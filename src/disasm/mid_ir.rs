@@ -1,11 +1,15 @@
 use std::fmt::{self, Display, Formatter};
 
 use crate::disasm::low_ir::*;
+use crate::disasm::mid_flow;
 use crate::line;
 use itertools::Itertools;
 use pathfinding::prelude::dfs;
 
 use super::code_printer::{CodePrinter, CodeWriter};
+use super::mid_flow::FlowGraph;
+use super::mid_flow::FlowNode;
+use super::mid_flow::FlowNodeKind;
 
 #[derive(Debug)]
 enum ArgType {
@@ -490,29 +494,61 @@ fn parse_while(input: Input) -> Result<(Input, MidIR), ParseError> {
 #[derive(Debug, Clone)]
 struct FlowAnalysis {
     span: Span,
-    return_statements: Vec<usize>,
-    gotos: Vec<(usize, usize)>,
     halts: Vec<usize>,
-    ifs: Vec<(usize, usize)>,
+    graph: FlowGraph,
+}
+
+struct NonBranchingTracker {
+    non_branching_start: Option<usize>,
+    end: usize,
+}
+
+impl NonBranchingTracker {
+    fn new() -> Self {
+        Self {
+            non_branching_start: None,
+            end: 0,
+        }
+    }
+
+    fn track(&mut self, start: usize, end: usize) {
+        if self.non_branching_start.is_none() {
+            self.non_branching_start = Some(start);
+        }
+        self.end = end;
+    }
+
+    fn end(&mut self, nodes: &mut Vec<FlowNode>) {
+        if self.non_branching_start.is_some() {
+            nodes.push(FlowNode::non_branching(Span::new(
+                self.non_branching_start.unwrap(),
+                self.end,
+            )));
+            self.non_branching_start = None;
+        }
+    }
 }
 
 fn analyze_flow(input: Input) -> FlowAnalysis {
     let mut input = input;
     let start_offset = input.offset;
-    let mut return_statements = Vec::new();
     let mut max_addr_seen = start_offset;
-    let mut gotos = Vec::new();
     let mut halts = Vec::new();
-    let mut ifs = Vec::new();
+    let mut nodes = vec![];
+    let mut non_branching_tracker = NonBranchingTracker::new();
+    let mut jumps = vec![];
     loop {
         let offset = input.offset;
-        if let Ok((new_input, mid)) = parse_function_call(input) {
+        if let Ok((new_input, _)) = parse_function_call(input) {
+            non_branching_tracker.track(input.offset, new_input.offset);
             input = new_input;
-            continue;
-        } else if let Ok((new_input, mid)) = parse_return(input) {
-            return_statements.push(offset);
+        } else if let Ok((new_input, _)) = parse_return(input) {
+            non_branching_tracker.end(&mut nodes);
+            nodes.push(FlowNode::new_return(Span::new(offset, new_input.offset)));
             input = new_input;
-            continue;
+            if offset >= max_addr_seen {
+                break;
+            }
         } else if let Ok((new_input, op)) = Instruction::parse(input) {
             match op.kind {
                 Instruction::Goto(OpArg {
@@ -520,12 +556,14 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
                     ..
                 }) => {
                     let addr = addr as usize;
-                    gotos.push((offset, addr));
+                    jumps.push(addr);
+                    non_branching_tracker.end(&mut nodes);
+                    nodes.push(FlowNode::goto(op.span, addr));
                     // back jump, code beyond max_addr_seen is not reachable.
                     if offset >= addr && offset >= max_addr_seen {
                         break;
                     }
-                    if max_addr_seen <= addr {
+                    if max_addr_seen < addr {
                         max_addr_seen = addr;
                     }
                 }
@@ -533,50 +571,80 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
                     panic!("Unexpected goto at {} {}", offset, op.kind);
                 }
                 Instruction::JumpIf(
-                    _,
-                    _,
+                    value,
+                    equal_to,
                     OpArg {
                         kind: Arg::Value(addr),
                         ..
                     },
                 ) => {
+                    non_branching_tracker.end(&mut nodes);
+                    jumps.push(addr as usize);
                     if addr as usize > max_addr_seen {
                         max_addr_seen = addr as usize;
                     }
-                    ifs.push((offset, addr as usize));
+                    nodes.push(FlowNode::jump_if(
+                        op.span,
+                        value.kind,
+                        equal_to,
+                        addr as usize,
+                    ));
                 }
                 Instruction::JumpIf(_, _, _) => {
                     panic!("Unexpected jumpif at {} {}", offset, op.kind);
                 }
                 Instruction::Halt => {
+                    non_branching_tracker.end(&mut nodes);
                     halts.push(offset);
-                    input = new_input;
                     if offset >= max_addr_seen {
                         break;
                     }
                 }
-                _ => {}
+                _ => {
+                    non_branching_tracker.track(input.offset, new_input.offset);
+                }
             }
+            input = new_input;
         } else {
             panic!("Could not parse instruction at {}", offset);
         }
     }
+    non_branching_tracker.end(&mut nodes);
+    for addr in jumps {
+        nodes = nodes
+            .into_iter()
+            .flat_map(|n| {
+                if !n.span.contains_address(addr) || n.span.start == addr {
+                    vec![n]
+                } else if let FlowNode {
+                    kind: FlowNodeKind::NonBranching,
+                    span,
+                } = n
+                {
+                    vec![
+                        FlowNode::non_branching(Span::new(span.start, addr)),
+                        FlowNode::non_branching(Span::new(addr, span.end)),
+                    ]
+                } else {
+                    panic!("Jump within a single instuction");
+                }
+            })
+            .collect_vec();
+    }
+    let graph = FlowGraph::build_from(&nodes);
 
     FlowAnalysis {
         span: Span {
             start: start_offset,
             end: max_addr_seen,
         },
-        return_statements,
-        gotos,
+        graph,
         halts,
-        ifs,
     }
 }
 
 fn parse_function(input: Input) -> Result<(Input, FunctionRange), ParseError> {
     let flow = analyze_flow(input);
-    println!("Flow = {:?}", flow);
     let (input, adjust_res) = Instruction::parse(input)?;
     let arg_count = match adjust_res.kind {
         Instruction::AdjustRelativeBase(OpArg {
@@ -591,7 +659,9 @@ fn parse_function(input: Input) -> Result<(Input, FunctionRange), ParseError> {
         }
         _ => Err(ParseError::NoMatch),
     }?;
-    let (input, block) = parse_block(input, None)?;
+    /*
+        let (input, block) = parse_block(input, None)?;
+    */
     let end = input.offset;
     Ok((
         input,
@@ -601,7 +671,7 @@ fn parse_function(input: Input) -> Result<(Input, FunctionRange), ParseError> {
             args: vec![],
             static_calls: vec![],
             return_point: None,
-            block: MidIR::Block(block),
+            block: MidIR::Block(vec![]),
         },
     ))
 }
