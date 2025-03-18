@@ -135,12 +135,6 @@ impl FlowGraph {
                 .find(|k| !graph.nodes.contains_key(k))
                 .unwrap()
         );
-        /*
-                assert!(nodes
-                    .iter()
-                    .filter(|n| matches!(n.kind, FlowNodeKind::Return))
-                    .all(|n| graph.next(n).is_some()));
-        */
         graph
     }
 }

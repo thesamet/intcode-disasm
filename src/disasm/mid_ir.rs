@@ -27,54 +27,14 @@ struct Argument {
 struct FunctionRange {
     start: usize,
     end: usize,
+    stack_size: usize,
     args: Vec<Argument>,
     static_calls: Vec<usize>,
     return_point: Option<usize>,
     block: MidIR,
 }
 
-fn parse_function_call(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, assign_op) = Instruction::parse(input)?;
-    let Instruction::Assign(
-        OpArg {
-            kind: Arg::RelativeMem(0),
-            ..
-        },
-        OpArg {
-            kind: Arg::Value(return_addr),
-            ..
-        },
-    ) = assign_op.kind
-    else {
-        return Err(ParseError::NoMatch);
-    };
-    let (input, goto) = Instruction::parse(input)?;
-    if return_addr as usize != input.offset {
-        return Err(ParseError::NoMatch);
-    }
-    trace!("{:?}", goto.kind);
-    match goto.kind {
-        Instruction::Goto(OpArg {
-            kind: Arg::Value(addr),
-            ..
-        }) => Ok((input, MidIR::FunctionCall(addr as usize, vec![]))),
-        Instruction::Goto(OpArg {
-            kind: Arg::RelativeMem(offset),
-            ..
-        }) if offset < 0 => Ok((
-            input,
-            MidIR::DynamicFunctionCall(Expr::InArg((-offset) as usize), vec![]),
-        )),
-        Instruction::Goto(OpArg {
-            kind: Arg::Pointer(p),
-            ..
-        }) => Ok((input, MidIR::DynamicFunctionCall(Expr::Var(p), vec![]))),
-
-        _ => Err(ParseError::NoMatch),
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Input(),
     Var(String), // To be deleted
@@ -261,6 +221,16 @@ fn find_function_calls(f: FunctionRange) -> Vec<usize> {
     calls.iter().unique().copied().collect()
 }
 
+fn find_dynamic_function_calls(f: &FunctionRange) -> Vec<usize> {
+    let mut res = Vec::new();
+    for i in scan_ops(f) {
+        if let MidIR::DynamicFunctionCall(Expr::InArg(arg), _) = i {
+            res.push(*arg);
+        }
+    }
+    res
+}
+
 /*
 impl<'a> Iterator for FunctionIterator<'a> {
     type Item = &'a MidIR;
@@ -295,6 +265,19 @@ pub fn to_mid_ir(prog: &[i128]) {
     );
     // program.functions.push(f);
 
+    /*
+        for f in program.functions.iter().sorted_by_key(|f| f.start) {
+            let in_args = find_dynamic_function_calls(&f);
+            if in_args.is_empty() {
+                continue;
+            }
+            for g in program.functions.iter().sorted_by_key(|g| g.start) {
+                if find_function_calls(g).filter()
+                    continue;
+                }
+            }
+        }
+    */
     let mut printer = CodePrinter::new();
     for f in program.functions.iter().sorted_by_key(|f| f.start) {
         line!(
@@ -309,17 +292,6 @@ pub fn to_mid_ir(prog: &[i128]) {
         line!(&mut printer, "");
     }
     println!("{}", printer.result());
-}
-
-fn from_arg(arg: &OpArg) -> Expr {
-    match &arg.kind {
-        Arg::Value(x) => Expr::Literal(*x),
-        Arg::RelativeMem(x) if *x > 0 => Expr::OutArg(*x as usize),
-        Arg::RelativeMem(x) if *x < 0 => Expr::InArg((-*x) as usize),
-        Arg::Mem(x) => Expr::Var(format!("data[{}]", *x)),
-        Arg::Pointer(x) => Expr::Var(x.clone()),
-        _ => panic!("Unexpected argument {:?}", arg),
-    }
 }
 
 fn parse_return(input: Input) -> Result<(Input, MidIR), ParseError> {
@@ -411,164 +383,237 @@ impl NonBranchingTracker {
     }
 }
 
-fn analyze_flow(input: Input) -> FlowAnalysis {
-    let mut input = input;
-    let start_offset = input.offset;
-    let mut max_addr_seen = start_offset;
-    let mut halts = Vec::new();
-    let mut nodes = vec![];
-    let mut non_branching_tracker = NonBranchingTracker::new();
-    let mut jumps = vec![];
-    loop {
-        let offset = input.offset;
-        trace!("offset={} max_addr_seen={}", offset, max_addr_seen);
-        if let Ok((new_input, fc)) = parse_function_call(input) {
-            non_branching_tracker.track(input.offset, new_input.offset, fc);
-
-            if new_input.offset >= max_addr_seen {
-                max_addr_seen = new_input.offset;
-            }
-            input = new_input;
-        } else if let Ok((new_input, _)) = parse_return(input) {
-            trace!("Return at {}", offset);
-            non_branching_tracker.end();
-            nodes.push(FlowNode::new_return(Span::new(offset, new_input.offset)));
-            input = new_input;
-            if new_input.offset >= max_addr_seen {
-                max_addr_seen = input.offset;
-                break;
-            }
-        } else if let Ok((new_input, op)) = Instruction::parse(input) {
-            match op.kind {
-                Instruction::Goto(OpArg {
-                    kind: Arg::Value(addr),
-                    ..
-                }) => {
-                    let addr = addr as usize;
-                    jumps.push(addr);
-                    non_branching_tracker.end();
-                    non_branching_tracker.break_at(addr);
-                    nodes.push(FlowNode::goto(op.span, addr));
-                    // back jump, code beyond max_addr_seen is not reachable.
-                    if max_addr_seen < addr.max(input.offset) {
-                        max_addr_seen = addr.max(input.offset);
-                    }
-                    trace!(
-                        "{}: max_addr_seen={} addr={}",
-                        input.offset,
-                        max_addr_seen,
-                        addr
-                    );
-                    if addr <= input.offset && max_addr_seen == input.offset {
-                        trace!("Function end detected at instruction at {}", input.offset);
-                        break;
-                    }
-                }
-                Instruction::Goto(_) => {
-                    panic!("Unexpected goto at {} {}", offset, op.kind);
-                }
-                Instruction::JumpIf(
-                    value,
-                    equal_to,
-                    OpArg {
-                        kind: Arg::Value(addr),
-                        ..
-                    },
-                ) => {
-                    let addr = addr as usize;
-                    non_branching_tracker.end();
-                    non_branching_tracker.break_at(addr);
-                    jumps.push(addr);
-                    let condition = {
-                        let mut t = from_arg(&value);
-                        if !equal_to {
-                            t = t.negate();
-                        }
-                        t
-                    };
-                    nodes.push(FlowNode::jump_if(op.span, condition, addr));
-                    if max_addr_seen < addr.max(new_input.offset) {
-                        max_addr_seen = addr.max(new_input.offset);
-                    }
-                }
-                Instruction::JumpIf(_, _, _) => {
-                    panic!("Unexpected jumpif at {} {}", offset, op.kind);
-                }
-                Instruction::Halt => {
-                    non_branching_tracker.end();
-                    halts.push(offset);
-                }
-                _ => {
-                    non_branching_tracker.track(
-                        input.offset,
-                        new_input.offset,
-                        instruction_to_midir(op.kind),
-                    );
-                }
-            }
-            if max_addr_seen < new_input.offset {
-                max_addr_seen = new_input.offset;
-            }
-            input = new_input;
-        } else {
-            panic!("Could not parse instruction at {}", offset);
-        }
-    }
-    non_branching_tracker.end();
-    trace!(
-        "Non-branching tracker: {:?}",
-        non_branching_tracker.non_branching
-    );
-    for v in non_branching_tracker.non_branching {
-        let start = v.first().unwrap().0;
-        let end = v.last().unwrap().1;
-        let ops = v.into_iter().map(|(_, _, op)| op).collect();
-        nodes.push(FlowNode::non_branching(Span::new(start, end), ops));
-    }
-
-    let graph = FlowGraph::build_from(&nodes);
-
-    FlowAnalysis {
-        span: Span {
-            start: start_offset,
-            end: max_addr_seen,
-        },
-        graph,
-        halts,
-    }
+struct FunctionParser {
+    stack_size: usize,
 }
 
-fn instruction_to_midir(kind: Instruction) -> MidIR {
-    match kind {
-        Instruction::Assign(arg1, arg2) => MidIR::Assign(from_arg(&arg1), from_arg(&arg2)),
-        Instruction::Add(a, b, c) => MidIR::Assign(
-            from_arg(&c),
-            Expr::Add(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-        ),
-        Instruction::Mul(a, b, c) => MidIR::Assign(
-            from_arg(&c),
-            Expr::Mul(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-        ),
-        Instruction::Output(OpArg {
-            kind: Arg::Value(x),
-            ..
-        }) => MidIR::Output(x),
-        Instruction::Input(a) => MidIR::Assign(from_arg(&a), Expr::Input()),
-        Instruction::Equals(a, b, c) => MidIR::Assign(
-            from_arg(&c),
-            Expr::Equal(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-        ),
-        Instruction::LessThan(a, b, c) => MidIR::Assign(
-            from_arg(&c),
-            Expr::LessThan(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-        ),
-        _ => panic!("Unexpected instruction {:?}", kind),
+impl FunctionParser {
+    fn parse_function_call<'a>(&self, input: Input<'a>) -> Result<(Input<'a>, MidIR), ParseError> {
+        let mut input = input;
+        let mut args = vec![];
+        let mut last_arg_offset = 0;
+        let return_addr = loop {
+            let (next_input, op) = Instruction::parse(input)?;
+            input = next_input;
+            let Some(MidIR::Assign(Expr::OutArg(v), val)) = self.instruction_to_midir(op.kind)
+            else {
+                return Err(ParseError::NoMatch);
+            };
+            if v == 0 {
+                let Expr::Literal(addr) = val else {
+                    return Err(ParseError::NoMatch);
+                };
+                break addr as usize;
+            }
+            if v != last_arg_offset + 1 {
+                return Err(ParseError::NoMatch);
+            }
+            args.push(val);
+            last_arg_offset = v;
+        };
+
+        let (input, goto) = Instruction::parse(input)?;
+        if return_addr != input.offset {
+            return Err(ParseError::NoMatch);
+        }
+        trace!("{:?}", goto.kind);
+        match goto.kind {
+            Instruction::Goto(OpArg {
+                kind: Arg::Value(addr),
+                ..
+            }) => Ok((input, MidIR::FunctionCall(addr as usize, args))),
+            Instruction::Goto(OpArg {
+                kind: Arg::RelativeMem(offset),
+                ..
+            }) if offset < 0 => Ok((
+                input,
+                MidIR::DynamicFunctionCall(
+                    Expr::InArg(self.stack_size.checked_add_signed(offset as isize).unwrap()),
+                    vec![],
+                ),
+            )),
+            Instruction::Goto(OpArg {
+                kind: Arg::Pointer(p),
+                ..
+            }) => Ok((input, MidIR::DynamicFunctionCall(Expr::Var(p), args))),
+
+            _ => Err(ParseError::NoMatch),
+        }
+    }
+
+    fn from_arg(&self, arg: &OpArg) -> Expr {
+        match &arg.kind {
+            Arg::Value(x) => Expr::Literal(*x),
+            Arg::RelativeMem(x) if *x >= 0 => Expr::OutArg(*x as usize),
+            Arg::RelativeMem(x) if *x < 0 => {
+                Expr::InArg(self.stack_size.checked_add_signed(*x as isize).unwrap())
+            }
+            Arg::Mem(x) => Expr::Var(format!("data[{}]", *x)),
+            Arg::Pointer(x) => Expr::Var(x.clone()),
+            _ => panic!("Unexpected argument {:?}", arg),
+        }
+    }
+
+    fn analyze_flow(&self, input: Input) -> FlowAnalysis {
+        let mut input = input;
+        let start_offset = input.offset;
+        let mut max_addr_seen = start_offset;
+        let mut halts = Vec::new();
+        let mut nodes = vec![];
+        let mut non_branching_tracker = NonBranchingTracker::new();
+        let mut jumps = vec![];
+        loop {
+            let offset = input.offset;
+            trace!("offset={} max_addr_seen={}", offset, max_addr_seen);
+            if let Ok((new_input, fc)) = self.parse_function_call(input) {
+                non_branching_tracker.track(input.offset, new_input.offset, fc);
+                if new_input.offset >= max_addr_seen {
+                    max_addr_seen = new_input.offset;
+                }
+                input = new_input;
+            } else if let Ok((new_input, _)) = parse_return(input) {
+                trace!("Return at {}", offset);
+                non_branching_tracker.end();
+                nodes.push(FlowNode::new_return(Span::new(offset, new_input.offset)));
+                input = new_input;
+                if new_input.offset >= max_addr_seen {
+                    max_addr_seen = input.offset;
+                    break;
+                }
+            } else if let Ok((new_input, op)) = Instruction::parse(input) {
+                match op.kind {
+                    Instruction::Goto(OpArg {
+                        kind: Arg::Value(addr),
+                        ..
+                    }) => {
+                        let addr = addr as usize;
+                        jumps.push(addr);
+                        non_branching_tracker.end();
+                        non_branching_tracker.break_at(addr);
+                        nodes.push(FlowNode::goto(op.span, addr));
+                        // back jump, code beyond max_addr_seen is not reachable.
+                        if max_addr_seen < addr.max(input.offset) {
+                            max_addr_seen = addr.max(input.offset);
+                        }
+                        trace!(
+                            "{}: max_addr_seen={} addr={}",
+                            input.offset,
+                            max_addr_seen,
+                            addr
+                        );
+                        if addr <= input.offset && max_addr_seen == input.offset {
+                            trace!("Function end detected at instruction at {}", input.offset);
+                            break;
+                        }
+                    }
+                    Instruction::Goto(_) => {
+                        panic!("Unexpected goto at {} {}", offset, op.kind);
+                    }
+                    Instruction::JumpIf(
+                        value,
+                        equal_to,
+                        OpArg {
+                            kind: Arg::Value(addr),
+                            ..
+                        },
+                    ) => {
+                        let addr = addr as usize;
+                        non_branching_tracker.end();
+                        non_branching_tracker.break_at(addr);
+                        jumps.push(addr);
+                        let condition = {
+                            let mut t = self.from_arg(&value);
+                            if !equal_to {
+                                t = t.negate();
+                            }
+                            t
+                        };
+                        nodes.push(FlowNode::jump_if(op.span, condition, addr));
+                        if max_addr_seen < addr.max(new_input.offset) {
+                            max_addr_seen = addr.max(new_input.offset);
+                        }
+                    }
+                    Instruction::JumpIf(_, _, _) => {
+                        panic!("Unexpected jumpif at {} {}", offset, op.kind);
+                    }
+                    Instruction::Halt => {
+                        non_branching_tracker.end();
+                        halts.push(offset);
+                    }
+                    _ => {
+                        non_branching_tracker.track(
+                            input.offset,
+                            new_input.offset,
+                            self.instruction_to_midir(op.kind).unwrap(),
+                        );
+                    }
+                }
+                if max_addr_seen < new_input.offset {
+                    max_addr_seen = new_input.offset;
+                }
+                input = new_input;
+            } else {
+                panic!("Could not parse instruction at {}", offset);
+            }
+        }
+        non_branching_tracker.end();
+        trace!(
+            "Non-branching tracker: {:?}",
+            non_branching_tracker.non_branching
+        );
+        for v in non_branching_tracker.non_branching {
+            let start = v.first().unwrap().0;
+            let end = v.last().unwrap().1;
+            let ops = v.into_iter().map(|(_, _, op)| op).collect();
+            nodes.push(FlowNode::non_branching(Span::new(start, end), ops));
+        }
+
+        let graph = FlowGraph::build_from(&nodes);
+
+        FlowAnalysis {
+            span: Span {
+                start: start_offset,
+                end: max_addr_seen,
+            },
+            graph,
+            halts,
+        }
+    }
+
+    fn instruction_to_midir(&self, kind: Instruction) -> Option<MidIR> {
+        Some(match kind {
+            Instruction::Assign(arg1, arg2) => {
+                MidIR::Assign(self.from_arg(&arg1), self.from_arg(&arg2))
+            }
+            Instruction::Add(a, b, c) => MidIR::Assign(
+                self.from_arg(&c),
+                Expr::Add(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+            ),
+            Instruction::Mul(a, b, c) => MidIR::Assign(
+                self.from_arg(&c),
+                Expr::Mul(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+            ),
+            Instruction::Output(OpArg {
+                kind: Arg::Value(x),
+                ..
+            }) => MidIR::Output(x),
+            Instruction::Input(a) => MidIR::Assign(self.from_arg(&a), Expr::Input()),
+            Instruction::Equals(a, b, c) => MidIR::Assign(
+                self.from_arg(&c),
+                Expr::Equal(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+            ),
+            Instruction::LessThan(a, b, c) => MidIR::Assign(
+                self.from_arg(&c),
+                Expr::LessThan(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+            ),
+            _ => return None,
+        })
     }
 }
 
 fn parse_function(input: Input) -> Result<FunctionRange, ParseError> {
     let (input, adjust_res) = Instruction::parse(input)?;
-    let arg_count = match adjust_res.kind {
+    let stack_size = match adjust_res.kind {
         Instruction::AdjustRelativeBase(OpArg {
             kind: Arg::Value(r),
             ..
@@ -576,18 +621,20 @@ fn parse_function(input: Input) -> Result<FunctionRange, ParseError> {
             if adjust_res.span.start == 0 {
                 Ok(0)
             } else {
-                Ok(r)
+                Ok(r as usize)
             }
         }
         _ => Err(ParseError::NoMatch),
     }?;
-    let flow = analyze_flow(input);
+    let parser = FunctionParser { stack_size };
+    let flow = parser.analyze_flow(input);
     let flow_high = mid_flow::parse_flow(&flow.graph, flow.span).unwrap();
     let mid_ir = flow_to_mid_ir(&flow_high);
 
     Ok(FunctionRange {
         start: adjust_res.span.start,
         end: flow.span.end,
+        stack_size,
         args: vec![],
         static_calls: vec![],
         return_point: None,
