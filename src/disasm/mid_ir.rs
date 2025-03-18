@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Display, Formatter};
 
 use crate::disasm::low_ir::*;
@@ -98,7 +98,7 @@ pub enum MidIR {
     While(LoopId, Option<Box<MidIR>>, Expr, Box<MidIR>),
     DoWhile(LoopId, Box<MidIR>, Expr),
     Loop(LoopId, Box<MidIR>),
-    Output(i128),
+    Output(Expr),
     Break(LoopId),
     Continue(LoopId),
     Unknown(usize, Instruction),
@@ -181,7 +181,7 @@ impl MidIR {
 
 struct Program {
     inst: Vec<i128>,
-    functions: Vec<FunctionRange>,
+    functions: HashMap<usize, FunctionRange>,
 }
 
 impl Program {}
@@ -211,14 +211,14 @@ fn scan_ops<'a>(fp: &'a FunctionRange) -> Box<dyn Iterator<Item = &'a MidIR> + '
     children_of(&fp.block)
 }
 
-fn find_function_calls(f: FunctionRange) -> Vec<usize> {
+fn find_function_calls(f: &FunctionRange) -> Vec<(usize, Vec<Expr>)> {
     let mut calls = vec![];
     for i in scan_ops(&f) {
-        if let MidIR::FunctionCall(addr, _) = i {
-            calls.push(*addr)
+        if let MidIR::FunctionCall(addr, args) = i {
+            calls.push((*addr, args.clone()));
         }
     }
-    calls.iter().unique().copied().collect()
+    calls
 }
 
 fn find_dynamic_function_calls(f: &FunctionRange) -> Vec<usize> {
@@ -247,39 +247,85 @@ impl<'a> Iterator for FunctionIterator<'a> {
 }
 */
 
-pub fn to_mid_ir(prog: &[i128]) {
-    let mut program = Program {
-        functions: vec![],
-        inst: prog.to_vec(),
-    };
-    dfs(
-        0,
-        |offset| {
-            trace!("Discovering function at {}", offset);
-            let input = Input::new(*offset, &program.inst[*offset..]);
-            let fr = parse_function(input).unwrap();
-            program.functions.push(fr.clone());
-            find_function_calls(fr)
-        },
-        |_| false,
-    );
-    // program.functions.push(f);
-
-    /*
-        for f in program.functions.iter().sorted_by_key(|f| f.start) {
-            let in_args = find_dynamic_function_calls(&f);
-            if in_args.is_empty() {
-                continue;
-            }
-            for g in program.functions.iter().sorted_by_key(|g| g.start) {
-                if find_function_calls(g).filter()
+fn discover_function_pointers(functions: &[FunctionRange]) -> Vec<usize> {
+    let mut new_funcs = vec![];
+    for f in functions.iter().sorted_by_key(|f| f.start) {
+        let in_args = find_dynamic_function_calls(&f);
+        if in_args.is_empty() {
+            continue;
+        }
+        for g in functions {
+            for fc in find_function_calls(g) {
+                if fc.0 != f.start {
                     continue;
+                }
+                for arg in &in_args {
+                    if *arg > fc.1.len() {
+                        println!(
+                            "Problem with function {} called from f{} args={:?} [arg={}]",
+                            fc.0, g.start, fc.1, *arg
+                        );
+                    } else {
+                        let Expr::Literal(addr) = fc.1[*arg - 1] else {
+                            panic!("Expected literal argument");
+                        };
+                        new_funcs.push(addr as usize);
+                    }
                 }
             }
         }
-    */
+    }
+    new_funcs.iter().unique().copied().collect_vec()
+}
+
+fn discover_functions(prog: &[i128]) -> Program {
+    let mut program = Program {
+        functions: HashMap::new(),
+        inst: prog.to_vec(),
+    };
+    let mut outer_stack = vec![0];
+    let mut seen: HashSet<usize> = HashSet::new();
+
+    while let Some(init) = outer_stack.pop() {
+        dfs(
+            init,
+            |offset| {
+                trace!("Discovering function at {}", offset);
+                let input = Input::new(*offset, &program.inst[*offset..]);
+                let fr = parse_function(input).unwrap();
+                program.functions.insert(fr.start, fr.clone());
+                let fcs = find_function_calls(&fr)
+                    .iter()
+                    .map(|fc| fc.0)
+                    .filter(|c| !seen.contains(c))
+                    .unique()
+                    .collect_vec();
+                seen.extend(&fcs);
+                fcs
+            },
+            |_| false,
+        );
+        for func_pointer in
+            discover_function_pointers(&program.functions.values().cloned().collect_vec())
+        {
+            if seen.contains(&func_pointer) {
+                continue;
+            }
+            seen.insert(func_pointer);
+            println!("Discovered function at {}", func_pointer);
+            outer_stack.push(func_pointer);
+        }
+        println!("----")
+    }
+    program
+}
+
+pub fn to_mid_ir(prog: &[i128]) {
+    // program.functions.push(f);
+    let program = discover_functions(prog);
+
     let mut printer = CodePrinter::new();
-    for f in program.functions.iter().sorted_by_key(|f| f.start) {
+    for (_, f) in program.functions.iter().sorted_by_key(|f| f.1.start) {
         line!(
             &mut printer,
             "fn f{}({}) {{",
@@ -593,10 +639,7 @@ impl FunctionParser {
                 self.from_arg(&c),
                 Expr::Mul(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
             ),
-            Instruction::Output(OpArg {
-                kind: Arg::Value(x),
-                ..
-            }) => MidIR::Output(x),
+            Instruction::Output(a) => MidIR::Output(self.from_arg(&a)),
             Instruction::Input(a) => MidIR::Assign(self.from_arg(&a), Expr::Input()),
             Instruction::Equals(a, b, c) => MidIR::Assign(
                 self.from_arg(&c),
