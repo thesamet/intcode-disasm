@@ -539,7 +539,7 @@ fn parse_if(
     if let Some(v) = parse_context.known_jumps.get(&jump_target) {
         return Ok((
             region.with_start(node.span.end),
-            FlowHigh::conditional(condition.negate(), v.clone()),
+            FlowHigh::conditional(condition.clone(), v.clone()),
         ));
     }
     if jump_target < node.span.start {
@@ -934,7 +934,7 @@ mod tests {
 
         let expected = FlowHigh::composite(vec![
             flow_high_non_branching(0, 10),
-            FlowHigh::conditional(cond().negate(), FlowHigh::return_flow()),
+            FlowHigh::conditional(cond(), FlowHigh::return_flow()),
             flow_high_non_branching(11, 20),
             FlowHigh::return_flow(),
             flow_high_non_branching(21, 30),
@@ -959,7 +959,7 @@ mod tests {
                 LoopId(1),
                 FlowHigh::composite(vec![
                     flow_high_non_branching(5, 15),
-                    FlowHigh::conditional(cond().negate(), FlowHigh::return_flow()),
+                    FlowHigh::conditional(cond(), FlowHigh::return_flow()),
                     flow_high_non_branching(16, 20),
                 ]),
                 cond(),
@@ -1037,9 +1037,9 @@ mod tests {
                 Some(flow_high_non_branching(10, 20)),
                 cond().negate(),
                 FlowHigh::composite(vec![
-                    FlowHigh::conditional(cond().negate(), FlowHigh::return_flow()),
+                    FlowHigh::conditional(cond(), FlowHigh::return_flow()),
                     flow_high_non_branching(40, 50),
-                    FlowHigh::conditional(cond().negate(), FlowHigh::Continue(LoopId(1))),
+                    FlowHigh::conditional(cond(), FlowHigh::Continue(LoopId(1))),
                     FlowHigh::conditional(
                         cond().negate(),
                         FlowHigh::composite(vec![

@@ -12,7 +12,7 @@ pub trait CodeWriter {
 
     fn line_fmt(&mut self, args: Arguments<'_>) {
         let mut s = String::new();
-        s.write_fmt(args);
+        s.write_fmt(args).unwrap();
         self.line(&s)
     }
 
@@ -21,6 +21,16 @@ pub trait CodeWriter {
         Self: Sized,
     {
         IndentedWriter { parent: self }
+    }
+
+    fn single_line_mode(&mut self) -> SingleLineWriter
+    where
+        Self: Sized,
+    {
+        SingleLineWriter {
+            parent: self,
+            c: vec![],
+        }
     }
 }
 
@@ -52,5 +62,22 @@ pub struct IndentedWriter<'a> {
 impl<'a> CodeWriter for IndentedWriter<'a> {
     fn line(&mut self, s: &str) {
         self.parent.line(&format!("  {}", s));
+    }
+}
+
+pub struct SingleLineWriter<'a> {
+    parent: &'a mut dyn CodeWriter,
+    c: Vec<String>,
+}
+
+impl<'a> Drop for SingleLineWriter<'a> {
+    fn drop(&mut self) {
+        self.parent.line(&self.c.join(" "));
+    }
+}
+
+impl<'a> CodeWriter for SingleLineWriter<'a> {
+    fn line(&mut self, s: &str) {
+        self.c.push(s.to_string());
     }
 }

@@ -180,7 +180,7 @@ impl MidIR {
                 line!(f, "// {}: {}", offset, i);
             }
             MidIR::Return() => {
-                line!(f, "return;");
+                line!(f, "return");
             }
             MidIR::Block(code) => {
                 for i in code {
@@ -193,11 +193,14 @@ impl MidIR {
                 line!(f, "}}  // '{}", id.0);
             }
             MidIR::While(id, header, cond, body) => {
-                line!(f, "'{}: while (", id.0);
-                if let Some(header) = header {
-                    header.print(&mut f.indented());
+                {
+                    let mut sl = f.single_line_mode();
+                    line!(sl, "'{}: while (", id.0);
+                    if let Some(header) = header {
+                        header.print(&mut sl)
+                    }
+                    line!(sl, "{}) {{", cond);
                 }
-                line!(f.indented(), "{}) {{", cond);
                 body.print(&mut f.indented());
                 line!(f, "}}  // '{}", id.0);
             }
@@ -231,6 +234,15 @@ fn children_of<'a>(mid_ir: &'a MidIR) -> Box<dyn Iterator<Item = &'a MidIR> + 'a
             Some(f) => Box::new(children_of(t).chain(children_of(f))),
             _ => Box::new(children_of(t)),
         },
+        MidIR::While(_, header, _, body) => {
+            let t = children_of(body);
+            if let Some(h) = header {
+                Box::new(t.chain(children_of(h)))
+            } else {
+                t
+            }
+        }
+        MidIR::DoWhile(_, body, _) => children_of(body),
         x => Box::new(std::iter::once(x)),
     }
 }
@@ -619,16 +631,16 @@ pub fn flow_to_mid_ir(flow: &FlowHigh) -> MidIR {
             MidIR::DoWhile(*id, Box::new(flow_to_mid_ir(body)), expr.clone())
         }
         FlowHigh::Loop { id, body } => MidIR::Loop(*id, Box::new(flow_to_mid_ir(body))),
-        FlowHigh::If { then, .. } => {
+        FlowHigh::If { expr, then, .. } => {
             // Use a placeholder condition for now
-            let condition = Expr::Literal(1);
-            MidIR::If(condition, Box::new(flow_to_mid_ir(then)), None)
+            MidIR::If(expr.clone(), Box::new(flow_to_mid_ir(then)), None)
         }
-        FlowHigh::IfElse { then, els, .. } => {
+        FlowHigh::IfElse {
+            expr, then, els, ..
+        } => {
             // Use a placeholder condition for now
-            let condition = Expr::Literal(1);
             MidIR::If(
-                condition,
+                expr.clone(),
                 Box::new(flow_to_mid_ir(then)),
                 Some(Box::new(flow_to_mid_ir(els))),
             )
