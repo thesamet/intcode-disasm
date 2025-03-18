@@ -337,7 +337,9 @@ impl NonBranchingTracker {
 
     fn end(&mut self) {
         if let Some(current) = self.current.take() {
-            self.non_branching.push(current);
+            if !current.is_empty() {
+                self.non_branching.push(current);
+            }
         }
     }
 
@@ -347,8 +349,12 @@ impl NonBranchingTracker {
         for block in self.non_branching.iter_mut() {
             if let Some(end_pos) = block.iter().position(|(s, _, _)| *s == addr) {
                 let next = block.split_off(end_pos);
-                res.push(block.clone());
-                res.push(next);
+                if !block.is_empty() {
+                    res.push(block.clone());
+                }
+                if !next.is_empty() {
+                    res.push(next);
+                }
             } else {
                 res.push(block.clone());
             }
@@ -455,6 +461,10 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
         }
     }
     non_branching_tracker.end();
+    trace!(
+        "Non-branching tracker: {:?}",
+        non_branching_tracker.non_branching
+    );
     for v in non_branching_tracker.non_branching {
         let start = v.first().unwrap().0;
         let end = v.last().unwrap().1;
