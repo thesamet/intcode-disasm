@@ -49,6 +49,7 @@ pub enum Expr {
     LessThan(Box<Expr>, Box<Expr>),
     GreaterOrEqual(Box<Expr>, Box<Expr>),
     Negate(Box<Expr>),
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
@@ -84,6 +85,9 @@ impl Display for Expr {
             Expr::LessThan(a, b) => write!(f, "{} < {}", a, b),
             Expr::GreaterOrEqual(a, b) => write!(f, "{} >= {}", a, b),
             Expr::Negate(e) => write!(f, "!{}", e),
+            Expr::If(cond, then, els) => {
+                write!(f, "if ({}) {{ {} }} else {{ {} }}", cond, then, els)
+            }
         }
     }
 }
@@ -434,15 +438,93 @@ struct FunctionParser {
 }
 
 impl FunctionParser {
+    fn parse_simple_ternary_assign_tmp<'a>(
+        &self,
+        input: Input<'a>,
+    ) -> Result<(Input<'a>, MidIR), ParseError> {
+        let (
+            input,
+            Op {
+                kind:
+                    Instruction::JumpIf(
+                        value,
+                        equal_to,
+                        OpArg {
+                            kind: Arg::Value(addr1),
+                            ..
+                        },
+                    ),
+                ..
+            },
+        ) = Instruction::parse(input)?
+        else {
+            return Err(ParseError::NoMatch);
+        }; // if jump
+        let mut condition = self.from_arg(&value);
+        if equal_to {
+            condition = condition.negate();
+        }
+        let (input, op) = Instruction::parse(input)?;
+        let Some(MidIR::Assign(Expr::OutArg(v1), val1)) = self.instruction_to_midir(op.kind) else {
+            return Err(ParseError::NoMatch);
+        };
+
+        let (
+            input,
+            Op {
+                kind:
+                    Instruction::Goto(OpArg {
+                        kind: Arg::Value(addr2),
+                        ..
+                    }),
+                ..
+            },
+        ) = Instruction::parse(input)?
+        else {
+            return Err(ParseError::NoMatch);
+        };
+
+        if input.offset != addr1 as usize {
+            return Err(ParseError::NoMatch);
+        }
+
+        let (input, op) = Instruction::parse(input)?;
+        let Some(MidIR::Assign(Expr::OutArg(v2), val2)) = self.instruction_to_midir(op.kind) else {
+            return Err(ParseError::NoMatch);
+        };
+        if input.offset != addr2 as usize {
+            return Err(ParseError::NoMatch);
+        }
+        if v1 != v2 {
+            return Err(ParseError::NoMatch);
+        }
+        Ok((
+            input,
+            MidIR::Assign(
+                Expr::OutArg(v1),
+                Expr::If(Box::new(condition), Box::new(val1), Box::new(val2)),
+            ),
+        ))
+    }
+
+    fn parse_simple_assign<'a>(&self, input: Input<'a>) -> Result<(Input<'a>, MidIR), ParseError> {
+        let (input, op) = Instruction::parse(input)?;
+        let Some(midir) = self.instruction_to_midir(op.kind) else {
+            return Err(ParseError::NoMatch);
+        };
+        Ok((input, midir))
+    }
+
     fn parse_function_call<'a>(&self, input: Input<'a>) -> Result<(Input<'a>, MidIR), ParseError> {
         let mut input = input;
         let mut args = vec![];
         let mut last_arg_offset = 0;
         let return_addr = loop {
-            let (next_input, op) = Instruction::parse(input)?;
+            let (next_input, midir) = self
+                .parse_simple_assign(input)
+                .or_else(|_| self.parse_simple_ternary_assign_tmp(input))?;
             input = next_input;
-            let Some(MidIR::Assign(Expr::OutArg(v), val)) = self.instruction_to_midir(op.kind)
-            else {
+            let MidIR::Assign(Expr::OutArg(v), val) = midir else {
                 return Err(ParseError::NoMatch);
             };
             if v == 0 {
