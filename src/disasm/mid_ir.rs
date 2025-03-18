@@ -289,6 +289,7 @@ fn discover_functions(prog: &[i128]) -> Program {
     };
     let mut outer_stack = vec![0];
     let mut seen: HashSet<usize> = HashSet::new();
+    let mut arg_count = HashMap::new();
 
     while let Some(init) = outer_stack.pop() {
         dfs(
@@ -298,7 +299,19 @@ fn discover_functions(prog: &[i128]) -> Program {
                 let input = Input::new(*offset, &program.inst[*offset..]);
                 let fr = parse_function(input).unwrap();
                 program.functions.insert(fr.start, fr.clone());
-                let fcs = find_function_calls(&fr)
+                let function_calls = find_function_calls(&fr);
+                for (addr, args) in &function_calls {
+                    if arg_count.contains_key(addr) {
+                        let count = arg_count.get_mut(addr).unwrap();
+                        if *count != args.len() {
+                            println!("Mismatch in argument count for function at {}", addr);
+                        }
+                        *count = args.len().max(*count);
+                    } else {
+                        arg_count.insert(*addr, args.len());
+                    }
+                }
+                let fcs = function_calls
                     .iter()
                     .map(|fc| fc.0)
                     .filter(|c| !seen.contains(c))
