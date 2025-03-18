@@ -1,6 +1,6 @@
 mod disasm;
 
-use clap::{Parser, Subcommand};
+use clap::{arg, Parser, Subcommand};
 use disasm::{low_ir::Instruction, mid_ir};
 
 #[derive(Parser)]
@@ -19,6 +19,7 @@ enum Command {
 }
 
 fn main() {
+    env_logger::builder().format_timestamp(None).init();
     let cli = Cli::parse();
     let prog = std::fs::read_to_string(cli.input.unwrap())
         .unwrap()

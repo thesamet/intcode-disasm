@@ -1,29 +1,29 @@
+use std::collections::HashSet;
 use std::fmt::{self, Display, Formatter};
 
 use crate::disasm::low_ir::*;
-use crate::disasm::mid_flow;
 use crate::line;
 use itertools::Itertools;
+use log::trace;
 use pathfinding::prelude::dfs;
 
 use super::code_printer::{CodePrinter, CodeWriter};
-use super::mid_flow::FlowGraph;
-use super::mid_flow::FlowNode;
-use super::mid_flow::FlowNodeKind;
+use super::mid_flow::{self, FlowGraph, LoopId};
+use super::mid_flow::{FlowHigh, FlowNode};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ArgType {
     Value,
     FunctionPointer { args: Vec<ArgType> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Argument {
     name: String,
     typ: ArgType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FunctionRange {
     start: usize,
     end: usize,
@@ -35,7 +35,7 @@ struct FunctionRange {
 
 fn parse_function_call(input: Input) -> Result<(Input, MidIR), ParseError> {
     let (input, assign_op) = Instruction::parse(input)?;
-    if let Instruction::Assign(
+    let Instruction::Assign(
         OpArg {
             kind: Arg::RelativeMem(0),
             ..
@@ -45,40 +45,38 @@ fn parse_function_call(input: Input) -> Result<(Input, MidIR), ParseError> {
             ..
         },
     ) = assign_op.kind
-    {
-        println!("Return addr: {}", return_addr);
-        let (input, goto) = Instruction::parse(input)?;
-        if return_addr as usize != input.offset {
-            return Err(ParseError::NoMatch);
-        }
-        match goto.kind {
-            Instruction::Goto(OpArg {
-                kind: Arg::Value(addr),
-                ..
-            }) => Ok((input, MidIR::FunctionCall(addr as usize, vec![]))),
-            Instruction::Goto(OpArg {
-                kind: Arg::RelativeMem(offset),
-                ..
-            }) => {
-                if offset < 0 {
-                    Ok((
-                        input,
-                        MidIR::DynamicFunctionCall(Expr::InArg((-offset) as usize), vec![]),
-                    ))
-                } else {
-                    Err(ParseError::NoMatch)
-                }
-            }
+    else {
+        return Err(ParseError::NoMatch);
+    };
+    let (input, goto) = Instruction::parse(input)?;
+    if return_addr as usize != input.offset {
+        return Err(ParseError::NoMatch);
+    }
+    trace!("{:?}", goto.kind);
+    match goto.kind {
+        Instruction::Goto(OpArg {
+            kind: Arg::Value(addr),
+            ..
+        }) => Ok((input, MidIR::FunctionCall(addr as usize, vec![]))),
+        Instruction::Goto(OpArg {
+            kind: Arg::RelativeMem(offset),
+            ..
+        }) if offset < 0 => Ok((
+            input,
+            MidIR::DynamicFunctionCall(Expr::InArg((-offset) as usize), vec![]),
+        )),
+        Instruction::Goto(OpArg {
+            kind: Arg::Pointer(p),
+            ..
+        }) => Ok((input, MidIR::DynamicFunctionCall(Expr::Var(p), vec![]))),
 
-            _ => Err(ParseError::NoMatch),
-        }
-    } else {
-        Err(ParseError::NoMatch)
+        _ => Err(ParseError::NoMatch),
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
+    Input(),
     Var(String), // To be deleted
     InArg(usize),
     OutArg(usize),
@@ -88,6 +86,7 @@ pub enum Expr {
     Mul(Box<Expr>, Box<Expr>),
     NotEqual(Box<Expr>, Box<Expr>),
     Equal(Box<Expr>, Box<Expr>),
+    LessThan(Box<Expr>, Box<Expr>),
 }
 
 impl Expr {}
@@ -95,6 +94,7 @@ impl Expr {}
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
+            Expr::Input() => write!(f, "input()"),
             Expr::Var(x) => write!(f, "{}", x),
             Expr::Literal(x) => write!(f, "{}", x),
             Expr::Add(a, b) => write!(f, "({} + {})", a, b),
@@ -104,6 +104,7 @@ impl Display for Expr {
             Expr::MemRef(x) => write!(f, "*({})", x),
             Expr::NotEqual(a, b) => write!(f, "{} != {}", a, b),
             Expr::Equal(a, b) => write!(f, "{} == {}", a, b),
+            Expr::LessThan(a, b) => write!(f, "{} < {}", a, b),
         }
     }
 }
@@ -111,12 +112,14 @@ impl Display for Expr {
 #[derive(Clone, Debug, PartialEq)]
 pub enum MidIR {
     Block(Vec<MidIR>),
-    Loop(Box<MidIR>),
+    Loop(LoopId, Box<MidIR>),
     Assign(Expr, Expr),
     FunctionCall(usize, Vec<Expr>),
     DynamicFunctionCall(Expr, Vec<Expr>),
-    If(Expr, Vec<MidIR>, Vec<MidIR>),
+    If(Expr, Box<MidIR>, Option<Box<MidIR>>),
     Output(i128),
+    Break(LoopId),
+    Continue(LoopId),
     Unknown(usize, Instruction),
     Return(),
 }
@@ -138,14 +141,12 @@ impl MidIR {
             }
             MidIR::If(cond, then, els) => {
                 line!(f, "if ({}) {{", cond);
-                for i in then {
-                    i.print(&mut f.indented());
-                }
-                if els.is_empty() {
+                then.print(&mut f.indented());
+                if els.is_none() {
                     line!(f, "}}");
                 } else {
                     line!(f, "}} else {{");
-                    for i in els {
+                    if let Some(i) = els {
                         i.print(&mut f.indented());
                     }
                     line!(f, "}}");
@@ -165,10 +166,16 @@ impl MidIR {
                     i.print(f);
                 }
             }
-            MidIR::Loop(body) => {
-                line!(f, "while (true) {{");
+            MidIR::Loop(id, body) => {
+                line!(f, "'{}: while (true) {{", id.0);
                 body.print(&mut f.indented());
-                line!(f, "}}");
+                line!(f, "}}  // '{}", id.0);
+            }
+            MidIR::Break(id) => {
+                line!(f, "break '{};", id.0);
+            }
+            MidIR::Continue(id) => {
+                line!(f, "continue '{};", id.0);
             }
         }
     }
@@ -183,9 +190,12 @@ impl Program {}
 
 fn children_of<'a>(mid_ir: &'a MidIR) -> Box<dyn Iterator<Item = &'a MidIR> + 'a> {
     match mid_ir {
-        MidIR::Block(mid_irs) => Box::new(mid_irs.iter()),
-        MidIR::Loop(mid_ir) => children_of(mid_ir),
-        MidIR::If(expr, t, f) => Box::new(t.iter().chain(f.iter())),
+        MidIR::Block(mid_irs) => Box::new(mid_irs.iter().flat_map(|x| children_of(x))),
+        MidIR::Loop(_, mid_ir) => children_of(mid_ir),
+        MidIR::If(_, t, f) => match f {
+            Some(f) => Box::new(children_of(t).chain(children_of(f))),
+            _ => Box::new(children_of(t)),
+        },
         x => Box::new(std::iter::once(x)),
     }
 }
@@ -221,16 +231,17 @@ impl<'a> Iterator for FunctionIterator<'a> {
 */
 
 pub fn to_mid_ir(prog: &[i128]) {
-    let program = Program {
+    let mut program = Program {
         functions: vec![],
         inst: prog.to_vec(),
     };
     dfs(
         0,
         |offset| {
-            println!("Discovering function at {}", offset);
+            trace!("Discovering function at {}", offset);
             let input = Input::new(*offset, &program.inst[*offset..]);
-            let (_, fr) = parse_function(input).unwrap();
+            let fr = parse_function(input).unwrap();
+            program.functions.push(fr.clone());
             find_function_calls(fr)
         },
         |_| false,
@@ -264,103 +275,8 @@ fn from_arg(arg: &OpArg) -> Expr {
     }
 }
 
-fn parse_assign(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, assign_op) = Instruction::parse(input)?;
-    if let Instruction::Assign(arg1, arg2) = assign_op.kind {
-        println!("Parsing assign");
-        Ok((input, MidIR::Assign(from_arg(&arg1), from_arg(&arg2))))
-    } else {
-        Err(ParseError::NoMatch)
-    }
-}
-
-fn parse_mul(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, mul_op) = Instruction::parse(input)?;
-    if let Instruction::Mul(a, b, c) = mul_op.kind {
-        Ok((
-            input,
-            MidIR::Assign(
-                from_arg(&c),
-                Expr::Mul(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-            ),
-        ))
-    } else {
-        Err(ParseError::NoMatch)
-    }
-}
-
-fn parse_add(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, add_op) = Instruction::parse(input)?;
-    if let Instruction::Add(a, b, c) = add_op.kind {
-        Ok((
-            input,
-            MidIR::Assign(
-                from_arg(&c),
-                Expr::Add(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-            ),
-        ))
-    } else {
-        Err(ParseError::NoMatch)
-    }
-}
-
-fn parse_eq(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, eq_op) = Instruction::parse(input)?;
-    if let Instruction::Equals(a, b, c) = eq_op.kind {
-        Ok((
-            input,
-            MidIR::Assign(
-                from_arg(&c),
-                Expr::Equal(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
-            ),
-        ))
-    } else {
-        Err(ParseError::NoMatch)
-    }
-}
-
-fn parse_if(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let offset = input.offset;
-    let (input, jump) = Instruction::parse(input)?;
-    if let Instruction::JumpIf(
-        cond,
-        val,
-        OpArg {
-            kind: Arg::Value(addr),
-            ..
-        },
-    ) = jump.kind
-    {
-        if addr <= input.offset as i128 {
-            return Err(ParseError::NoMatch);
-        }
-        let (input, then_block) = parse_block(input, Some(addr as usize))?;
-        if input.offset == addr as usize {
-            Ok((
-                input,
-                MidIR::If(
-                    if val {
-                        Expr::NotEqual(Box::new(from_arg(&cond)), Box::new(Expr::Literal(0)))
-                    } else {
-                        Expr::Equal(Box::new(from_arg(&cond)), Box::new(Expr::Literal(0)))
-                    },
-                    then_block.into_iter().collect(),
-                    vec![],
-                ),
-            ))
-        } else {
-            panic!("Expected jump to end of block at {}", addr);
-        }
-    } else {
-        Err(ParseError::NoMatch)
-    }
-}
-
 fn parse_return(input: Input) -> Result<(Input, MidIR), ParseError> {
     let (input, adjust) = Instruction::parse(input)?;
-    if input.offset == 1303 {
-        println!("here: {:?}", adjust.kind);
-    }
     match adjust.kind {
         Instruction::AdjustRelativeBase(OpArg {
             kind: Arg::Value(r),
@@ -379,118 +295,6 @@ fn parse_return(input: Input) -> Result<(Input, MidIR), ParseError> {
     }
 }
 
-fn parse_block(
-    input: Input,
-    max_known_offset: Option<usize>,
-) -> Result<(Input, Vec<MidIR>), ParseError> {
-    let mut input = input;
-    let mut code = vec![];
-    let mut potentially_exit_next = false;
-    loop {
-        let offset = input.offset;
-        if Some(offset) == max_known_offset {
-            break;
-        }
-        if potentially_exit_next {
-            if max_known_offset.is_none() {
-                break;
-            }
-            if max_known_offset.unwrap() <= offset {
-                break;
-            }
-            potentially_exit_next = false;
-        }
-        if let Ok((new_input, mid)) = parse_function_call(input)
-            // .or_else(|_| parse_while(input))
-            .or_else(|_| parse_if(input))
-            .or_else(|_| parse_assign(input))
-            .or_else(|_| parse_mul(input))
-            .or_else(|_| parse_add(input))
-            .or_else(|_| parse_eq(input))
-            .or_else(|_| parse_return(input).inspect(|_| potentially_exit_next = true))
-        {
-            code.push((input.offset, mid));
-            input = new_input;
-        } else {
-            let (input, goto) = Instruction::parse(input)?;
-            match goto.kind {
-                Instruction::Goto(OpArg {
-                    kind: Arg::Value(addr),
-                    ..
-                }) => {
-                    if let Some(loop_start_index) = code.iter().position(|x| x.0 == addr as usize) {
-                        let c = code.split_off(loop_start_index);
-                        code.push((
-                            addr as usize,
-                            MidIR::Loop(Box::new(MidIR::Block(
-                                c.into_iter().map(|x| x.1).collect(),
-                            ))),
-                        ));
-                        potentially_exit_next = true;
-                    } else {
-                        panic!("Unexpected goto to {}", addr);
-                    }
-                }
-                _ => panic!("Unexpected instruction at {}: {:?}", offset, goto.kind),
-            };
-        }
-    }
-    Ok((input, code.into_iter().map(|x| x.1).collect()))
-}
-
-fn parse_while(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, assign_cond) = Instruction::parse(input)?;
-    let (input, jump_cond) = Instruction::parse(input)?;
-    let cond_var = if let Instruction::Assign(
-        OpArg {
-            kind: a @ Arg::RelativeMem(_),
-            ..
-        },
-        _,
-    ) = assign_cond.kind
-    {
-        a
-    } else {
-        return Err(ParseError::NoMatch);
-    };
-
-    if let Instruction::JumpIf(
-        OpArg {
-            kind: b @ Arg::RelativeMem(_),
-            ..
-        },
-        val,
-        OpArg {
-            kind: Arg::Value(end_addr),
-            ..
-        },
-    ) = jump_cond.kind
-    {
-        if cond_var == b {
-            let (input, block) = parse_block(input, Some(end_addr as usize))?;
-            /*
-            Ok((
-                input,
-                MidIR::Loop(Box::new(MidIR::If(
-                    if val {
-                        Expr::NotEqual(Box::new(from_arg(&a)), Box::new(Expr::Literal(0)))
-                    } else {
-                        Expr::Equal(Box::new(from_arg(&a)), Box::new(Expr::Literal(0)))
-                    },
-                    block.into_iter().collect(),
-                    vec![],
-                ))),
-            ))
-            */
-            unreachable!()
-        } else {
-            Err(ParseError::NoMatch)
-        }
-    } else {
-        Err(ParseError::NoMatch)
-    }
-}
-
 #[derive(Debug, Clone)]
 struct FlowAnalysis {
     span: Span,
@@ -499,33 +303,58 @@ struct FlowAnalysis {
 }
 
 struct NonBranchingTracker {
-    non_branching_start: Option<usize>,
-    end: usize,
+    current: Option<Vec<(usize, usize, MidIR)>>,
+    non_branching: Vec<Vec<(usize, usize, MidIR)>>,
+    jumps: HashSet<usize>,
 }
 
 impl NonBranchingTracker {
     fn new() -> Self {
         Self {
-            non_branching_start: None,
-            end: 0,
+            current: None,
+            non_branching: vec![],
+            jumps: HashSet::new(),
         }
     }
 
-    fn track(&mut self, start: usize, end: usize) {
-        if self.non_branching_start.is_none() {
-            self.non_branching_start = Some(start);
+    fn track(&mut self, start: usize, end: usize, op: MidIR) {
+        if self.jumps.contains(&start) {
+            self.end();
         }
-        self.end = end;
+
+        if self.current.is_none() {
+            self.current = Some(vec![]);
+        };
+        if let Some(current) = self.current.as_mut() {
+            assert!(current
+                .iter()
+                .last()
+                .map(|x| x.1)
+                .is_none_or(|e| e == start));
+            current.push((start, end, op));
+        }
     }
 
-    fn end(&mut self, nodes: &mut Vec<FlowNode>) {
-        if self.non_branching_start.is_some() {
-            nodes.push(FlowNode::non_branching(Span::new(
-                self.non_branching_start.unwrap(),
-                self.end,
-            )));
-            self.non_branching_start = None;
+    fn end(&mut self) {
+        if let Some(current) = self.current.take() {
+            self.non_branching.push(current);
         }
+    }
+
+    fn break_at(&mut self, addr: usize) {
+        self.end();
+        let mut res = vec![];
+        for block in self.non_branching.iter_mut() {
+            if let Some(end_pos) = block.iter().position(|(s, _, _)| *s == addr) {
+                let next = block.split_off(end_pos);
+                res.push(block.clone());
+                res.push(next);
+            } else {
+                res.push(block.clone());
+            }
+        }
+        self.non_branching = res;
+        self.jumps.insert(addr);
     }
 }
 
@@ -539,14 +368,21 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
     let mut jumps = vec![];
     loop {
         let offset = input.offset;
-        if let Ok((new_input, _)) = parse_function_call(input) {
-            non_branching_tracker.track(input.offset, new_input.offset);
+        trace!("offset={} max_addr_seen={}", offset, max_addr_seen);
+        if let Ok((new_input, fc)) = parse_function_call(input) {
+            non_branching_tracker.track(input.offset, new_input.offset, fc);
+
+            if new_input.offset >= max_addr_seen {
+                max_addr_seen = new_input.offset;
+            }
             input = new_input;
         } else if let Ok((new_input, _)) = parse_return(input) {
-            non_branching_tracker.end(&mut nodes);
+            trace!("Return at {}", offset);
+            non_branching_tracker.end();
             nodes.push(FlowNode::new_return(Span::new(offset, new_input.offset)));
             input = new_input;
-            if offset >= max_addr_seen {
+            if new_input.offset >= max_addr_seen {
+                max_addr_seen = input.offset;
                 break;
             }
         } else if let Ok((new_input, op)) = Instruction::parse(input) {
@@ -557,14 +393,22 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
                 }) => {
                     let addr = addr as usize;
                     jumps.push(addr);
-                    non_branching_tracker.end(&mut nodes);
+                    non_branching_tracker.end();
+                    non_branching_tracker.break_at(addr);
                     nodes.push(FlowNode::goto(op.span, addr));
                     // back jump, code beyond max_addr_seen is not reachable.
-                    if offset >= addr && offset >= max_addr_seen {
-                        break;
+                    if max_addr_seen < addr.max(input.offset) {
+                        max_addr_seen = addr.max(input.offset);
                     }
-                    if max_addr_seen < addr {
-                        max_addr_seen = addr;
+                    trace!(
+                        "{}: max_addr_seen={} addr={}",
+                        input.offset,
+                        max_addr_seen,
+                        addr
+                    );
+                    if addr <= input.offset && max_addr_seen == input.offset {
+                        trace!("Function end detected at instruction at {}", input.offset);
+                        break;
                     }
                 }
                 Instruction::Goto(_) => {
@@ -578,59 +422,46 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
                         ..
                     },
                 ) => {
-                    non_branching_tracker.end(&mut nodes);
-                    jumps.push(addr as usize);
-                    if addr as usize > max_addr_seen {
-                        max_addr_seen = addr as usize;
+                    let addr = addr as usize;
+                    non_branching_tracker.end();
+                    non_branching_tracker.break_at(addr);
+                    jumps.push(addr);
+                    nodes.push(FlowNode::jump_if(op.span, value.kind, equal_to, addr));
+                    if max_addr_seen < addr.max(new_input.offset) {
+                        max_addr_seen = addr.max(new_input.offset);
                     }
-                    nodes.push(FlowNode::jump_if(
-                        op.span,
-                        value.kind,
-                        equal_to,
-                        addr as usize,
-                    ));
                 }
                 Instruction::JumpIf(_, _, _) => {
                     panic!("Unexpected jumpif at {} {}", offset, op.kind);
                 }
                 Instruction::Halt => {
-                    non_branching_tracker.end(&mut nodes);
+                    non_branching_tracker.end();
                     halts.push(offset);
-                    if offset >= max_addr_seen {
-                        break;
-                    }
                 }
                 _ => {
-                    non_branching_tracker.track(input.offset, new_input.offset);
+                    non_branching_tracker.track(
+                        input.offset,
+                        new_input.offset,
+                        instruction_to_midir(op.kind),
+                    );
                 }
+            }
+            if max_addr_seen < new_input.offset {
+                max_addr_seen = new_input.offset;
             }
             input = new_input;
         } else {
             panic!("Could not parse instruction at {}", offset);
         }
     }
-    non_branching_tracker.end(&mut nodes);
-    for addr in jumps {
-        nodes = nodes
-            .into_iter()
-            .flat_map(|n| {
-                if !n.span.contains_address(addr) || n.span.start == addr {
-                    vec![n]
-                } else if let FlowNode {
-                    kind: FlowNodeKind::NonBranching,
-                    span,
-                } = n
-                {
-                    vec![
-                        FlowNode::non_branching(Span::new(span.start, addr)),
-                        FlowNode::non_branching(Span::new(addr, span.end)),
-                    ]
-                } else {
-                    panic!("Jump within a single instuction");
-                }
-            })
-            .collect_vec();
+    non_branching_tracker.end();
+    for v in non_branching_tracker.non_branching {
+        let start = v.first().unwrap().0;
+        let end = v.last().unwrap().1;
+        let ops = v.into_iter().map(|(_, _, op)| op).collect();
+        nodes.push(FlowNode::non_branching(Span::new(start, end), ops));
     }
+
     let graph = FlowGraph::build_from(&nodes);
 
     FlowAnalysis {
@@ -643,8 +474,35 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
     }
 }
 
-fn parse_function(input: Input) -> Result<(Input, FunctionRange), ParseError> {
-    let flow = analyze_flow(input);
+fn instruction_to_midir(kind: Instruction) -> MidIR {
+    match kind {
+        Instruction::Assign(arg1, arg2) => MidIR::Assign(from_arg(&arg1), from_arg(&arg2)),
+        Instruction::Add(a, b, c) => MidIR::Assign(
+            from_arg(&c),
+            Expr::Add(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
+        ),
+        Instruction::Mul(a, b, c) => MidIR::Assign(
+            from_arg(&c),
+            Expr::Mul(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
+        ),
+        Instruction::Output(OpArg {
+            kind: Arg::Value(x),
+            ..
+        }) => MidIR::Output(x),
+        Instruction::Input(a) => MidIR::Assign(from_arg(&a), Expr::Input()),
+        Instruction::Equals(a, b, c) => MidIR::Assign(
+            from_arg(&c),
+            Expr::Equal(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
+        ),
+        Instruction::LessThan(a, b, c) => MidIR::Assign(
+            from_arg(&c),
+            Expr::LessThan(Box::new(from_arg(&a)), Box::new(from_arg(&b))),
+        ),
+        _ => panic!("Unexpected instruction {:?}", kind),
+    }
+}
+
+fn parse_function(input: Input) -> Result<FunctionRange, ParseError> {
     let (input, adjust_res) = Instruction::parse(input)?;
     let arg_count = match adjust_res.kind {
         Instruction::AdjustRelativeBase(OpArg {
@@ -659,21 +517,67 @@ fn parse_function(input: Input) -> Result<(Input, FunctionRange), ParseError> {
         }
         _ => Err(ParseError::NoMatch),
     }?;
-    /*
-        let (input, block) = parse_block(input, None)?;
-    */
-    let end = input.offset;
-    Ok((
-        input,
-        FunctionRange {
-            start: adjust_res.span.start,
-            end,
-            args: vec![],
-            static_calls: vec![],
-            return_point: None,
-            block: MidIR::Block(vec![]),
-        },
-    ))
+    let flow = analyze_flow(input);
+    let flow_high = mid_flow::parse_flow(&flow.graph, flow.span).unwrap();
+    let mid_ir = flow_to_mid_ir(&flow_high);
+
+    Ok(FunctionRange {
+        start: adjust_res.span.start,
+        end: flow.span.end,
+        args: vec![],
+        static_calls: vec![],
+        return_point: None,
+        block: mid_ir,
+    })
+}
+
+pub fn flow_to_mid_ir(flow: &FlowHigh) -> MidIR {
+    match flow {
+        FlowHigh::NonBranching { instructions, .. } => {
+            assert!(!instructions.is_empty());
+            if instructions.len() == 1 {
+                instructions[0].clone()
+            } else {
+                MidIR::Block(instructions.clone())
+            }
+        }
+        FlowHigh::Composite(flows) => {
+            let blocks: Vec<MidIR> = flows.iter().map(flow_to_mid_ir).collect();
+            MidIR::Block(blocks)
+        }
+        FlowHigh::While { id, body, .. } => {
+            // Convert while loops to infinite loops for now
+            // In a real implementation, we'd need the condition from jump_if_span
+            MidIR::Loop(*id, Box::new(flow_to_mid_ir(body)))
+        }
+        FlowHigh::DoWhile {
+            id,
+            body,
+            jump_if_span,
+        } => {
+            // Convert while loops to infinite loops for now
+            // In a real implementation, we'd need the condition from jump_if_span
+            MidIR::Loop(*id, Box::new(flow_to_mid_ir(body)))
+        }
+        FlowHigh::Loop { id, body } => MidIR::Loop(*id, Box::new(flow_to_mid_ir(body))),
+        FlowHigh::If { then, .. } => {
+            // Use a placeholder condition for now
+            let condition = Expr::Literal(1);
+            MidIR::If(condition, Box::new(flow_to_mid_ir(then)), None)
+        }
+        FlowHigh::IfElse { then, els, .. } => {
+            // Use a placeholder condition for now
+            let condition = Expr::Literal(1);
+            MidIR::If(
+                condition,
+                Box::new(flow_to_mid_ir(then)),
+                Some(Box::new(flow_to_mid_ir(els))),
+            )
+        }
+        FlowHigh::Return => MidIR::Return(),
+        FlowHigh::Break(id) => MidIR::Break(*id),
+        FlowHigh::Continue(id) => MidIR::Continue(*id),
+    }
 }
 
 /*
@@ -695,7 +599,7 @@ pub fn to_mid_ir(prog: &[i128]) -> Vec<MidIR> {
     loop {
         let new_funcs = program.scan_dynamic_calls();
         for new_func in &new_funcs {
-            println!("Discovering function at {}", new_func);
+            trace!("Discovering function at {}", new_func);
             discover_functions(*new_func, &mut program);
             program.process_all_functions();
         }
@@ -719,7 +623,7 @@ pub fn to_mid_ir(prog: &[i128]) -> Vec<MidIR> {
         line!(&mut printer, "}}");
         line!(&mut printer, "");
     }
-    println!("{}\n", printer.result());
+    trace!("{}\n", printer.result());
     vec![]
 }
 fn discover_functions(start: usize, program: &mut Program) {

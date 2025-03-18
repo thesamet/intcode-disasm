@@ -1,4 +1,4 @@
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 
 use itertools::Itertools;
 
@@ -10,7 +10,7 @@ pub enum Arg {
     Pointer(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -33,6 +33,18 @@ impl Span {
     pub fn with_start(&self, start: usize) -> Self {
         assert!(start <= self.end);
         Self::new(start, self.end)
+    }
+}
+
+impl Display for Span {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}..{}", self.start, self.end)
+    }
+}
+
+impl std::fmt::Debug for Span {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}..{}", self.start, self.end)
     }
 }
 
@@ -359,9 +371,31 @@ impl Instruction {
     pub fn parse_program(prog: &[i128]) -> Vec<(usize, Self)> {
         let mut instructions = Vec::new();
         let mut i = 0;
+        let mut in_data = false;
         while i < prog.len() {
-            let instr =
-                Instruction::from_slice(i, &prog[i..]).unwrap_or(Instruction::Data(vec![prog[i]]));
+            let instr = match Instruction::from_slice(i, &prog[i..]) {
+                Some(
+                    i @ Instruction::AdjustRelativeBase(OpArg {
+                        kind: Arg::Value(t),
+                        ..
+                    }),
+                ) if t > 0 => {
+                    in_data = false;
+                    i
+                }
+                Some(inst) => {
+                    if in_data {
+                        Instruction::Data(vec![prog[i]])
+                    } else {
+                        inst
+                    }
+                }
+                None => {
+                    in_data = true;
+                    Instruction::Data(vec![prog[i]])
+                }
+            };
+
             let size = instr.size();
             let instr = instr.simplify();
             instructions.push((i, instr));
