@@ -5,7 +5,7 @@ use pathfinding::prelude::dfs;
 
 use super::{
     low_ir::{Arg, Span},
-    mid_ir::MidIR,
+    mid_ir::{Expr, MidIR},
 };
 
 #[derive(Debug)]
@@ -21,11 +21,7 @@ pub enum ControlFlowError {
 #[derive(Debug, Clone)]
 pub enum FlowNodeKind {
     NonBranching(Vec<MidIR>),
-    JumpIf {
-        value: Arg,
-        equal_to: bool,
-        target: usize,
-    },
+    JumpIf { condition: Expr, target: usize },
     Goto(usize),
     Return,
 }
@@ -65,13 +61,9 @@ impl FlowNode {
         }
     }
 
-    pub fn jump_if(span: Span, value: Arg, equal_to: bool, target: usize) -> Self {
+    pub fn jump_if(span: Span, condition: Expr, target: usize) -> Self {
         FlowNode {
-            kind: FlowNodeKind::JumpIf {
-                value,
-                equal_to,
-                target,
-            },
+            kind: FlowNodeKind::JumpIf { condition, target },
             span,
         }
     }
@@ -178,25 +170,25 @@ pub enum FlowHigh {
     // consecutively.
     While {
         id: LoopId,
-        jump_if_span: Span,
-        expr: Option<Box<FlowHigh>>,
+        header: Option<Box<FlowHigh>>,
+        expr: Expr,
         body: Box<FlowHigh>,
     },
     DoWhile {
         id: LoopId,
         body: Box<FlowHigh>,
-        jump_if_span: Span,
+        expr: Expr,
     },
     Loop {
         id: LoopId,
         body: Box<FlowHigh>,
     },
     If {
-        jump_if_span: Span,
+        expr: Expr,
         then: Box<FlowHigh>,
     },
     IfElse {
-        jump_if_span: Span,
+        expr: Expr,
         then: Box<FlowHigh>,
         els: Box<FlowHigh>,
     },
@@ -216,23 +208,23 @@ impl FlowHigh {
 
     pub fn while_loop(
         loop_id: LoopId,
-        expr: Option<FlowHigh>,
+        header: Option<FlowHigh>,
+        expr: Expr,
         body: FlowHigh,
-        jump_if_span: Span,
     ) -> Self {
         FlowHigh::While {
             id: loop_id,
-            expr: expr.map(Box::new),
+            header: header.map(Box::new),
+            expr,
             body: Box::new(body),
-            jump_if_span,
         }
     }
 
-    pub fn do_while_loop(id: LoopId, body: FlowHigh, jump_if_span: Span) -> Self {
+    pub fn do_while_loop(id: LoopId, body: FlowHigh, expr: Expr) -> Self {
         FlowHigh::DoWhile {
             id,
             body: Box::new(body),
-            jump_if_span,
+            expr,
         }
     }
 
@@ -243,18 +235,18 @@ impl FlowHigh {
         }
     }
 
-    pub fn conditional(jump_if_span: Span, then: FlowHigh) -> Self {
+    pub fn conditional(expr: Expr, then: FlowHigh) -> Self {
         FlowHigh::If {
+            expr,
             then: Box::new(then),
-            jump_if_span,
         }
     }
 
-    pub fn if_else(jump_if_span: Span, then: FlowHigh, els: FlowHigh) -> Self {
+    pub fn if_else(expr: Expr, then: FlowHigh, els: FlowHigh) -> Self {
         FlowHigh::IfElse {
+            expr,
             then: Box::new(then),
             els: Box::new(els),
-            jump_if_span,
         }
     }
 
@@ -460,32 +452,31 @@ fn parse_while(
     );
 
     let FlowNodeKind::JumpIf {
-        value: ref _value,
-        equal_to: _equal_to,
+        condition,
         target: end_address,
-    } = cond_node.kind
+    } = &cond_node.kind
     else {
         unreachable!();
     };
 
-    if end_address != max_jump_back.span.end {
+    if *end_address != max_jump_back.span.end {
         return Err(ControlFlowError::WhileJumpBackDoesNotMatchJumpIf);
     }
     let body_span = Span::new(cond_node.span.end, max_jump_back.span.start);
-    let loop_parse_context = &parse_context.with_next_loop_id(region.start, end_address);
+    let loop_parse_context = &parse_context.with_next_loop_id(region.start, *end_address);
 
-    let expr = expr_node
+    let header = expr_node
         .map(|n| parse_flow_inner(graph, n.span, loop_parse_context))
         .transpose()?
         .map(|e| e.1);
     let body = parse_flow_inner(graph, body_span, loop_parse_context)?.1;
     Ok((
-        region.with_start(end_address),
+        region.with_start(*end_address),
         FlowHigh::while_loop(
             loop_parse_context.current_loop_id.unwrap(),
-            expr,
+            header,
+            condition.negate(),
             body,
-            cond_node.span,
         ),
     ))
 }
@@ -508,8 +499,7 @@ fn parse_do_while(
     };
 
     let FlowNodeKind::JumpIf {
-        value: ref _value,
-        equal_to: _equal_to,
+        ref condition,
         target: start_address,
     } = cond_node.kind
     else {
@@ -527,7 +517,7 @@ fn parse_do_while(
         FlowHigh::do_while_loop(
             loop_parse_context.current_loop_id.unwrap(),
             body,
-            cond_node.span,
+            condition.clone(),
         ),
     ))
 }
@@ -540,8 +530,7 @@ fn parse_if(
     trace!("Trying if {:?} {:?}", region, parse_context.known_jumps);
     let node = graph.nodes.get(&region.start).unwrap();
     let FlowNodeKind::JumpIf {
-        value: ref _value,
-        equal_to: _equal_to,
+        ref condition,
         target: jump_target,
     } = node.kind
     else {
@@ -550,7 +539,7 @@ fn parse_if(
     if let Some(v) = parse_context.known_jumps.get(&jump_target) {
         return Ok((
             region.with_start(node.span.end),
-            FlowHigh::conditional(node.span, v.clone()),
+            FlowHigh::conditional(condition.negate(), v.clone()),
         ));
     }
     if jump_target < node.span.start {
@@ -587,7 +576,7 @@ fn parse_if(
 
         Ok((
             region.with_start(else_end),
-            FlowHigh::if_else(node.span, then, els),
+            FlowHigh::if_else(condition.negate(), then, els),
         ))
     } else {
         // This is a simple if structure
@@ -596,7 +585,7 @@ fn parse_if(
         trace!("then parsed");
         Ok((
             region.with_start(jump_target),
-            FlowHigh::conditional(node.span, then),
+            FlowHigh::conditional(condition.negate(), then),
         ))
     }
 }
@@ -640,8 +629,8 @@ mod tests {
         parse_flow(&graph, region).unwrap()
     }
 
-    fn arg() -> Arg {
-        Arg::Value(0)
+    fn cond() -> Expr {
+        Expr::Literal(0)
     }
 
     fn node_non_branching(start: usize, end: usize) -> FlowNode {
@@ -668,13 +657,13 @@ mod tests {
     fn test_basic_if() {
         let span = Span::new(0, 30);
         let program = vec![
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 20),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 20),
             FlowNode::non_branching(Span::new(20, 30), vec![]),
         ];
 
         let expected = FlowHigh::composite(vec![
             flow_high_non_branching(0, 10),
-            FlowHigh::conditional(Span::new(10, 11), flow_high_non_branching(11, 20)),
+            FlowHigh::conditional(cond().negate(), flow_high_non_branching(11, 20)),
             flow_high_non_branching(20, 30),
         ]);
         let result = test_parse_flow(&program, span);
@@ -685,7 +674,7 @@ mod tests {
     fn test_if_else() {
         let span = Span::new(0, 40);
         let program = vec![
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 25),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 25),
             FlowNode::goto(Span::new(22, 25), 30),
             FlowNode::non_branching(Span::new(25, 30), vec![]),
         ];
@@ -693,7 +682,7 @@ mod tests {
         let expected = FlowHigh::composite(vec![
             flow_high_non_branching(0, 10),
             FlowHigh::if_else(
-                Span::new(10, 11),
+                cond().negate(),
                 flow_high_non_branching(11, 22),
                 flow_high_non_branching(25, 30),
             ),
@@ -708,7 +697,7 @@ mod tests {
         let span = Span::new(0, 30);
         let program = vec![
             FlowNode::non_branching(Span::new(5, 10), vec![]),
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 21),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 21),
             FlowNode::goto(Span::new(20, 21), 5),
         ];
 
@@ -717,8 +706,8 @@ mod tests {
             FlowHigh::while_loop(
                 LoopId(1),
                 Some(flow_high_non_branching(5, 10)),
+                cond().negate(),
                 flow_high_non_branching(11, 20),
-                Span::new(10, 11),
             ),
             flow_high_non_branching(21, 30),
         ]);
@@ -731,7 +720,7 @@ mod tests {
         let span = Span::new(0, 50);
         let program = vec![
             node_non_branching(5, 10),
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 41),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 41),
             FlowNode::goto(Span::new(20, 21), 11),
             FlowNode::goto(Span::new(40, 41), 5),
         ];
@@ -741,11 +730,11 @@ mod tests {
             FlowHigh::while_loop(
                 LoopId(1),
                 Some(flow_high_non_branching(5, 10)),
+                cond().negate(),
                 FlowHigh::composite(vec![
                     FlowHigh::loop_body(LoopId(2), flow_high_non_branching(11, 20)),
                     flow_high_non_branching(21, 40),
                 ]),
-                Span::new(10, 11),
             ),
             flow_high_non_branching(41, 50),
         ]);
@@ -758,7 +747,7 @@ mod tests {
         let span = Span::new(0, 50);
         let program = vec![
             node_non_branching(5, 20),
-            FlowNode::jump_if(Span::new(20, 21), arg(), true, 31),
+            FlowNode::jump_if(Span::new(20, 21), cond(), 31),
             FlowNode::goto(Span::new(30, 31), 5),
             FlowNode::goto(Span::new(40, 41), 5),
         ];
@@ -771,8 +760,8 @@ mod tests {
                     FlowHigh::while_loop(
                         LoopId(2),
                         Some(flow_high_non_branching(5, 20)),
+                        cond().negate(),
                         flow_high_non_branching(21, 30),
-                        Span::new(20, 21),
                     ),
                     flow_high_non_branching(31, 40),
                 ]),
@@ -876,8 +865,8 @@ mod tests {
         let span = Span::new(0, 50);
         let program = vec![
             node_non_branching(5, 10),
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 41),
-            FlowNode::jump_if(Span::new(20, 21), arg(), true, 30),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 41),
+            FlowNode::jump_if(Span::new(20, 21), cond(), 30),
             node_non_branching(30, 40),
             FlowNode::goto(Span::new(40, 41), 5),
         ];
@@ -887,12 +876,12 @@ mod tests {
             FlowHigh::while_loop(
                 LoopId(1),
                 Some(flow_high_non_branching(5, 10)),
+                cond().negate(),
                 FlowHigh::composite(vec![
                     flow_high_non_branching(11, 20),
-                    FlowHigh::conditional(Span::new(20, 21), flow_high_non_branching(21, 30)),
+                    FlowHigh::conditional(cond().negate(), flow_high_non_branching(21, 30)),
                     flow_high_non_branching(30, 40),
                 ]),
-                Span::new(10, 11),
             ),
             flow_high_non_branching(41, 50),
         ]);
@@ -905,10 +894,10 @@ mod tests {
         let span = Span::new(0, 60);
         let program = vec![
             // If condition - jump to end if condition is true
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 51),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 51),
             // While loop inside if body
             node_non_branching(20, 25), // While condition expression
-            FlowNode::jump_if(Span::new(25, 26), arg(), true, 41), // While condition jump
+            FlowNode::jump_if(Span::new(25, 26), cond(), 41), // While condition jump
             FlowNode::goto(Span::new(40, 41), 20), // Jump back to while condition
             node_non_branching(51, 60), // While condition expression
         ];
@@ -916,14 +905,14 @@ mod tests {
         let expected = FlowHigh::composite(vec![
             flow_high_non_branching(0, 10),
             FlowHigh::conditional(
-                Span::new(10, 11),
+                cond().negate(),
                 FlowHigh::composite(vec![
                     flow_high_non_branching(11, 20),
                     FlowHigh::while_loop(
                         LoopId(1),
                         Some(flow_high_non_branching(20, 25)),
+                        cond().negate(),
                         flow_high_non_branching(26, 40),
-                        Span::new(25, 26),
                     ),
                     flow_high_non_branching(41, 51),
                 ]),
@@ -939,13 +928,13 @@ mod tests {
     fn jump_conditionally_to_return_statement() {
         let span = Span::new(0, 30);
         let program = vec![
-            FlowNode::jump_if(Span::new(10, 11), arg(), true, 20),
+            FlowNode::jump_if(Span::new(10, 11), cond(), 20),
             FlowNode::new_return(Span::new(20, 21)),
         ];
 
         let expected = FlowHigh::composite(vec![
             flow_high_non_branching(0, 10),
-            FlowHigh::conditional(Span::new(10, 11), FlowHigh::return_flow()),
+            FlowHigh::conditional(cond().negate(), FlowHigh::return_flow()),
             flow_high_non_branching(11, 20),
             FlowHigh::return_flow(),
             flow_high_non_branching(21, 30),
@@ -959,8 +948,8 @@ mod tests {
         let span = Span::new(0, 30);
         let program = vec![
             node_non_branching(5, 15),
-            FlowNode::jump_if(Span::new(15, 16), arg(), true, 27),
-            FlowNode::jump_if(Span::new(20, 21), arg(), true, 5),
+            FlowNode::jump_if(Span::new(15, 16), cond(), 27),
+            FlowNode::jump_if(Span::new(20, 21), cond(), 5),
             FlowNode::new_return(Span::new(27, 30)),
         ];
 
@@ -970,10 +959,10 @@ mod tests {
                 LoopId(1),
                 FlowHigh::composite(vec![
                     flow_high_non_branching(5, 15),
-                    FlowHigh::conditional(Span::new(15, 16), FlowHigh::return_flow()),
+                    FlowHigh::conditional(cond().negate(), FlowHigh::return_flow()),
                     flow_high_non_branching(16, 20),
                 ]),
-                Span::new(20, 21),
+                cond(),
             ),
             flow_high_non_branching(21, 27),
             FlowHigh::return_flow(),
@@ -989,11 +978,11 @@ mod tests {
         let program = vec![
             node_non_branching(0, 10),
             node_non_branching(10, 20),
-            FlowNode::jump_if(Span::new(20, 30), arg(), true, 50),
+            FlowNode::jump_if(Span::new(20, 30), cond(), 50),
             node_non_branching(30, 40),
             FlowNode::goto(Span::new(40, 50), 80),
             node_non_branching(50, 60),
-            FlowNode::jump_if(Span::new(60, 70), arg(), true, 10),
+            FlowNode::jump_if(Span::new(60, 70), cond(), 10),
             node_non_branching(70, 80),
             FlowNode::new_return(Span::new(80, 90)),
         ];
@@ -1005,7 +994,7 @@ mod tests {
                 FlowHigh::composite(vec![
                     flow_high_non_branching(10, 20),
                     FlowHigh::conditional(
-                        Span::new(20, 30),
+                        cond().negate(),
                         FlowHigh::composite(vec![
                             flow_high_non_branching(30, 40),
                             FlowHigh::return_flow(),
@@ -1013,7 +1002,7 @@ mod tests {
                     ),
                     flow_high_non_branching(50, 60),
                 ]),
-                Span::new(60, 70),
+                cond(),
             ),
             flow_high_non_branching(70, 80),
             FlowHigh::return_flow(),
@@ -1028,11 +1017,11 @@ mod tests {
         let program = vec![
             node_non_branching(0, 10),
             node_non_branching(10, 20),
-            FlowNode::jump_if(Span::new(20, 30), arg(), true, 110),
-            FlowNode::jump_if(Span::new(30, 40), arg(), true, 120),
+            FlowNode::jump_if(Span::new(20, 30), cond(), 110),
+            FlowNode::jump_if(Span::new(30, 40), cond(), 120),
             node_non_branching(40, 50),
-            FlowNode::jump_if(Span::new(50, 60), arg(), true, 10),
-            FlowNode::jump_if(Span::new(60, 70), arg(), true, 90),
+            FlowNode::jump_if(Span::new(50, 60), cond(), 10),
+            FlowNode::jump_if(Span::new(60, 70), cond(), 90),
             node_non_branching(70, 80),
             FlowNode::goto(Span::new(80, 90), 10),
             node_non_branching(90, 100),
@@ -1046,12 +1035,13 @@ mod tests {
             FlowHigh::while_loop(
                 LoopId(1),
                 Some(flow_high_non_branching(10, 20)),
+                cond().negate(),
                 FlowHigh::composite(vec![
-                    FlowHigh::conditional(Span::new(30, 40), FlowHigh::return_flow()),
+                    FlowHigh::conditional(cond().negate(), FlowHigh::return_flow()),
                     flow_high_non_branching(40, 50),
-                    FlowHigh::conditional(Span::new(50, 60), FlowHigh::Continue(LoopId(1))),
+                    FlowHigh::conditional(cond().negate(), FlowHigh::Continue(LoopId(1))),
                     FlowHigh::conditional(
-                        Span::new(60, 70),
+                        cond().negate(),
                         FlowHigh::composite(vec![
                             flow_high_non_branching(70, 80),
                             FlowHigh::Continue(LoopId(1)),
@@ -1059,7 +1049,6 @@ mod tests {
                     ),
                     flow_high_non_branching(90, 100),
                 ]),
-                Span::new(20, 30),
             ),
             flow_high_non_branching(110, 120),
             FlowHigh::return_flow(),

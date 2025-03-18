@@ -87,9 +87,26 @@ pub enum Expr {
     NotEqual(Box<Expr>, Box<Expr>),
     Equal(Box<Expr>, Box<Expr>),
     LessThan(Box<Expr>, Box<Expr>),
+    GreaterOrEqual(Box<Expr>, Box<Expr>),
+    Negate(Box<Expr>),
 }
 
-impl Expr {}
+impl Expr {
+    pub fn negate(&self) -> Expr {
+        match self {
+            Expr::NotEqual(a, b) => Expr::Equal(Box::new(*a.clone()), Box::new(*b.clone())),
+            Expr::Equal(a, b) => Expr::NotEqual(Box::new(*a.clone()), Box::new(*b.clone())),
+            Expr::LessThan(a, b) => {
+                Expr::GreaterOrEqual(Box::new(*a.clone()), Box::new(*b.clone()))
+            }
+            Expr::GreaterOrEqual(a, b) => {
+                Expr::LessThan(Box::new(*a.clone()), Box::new(*b.clone()))
+            }
+            Expr::Negate(e) => *e.clone(),
+            _ => Expr::Negate(Box::new(self.clone())),
+        }
+    }
+}
 
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -105,6 +122,8 @@ impl Display for Expr {
             Expr::NotEqual(a, b) => write!(f, "{} != {}", a, b),
             Expr::Equal(a, b) => write!(f, "{} == {}", a, b),
             Expr::LessThan(a, b) => write!(f, "{} < {}", a, b),
+            Expr::GreaterOrEqual(a, b) => write!(f, "{} >= {}", a, b),
+            Expr::Negate(e) => write!(f, "!{}", e),
         }
     }
 }
@@ -112,11 +131,13 @@ impl Display for Expr {
 #[derive(Clone, Debug, PartialEq)]
 pub enum MidIR {
     Block(Vec<MidIR>),
-    Loop(LoopId, Box<MidIR>),
     Assign(Expr, Expr),
     FunctionCall(usize, Vec<Expr>),
     DynamicFunctionCall(Expr, Vec<Expr>),
     If(Expr, Box<MidIR>, Option<Box<MidIR>>),
+    While(LoopId, Option<Box<MidIR>>, Expr, Box<MidIR>),
+    DoWhile(LoopId, Box<MidIR>, Expr),
+    Loop(LoopId, Box<MidIR>),
     Output(i128),
     Break(LoopId),
     Continue(LoopId),
@@ -170,6 +191,20 @@ impl MidIR {
                 line!(f, "'{}: while (true) {{", id.0);
                 body.print(&mut f.indented());
                 line!(f, "}}  // '{}", id.0);
+            }
+            MidIR::While(id, header, cond, body) => {
+                line!(f, "'{}: while (", id.0);
+                if let Some(header) = header {
+                    header.print(&mut f.indented());
+                }
+                line!(f.indented(), "{}) {{", cond);
+                body.print(&mut f.indented());
+                line!(f, "}}  // '{}", id.0);
+            }
+            MidIR::DoWhile(id, body, cond) => {
+                line!(f, "'{}: do {{", id.0);
+                body.print(&mut f.indented());
+                line!(f, "}} while ({})", cond);
             }
             MidIR::Break(id) => {
                 line!(f, "break '{};", id.0);
@@ -432,7 +467,14 @@ fn analyze_flow(input: Input) -> FlowAnalysis {
                     non_branching_tracker.end();
                     non_branching_tracker.break_at(addr);
                     jumps.push(addr);
-                    nodes.push(FlowNode::jump_if(op.span, value.kind, equal_to, addr));
+                    let condition = {
+                        let mut t = from_arg(&value);
+                        if !equal_to {
+                            t = t.negate();
+                        }
+                        t
+                    };
+                    nodes.push(FlowNode::jump_if(op.span, condition, addr));
                     if max_addr_seen < addr.max(new_input.offset) {
                         max_addr_seen = addr.max(new_input.offset);
                     }
@@ -555,19 +597,26 @@ pub fn flow_to_mid_ir(flow: &FlowHigh) -> MidIR {
             let blocks: Vec<MidIR> = flows.iter().map(flow_to_mid_ir).collect();
             MidIR::Block(blocks)
         }
-        FlowHigh::While { id, body, .. } => {
-            // Convert while loops to infinite loops for now
-            // In a real implementation, we'd need the condition from jump_if_span
-            MidIR::Loop(*id, Box::new(flow_to_mid_ir(body)))
-        }
-        FlowHigh::DoWhile {
+        FlowHigh::While {
             id,
+            header,
+            expr,
             body,
-            jump_if_span,
+            ..
         } => {
             // Convert while loops to infinite loops for now
             // In a real implementation, we'd need the condition from jump_if_span
-            MidIR::Loop(*id, Box::new(flow_to_mid_ir(body)))
+            MidIR::While(
+                *id,
+                header.as_ref().map(|h| Box::new(flow_to_mid_ir(&h))),
+                expr.clone(),
+                Box::new(flow_to_mid_ir(body)),
+            )
+        }
+        FlowHigh::DoWhile { id, expr, body } => {
+            // Convert while loops to infinite loops for now
+            // In a real implementation, we'd need the condition from jump_if_span
+            MidIR::DoWhile(*id, Box::new(flow_to_mid_ir(body)), expr.clone())
         }
         FlowHigh::Loop { id, body } => MidIR::Loop(*id, Box::new(flow_to_mid_ir(body))),
         FlowHigh::If { then, .. } => {
