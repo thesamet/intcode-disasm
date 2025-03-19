@@ -368,7 +368,7 @@ impl MidTransformer for RenameVarsOnStack {
         if *v >= self.first_var {
             Expr::Var(format!("s{}", v + 1 - self.first_var))
         } else {
-            Expr::InArg(*v)
+            Expr::Var(format!("i{}", v))
         }
     }
 }
