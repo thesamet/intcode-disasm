@@ -18,6 +18,7 @@ pub trait MidVisitor {
             MidIR::Output(expr) => self.visit_output(expr),
             MidIR::While(l, header, cond, body) => self.visit_while(l, header, cond, body),
             MidIR::DoWhile(l, body, cond) => self.visit_do_while(l, body, cond),
+            MidIR::Halt() => self.visit_halt(),
         }
     }
 
@@ -66,6 +67,8 @@ pub trait MidVisitor {
         self.visit_statement(body);
         self.visit_expr(cond);
     }
+
+    fn visit_halt(&mut self) {}
 
     fn visit_expr(&mut self, expr: &Expr) {
         match expr {
@@ -166,6 +169,7 @@ pub trait MidTransformer {
             MidIR::Output(expr) => self.transform_output(expr),
             MidIR::While(l, header, cond, body) => self.transform_while(l, header, cond, body),
             MidIR::DoWhile(l, body, cond) => self.transform_do_while(l, body, cond),
+            MidIR::Halt() => self.transform_halt(),
         }
     }
 
@@ -200,6 +204,10 @@ pub trait MidTransformer {
 
     fn transform_return(&mut self) -> MidIR {
         MidIR::Return()
+    }
+
+    fn transform_halt(&mut self) -> MidIR {
+        MidIR::Halt()
     }
 
     fn transform_assign(&mut self, lhs: &Expr, rhs: &Expr) -> MidIR {

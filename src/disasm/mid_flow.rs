@@ -24,6 +24,7 @@ pub enum FlowNodeKind {
     JumpIf { condition: Expr, target: usize },
     Goto(usize),
     Return,
+    Halt,
 }
 
 impl FlowNodeKind {
@@ -78,6 +79,13 @@ impl FlowNode {
     pub fn new_return(span: Span) -> Self {
         FlowNode {
             kind: FlowNodeKind::Return,
+            span,
+        }
+    }
+
+    pub fn halt(span: Span) -> FlowNode {
+        FlowNode {
+            kind: FlowNodeKind::Halt,
             span,
         }
     }
@@ -183,6 +191,7 @@ pub enum FlowHigh {
     Return,
     Break(LoopId),
     Continue(LoopId),
+    Halt,
 }
 
 impl FlowHigh {
@@ -257,6 +266,7 @@ pub fn parse_flow(graph: &FlowGraph, region: Span) -> Result<FlowHigh, ControlFl
                 FlowNodeKind::NonBranching(_) => vec![node.span.end],
                 FlowNodeKind::JumpIf { target, .. } => vec![target, node.span.end],
                 FlowNodeKind::Goto(target) => vec![target, node.span.end],
+                FlowNodeKind::Halt => vec![],
             }
         },
         |_| false,
@@ -323,6 +333,7 @@ fn parse_flow_inner(
         }
 
         let (next_region, h) = parse_return(graph, region, parse_context)
+            .or_else(|_| parse_halt(graph, region, parse_context))
             .or_else(|_| parse_goto_marker(graph, region, parse_context))
             .or_else(|_| parse_if(graph, region, parse_context))
             .or_else(|_| parse_while(graph, region, parse_context))
@@ -337,6 +348,21 @@ fn parse_flow_inner(
     } else {
         Ok((region, FlowHigh::composite(result)))
     }
+}
+
+fn parse_halt(
+    graph: &FlowGraph,
+    region: Span,
+    _parse_context: &ParseContext,
+) -> Result<(Span, FlowHigh), ControlFlowError> {
+    let Some(FlowNode {
+        kind: FlowNodeKind::Halt,
+        span,
+    }) = graph.nodes.get(&region.start)
+    else {
+        return Err(ControlFlowError::NoMatch);
+    };
+    Ok((region.with_start(span.end), FlowHigh::Halt))
 }
 
 fn parse_goto_marker(

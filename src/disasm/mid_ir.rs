@@ -129,6 +129,7 @@ pub enum MidIR {
     Continue(LoopId),
     Unknown(usize, Instruction),
     Return(),
+    Halt(),
 }
 
 impl MidIR {
@@ -199,6 +200,7 @@ impl MidIR {
             MidIR::Continue(id) => {
                 line!(f, "continue '{};", id.0);
             }
+            MidIR::Halt() => line!(f, "halt();"),
         }
     }
 }
@@ -265,7 +267,7 @@ fn discover_functions(prog: &[i128]) -> Program {
         functions: HashMap::new(),
         inst: prog.to_vec(),
     };
-    let mut outer_stack = vec![0];
+    let mut outer_stack = vec![0, 1130, 2722, 1752, 1234, 1424];
     let mut seen: HashSet<usize> = HashSet::new();
     let mut arg_counts = HashMap::new();
 
@@ -669,6 +671,7 @@ impl FunctionParser {
                     Instruction::Halt => {
                         non_branching_tracker.end();
                         halts.push(offset);
+                        nodes.push(FlowNode::halt(op.span));
                     }
                     _ => {
                         non_branching_tracker.track(
@@ -834,5 +837,6 @@ pub fn flow_to_mid_ir(flow: &FlowHigh) -> MidIR {
         FlowHigh::Return => MidIR::Return(),
         FlowHigh::Break(id) => MidIR::Break(*id),
         FlowHigh::Continue(id) => MidIR::Continue(*id),
+        FlowHigh::Halt => MidIR::Halt(),
     }
 }
