@@ -11,7 +11,9 @@ use pathfinding::prelude::dfs;
 use super::code_printer::{CodePrinter, CodeWriter};
 use super::mid_flow::{self, FlowGraph, LoopId};
 use super::mid_flow::{FlowHigh, FlowNode};
-use super::mid_transform::{find_dynamic_function_calls, find_static_function_calls};
+use super::mid_transform::{
+    find_dynamic_function_calls, find_static_function_calls, rename_vars_on_stack,
+};
 
 #[derive(Debug, Clone)]
 enum ArgType {
@@ -20,9 +22,9 @@ enum ArgType {
 }
 
 #[derive(Debug, Clone)]
-struct Argument {
-    name: String,
-    typ: ArgType,
+pub struct Argument {
+    pub name: String,
+    pub typ: ArgType,
 }
 
 #[derive(Debug, Clone)]
@@ -354,6 +356,10 @@ fn discover_functions(prog: &[i128]) -> Program {
             .collect();
         println!("Function at {} has {} arguments", addr, arg_count);
     }
+    for fr in program.functions.values_mut() {
+        rename_vars_on_stack(fr);
+    }
+
     program
 }
 
