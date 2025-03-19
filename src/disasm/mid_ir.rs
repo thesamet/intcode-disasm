@@ -3,7 +3,6 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::disasm::low_ir::*;
 use crate::line;
-use clap::arg;
 use itertools::Itertools;
 use log::trace;
 use pathfinding::prelude::dfs;
@@ -16,7 +15,7 @@ use super::mid_transform::{
 };
 
 #[derive(Debug, Clone)]
-enum ArgType {
+pub enum ArgType {
     Value,
     FunctionPointer { args: Vec<ArgType> },
 }
@@ -210,31 +209,6 @@ pub struct Program {
 }
 
 impl Program {}
-
-fn children_of<'a>(mid_ir: &'a MidIR) -> Box<dyn Iterator<Item = &'a MidIR> + 'a> {
-    match mid_ir {
-        MidIR::Block(mid_irs) => Box::new(mid_irs.iter().flat_map(|x| children_of(x))),
-        MidIR::Loop(_, mid_ir) => children_of(mid_ir),
-        MidIR::If(_, t, f) => match f {
-            Some(f) => Box::new(children_of(t).chain(children_of(f))),
-            _ => Box::new(children_of(t)),
-        },
-        MidIR::While(_, header, _, body) => {
-            let t = children_of(body);
-            if let Some(h) = header {
-                Box::new(t.chain(children_of(h)))
-            } else {
-                t
-            }
-        }
-        MidIR::DoWhile(_, body, _) => children_of(body),
-        x => Box::new(std::iter::once(x)),
-    }
-}
-
-fn scan_ops<'a>(fp: &'a FunctionRange) -> Box<dyn Iterator<Item = &'a MidIR> + 'a> {
-    children_of(&fp.block)
-}
 
 fn discover_function_pointers(functions: &[FunctionRange]) -> Vec<(usize, usize)> {
     let mut new_funcs = vec![];
