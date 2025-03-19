@@ -473,7 +473,7 @@ impl FunctionParser {
         else {
             return Err(ParseError::NoMatch);
         }; // if jump
-        let mut condition = self.from_arg(&value);
+        let mut condition = self.expr_from_arg(&value);
         if equal_to {
             condition = condition.negate();
         }
@@ -563,7 +563,7 @@ impl FunctionParser {
                 input,
                 MidIR::Assign(
                     Expr::Ignore,
-                    Expr::FunctionCall(Box::new(self.from_arg(&o)), args),
+                    Expr::FunctionCall(Box::new(self.expr_from_arg(&o)), args),
                 ),
             )),
 
@@ -571,7 +571,7 @@ impl FunctionParser {
         }
     }
 
-    fn from_arg(&self, arg: &OpArg) -> Expr {
+    fn expr_from_arg(&self, arg: &OpArg) -> Expr {
         match &arg.kind {
             Arg::Value(x) => Expr::Literal(*x),
             Arg::RelativeMem(x) if *x >= 0 => Expr::OutArg(*x as usize),
@@ -652,7 +652,7 @@ impl FunctionParser {
                         non_branching_tracker.break_at(addr);
                         jumps.push(addr);
                         let condition = {
-                            let mut t = self.from_arg(&value);
+                            let mut t = self.expr_from_arg(&value);
                             if !equal_to {
                                 t = t.negate();
                             }
@@ -713,25 +713,37 @@ impl FunctionParser {
     fn instruction_to_midir(&self, kind: Instruction) -> Option<MidIR> {
         Some(match kind {
             Instruction::Assign(arg1, arg2) => {
-                MidIR::Assign(self.from_arg(&arg1), self.from_arg(&arg2))
+                MidIR::Assign(self.expr_from_arg(&arg1), self.expr_from_arg(&arg2))
             }
             Instruction::Add(a, b, c) => MidIR::Assign(
-                self.from_arg(&c),
-                Expr::Add(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+                self.expr_from_arg(&c),
+                Expr::Add(
+                    Box::new(self.expr_from_arg(&a)),
+                    Box::new(self.expr_from_arg(&b)),
+                ),
             ),
             Instruction::Mul(a, b, c) => MidIR::Assign(
-                self.from_arg(&c),
-                Expr::Mul(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+                self.expr_from_arg(&c),
+                Expr::Mul(
+                    Box::new(self.expr_from_arg(&a)),
+                    Box::new(self.expr_from_arg(&b)),
+                ),
             ),
-            Instruction::Output(a) => MidIR::Output(self.from_arg(&a)),
-            Instruction::Input(a) => MidIR::Assign(self.from_arg(&a), Expr::Input()),
+            Instruction::Output(a) => MidIR::Output(self.expr_from_arg(&a)),
+            Instruction::Input(a) => MidIR::Assign(self.expr_from_arg(&a), Expr::Input()),
             Instruction::Equals(a, b, c) => MidIR::Assign(
-                self.from_arg(&c),
-                Expr::Equal(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+                self.expr_from_arg(&c),
+                Expr::Equal(
+                    Box::new(self.expr_from_arg(&a)),
+                    Box::new(self.expr_from_arg(&b)),
+                ),
             ),
             Instruction::LessThan(a, b, c) => MidIR::Assign(
-                self.from_arg(&c),
-                Expr::LessThan(Box::new(self.from_arg(&a)), Box::new(self.from_arg(&b))),
+                self.expr_from_arg(&c),
+                Expr::LessThan(
+                    Box::new(self.expr_from_arg(&a)),
+                    Box::new(self.expr_from_arg(&b)),
+                ),
             ),
             _ => return None,
         })
@@ -794,7 +806,7 @@ pub fn flow_to_mid_ir(flow: &FlowHigh) -> MidIR {
             // In a real implementation, we'd need the condition from jump_if_span
             MidIR::While(
                 *id,
-                header.as_ref().map(|h| Box::new(flow_to_mid_ir(&h))),
+                header.as_ref().map(|h| Box::new(flow_to_mid_ir(h))),
                 expr.clone(),
                 Box::new(flow_to_mid_ir(body)),
             )

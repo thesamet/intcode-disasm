@@ -4,7 +4,7 @@ use log::trace;
 use pathfinding::prelude::dfs;
 
 use super::{
-    low_ir::{Arg, Span},
+    low_ir::Span,
     mid_ir::{Expr, MidIR},
 };
 
@@ -139,12 +139,6 @@ impl FlowGraph {
     }
 }
 
-impl FlowHigh {
-    fn new(flows: Vec<FlowHigh>) -> Self {
-        FlowHigh::Composite(flows)
-    }
-}
-
 #[derive(PartialEq, Clone, Copy)]
 pub struct LoopId(pub usize);
 
@@ -242,10 +236,6 @@ impl FlowHigh {
             then: Box::new(then),
             els: Box::new(els),
         }
-    }
-
-    pub fn return_flow() -> Self {
-        FlowHigh::Return
     }
 }
 
@@ -928,9 +918,9 @@ mod tests {
 
         let expected = FlowHigh::composite(vec![
             flow_high_non_branching(0, 10),
-            FlowHigh::conditional(cond(), FlowHigh::return_flow()),
+            FlowHigh::conditional(cond(), FlowHigh::Return),
             flow_high_non_branching(11, 20),
-            FlowHigh::return_flow(),
+            FlowHigh::Return,
             flow_high_non_branching(21, 30),
         ]);
         let result = test_parse_flow(&program, span);
@@ -953,13 +943,13 @@ mod tests {
                 LoopId(1),
                 FlowHigh::composite(vec![
                     flow_high_non_branching(5, 15),
-                    FlowHigh::conditional(cond(), FlowHigh::return_flow()),
+                    FlowHigh::conditional(cond(), FlowHigh::Return),
                     flow_high_non_branching(16, 20),
                 ]),
                 cond(),
             ),
             flow_high_non_branching(21, 27),
-            FlowHigh::return_flow(),
+            FlowHigh::Return,
         ]);
         let result = test_parse_flow(&program, span);
         assert_eq!(result, expected);
@@ -991,7 +981,7 @@ mod tests {
                         cond().negate(),
                         FlowHigh::composite(vec![
                             flow_high_non_branching(30, 40),
-                            FlowHigh::return_flow(),
+                            FlowHigh::Return,
                         ]),
                     ),
                     flow_high_non_branching(50, 60),
@@ -999,7 +989,7 @@ mod tests {
                 cond(),
             ),
             flow_high_non_branching(70, 80),
-            FlowHigh::return_flow(),
+            FlowHigh::Return,
         ]);
         let result = test_parse_flow(&program, span);
         assert_eq!(result, expected);
@@ -1031,7 +1021,7 @@ mod tests {
                 Some(flow_high_non_branching(10, 20)),
                 cond().negate(),
                 FlowHigh::composite(vec![
-                    FlowHigh::conditional(cond(), FlowHigh::return_flow()),
+                    FlowHigh::conditional(cond(), FlowHigh::Return),
                     flow_high_non_branching(40, 50),
                     FlowHigh::conditional(cond(), FlowHigh::Continue(LoopId(1))),
                     FlowHigh::conditional(
@@ -1045,7 +1035,7 @@ mod tests {
                 ]),
             ),
             flow_high_non_branching(110, 120),
-            FlowHigh::return_flow(),
+            FlowHigh::Return,
         ]);
         let result = test_parse_flow(&program, span);
         assert_eq!(result, expected);

@@ -1,6 +1,6 @@
 mod disasm;
 
-use clap::{arg, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use disasm::{low_ir::Instruction, mid_ir};
 
 #[derive(Parser)]

@@ -64,21 +64,6 @@ impl From<(usize, usize)> for Span {
 }
 
 impl Arg {
-    fn from_mode(offset: usize, mode: i128, value: i128) -> Option<Self> {
-        Some(match mode {
-            0 => {
-                if value == 0 {
-                    Arg::Pointer(format!("*p{}", offset))
-                } else {
-                    Arg::Mem(value)
-                }
-            }
-            1 => Arg::Value(value),
-            2 => Arg::RelativeMem(value),
-            _ => return None,
-        })
-    }
-
     fn parse(input: Input, mode: i128) -> Result<(Input, OpArg), ParseError> {
         let offset = input.offset;
         let (new_input, value) = input.read()?;
@@ -166,15 +151,6 @@ impl<'a> Input<'a> {
         }
     }
 
-    pub fn read_ref(&mut self) -> Result<i128, ParseError> {
-        if self.prog.is_empty() {
-            return Err(ParseError::Empty);
-        }
-        let v = self.prog[0];
-        *self = self.advance(1);
-        Ok(v)
-    }
-
     pub fn advance(&self, count: usize) -> Self {
         Input {
             offset: self.offset + count,
@@ -202,7 +178,7 @@ impl Instruction {
             99 => 0,
             _ => return Err(ParseError::InvalidMode),
         };
-        let mut args: [Option<OpArg>; 3] = core::array::from_fn(|i| None);
+        let mut args: [Option<OpArg>; 3] = core::array::from_fn(|_| None);
         let mut input = input;
         for (i, mut_arg) in args.iter_mut().take(arg_count).enumerate() {
             let (new_input, arg) = Arg::parse(input, mode(i))?;
@@ -252,7 +228,7 @@ impl Instruction {
     pub fn from_slice(offset: usize, prog: &[i128]) -> Option<Self> {
         Self::parse(Input::new(offset, prog))
             .ok()
-            .map(|(input, op)| op.kind)
+            .map(|(_, op)| op.kind)
     }
 
     pub fn simplify(self) -> Self {
