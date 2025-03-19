@@ -3,6 +3,7 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::disasm::low_ir::*;
 use crate::line;
+use clap::arg;
 use itertools::Itertools;
 use log::trace;
 use pathfinding::prelude::dfs;
@@ -10,6 +11,7 @@ use pathfinding::prelude::dfs;
 use super::code_printer::{CodePrinter, CodeWriter};
 use super::mid_flow::{self, FlowGraph, LoopId};
 use super::mid_flow::{FlowHigh, FlowNode};
+use super::mid_transform::{find_dynamic_function_calls, find_static_function_calls};
 
 #[derive(Debug, Clone)]
 enum ArgType {
@@ -24,14 +26,14 @@ struct Argument {
 }
 
 #[derive(Debug, Clone)]
-struct FunctionRange {
-    start: usize,
-    end: usize,
-    stack_size: usize,
-    args: Vec<Argument>,
-    static_calls: Vec<usize>,
-    return_point: Option<usize>,
-    block: MidIR,
+pub struct FunctionRange {
+    pub start: usize,
+    pub end: usize,
+    pub stack_size: usize,
+    pub args: Vec<Argument>,
+    pub static_calls: Vec<usize>,
+    pub return_point: Option<usize>,
+    pub block: MidIR,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,6 +52,8 @@ pub enum Expr {
     GreaterOrEqual(Box<Expr>, Box<Expr>),
     Negate(Box<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
+    FunctionCall(Box<Expr>, Vec<Expr>),
+    Ignore,
 }
 
 impl Expr {
@@ -65,6 +69,20 @@ impl Expr {
             }
             Expr::Negate(e) => *e.clone(),
             _ => Expr::Negate(Box::new(self.clone())),
+        }
+    }
+
+    pub fn literal(&self) -> Option<i128> {
+        match self {
+            Expr::Literal(x) => Some(*x),
+            _ => None,
+        }
+    }
+
+    pub fn in_arg(&self) -> Option<usize> {
+        match self {
+            Expr::InArg(x) => Some(*x),
+            _ => None,
         }
     }
 }
@@ -85,6 +103,11 @@ impl Display for Expr {
             Expr::LessThan(a, b) => write!(f, "{} < {}", a, b),
             Expr::GreaterOrEqual(a, b) => write!(f, "{} >= {}", a, b),
             Expr::Negate(e) => write!(f, "!{}", e),
+            Expr::FunctionCall(addr, args) => match addr.as_ref() {
+                Expr::Literal(addr) => write!(f, "f{}({})", addr, args.iter().join(", ")),
+                e => write!(f, "{}({})", e, args.iter().join(", ")),
+            },
+            Expr::Ignore => write!(f, "_"),
             Expr::If(cond, then, els) => {
                 write!(f, "if ({}) {{ {} }} else {{ {} }}", cond, then, els)
             }
@@ -96,8 +119,6 @@ impl Display for Expr {
 pub enum MidIR {
     Block(Vec<MidIR>),
     Assign(Expr, Expr),
-    FunctionCall(usize, Vec<Expr>),
-    DynamicFunctionCall(Expr, Vec<Expr>),
     If(Expr, Box<MidIR>, Option<Box<MidIR>>),
     While(LoopId, Option<Box<MidIR>>, Expr, Box<MidIR>),
     DoWhile(LoopId, Box<MidIR>, Expr),
@@ -116,13 +137,11 @@ impl MidIR {
     {
         match self {
             MidIR::Assign(a, b) => {
-                line!(f, "{} = {};", a, b);
-            }
-            MidIR::FunctionCall(addr, args) => {
-                line!(f, "f{}({});", addr, args.iter().join(", "));
-            }
-            MidIR::DynamicFunctionCall(fcall, args) => {
-                line!(f, "{}({});", fcall, args.iter().join(", "));
+                if matches!(a, Expr::Ignore) {
+                    line!(f, "{};", b);
+                } else {
+                    line!(f, "{} = {};", a, b);
+                }
             }
             MidIR::If(cond, then, els) => {
                 line!(f, "if ({}) {{", cond);
@@ -183,9 +202,9 @@ impl MidIR {
     }
 }
 
-struct Program {
-    inst: Vec<i128>,
-    functions: HashMap<usize, FunctionRange>,
+pub struct Program {
+    pub inst: Vec<i128>,
+    pub functions: HashMap<usize, FunctionRange>,
 }
 
 impl Program {}
@@ -215,65 +234,48 @@ fn scan_ops<'a>(fp: &'a FunctionRange) -> Box<dyn Iterator<Item = &'a MidIR> + '
     children_of(&fp.block)
 }
 
-fn find_function_calls(f: &FunctionRange) -> Vec<(usize, Vec<Expr>)> {
-    let mut calls = vec![];
-    for i in scan_ops(&f) {
-        if let MidIR::FunctionCall(addr, args) = i {
-            calls.push((*addr, args.clone()));
-        }
-    }
-    calls
-}
-
-fn find_dynamic_function_calls(f: &FunctionRange) -> Vec<usize> {
-    let mut res = Vec::new();
-    for i in scan_ops(f) {
-        if let MidIR::DynamicFunctionCall(Expr::InArg(arg), _) = i {
-            res.push(*arg);
-        }
-    }
-    res
-}
-
-/*
-impl<'a> Iterator for FunctionIterator<'a> {
-    type Item = &'a MidIR;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(sub) = &mut self.sub {
-            if let Some(i) = sub.next() {
-                return Some(i);
-            } else {
-                self.sub = None;
-            }
-        }
-    }
-}
-*/
-
-fn discover_function_pointers(functions: &[FunctionRange]) -> Vec<usize> {
+fn discover_function_pointers(functions: &[FunctionRange]) -> Vec<(usize, usize)> {
     let mut new_funcs = vec![];
-    for f in functions.iter().sorted_by_key(|f| f.start) {
-        let in_args = find_dynamic_function_calls(&f);
-        if in_args.is_empty() {
+    let mut arg_count = HashMap::new();
+    for f in functions {
+        // func f calls functions dynamically using. The first usize
+        // represents the 1-based arg_index of f.
+        let dynamic_calls = find_dynamic_function_calls(&f.block);
+        if dynamic_calls.is_empty() {
             continue;
         }
         for g in functions {
-            for fc in find_function_calls(g) {
-                if fc.0 != f.start {
+            for (fc, f_args) in find_static_function_calls(&g.block) {
+                if fc != f.start {
                     continue;
                 }
-                for arg in &in_args {
-                    if *arg > fc.1.len() {
+                for (arg_index, dyn_args) in &dynamic_calls {
+                    let Some(arg_index) = arg_index.in_arg() else {
+                        continue;
+                    };
+
+                    // g calls f(*f_args) which calls f_args[arg_index-1](dyn_args) function dynamically.
+                    if arg_index > f_args.len() {
                         println!(
                             "Problem with function {} called from f{} args={:?} [arg={}]",
-                            fc.0, g.start, fc.1, *arg
+                            fc, g.start, f_args, arg_index
                         );
                     } else {
-                        let Expr::Literal(addr) = fc.1[*arg - 1] else {
+                        let Expr::Literal(addr) = f_args[arg_index - 1] else {
                             panic!("Expected literal argument");
                         };
-                        new_funcs.push(addr as usize);
+                        if let Some(existing_arg_count) = arg_count.get(&addr) {
+                            assert_eq!(
+                                *existing_arg_count,
+                                dyn_args.len(),
+                                "Mismatch in argument count for function at {}",
+                                addr
+                            );
+                        } else {
+                            trace!("Dyn function at {} has {} arguments", addr, dyn_args.len());
+                            arg_count.insert(addr, dyn_args.len());
+                        }
+                        new_funcs.push((addr as usize, dyn_args.len()));
                     }
                 }
             }
@@ -289,7 +291,7 @@ fn discover_functions(prog: &[i128]) -> Program {
     };
     let mut outer_stack = vec![0];
     let mut seen: HashSet<usize> = HashSet::new();
-    let mut arg_count = HashMap::new();
+    let mut arg_counts = HashMap::new();
 
     while let Some(init) = outer_stack.pop() {
         dfs(
@@ -299,16 +301,16 @@ fn discover_functions(prog: &[i128]) -> Program {
                 let input = Input::new(*offset, &program.inst[*offset..]);
                 let fr = parse_function(input).unwrap();
                 program.functions.insert(fr.start, fr.clone());
-                let function_calls = find_function_calls(&fr);
+                let function_calls = find_static_function_calls(&fr.block);
                 for (addr, args) in &function_calls {
-                    if arg_count.contains_key(addr) {
-                        let count = arg_count.get_mut(addr).unwrap();
-                        if *count != args.len() {
-                            println!("Mismatch in argument count for function at {}", addr);
-                        }
-                        *count = args.len().max(*count);
+                    if let Some(arg_count) = arg_counts.get(addr) {
+                        assert!(
+                            *arg_count == args.len(),
+                            "Mismatch in argument count for function at {}",
+                            addr
+                        );
                     } else {
-                        arg_count.insert(*addr, args.len());
+                        arg_counts.insert(*addr, args.len());
                     }
                 }
                 let fcs = function_calls
@@ -322,17 +324,35 @@ fn discover_functions(prog: &[i128]) -> Program {
             },
             |_| false,
         );
-        for func_pointer in
+        for (func_pointer, arg_count) in
             discover_function_pointers(&program.functions.values().cloned().collect_vec())
         {
             if seen.contains(&func_pointer) {
                 continue;
+            }
+            if let Some(existing) = arg_counts.get(&func_pointer) {
+                assert!(
+                    arg_count == *existing,
+                    "Mismatch in argument count for function at {}",
+                    func_pointer
+                );
+            } else {
+                arg_counts.insert(func_pointer, arg_count);
             }
             seen.insert(func_pointer);
             println!("Discovered function at {}", func_pointer);
             outer_stack.push(func_pointer);
         }
         println!("----")
+    }
+    for (addr, arg_count) in arg_counts {
+        program.functions.get_mut(&addr).unwrap().args = (1..=arg_count)
+            .map(|i| Argument {
+                name: format!("i{}", i),
+                typ: ArgType::Value,
+            })
+            .collect();
+        println!("Function at {} has {} arguments", addr, arg_count);
     }
     program
 }
@@ -559,24 +579,13 @@ impl FunctionParser {
         }
         trace!("{:?}", goto.kind);
         match goto.kind {
-            Instruction::Goto(OpArg {
-                kind: Arg::Value(addr),
-                ..
-            }) => Ok((input, MidIR::FunctionCall(addr as usize, args))),
-            Instruction::Goto(OpArg {
-                kind: Arg::RelativeMem(offset),
-                ..
-            }) if offset < 0 => Ok((
+            Instruction::Goto(o) => Ok((
                 input,
-                MidIR::DynamicFunctionCall(
-                    Expr::InArg(self.stack_size.checked_add_signed(offset as isize).unwrap()),
-                    vec![],
+                MidIR::Assign(
+                    Expr::Ignore,
+                    Expr::FunctionCall(Box::new(self.from_arg(&o)), args),
                 ),
             )),
-            Instruction::Goto(OpArg {
-                kind: Arg::Pointer(p),
-                ..
-            }) => Ok((input, MidIR::DynamicFunctionCall(Expr::Var(p), args))),
 
             _ => Err(ParseError::NoMatch),
         }
