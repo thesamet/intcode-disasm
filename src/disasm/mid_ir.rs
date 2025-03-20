@@ -581,7 +581,9 @@ impl FunctionParser {
                 Expr::InArg(self.stack_size.checked_add_signed(*x as isize).unwrap())
             }
             Arg::Mem(x) => Expr::Var(format!("data[{}]", *x)),
-            Arg::Pointer(x) => Expr::Var(x.clone()),
+            Arg::Pointer(id) => {
+                Expr::MemRef(Box::new(Expr::MemRef(Box::new(Expr::Literal(*id as i128)))))
+            }
             _ => panic!("Unexpected argument {:?}", arg),
         }
     }

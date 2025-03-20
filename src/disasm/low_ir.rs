@@ -7,7 +7,7 @@ pub enum Arg {
     Mem(i128),
     Value(i128),
     RelativeMem(i128),
-    Pointer(String),
+    Pointer(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,7 +70,7 @@ impl Arg {
         let arg = match mode {
             0 => {
                 if value == 0 {
-                    Arg::Pointer(format!("*p{}", offset))
+                    Arg::Pointer(offset)
                 } else {
                     Arg::Mem(value)
                 }
@@ -97,7 +97,7 @@ impl Display for Arg {
             Arg::RelativeMem(x) if *x > 0 => write!(f, "[R+{}]", x),
             Arg::RelativeMem(x) if *x < 0 => write!(f, "[R{}]", x),
             Arg::RelativeMem(_) => write!(f, "[R]"),
-            Arg::Pointer(x) => write!(f, "{}", x),
+            Arg::Pointer(x) => write!(f, "[[{}]]", x),
         }
     }
 }
@@ -231,7 +231,7 @@ impl Instruction {
             .map(|(_, op)| op.kind)
     }
 
-    pub fn simplify(self) -> Self {
+    fn simplify(self) -> Self {
         match self {
             Instruction::Add(
                 OpArg {
@@ -326,24 +326,6 @@ impl Instruction {
             .collect()
     }
 
-    /*
-    fn find_pointers(instructions: &[(usize, Self)]) -> Vec<(usize, Self)> {
-        let mut out = instructions.to_vec();
-        for (addr, i) in &mut out {
-            if let Some(k) = i.select_target() {
-                if let Arg::Mem(p) = k {
-                    let pos = instructions
-                        .iter()
-                        .tuple_windows()
-                        .find_position(|(i, inext)| (i.0 as i128) < *p && *p <= (inext.0 as i128));
-                    *k = Arg::Pointer(format!("p{:?}", p));
-                }
-            }
-        }
-        out
-    }
-    */
-
     pub fn parse_program(prog: &[i128]) -> Vec<(usize, Self)> {
         let mut instructions = Vec::new();
         let mut i = 0;
@@ -380,6 +362,42 @@ impl Instruction {
         // let mut instructions = Self::find_pointers(&instructions);
         Self::coalesce_data(&instructions, prog)
     }
+
+    pub fn reads(&self) -> Vec<&Arg> {
+        let mut v = match self {
+            Instruction::Add(a, b, _) => vec![&a.kind, &b.kind],
+            Instruction::Mul(a, b, _) => vec![&a.kind, &b.kind],
+            Instruction::Input(a) => vec![&a.kind],
+            Instruction::Output(a) => vec![&a.kind],
+            Instruction::JumpIf(a, _, b) => vec![&a.kind, &b.kind],
+            Instruction::LessThan(a, b, _) => vec![&a.kind, &b.kind],
+            Instruction::Equals(a, b, _) => vec![&a.kind, &b.kind],
+            Instruction::AdjustRelativeBase(a) => vec![&a.kind],
+            Instruction::Data(_) => vec![],
+            Instruction::Halt => vec![],
+            Instruction::Goto(a) => vec![&a.kind],
+            Instruction::Assign(_, b) => vec![&b.kind],
+        };
+        v.retain(|x| !matches!(x, Arg::Value(_)));
+        v
+    }
+
+    pub fn writes(&self) -> Vec<&Arg> {
+        match self {
+            Instruction::Add(_, _, c) => vec![&c.kind],
+            Instruction::Mul(_, _, c) => vec![&c.kind],
+            Instruction::Input(a) => vec![&a.kind],
+            Instruction::Output(_) => vec![],
+            Instruction::JumpIf(_, _, _) => vec![],
+            Instruction::LessThan(_, _, c) => vec![&c.kind],
+            Instruction::Equals(_, _, c) => vec![&c.kind],
+            Instruction::AdjustRelativeBase(_) => vec![],
+            Instruction::Data(_) => vec![],
+            Instruction::Halt => vec![],
+            Instruction::Goto(_) => vec![],
+            Instruction::Assign(a, _) => vec![&a.kind],
+        }
+    }
 }
 
 impl Display for Instruction {
@@ -387,8 +405,8 @@ impl Display for Instruction {
         match self {
             Instruction::Add(a, b, c) => write!(f, "{} = {} + {}", c.kind, a.kind, b.kind),
             Instruction::Mul(a, b, c) => write!(f, "{} = {} * {}", c.kind, a.kind, b.kind),
-            Instruction::Input(a) => write!(f, "{} = INPUT()", a.kind),
-            Instruction::Output(a) => write!(f, "OUTPUT({})", a.kind),
+            Instruction::Input(a) => write!(f, "{} = input()", a.kind),
+            Instruction::Output(a) => write!(f, "output({})", a.kind),
             Instruction::JumpIf(a, cond, b) => {
                 write!(
                     f,
@@ -401,11 +419,11 @@ impl Display for Instruction {
             Instruction::LessThan(a, b, c) => write!(f, "{} = {} < {}", c.kind, a.kind, b.kind),
             Instruction::Equals(a, b, c) => write!(f, "{} = {} == {}", c.kind, a.kind, b.kind),
             Instruction::AdjustRelativeBase(a) => write!(f, "R += {}", a.kind),
-            Instruction::Halt => write!(f, "HLT"),
+            Instruction::Halt => write!(f, "halt"),
             Instruction::Data(i) => write!(f, "[DATA: {:?}]", i),
             // Synthetic
             Instruction::Assign(a, b) => write!(f, "{} = {}", a.kind, b.kind),
-            Instruction::Goto(a) => write!(f, "GOTO {}", a.kind),
+            Instruction::Goto(a) => write!(f, "goto {}", a.kind),
         }
     }
 }
