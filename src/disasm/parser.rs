@@ -124,10 +124,16 @@ fn parse_i128(input: &str) -> IResult<&str, i128> {
 
 // Parse arguments
 fn parse_memory(input: &str) -> IResult<&str, Argument> {
-    map(
-        delimited(char('['), parse_i128, char(']')),
-        Argument::Memory,
-    )
+    alt((
+        map(
+            delimited(char('['), parse_i128, char(']')),
+            Argument::Memory,
+        ),
+        value(
+            Argument::Memory(0),
+            delimited(tag("[["), parse_i128, tag("]]")),
+        ),
+    ))
     .parse(input)
 }
 

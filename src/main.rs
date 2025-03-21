@@ -1,7 +1,7 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
-use disasm::{low_ir::Instruction, mid_ir};
+use disasm::{control_flow_graph, low_ir::Instruction, mid_ir};
 
 use itertools::Itertools;
 
@@ -17,6 +17,7 @@ enum Command {
     Compile { source: String },
     Disassemble { input: String },
     Intermediate { input: String },
+    Cfg { input: String },
 }
 
 fn main() {
@@ -27,6 +28,7 @@ fn main() {
         Command::Compile { source } => compile(source),
         Command::Intermediate { input } => intermediate(input),
         Command::Disassemble { input } => disassemble(input),
+        Command::Cfg { input } => cfg(input),
     }
 }
 
@@ -61,7 +63,14 @@ fn intermediate(input: String) {
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
     mid_ir::to_mid_ir(&prog);
-    // for i in mid_ir {
-    //     println!("{:?}", i);
-    // }
+}
+
+fn cfg(input: String) {
+    let prog = std::fs::read_to_string(input)
+        .unwrap()
+        .trim()
+        .split(',')
+        .map(|x| x.parse().unwrap())
+        .collect::<Vec<i128>>();
+    control_flow_graph::drive(&prog);
 }

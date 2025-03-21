@@ -2,12 +2,21 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use itertools::Itertools;
 
-#[derive(Clone, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum Arg {
     Mem(i128),
     Value(i128),
     RelativeMem(i128),
     Pointer(usize),
+}
+
+impl Arg {
+    pub fn value(&self) -> Option<i128> {
+        match self {
+            Arg::Value(x) => Some(*x),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,7 +57,7 @@ impl std::fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct OpArg {
     pub kind: Arg,
     pub span: Span,
@@ -187,31 +196,15 @@ impl Instruction {
         }
 
         let val = match opcode {
-            1 => Instruction::Add(
-                args[0].clone().unwrap(),
-                args[1].clone().unwrap(),
-                args[2].clone().unwrap(),
-            ),
-            2 => Instruction::Mul(
-                args[0].clone().unwrap(),
-                args[1].clone().unwrap(),
-                args[2].clone().unwrap(),
-            ),
-            3 => Instruction::Input(args[0].clone().unwrap()),
-            4 => Instruction::Output(args[0].clone().unwrap()),
-            5 => Instruction::JumpIf(args[0].clone().unwrap(), true, args[1].clone().unwrap()),
-            6 => Instruction::JumpIf(args[0].clone().unwrap(), false, args[1].clone().unwrap()),
-            7 => Instruction::LessThan(
-                args[0].clone().unwrap(),
-                args[1].clone().unwrap(),
-                args[2].clone().unwrap(),
-            ),
-            8 => Instruction::Equals(
-                args[0].clone().unwrap(),
-                args[1].clone().unwrap(),
-                args[2].clone().unwrap(),
-            ),
-            9 => Instruction::AdjustRelativeBase(args[0].clone().unwrap()),
+            1 => Instruction::Add(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            2 => Instruction::Mul(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            3 => Instruction::Input(args[0].unwrap()),
+            4 => Instruction::Output(args[0].unwrap()),
+            5 => Instruction::JumpIf(args[0].unwrap(), true, args[1].unwrap()),
+            6 => Instruction::JumpIf(args[0].unwrap(), false, args[1].unwrap()),
+            7 => Instruction::LessThan(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            8 => Instruction::Equals(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            9 => Instruction::AdjustRelativeBase(args[0].unwrap()),
             99 => Instruction::Halt,
             _ => return Err(ParseError::InvalidOpcode),
         };
