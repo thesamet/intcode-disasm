@@ -136,6 +136,7 @@ pub enum GenericInstruction<ArgType: ArgBase> {
     // synthetic
     Goto(ArgType),
     Assign(ArgType, ArgType),
+    Phi(ArgType, Vec<ArgType>), // Destination and list of (block, source) pairs
 }
 
 pub type FatInstruction = GenericInstruction<OpArg>;
@@ -203,7 +204,7 @@ impl<'a> Input<'a> {
 }
 
 impl<ArgType: ArgBase> GenericInstruction<ArgType> {
-    fn map<F, T: ArgBase>(&self, f: F) -> GenericInstruction<T>
+    pub fn map<F, T: ArgBase>(&self, f: F) -> GenericInstruction<T>
     where
         F: Fn(&ArgType) -> T,
     {
@@ -222,6 +223,9 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
             GenericInstruction::Halt => GenericInstruction::Halt,
             GenericInstruction::Goto(a) => GenericInstruction::Goto(f(a)),
             GenericInstruction::Assign(a, b) => GenericInstruction::Assign(f(a), f(b)),
+            GenericInstruction::Phi(a, b) => {
+                GenericInstruction::Phi(f(a), b.iter().map(f).collect())
+            }
         }
     }
 
@@ -239,6 +243,7 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
             Self::Halt => vec![],
             Self::Goto(a) => vec![a],
             Self::Assign(_, b) => vec![b],
+            Self::Phi(_, args) => args.iter().collect(),
         };
         v.retain(|x| !x.is_value());
         v
@@ -258,6 +263,7 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
             Self::Halt => None,
             Self::Goto(_) => None,
             Self::Assign(a, _) => Some(a),
+            Self::Phi(a, _) => Some(a),
         }
     }
 }
@@ -384,6 +390,7 @@ impl FatInstruction {
             FatInstruction::Data(i) => i.len(),
             FatInstruction::Goto(_) => 3,
             FatInstruction::Assign(_, _) => 4,
+            FatInstruction::Phi(_, _) => unreachable!(),
         }
     }
 
@@ -475,6 +482,7 @@ impl<T: ArgBase + Display> Display for GenericInstruction<T> {
             // Synthetic
             Self::Assign(a, b) => write!(f, "{} = {}", a, b),
             Self::Goto(a) => write!(f, "goto {}", a),
+            Self::Phi(a, b) => write!(f, "{} = φ({})", a, b.iter().format(", ")),
         }
     }
 }
