@@ -127,7 +127,7 @@ pub enum MidIR {
     Output(Expr),
     Break(LoopId),
     Continue(LoopId),
-    Unknown(usize, InstructionWithOpArg),
+    Unknown(usize, FatInstruction),
     Return(),
     Halt(),
 }
@@ -360,15 +360,15 @@ pub fn to_mid_ir(prog: &[i128]) {
 }
 
 fn parse_return(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, adjust) = InstructionWithOpArg::parse(input)?;
+    let (input, adjust) = FatInstruction::parse(input)?;
     match adjust.kind {
-        InstructionWithOpArg::AdjustRelativeBase(OpArg {
+        FatInstruction::AdjustRelativeBase(OpArg {
             kind: Arg::Value(r),
             ..
         }) if r < 0 => {
-            let (input, goto) = InstructionWithOpArg::parse(input)?;
+            let (input, goto) = FatInstruction::parse(input)?;
             match goto.kind {
-                InstructionWithOpArg::Goto(OpArg {
+                FatInstruction::Goto(OpArg {
                     kind: Arg::RelativeMem(0),
                     ..
                 }) => Ok((input, MidIR::Return())),
@@ -461,7 +461,7 @@ impl FunctionParser {
             input,
             Op {
                 kind:
-                    InstructionWithOpArg::JumpIf(
+                    FatInstruction::JumpIf(
                         value,
                         equal_to,
                         OpArg {
@@ -471,7 +471,7 @@ impl FunctionParser {
                     ),
                 ..
             },
-        ) = InstructionWithOpArg::parse(input)?
+        ) = FatInstruction::parse(input)?
         else {
             return Err(ParseError::NoMatch);
         }; // if jump
@@ -479,7 +479,7 @@ impl FunctionParser {
         if equal_to {
             condition = condition.negate();
         }
-        let (input, op) = InstructionWithOpArg::parse(input)?;
+        let (input, op) = FatInstruction::parse(input)?;
         let Some(MidIR::Assign(Expr::OutArg(v1), val1)) = self.instruction_to_midir(op.kind) else {
             return Err(ParseError::NoMatch);
         };
@@ -488,13 +488,13 @@ impl FunctionParser {
             input,
             Op {
                 kind:
-                    InstructionWithOpArg::Goto(OpArg {
+                    FatInstruction::Goto(OpArg {
                         kind: Arg::Value(addr2),
                         ..
                     }),
                 ..
             },
-        ) = InstructionWithOpArg::parse(input)?
+        ) = FatInstruction::parse(input)?
         else {
             return Err(ParseError::NoMatch);
         };
@@ -503,7 +503,7 @@ impl FunctionParser {
             return Err(ParseError::NoMatch);
         }
 
-        let (input, op) = InstructionWithOpArg::parse(input)?;
+        let (input, op) = FatInstruction::parse(input)?;
         let Some(MidIR::Assign(Expr::OutArg(v2), val2)) = self.instruction_to_midir(op.kind) else {
             return Err(ParseError::NoMatch);
         };
@@ -523,7 +523,7 @@ impl FunctionParser {
     }
 
     fn parse_simple_assign<'a>(&self, input: Input<'a>) -> Result<(Input<'a>, MidIR), ParseError> {
-        let (input, op) = InstructionWithOpArg::parse(input)?;
+        let (input, op) = FatInstruction::parse(input)?;
         let Some(midir) = self.instruction_to_midir(op.kind) else {
             return Err(ParseError::NoMatch);
         };
@@ -555,13 +555,13 @@ impl FunctionParser {
             last_arg_offset = v;
         };
 
-        let (input, goto) = InstructionWithOpArg::parse(input)?;
+        let (input, goto) = FatInstruction::parse(input)?;
         if return_addr != input.offset {
             return Err(ParseError::NoMatch);
         }
         trace!("{:?}", goto.kind);
         match goto.kind {
-            InstructionWithOpArg::Goto(o) => Ok((
+            FatInstruction::Goto(o) => Ok((
                 input,
                 MidIR::Assign(
                     Expr::Ignore,
@@ -614,9 +614,9 @@ impl FunctionParser {
                     max_addr_seen = input.offset;
                     break;
                 }
-            } else if let Ok((new_input, op)) = InstructionWithOpArg::parse(input) {
+            } else if let Ok((new_input, op)) = FatInstruction::parse(input) {
                 match op.kind {
-                    InstructionWithOpArg::Goto(OpArg {
+                    FatInstruction::Goto(OpArg {
                         kind: Arg::Value(addr),
                         ..
                     }) => {
@@ -640,10 +640,10 @@ impl FunctionParser {
                             break;
                         }
                     }
-                    InstructionWithOpArg::Goto(_) => {
+                    FatInstruction::Goto(_) => {
                         panic!("Unexpected goto at {} {}", offset, op.kind);
                     }
-                    InstructionWithOpArg::JumpIf(
+                    FatInstruction::JumpIf(
                         value,
                         equal_to,
                         OpArg {
@@ -667,10 +667,10 @@ impl FunctionParser {
                             max_addr_seen = addr.max(new_input.offset);
                         }
                     }
-                    InstructionWithOpArg::JumpIf(_, _, _) => {
+                    FatInstruction::JumpIf(_, _, _) => {
                         panic!("Unexpected jumpif at {} {}", offset, op.kind);
                     }
-                    InstructionWithOpArg::Halt => {
+                    FatInstruction::Halt => {
                         non_branching_tracker.end();
                         halts.push(offset);
                         nodes.push(FlowNode::halt(op.span));
@@ -715,35 +715,35 @@ impl FunctionParser {
         }
     }
 
-    fn instruction_to_midir(&self, kind: InstructionWithOpArg) -> Option<MidIR> {
+    fn instruction_to_midir(&self, kind: FatInstruction) -> Option<MidIR> {
         Some(match kind {
-            InstructionWithOpArg::Assign(arg1, arg2) => {
+            FatInstruction::Assign(arg1, arg2) => {
                 MidIR::Assign(self.expr_from_arg(&arg1), self.expr_from_arg(&arg2))
             }
-            InstructionWithOpArg::Add(a, b, c) => MidIR::Assign(
+            FatInstruction::Add(a, b, c) => MidIR::Assign(
                 self.expr_from_arg(&c),
                 Expr::Add(
                     Box::new(self.expr_from_arg(&a)),
                     Box::new(self.expr_from_arg(&b)),
                 ),
             ),
-            InstructionWithOpArg::Mul(a, b, c) => MidIR::Assign(
+            FatInstruction::Mul(a, b, c) => MidIR::Assign(
                 self.expr_from_arg(&c),
                 Expr::Mul(
                     Box::new(self.expr_from_arg(&a)),
                     Box::new(self.expr_from_arg(&b)),
                 ),
             ),
-            InstructionWithOpArg::Output(a) => MidIR::Output(self.expr_from_arg(&a)),
-            InstructionWithOpArg::Input(a) => MidIR::Assign(self.expr_from_arg(&a), Expr::Input()),
-            InstructionWithOpArg::Equals(a, b, c) => MidIR::Assign(
+            FatInstruction::Output(a) => MidIR::Output(self.expr_from_arg(&a)),
+            FatInstruction::Input(a) => MidIR::Assign(self.expr_from_arg(&a), Expr::Input()),
+            FatInstruction::Equals(a, b, c) => MidIR::Assign(
                 self.expr_from_arg(&c),
                 Expr::Equal(
                     Box::new(self.expr_from_arg(&a)),
                     Box::new(self.expr_from_arg(&b)),
                 ),
             ),
-            InstructionWithOpArg::LessThan(a, b, c) => MidIR::Assign(
+            FatInstruction::LessThan(a, b, c) => MidIR::Assign(
                 self.expr_from_arg(&c),
                 Expr::LessThan(
                     Box::new(self.expr_from_arg(&a)),
@@ -756,9 +756,9 @@ impl FunctionParser {
 }
 
 fn parse_function(input: Input) -> Result<FunctionRange, ParseError> {
-    let (input, adjust_res) = InstructionWithOpArg::parse(input)?;
+    let (input, adjust_res) = FatInstruction::parse(input)?;
     let stack_size = match adjust_res.kind {
-        InstructionWithOpArg::AdjustRelativeBase(OpArg {
+        FatInstruction::AdjustRelativeBase(OpArg {
             kind: Arg::Value(r),
             ..
         }) if r > 0 => {

@@ -138,9 +138,9 @@ pub enum GenericInstruction<ArgType: ArgBase> {
     Assign(ArgType, ArgType),
 }
 
-pub type InstructionWithOpArg = GenericInstruction<OpArg>;
+pub type FatInstruction = GenericInstruction<OpArg>;
 
-pub type ArgInstruction = GenericInstruction<Arg>;
+pub type Instruction = GenericInstruction<Arg>;
 
 pub struct GenericOp<T: ArgBase> {
     pub span: Span,
@@ -150,7 +150,7 @@ pub struct GenericOp<T: ArgBase> {
 pub type Op = GenericOp<OpArg>;
 
 impl Op {
-    fn to_arg_instruction(&self) -> ArgInstruction {
+    fn to_arg_instruction(&self) -> Instruction {
         self.kind.map(|x| x.kind)
     }
 }
@@ -262,13 +262,13 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
     }
 }
 
-impl ArgInstruction {
-    pub fn parse(input: Input) -> Result<(Input, ArgInstruction), ParseError> {
-        InstructionWithOpArg::parse(input).map(|(input, op)| (input, op.to_arg_instruction()))
+impl Instruction {
+    pub fn parse(input: Input) -> Result<(Input, Instruction), ParseError> {
+        FatInstruction::parse(input).map(|(input, op)| (input, op.to_arg_instruction()))
     }
 }
 
-impl InstructionWithOpArg {
+impl FatInstruction {
     pub fn parse(input: Input) -> Result<(Input, Op), ParseError> {
         let offset = input.offset;
         let (input, op) = input.read()?;
@@ -296,18 +296,16 @@ impl InstructionWithOpArg {
         }
 
         let val = match opcode {
-            1 => InstructionWithOpArg::Add(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            2 => InstructionWithOpArg::Mul(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            3 => InstructionWithOpArg::Input(args[0].unwrap()),
-            4 => InstructionWithOpArg::Output(args[0].unwrap()),
-            5 => InstructionWithOpArg::JumpIf(args[0].unwrap(), true, args[1].unwrap()),
-            6 => InstructionWithOpArg::JumpIf(args[0].unwrap(), false, args[1].unwrap()),
-            7 => {
-                InstructionWithOpArg::LessThan(args[0].unwrap(), args[1].unwrap(), args[2].unwrap())
-            }
-            8 => InstructionWithOpArg::Equals(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            9 => InstructionWithOpArg::AdjustRelativeBase(args[0].unwrap()),
-            99 => InstructionWithOpArg::Halt,
+            1 => FatInstruction::Add(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            2 => FatInstruction::Mul(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            3 => FatInstruction::Input(args[0].unwrap()),
+            4 => FatInstruction::Output(args[0].unwrap()),
+            5 => FatInstruction::JumpIf(args[0].unwrap(), true, args[1].unwrap()),
+            6 => FatInstruction::JumpIf(args[0].unwrap(), false, args[1].unwrap()),
+            7 => FatInstruction::LessThan(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            8 => FatInstruction::Equals(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            9 => FatInstruction::AdjustRelativeBase(args[0].unwrap()),
+            99 => FatInstruction::Halt,
             _ => return Err(ParseError::InvalidOpcode),
         };
         let end_offset = input.offset;
@@ -328,7 +326,7 @@ impl InstructionWithOpArg {
 
     fn simplify(self) -> Self {
         match self {
-            InstructionWithOpArg::Add(
+            FatInstruction::Add(
                 OpArg {
                     kind: Arg::Value(0),
                     ..
@@ -336,7 +334,7 @@ impl InstructionWithOpArg {
                 b,
                 a,
             )
-            | InstructionWithOpArg::Add(
+            | FatInstruction::Add(
                 b,
                 OpArg {
                     kind: Arg::Value(0),
@@ -344,48 +342,48 @@ impl InstructionWithOpArg {
                 },
                 a,
             )
-            | InstructionWithOpArg::Mul(
+            | FatInstruction::Mul(
                 OpArg {
                     kind: Arg::Value(1),
                     ..
                 },
                 b,
                 a,
-            ) => InstructionWithOpArg::Assign(a, b),
-            InstructionWithOpArg::Mul(
+            ) => FatInstruction::Assign(a, b),
+            FatInstruction::Mul(
                 b,
                 OpArg {
                     kind: Arg::Value(1),
                     ..
                 },
                 a,
-            ) => InstructionWithOpArg::Assign(a, b),
-            InstructionWithOpArg::JumpIf(
+            ) => FatInstruction::Assign(a, b),
+            FatInstruction::JumpIf(
                 OpArg {
                     kind: Arg::Value(c),
                     ..
                 },
                 cond,
                 addr,
-            ) if (cond && c != 0) || (!cond && c == 0) => InstructionWithOpArg::Goto(addr),
+            ) if (cond && c != 0) || (!cond && c == 0) => FatInstruction::Goto(addr),
             x => x,
         }
     }
 
     pub fn size(&self) -> usize {
         match self {
-            InstructionWithOpArg::Add(_, _, _) => 4,
-            InstructionWithOpArg::Mul(_, _, _) => 4,
-            InstructionWithOpArg::Input(_) => 2,
-            InstructionWithOpArg::Output(_) => 2,
-            InstructionWithOpArg::JumpIf(_, _, _) => 3,
-            InstructionWithOpArg::LessThan(_, _, _) => 4,
-            InstructionWithOpArg::Equals(_, _, _) => 4,
-            InstructionWithOpArg::AdjustRelativeBase(_) => 2,
-            InstructionWithOpArg::Halt => 1,
-            InstructionWithOpArg::Data(i) => i.len(),
-            InstructionWithOpArg::Goto(_) => 3,
-            InstructionWithOpArg::Assign(_, _) => 4,
+            FatInstruction::Add(_, _, _) => 4,
+            FatInstruction::Mul(_, _, _) => 4,
+            FatInstruction::Input(_) => 2,
+            FatInstruction::Output(_) => 2,
+            FatInstruction::JumpIf(_, _, _) => 3,
+            FatInstruction::LessThan(_, _, _) => 4,
+            FatInstruction::Equals(_, _, _) => 4,
+            FatInstruction::AdjustRelativeBase(_) => 2,
+            FatInstruction::Halt => 1,
+            FatInstruction::Data(i) => i.len(),
+            FatInstruction::Goto(_) => 3,
+            FatInstruction::Assign(_, _) => 4,
         }
     }
 
@@ -396,13 +394,9 @@ impl InstructionWithOpArg {
             let c = instructions[i + 2].clone();
             let b = &mut instructions[i + 1];
             match (a.1, &b.1, c.1) {
-                (
-                    InstructionWithOpArg::Data(_),
-                    InstructionWithOpArg::Data(_),
-                    InstructionWithOpArg::Data(_),
-                ) => {}
-                (InstructionWithOpArg::Data(_), _, InstructionWithOpArg::Data(_)) => {
-                    *b = (b.0, InstructionWithOpArg::Data(prog[b.0..c.0].to_vec()));
+                (FatInstruction::Data(_), FatInstruction::Data(_), FatInstruction::Data(_)) => {}
+                (FatInstruction::Data(_), _, FatInstruction::Data(_)) => {
+                    *b = (b.0, FatInstruction::Data(prog[b.0..c.0].to_vec()));
                 }
                 _ => {}
             }
@@ -412,14 +406,9 @@ impl InstructionWithOpArg {
             .into_iter()
             .coalesce(|(prev_addr, prev_inst), (curr_addr, curr_inst)| {
                 match (&prev_inst, &curr_inst) {
-                    (
-                        InstructionWithOpArg::Data(prev_data),
-                        InstructionWithOpArg::Data(curr_data),
-                    ) => Ok((
+                    (FatInstruction::Data(prev_data), FatInstruction::Data(curr_data)) => Ok((
                         prev_addr,
-                        InstructionWithOpArg::Data(
-                            prev_data.iter().chain(curr_data).cloned().collect(),
-                        ),
+                        FatInstruction::Data(prev_data.iter().chain(curr_data).cloned().collect()),
                     )),
                     _ => Err((
                         (prev_addr, prev_inst.clone()),
@@ -435,9 +424,9 @@ impl InstructionWithOpArg {
         let mut i = 0;
         let mut in_data = false;
         while i < prog.len() {
-            let instr = match InstructionWithOpArg::from_slice(i, &prog[i..]) {
+            let instr = match FatInstruction::from_slice(i, &prog[i..]) {
                 Some(
-                    i @ InstructionWithOpArg::AdjustRelativeBase(OpArg {
+                    i @ FatInstruction::AdjustRelativeBase(OpArg {
                         kind: Arg::Value(t),
                         ..
                     }),
@@ -447,14 +436,14 @@ impl InstructionWithOpArg {
                 }
                 Some(inst) => {
                     if in_data {
-                        InstructionWithOpArg::Data(vec![prog[i]])
+                        FatInstruction::Data(vec![prog[i]])
                     } else {
                         inst
                     }
                 }
                 None => {
                     in_data = true;
-                    InstructionWithOpArg::Data(vec![prog[i]])
+                    FatInstruction::Data(vec![prog[i]])
                 }
             };
 

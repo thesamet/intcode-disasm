@@ -1,5 +1,5 @@
 use super::{
-    low_ir::InstructionWithOpArg,
+    low_ir::FatInstruction,
     mid_flow::LoopId,
     mid_ir::{Expr, FunctionRange, MidIR},
 };
@@ -198,7 +198,7 @@ pub trait MidTransformer {
         MidIR::Continue(*l)
     }
 
-    fn transform_unknown(&mut self, offset: &usize, inst: &InstructionWithOpArg) -> MidIR {
+    fn transform_unknown(&mut self, offset: &usize, inst: &FatInstruction) -> MidIR {
         MidIR::Unknown(*offset, inst.clone())
     }
 
