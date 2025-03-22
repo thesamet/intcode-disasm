@@ -90,7 +90,7 @@ fn get_read_before_write(block: &Block) -> HashSet<Arg> {
                 use_set.insert(*r);
             }
         }
-        for r in inst.writes() {
+        if let Some(r) = inst.writes() {
             defines.insert(*r);
         }
     }
