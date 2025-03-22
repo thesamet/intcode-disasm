@@ -112,21 +112,25 @@ impl Display for Arg {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Instruction {
-    Add(OpArg, OpArg, OpArg),
-    Mul(OpArg, OpArg, OpArg),
-    Input(OpArg),
-    Output(OpArg),
-    JumpIf(OpArg, bool, OpArg),
-    LessThan(OpArg, OpArg, OpArg),
-    Equals(OpArg, OpArg, OpArg),
-    AdjustRelativeBase(OpArg),
+pub enum GenericInstruction<ArgType> {
+    Add(ArgType, ArgType, ArgType),
+    Mul(ArgType, ArgType, ArgType),
+    Input(ArgType),
+    Output(ArgType),
+    JumpIf(ArgType, bool, ArgType),
+    LessThan(ArgType, ArgType, ArgType),
+    Equals(ArgType, ArgType, ArgType),
+    AdjustRelativeBase(ArgType),
     Data(Vec<i128>),
     Halt,
     // synthetic
-    Goto(OpArg),
-    Assign(OpArg, OpArg),
+    Goto(ArgType),
+    Assign(ArgType, ArgType),
 }
+
+pub type Instruction = GenericInstruction<OpArg>;
+
+pub type ArgInstruction = GenericInstruction<Arg>;
 
 pub struct Op {
     pub span: Span,
@@ -164,6 +168,30 @@ impl<'a> Input<'a> {
         Input {
             offset: self.offset + count,
             prog: &self.prog[count..],
+        }
+    }
+}
+
+impl<ArgType> GenericInstruction<ArgType> {
+    fn map<F, T>(&self, f: F) -> GenericInstruction<T>
+    where
+        F: Fn(&ArgType) -> T,
+    {
+        match self {
+            GenericInstruction::Add(a, b, c) => GenericInstruction::Add(f(a), f(b), f(c)),
+            GenericInstruction::Mul(a, b, c) => GenericInstruction::Mul(f(a), f(b), f(c)),
+            GenericInstruction::Input(a) => GenericInstruction::Input(f(a)),
+            GenericInstruction::Output(a) => GenericInstruction::Output(f(a)),
+            GenericInstruction::JumpIf(a, b, c) => GenericInstruction::JumpIf(f(a), *b, f(c)),
+            GenericInstruction::LessThan(a, b, c) => GenericInstruction::LessThan(f(a), f(b), f(c)),
+            GenericInstruction::Equals(a, b, c) => GenericInstruction::Equals(f(a), f(b), f(c)),
+            GenericInstruction::AdjustRelativeBase(a) => {
+                GenericInstruction::AdjustRelativeBase(f(a))
+            }
+            GenericInstruction::Data(a) => GenericInstruction::Data(a.clone()),
+            GenericInstruction::Halt => GenericInstruction::Halt,
+            GenericInstruction::Goto(a) => GenericInstruction::Goto(f(a)),
+            GenericInstruction::Assign(a, b) => GenericInstruction::Assign(f(a), f(b)),
         }
     }
 }
