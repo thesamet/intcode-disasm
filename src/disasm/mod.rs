@@ -1,5 +1,6 @@
 mod code_printer;
 pub mod control_flow_graph;
+pub mod data_flow_analysis;
 pub mod low_ir;
 pub mod mid_flow;
 pub mod mid_ir;

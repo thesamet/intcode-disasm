@@ -375,20 +375,20 @@ impl Instruction {
         v
     }
 
-    pub fn writes(&self) -> Vec<&Arg> {
+    pub fn writes(&self) -> Option<&Arg> {
         match self {
-            Instruction::Add(_, _, c) => vec![&c.kind],
-            Instruction::Mul(_, _, c) => vec![&c.kind],
-            Instruction::Input(a) => vec![&a.kind],
-            Instruction::Output(_) => vec![],
-            Instruction::JumpIf(_, _, _) => vec![],
-            Instruction::LessThan(_, _, c) => vec![&c.kind],
-            Instruction::Equals(_, _, c) => vec![&c.kind],
-            Instruction::AdjustRelativeBase(_) => vec![],
-            Instruction::Data(_) => vec![],
-            Instruction::Halt => vec![],
-            Instruction::Goto(_) => vec![],
-            Instruction::Assign(a, _) => vec![&a.kind],
+            Instruction::Add(_, _, c) => Some(&c.kind),
+            Instruction::Mul(_, _, c) => Some(&c.kind),
+            Instruction::Input(a) => Some(&a.kind),
+            Instruction::Output(_) => None,
+            Instruction::JumpIf(_, _, _) => None,
+            Instruction::LessThan(_, _, c) => Some(&c.kind),
+            Instruction::Equals(_, _, c) => Some(&c.kind),
+            Instruction::AdjustRelativeBase(_) => None,
+            Instruction::Data(_) => None,
+            Instruction::Halt => None,
+            Instruction::Goto(_) => None,
+            Instruction::Assign(a, _) => Some(&a.kind),
         }
     }
 }
