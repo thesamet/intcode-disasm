@@ -111,8 +111,18 @@ impl Display for Arg {
     }
 }
 
+impl Display for OpArg {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.kind)
+    }
+}
+
+trait ArgBase {
+    fn is_value(&self) -> bool;
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub enum GenericInstruction<ArgType> {
+pub enum GenericInstruction<ArgType: ArgBase> {
     Add(ArgType, ArgType, ArgType),
     Mul(ArgType, ArgType, ArgType),
     Input(ArgType),
@@ -132,9 +142,29 @@ pub type Instruction = GenericInstruction<OpArg>;
 
 pub type ArgInstruction = GenericInstruction<Arg>;
 
-pub struct Op {
+pub struct GenericOp<T: ArgBase> {
     pub span: Span,
-    pub kind: Instruction,
+    pub kind: GenericInstruction<T>,
+}
+
+pub type Op = GenericOp<OpArg>;
+
+impl Op {
+    fn to_arg_instruction(&self) -> ArgInstruction {
+        self.kind.map(|x| x.kind)
+    }
+}
+
+impl ArgBase for Arg {
+    fn is_value(&self) -> bool {
+        matches!(self, Arg::Value(_))
+    }
+}
+
+impl ArgBase for OpArg {
+    fn is_value(&self) -> bool {
+        self.kind.is_value()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,8 +202,8 @@ impl<'a> Input<'a> {
     }
 }
 
-impl<ArgType> GenericInstruction<ArgType> {
-    fn map<F, T>(&self, f: F) -> GenericInstruction<T>
+impl<ArgType: ArgBase> GenericInstruction<ArgType> {
+    fn map<F, T: ArgBase>(&self, f: F) -> GenericInstruction<T>
     where
         F: Fn(&ArgType) -> T,
     {
@@ -193,6 +223,48 @@ impl<ArgType> GenericInstruction<ArgType> {
             GenericInstruction::Goto(a) => GenericInstruction::Goto(f(a)),
             GenericInstruction::Assign(a, b) => GenericInstruction::Assign(f(a), f(b)),
         }
+    }
+
+    pub fn reads(&self) -> Vec<&ArgType> {
+        let mut v = match self {
+            Self::Add(a, b, _) => vec![a, b],
+            Self::Mul(a, b, _) => vec![a, b],
+            Self::Input(a) => vec![a],
+            Self::Output(a) => vec![a],
+            Self::JumpIf(a, _, b) => vec![a, b],
+            Self::LessThan(a, b, _) => vec![a, b],
+            Self::Equals(a, b, _) => vec![a, b],
+            Self::AdjustRelativeBase(a) => vec![a],
+            Self::Data(_) => vec![],
+            Self::Halt => vec![],
+            Self::Goto(a) => vec![a],
+            Self::Assign(_, b) => vec![b],
+        };
+        v.retain(|x| !x.is_value());
+        v
+    }
+
+    pub fn writes(&self) -> Option<&ArgType> {
+        match self {
+            Self::Add(_, _, c) => Some(c),
+            Self::Mul(_, _, c) => Some(c),
+            Self::Input(a) => Some(a),
+            Self::Output(_) => None,
+            Self::JumpIf(_, _, _) => None,
+            Self::LessThan(_, _, c) => Some(c),
+            Self::Equals(_, _, c) => Some(c),
+            Self::AdjustRelativeBase(_) => None,
+            Self::Data(_) => None,
+            Self::Halt => None,
+            Self::Goto(_) => None,
+            Self::Assign(a, _) => Some(a),
+        }
+    }
+}
+
+impl ArgInstruction {
+    pub fn parse(input: Input) -> Result<(Input, ArgInstruction), ParseError> {
+        Instruction::parse(input).map(|(input, op)| (input, op.to_arg_instruction()))
     }
 }
 
@@ -383,68 +455,26 @@ impl Instruction {
         // let mut instructions = Self::find_pointers(&instructions);
         Self::coalesce_data(&instructions, prog)
     }
-
-    pub fn reads(&self) -> Vec<&Arg> {
-        let mut v = match self {
-            Instruction::Add(a, b, _) => vec![&a.kind, &b.kind],
-            Instruction::Mul(a, b, _) => vec![&a.kind, &b.kind],
-            Instruction::Input(a) => vec![&a.kind],
-            Instruction::Output(a) => vec![&a.kind],
-            Instruction::JumpIf(a, _, b) => vec![&a.kind, &b.kind],
-            Instruction::LessThan(a, b, _) => vec![&a.kind, &b.kind],
-            Instruction::Equals(a, b, _) => vec![&a.kind, &b.kind],
-            Instruction::AdjustRelativeBase(a) => vec![&a.kind],
-            Instruction::Data(_) => vec![],
-            Instruction::Halt => vec![],
-            Instruction::Goto(a) => vec![&a.kind],
-            Instruction::Assign(_, b) => vec![&b.kind],
-        };
-        v.retain(|x| !matches!(x, Arg::Value(_)));
-        v
-    }
-
-    pub fn writes(&self) -> Option<&Arg> {
-        match self {
-            Instruction::Add(_, _, c) => Some(&c.kind),
-            Instruction::Mul(_, _, c) => Some(&c.kind),
-            Instruction::Input(a) => Some(&a.kind),
-            Instruction::Output(_) => None,
-            Instruction::JumpIf(_, _, _) => None,
-            Instruction::LessThan(_, _, c) => Some(&c.kind),
-            Instruction::Equals(_, _, c) => Some(&c.kind),
-            Instruction::AdjustRelativeBase(_) => None,
-            Instruction::Data(_) => None,
-            Instruction::Halt => None,
-            Instruction::Goto(_) => None,
-            Instruction::Assign(a, _) => Some(&a.kind),
-        }
-    }
 }
 
-impl Display for Instruction {
+impl<T: ArgBase + Display> Display for GenericInstruction<T> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Instruction::Add(a, b, c) => write!(f, "{} = {} + {}", c.kind, a.kind, b.kind),
-            Instruction::Mul(a, b, c) => write!(f, "{} = {} * {}", c.kind, a.kind, b.kind),
-            Instruction::Input(a) => write!(f, "{} = input()", a.kind),
-            Instruction::Output(a) => write!(f, "output({})", a.kind),
-            Instruction::JumpIf(a, cond, b) => {
-                write!(
-                    f,
-                    "if {}{} goto {}",
-                    if *cond { "" } else { "!" },
-                    a.kind,
-                    b.kind
-                )
+            Self::Add(a, b, c) => write!(f, "{} = {} + {}", c, a, b),
+            Self::Mul(a, b, c) => write!(f, "{} = {} * {}", c, a, b),
+            Self::Input(a) => write!(f, "{} = input()", a),
+            Self::Output(a) => write!(f, "output({})", a),
+            Self::JumpIf(a, cond, b) => {
+                write!(f, "if {}{} goto {}", if *cond { "" } else { "!" }, a, b)
             }
-            Instruction::LessThan(a, b, c) => write!(f, "{} = {} < {}", c.kind, a.kind, b.kind),
-            Instruction::Equals(a, b, c) => write!(f, "{} = {} == {}", c.kind, a.kind, b.kind),
-            Instruction::AdjustRelativeBase(a) => write!(f, "R += {}", a.kind),
-            Instruction::Halt => write!(f, "halt"),
-            Instruction::Data(i) => write!(f, "[DATA: {:?}]", i),
+            Self::LessThan(a, b, c) => write!(f, "{} = {} < {}", c, a, b),
+            Self::Equals(a, b, c) => write!(f, "{} = {} == {}", c, a, b),
+            Self::AdjustRelativeBase(a) => write!(f, "R += {}", a),
+            Self::Halt => write!(f, "halt"),
+            Self::Data(i) => write!(f, "[DATA: {:?}]", i),
             // Synthetic
-            Instruction::Assign(a, b) => write!(f, "{} = {}", a.kind, b.kind),
-            Instruction::Goto(a) => write!(f, "goto {}", a.kind),
+            Self::Assign(a, b) => write!(f, "{} = {}", a, b),
+            Self::Goto(a) => write!(f, "goto {}", a),
         }
     }
 }

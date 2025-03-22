@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 use crate::disasm::{data_flow_analysis, low_ir::Span};
 
-use super::low_ir::{Arg, Input, Instruction, Op, OpArg, ParseError};
+use super::low_ir::{Arg, ArgInstruction, Input, ParseError};
 
 #[derive(Debug, Copy, Clone)]
 pub struct FunctionCall {
@@ -62,7 +62,7 @@ impl PredecessorKind {
 #[derive(Debug, Clone)]
 pub struct Block {
     pub predecessors: Vec<PredecessorKind>,
-    pub ops: Vec<(usize, Instruction)>,
+    pub ops: Vec<(usize, ArgInstruction)>,
     pub next: NextKind,
     pub span: Span, // includes the possible branching at the end.
 }
@@ -73,22 +73,15 @@ impl Block {
         block: &mut Block,
     ) -> Result<Input<'a>, ParseError> {
         let assign_offset = input.offset;
-        let (input, assign_op) = Instruction::parse(input)?;
-        let Instruction::Assign(
-            _,
-            OpArg {
-                kind: Arg::Value(return_addr),
-                ..
-            },
-        ) = assign_op.kind
-        else {
+        let (input, assign_op) = ArgInstruction::parse(input)?;
+        let ArgInstruction::Assign(_, Arg::Value(return_addr)) = assign_op else {
             return Err(ParseError::InvalidOpcode);
         };
         let return_addr = return_addr as usize;
 
         let goto_offset = input.offset;
-        let (input, goto_op) = Instruction::parse(input)?;
-        let Instruction::Goto(OpArg { kind: goto_arg, .. }) = goto_op.kind else {
+        let (input, goto_op) = ArgInstruction::parse(input)?;
+        let ArgInstruction::Goto(goto_arg) = goto_op else {
             return Err(ParseError::InvalidOpcode);
         };
         if return_addr != input.offset {
@@ -99,37 +92,29 @@ impl Block {
             function_addr: goto_arg,
             return_block: return_addr,
         });
-        block.ops.push((assign_offset, assign_op.kind));
-        block.ops.push((goto_offset, goto_op.kind));
+        block.ops.push((assign_offset, assign_op));
+        block.ops.push((goto_offset, goto_op));
         Ok(input)
     }
 
     fn parse_return<'a>(input: Input<'a>, block: &mut Block) -> Result<Input<'a>, ParseError> {
         let adjust_offset = input.offset;
-        let (input, adjust_op) = Instruction::parse(input)?;
-        let Instruction::AdjustRelativeBase(OpArg {
-            kind: Arg::Value(r),
-            ..
-        }) = adjust_op.kind
-        else {
+        let (input, adjust_op) = ArgInstruction::parse(input)?;
+        let ArgInstruction::AdjustRelativeBase(Arg::Value(r)) = adjust_op else {
             return Err(ParseError::NoMatch);
         };
         if r >= 0 {
             return Err(ParseError::NoMatch);
         }
         let goto_offset = input.offset;
-        let (input, goto_op) = Instruction::parse(input)?;
-        if let Instruction::Goto(OpArg {
-            kind: Arg::RelativeMem(0),
-            ..
-        }) = goto_op.kind
-        {
+        let (input, goto_op) = ArgInstruction::parse(input)?;
+        if let ArgInstruction::Goto(Arg::RelativeMem(0)) = goto_op {
             block.next = NextKind::Return;
         } else {
             return Err(ParseError::NoMatch);
         }
-        block.ops.push((adjust_offset, adjust_op.kind));
-        block.ops.push((goto_offset, goto_op.kind));
+        block.ops.push((adjust_offset, adjust_op));
+        block.ops.push((goto_offset, goto_op));
         Ok(input)
     }
 
@@ -144,56 +129,45 @@ impl Block {
             return Ok((input, false));
         }
         let offset = input.offset;
-        let (input, op) = Instruction::parse(input)?;
-        block.ops.push((offset, op.kind.clone()));
+        let (input, op) = ArgInstruction::parse(input)?;
+        block.ops.push((offset, op.clone()));
 
-        match op.kind {
-            Instruction::Goto(op_arg) => {
-                block.next = NextKind::Goto(op_arg.kind);
+        match op {
+            ArgInstruction::Goto(op_arg) => {
+                block.next = NextKind::Goto(op_arg);
                 Ok((input, false))
             }
-            Instruction::JumpIf(
-                arg,
-                matches,
-                OpArg {
-                    kind: Arg::Value(addr),
-                    ..
-                },
-            ) => {
+            ArgInstruction::JumpIf(arg, matches, Arg::Value(addr)) => {
                 block.next = NextKind::Condition(Condition {
                     from_block: block.span.start,
                     jump_block: addr as usize,
                     follows_block: input.offset,
-                    arg: arg.kind,
+                    arg,
                     matches,
                 });
                 Ok((input, false))
             }
-            Instruction::Halt => {
+            ArgInstruction::Halt => {
                 let input = Self::parse_halt_exit(block, input).unwrap_or(input);
                 block.next = NextKind::Halt; // needs to be here since parse_halt_exit may set to
                                              // return kind.
                 Ok((input, false))
             }
-            Instruction::Data(_) => unreachable!(),
+            ArgInstruction::Data(_) => unreachable!(),
             _ => Ok((input, true)),
         }
     }
 
     fn parse_halt_exit<'a>(block: &mut Block, input: Input<'a>) -> Result<Input<'a>, ParseError> {
         let halt_offset = input.offset - 1;
-        let (input, op) = Instruction::parse(input)?;
-        let Instruction::Goto(OpArg {
-            kind: Arg::Value(goto_offset),
-            ..
-        }) = op.kind
-        else {
+        let (input, op) = ArgInstruction::parse(input)?;
+        let ArgInstruction::Goto(Arg::Value(goto_offset)) = op else {
             return Err(ParseError::NoMatch);
         };
         if goto_offset as usize != halt_offset {
             return Err(ParseError::NoMatch);
         }
-        block.ops.push((halt_offset, op.kind));
+        block.ops.push((halt_offset, op));
         let input = Self::parse_return(input, block).unwrap_or(input);
         Ok(input)
     }
@@ -341,13 +315,10 @@ impl Graph {
     }
 
     fn parse_stack_size(input: Input) -> Result<usize, ParseError> {
-        let (_, adjust_res) = Instruction::parse(input)?;
-        match adjust_res.kind {
-            Instruction::AdjustRelativeBase(OpArg {
-                kind: Arg::Value(r),
-                ..
-            }) if r > 0 => {
-                if adjust_res.span.start == 0 {
+        let (_, adjust_res) = ArgInstruction::parse(input)?;
+        match adjust_res {
+            ArgInstruction::AdjustRelativeBase(Arg::Value(r)) if r > 0 => {
+                if input.offset == 0 {
                     Ok(0)
                 } else {
                     Ok(r as usize)
@@ -403,17 +374,8 @@ impl Graph {
             }) {
                 continue;
             }
-            let Ok((
-                _,
-                Op {
-                    kind:
-                        Instruction::AdjustRelativeBase(OpArg {
-                            kind: Arg::Value(r),
-                            ..
-                        }),
-                    ..
-                },
-            )) = Instruction::parse(make_input(prog, start))
+            let Ok((_, ArgInstruction::AdjustRelativeBase(Arg::Value(r)))) =
+                ArgInstruction::parse(make_input(prog, start))
             else {
                 data.push(start);
                 continue;
