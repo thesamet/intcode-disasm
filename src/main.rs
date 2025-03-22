@@ -1,7 +1,7 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
-use disasm::{control_flow_graph, low_ir::Instruction, mid_ir};
+use disasm::{control_flow_graph, low_ir::InstructionWithOpArg, mid_ir};
 
 use itertools::Itertools;
 
@@ -49,7 +49,7 @@ fn disassemble(input: String) {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
-    let inst = Instruction::parse_program(&prog);
+    let inst = InstructionWithOpArg::parse_program(&prog);
     for (addr, i) in inst.iter() {
         println!("{:8}  {}", addr, i);
     }

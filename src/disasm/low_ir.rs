@@ -117,7 +117,7 @@ impl Display for OpArg {
     }
 }
 
-trait ArgBase {
+pub trait ArgBase {
     fn is_value(&self) -> bool;
 }
 
@@ -138,7 +138,7 @@ pub enum GenericInstruction<ArgType: ArgBase> {
     Assign(ArgType, ArgType),
 }
 
-pub type Instruction = GenericInstruction<OpArg>;
+pub type InstructionWithOpArg = GenericInstruction<OpArg>;
 
 pub type ArgInstruction = GenericInstruction<Arg>;
 
@@ -264,11 +264,11 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
 
 impl ArgInstruction {
     pub fn parse(input: Input) -> Result<(Input, ArgInstruction), ParseError> {
-        Instruction::parse(input).map(|(input, op)| (input, op.to_arg_instruction()))
+        InstructionWithOpArg::parse(input).map(|(input, op)| (input, op.to_arg_instruction()))
     }
 }
 
-impl Instruction {
+impl InstructionWithOpArg {
     pub fn parse(input: Input) -> Result<(Input, Op), ParseError> {
         let offset = input.offset;
         let (input, op) = input.read()?;
@@ -296,16 +296,18 @@ impl Instruction {
         }
 
         let val = match opcode {
-            1 => Instruction::Add(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            2 => Instruction::Mul(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            3 => Instruction::Input(args[0].unwrap()),
-            4 => Instruction::Output(args[0].unwrap()),
-            5 => Instruction::JumpIf(args[0].unwrap(), true, args[1].unwrap()),
-            6 => Instruction::JumpIf(args[0].unwrap(), false, args[1].unwrap()),
-            7 => Instruction::LessThan(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            8 => Instruction::Equals(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
-            9 => Instruction::AdjustRelativeBase(args[0].unwrap()),
-            99 => Instruction::Halt,
+            1 => InstructionWithOpArg::Add(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            2 => InstructionWithOpArg::Mul(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            3 => InstructionWithOpArg::Input(args[0].unwrap()),
+            4 => InstructionWithOpArg::Output(args[0].unwrap()),
+            5 => InstructionWithOpArg::JumpIf(args[0].unwrap(), true, args[1].unwrap()),
+            6 => InstructionWithOpArg::JumpIf(args[0].unwrap(), false, args[1].unwrap()),
+            7 => {
+                InstructionWithOpArg::LessThan(args[0].unwrap(), args[1].unwrap(), args[2].unwrap())
+            }
+            8 => InstructionWithOpArg::Equals(args[0].unwrap(), args[1].unwrap(), args[2].unwrap()),
+            9 => InstructionWithOpArg::AdjustRelativeBase(args[0].unwrap()),
+            99 => InstructionWithOpArg::Halt,
             _ => return Err(ParseError::InvalidOpcode),
         };
         let end_offset = input.offset;
@@ -326,7 +328,7 @@ impl Instruction {
 
     fn simplify(self) -> Self {
         match self {
-            Instruction::Add(
+            InstructionWithOpArg::Add(
                 OpArg {
                     kind: Arg::Value(0),
                     ..
@@ -334,7 +336,7 @@ impl Instruction {
                 b,
                 a,
             )
-            | Instruction::Add(
+            | InstructionWithOpArg::Add(
                 b,
                 OpArg {
                     kind: Arg::Value(0),
@@ -342,48 +344,48 @@ impl Instruction {
                 },
                 a,
             )
-            | Instruction::Mul(
+            | InstructionWithOpArg::Mul(
                 OpArg {
                     kind: Arg::Value(1),
                     ..
                 },
                 b,
                 a,
-            ) => Instruction::Assign(a, b),
-            Instruction::Mul(
+            ) => InstructionWithOpArg::Assign(a, b),
+            InstructionWithOpArg::Mul(
                 b,
                 OpArg {
                     kind: Arg::Value(1),
                     ..
                 },
                 a,
-            ) => Instruction::Assign(a, b),
-            Instruction::JumpIf(
+            ) => InstructionWithOpArg::Assign(a, b),
+            InstructionWithOpArg::JumpIf(
                 OpArg {
                     kind: Arg::Value(c),
                     ..
                 },
                 cond,
                 addr,
-            ) if (cond && c != 0) || (!cond && c == 0) => Instruction::Goto(addr),
+            ) if (cond && c != 0) || (!cond && c == 0) => InstructionWithOpArg::Goto(addr),
             x => x,
         }
     }
 
     pub fn size(&self) -> usize {
         match self {
-            Instruction::Add(_, _, _) => 4,
-            Instruction::Mul(_, _, _) => 4,
-            Instruction::Input(_) => 2,
-            Instruction::Output(_) => 2,
-            Instruction::JumpIf(_, _, _) => 3,
-            Instruction::LessThan(_, _, _) => 4,
-            Instruction::Equals(_, _, _) => 4,
-            Instruction::AdjustRelativeBase(_) => 2,
-            Instruction::Halt => 1,
-            Instruction::Data(i) => i.len(),
-            Instruction::Goto(_) => 3,
-            Instruction::Assign(_, _) => 4,
+            InstructionWithOpArg::Add(_, _, _) => 4,
+            InstructionWithOpArg::Mul(_, _, _) => 4,
+            InstructionWithOpArg::Input(_) => 2,
+            InstructionWithOpArg::Output(_) => 2,
+            InstructionWithOpArg::JumpIf(_, _, _) => 3,
+            InstructionWithOpArg::LessThan(_, _, _) => 4,
+            InstructionWithOpArg::Equals(_, _, _) => 4,
+            InstructionWithOpArg::AdjustRelativeBase(_) => 2,
+            InstructionWithOpArg::Halt => 1,
+            InstructionWithOpArg::Data(i) => i.len(),
+            InstructionWithOpArg::Goto(_) => 3,
+            InstructionWithOpArg::Assign(_, _) => 4,
         }
     }
 
@@ -394,9 +396,13 @@ impl Instruction {
             let c = instructions[i + 2].clone();
             let b = &mut instructions[i + 1];
             match (a.1, &b.1, c.1) {
-                (Instruction::Data(_), Instruction::Data(_), Instruction::Data(_)) => {}
-                (Instruction::Data(_), _, Instruction::Data(_)) => {
-                    *b = (b.0, Instruction::Data(prog[b.0..c.0].to_vec()));
+                (
+                    InstructionWithOpArg::Data(_),
+                    InstructionWithOpArg::Data(_),
+                    InstructionWithOpArg::Data(_),
+                ) => {}
+                (InstructionWithOpArg::Data(_), _, InstructionWithOpArg::Data(_)) => {
+                    *b = (b.0, InstructionWithOpArg::Data(prog[b.0..c.0].to_vec()));
                 }
                 _ => {}
             }
@@ -406,9 +412,14 @@ impl Instruction {
             .into_iter()
             .coalesce(|(prev_addr, prev_inst), (curr_addr, curr_inst)| {
                 match (&prev_inst, &curr_inst) {
-                    (Instruction::Data(prev_data), Instruction::Data(curr_data)) => Ok((
+                    (
+                        InstructionWithOpArg::Data(prev_data),
+                        InstructionWithOpArg::Data(curr_data),
+                    ) => Ok((
                         prev_addr,
-                        Instruction::Data(prev_data.iter().chain(curr_data).cloned().collect()),
+                        InstructionWithOpArg::Data(
+                            prev_data.iter().chain(curr_data).cloned().collect(),
+                        ),
                     )),
                     _ => Err((
                         (prev_addr, prev_inst.clone()),
@@ -424,9 +435,9 @@ impl Instruction {
         let mut i = 0;
         let mut in_data = false;
         while i < prog.len() {
-            let instr = match Instruction::from_slice(i, &prog[i..]) {
+            let instr = match InstructionWithOpArg::from_slice(i, &prog[i..]) {
                 Some(
-                    i @ Instruction::AdjustRelativeBase(OpArg {
+                    i @ InstructionWithOpArg::AdjustRelativeBase(OpArg {
                         kind: Arg::Value(t),
                         ..
                     }),
@@ -436,14 +447,14 @@ impl Instruction {
                 }
                 Some(inst) => {
                     if in_data {
-                        Instruction::Data(vec![prog[i]])
+                        InstructionWithOpArg::Data(vec![prog[i]])
                     } else {
                         inst
                     }
                 }
                 None => {
                     in_data = true;
-                    Instruction::Data(vec![prog[i]])
+                    InstructionWithOpArg::Data(vec![prog[i]])
                 }
             };
 
