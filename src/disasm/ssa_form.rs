@@ -6,7 +6,7 @@ use std::{
 use super::{
     control_flow_graph::{Block, BlockId, Graph},
     data_flow_analysis::GraphDataFlow,
-    low_ir::{Arg, ArgBase, GenericInstruction},
+    low_ir::{Arg, ArgBase, GenericInstruction, OpArg},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
@@ -15,9 +15,22 @@ pub struct SSAArg {
     pub version: usize,
 }
 
+impl From<OpArg> for SSAArg {
+    fn from(arg: OpArg) -> Self {
+        SSAArg {
+            arg: arg.kind,
+            version: 0,
+        }
+    }
+}
+
 impl ArgBase for SSAArg {
-    fn is_value(&self) -> bool {
-        self.arg.is_value()
+    fn value(&self) -> Option<i128> {
+        self.arg.value()
+    }
+
+    fn relative_mem(&self) -> Option<i128> {
+        self.arg.relative_mem()
     }
 }
 
@@ -32,16 +45,20 @@ impl Display for SSAArg {
 
 type SSAInstruction = GenericInstruction<SSAArg>;
 
+type SSAGraph = Graph<SSAArg>;
+
+type SSADataFlow = GraphDataFlow<SSAArg>;
+
 pub struct SSAConverter<'a> {
-    graph: &'a Graph,
-    flow: &'a GraphDataFlow,
+    graph: &'a SSAGraph,
+    flow: &'a SSADataFlow,
     current_version: HashMap<Arg, usize>,
     var_versions: HashMap<(BlockId, Arg), SSAArg>, // Maps (block, var) to SSA version
-    phi_nodes: HashMap<BlockId, HashMap<Arg, SSAInstruction>>,
+    phi_nodes: HashMap<BlockId, HashMap<SSAArg, SSAInstruction>>,
 }
 
 impl<'a> SSAConverter<'a> {
-    pub fn new(graph: &'a Graph, flow: &'a GraphDataFlow) -> Self {
+    pub fn new(graph: &'a SSAGraph, flow: &'a SSADataFlow) -> Self {
         SSAConverter {
             graph,
             flow,
@@ -51,7 +68,7 @@ impl<'a> SSAConverter<'a> {
         }
     }
 
-    pub fn convert(&mut self) -> Graph {
+    pub fn convert(&mut self) -> SSAGraph {
         // 1. Identify where phi functions are needed using data flow analysis
         self.place_phi_functions();
 
@@ -83,7 +100,7 @@ impl<'a> SSAConverter<'a> {
                         *arg,
                         GenericInstruction::Phi(
                             SSAArg {
-                                arg: *arg,
+                                arg: arg.arg,
                                 version: 0,
                             }, // Placeholder
                             Vec::new(), // Will be populated during renaming
@@ -109,17 +126,17 @@ impl<'a> SSAConverter<'a> {
         if let Some(phi_map) = self.phi_nodes.get_mut(&block_id) {
             for (arg, phi) in phi_map {
                 // Assign new version to phi result
-                let new_version = *self.current_version.entry(*arg).or_insert(0) + 1;
-                self.current_version.insert(*arg, new_version);
+                let new_version = *self.current_version.entry(arg.arg).or_insert(0) + 1;
+                self.current_version.insert(arg.arg, new_version);
 
                 let GenericInstruction::Phi(dest, _) = phi else {
                     panic!("Non-phi instruction in phi_map");
                 };
                 *dest = SSAArg {
-                    arg: *arg,
+                    arg: arg.arg,
                     version: new_version,
                 };
-                self.var_versions.insert((block_id, *arg), *dest);
+                self.var_versions.insert((block_id, arg.arg), *dest);
             }
         }
 
@@ -132,11 +149,11 @@ impl<'a> SSAConverter<'a> {
                     continue;
                 }
                 // Use the current version
-                let version = *self.current_version.entry(*read_arg).or_insert(0);
+                let version = *self.current_version.entry(read_arg.arg).or_insert(0);
                 self.var_versions.insert(
-                    (block_id, *read_arg),
+                    (block_id, read_arg.arg),
                     SSAArg {
-                        arg: *read_arg,
+                        arg: read_arg.arg,
                         version,
                     },
                 );
@@ -147,12 +164,12 @@ impl<'a> SSAConverter<'a> {
                 if write_arg.is_value() {
                     continue;
                 }
-                let new_version = *self.current_version.entry(*write_arg).or_insert(0) + 1;
-                self.current_version.insert(*write_arg, new_version);
+                let new_version = *self.current_version.entry(write_arg.arg).or_insert(0) + 1;
+                self.current_version.insert(write_arg.arg, new_version);
                 self.var_versions.insert(
-                    (block_id, *write_arg),
+                    (block_id, write_arg.arg),
                     SSAArg {
-                        arg: *write_arg,
+                        arg: write_arg.arg,
                         version: new_version,
                     },
                 );
@@ -163,7 +180,7 @@ impl<'a> SSAConverter<'a> {
         for succ_addr in block.next_blocks() {
             if let Some(phi_map) = self.phi_nodes.get_mut(&succ_addr) {
                 for (arg, phi) in phi_map {
-                    if let Some(version) = self.var_versions.get(&(block_id, *arg)) {
+                    if let Some(version) = self.var_versions.get(&(block_id, arg.arg)) {
                         if let GenericInstruction::Phi(_, args) = phi {
                             args.push(*version);
                         }
@@ -176,7 +193,7 @@ impl<'a> SSAConverter<'a> {
         }
     }
 
-    fn build_ssa_graph(&self) -> Graph {
+    fn build_ssa_graph(&self) -> SSAGraph {
         let mut new_blocks = HashMap::new();
 
         for (&block_id, block) in &self.graph.blocks {
@@ -194,10 +211,10 @@ impl<'a> SSAConverter<'a> {
                 let new_op = op.map(|arg| {
                     if arg.is_value() {
                         SSAArg {
-                            arg: *arg,
+                            arg: arg.arg,
                             version: 0,
                         }
-                    } else if let Some(version) = self.var_versions.get(&(block_id, *arg)) {
+                    } else if let Some(version) = self.var_versions.get(&(block_id, arg.arg)) {
                         *version
                     } else {
                         unreachable!()

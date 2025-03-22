@@ -5,48 +5,51 @@ use std::{
 
 use super::{
     control_flow_graph::{Block, BlockId, Graph},
-    low_ir::Arg,
+    low_ir::{ArgBase, OpArg},
 };
 
 use itertools::Itertools;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Definition {
+pub struct Definition<ArgType> {
     pub instruction_addr: usize,
-    pub arg: Arg,
+    pub arg: ArgType,
     pub block: BlockId,
 }
 
-impl Display for Definition {
+impl<ArgType> Display for Definition<ArgType>
+where
+    ArgType: Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} at {}", self.arg, self.block)
     }
 }
 
 #[derive(Debug)]
-pub struct BlockDef {
+pub struct BlockDef<ArgType> {
     // Definitions available to the block from previous blocks.
-    pub defs_in: HashSet<Definition>,
+    pub defs_in: HashSet<Definition<ArgType>>,
 
     // Definitions provided to following blocks.
-    pub defs_out: HashSet<Definition>,
+    pub defs_out: HashSet<Definition<ArgType>>,
 
     // Defintions that are expected to be live when coming in (will be used in the block, or in a
     // successor block).
-    pub live_in: HashSet<Arg>,
+    pub live_in: HashSet<ArgType>,
 
     // Contains values that will be used in any successor blocks.
-    pub live_out: HashSet<Arg>,
+    pub live_out: HashSet<ArgType>,
 
-    // Args defined in this block
-    pub gen_set: HashMap<Arg, Definition>,
+    // ArgTypes defined in this block
+    pub gen_set: HashMap<ArgType, Definition<ArgType>>,
 
-    // Args used in this block before being possibly defined in the block.
-    pub use_set: HashSet<Arg>,
+    // ArgTypes used in this block before being possibly defined in the block.
+    pub use_set: HashSet<ArgType>,
 }
 
-impl BlockDef {
-    fn new() -> BlockDef {
+impl<ArgType> BlockDef<ArgType> {
+    fn new() -> Self {
         BlockDef {
             defs_in: HashSet::new(),
             defs_out: HashSet::new(),
@@ -59,11 +62,14 @@ impl BlockDef {
 }
 
 #[derive(Debug)]
-pub struct GraphDataFlow {
-    pub block_defs: HashMap<BlockId, BlockDef>,
+pub struct GraphDataFlow<ArgType> {
+    pub block_defs: HashMap<BlockId, BlockDef<ArgType>>,
 }
 
-fn get_definitions(block: &Block) -> HashMap<Arg, Definition> {
+fn get_definitions<ArgType>(block: &Block<ArgType>) -> HashMap<ArgType, Definition<ArgType>>
+where
+    ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy + From<OpArg>,
+{
     let mut hm = HashMap::new();
     for (addr, inst) in &block.ops {
         if let Some(arg) = inst.writes() {
@@ -81,7 +87,10 @@ fn get_definitions(block: &Block) -> HashMap<Arg, Definition> {
     hm
 }
 
-fn get_read_before_write(block: &Block) -> HashSet<Arg> {
+fn get_read_before_write<ArgType>(block: &Block<ArgType>) -> HashSet<ArgType>
+where
+    ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy,
+{
     let mut use_set = HashSet::new();
     let mut defines = HashSet::new();
     for (_, inst) in &block.ops {
@@ -97,10 +106,13 @@ fn get_read_before_write(block: &Block) -> HashSet<Arg> {
     use_set
 }
 
-impl GraphDataFlow {
+impl<ArgType> GraphDataFlow<ArgType>
+where
+    ArgType: ArgBase + Copy + Clone + Eq + std::hash::Hash + From<OpArg>,
+{
     /** Get the set of definitions that potentially reach the given block */
 
-    fn forward_analysis(flow: &mut GraphDataFlow, graph: &Graph) {
+    fn forward_analysis(flow: &mut GraphDataFlow<ArgType>, graph: &Graph<ArgType>) {
         loop {
             let mut changed = false;
             for (addr, block) in &graph.blocks {
@@ -127,7 +139,7 @@ impl GraphDataFlow {
         }
     }
 
-    fn live_variable_analysis(flow: &mut GraphDataFlow, graph: &Graph) {
+    fn live_variable_analysis(flow: &mut GraphDataFlow<ArgType>, graph: &Graph<ArgType>) {
         loop {
             let mut changed = false;
             for (addr, block) in &graph.blocks {
@@ -159,7 +171,7 @@ impl GraphDataFlow {
         }
     }
 
-    pub fn build_for(graph: &Graph) -> GraphDataFlow {
+    pub fn build_for(graph: &Graph<ArgType>) -> GraphDataFlow<ArgType> {
         let mut flow = GraphDataFlow {
             block_defs: HashMap::new(),
         };

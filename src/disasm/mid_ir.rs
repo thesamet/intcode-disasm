@@ -360,13 +360,13 @@ pub fn to_mid_ir(prog: &[i128]) {
 }
 
 fn parse_return(input: Input) -> Result<(Input, MidIR), ParseError> {
-    let (input, adjust) = FatInstruction::parse(input)?;
+    let (input, adjust) = FatInstruction::parse_fat(input)?;
     match adjust.kind {
         FatInstruction::AdjustRelativeBase(OpArg {
             kind: Arg::Value(r),
             ..
         }) if r < 0 => {
-            let (input, goto) = FatInstruction::parse(input)?;
+            let (input, goto) = FatInstruction::parse_fat(input)?;
             match goto.kind {
                 FatInstruction::Goto(OpArg {
                     kind: Arg::RelativeMem(0),
@@ -471,7 +471,7 @@ impl FunctionParser {
                     ),
                 ..
             },
-        ) = FatInstruction::parse(input)?
+        ) = FatInstruction::parse_fat(input)?
         else {
             return Err(ParseError::NoMatch);
         }; // if jump
@@ -479,7 +479,7 @@ impl FunctionParser {
         if equal_to {
             condition = condition.negate();
         }
-        let (input, op) = FatInstruction::parse(input)?;
+        let (input, op) = FatInstruction::parse_fat(input)?;
         let Some(MidIR::Assign(Expr::OutArg(v1), val1)) = self.instruction_to_midir(op.kind) else {
             return Err(ParseError::NoMatch);
         };
@@ -494,7 +494,7 @@ impl FunctionParser {
                     }),
                 ..
             },
-        ) = FatInstruction::parse(input)?
+        ) = FatInstruction::parse_fat(input)?
         else {
             return Err(ParseError::NoMatch);
         };
@@ -503,7 +503,7 @@ impl FunctionParser {
             return Err(ParseError::NoMatch);
         }
 
-        let (input, op) = FatInstruction::parse(input)?;
+        let (input, op) = FatInstruction::parse_fat(input)?;
         let Some(MidIR::Assign(Expr::OutArg(v2), val2)) = self.instruction_to_midir(op.kind) else {
             return Err(ParseError::NoMatch);
         };
@@ -523,7 +523,7 @@ impl FunctionParser {
     }
 
     fn parse_simple_assign<'a>(&self, input: Input<'a>) -> Result<(Input<'a>, MidIR), ParseError> {
-        let (input, op) = FatInstruction::parse(input)?;
+        let (input, op) = FatInstruction::parse_fat(input)?;
         let Some(midir) = self.instruction_to_midir(op.kind) else {
             return Err(ParseError::NoMatch);
         };
@@ -555,7 +555,7 @@ impl FunctionParser {
             last_arg_offset = v;
         };
 
-        let (input, goto) = FatInstruction::parse(input)?;
+        let (input, goto) = FatInstruction::parse_fat(input)?;
         if return_addr != input.offset {
             return Err(ParseError::NoMatch);
         }
@@ -614,7 +614,7 @@ impl FunctionParser {
                     max_addr_seen = input.offset;
                     break;
                 }
-            } else if let Ok((new_input, op)) = FatInstruction::parse(input) {
+            } else if let Ok((new_input, op)) = FatInstruction::parse_fat(input) {
                 match op.kind {
                     FatInstruction::Goto(OpArg {
                         kind: Arg::Value(addr),
@@ -756,7 +756,7 @@ impl FunctionParser {
 }
 
 fn parse_function(input: Input) -> Result<FunctionRange, ParseError> {
-    let (input, adjust_res) = FatInstruction::parse(input)?;
+    let (input, adjust_res) = FatInstruction::parse_fat(input)?;
     let stack_size = match adjust_res.kind {
         FatInstruction::AdjustRelativeBase(OpArg {
             kind: Arg::Value(r),

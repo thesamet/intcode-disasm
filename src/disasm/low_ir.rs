@@ -118,7 +118,17 @@ impl Display for OpArg {
 }
 
 pub trait ArgBase {
-    fn is_value(&self) -> bool;
+    fn value(&self) -> Option<i128>;
+
+    fn is_value(&self) -> bool {
+        Self::value(self).is_some()
+    }
+
+    fn relative_mem(&self) -> Option<i128>;
+
+    fn is_relative_mem(&self) -> bool {
+        Self::relative_mem(self).is_some()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -150,24 +160,48 @@ pub struct GenericOp<T: ArgBase> {
 
 pub type Op = GenericOp<OpArg>;
 
-impl Op {
-    fn to_arg_instruction(&self) -> Instruction {
-        self.kind.map(|x| x.kind)
+impl From<OpArg> for Arg {
+    fn from(arg: OpArg) -> Self {
+        arg.kind
     }
 }
 
 impl ArgBase for Arg {
-    fn is_value(&self) -> bool {
-        matches!(self, Arg::Value(_))
+    fn value(&self) -> Option<i128> {
+        if let Arg::Value(x) = self {
+            Some(*x)
+        } else {
+            None
+        }
+    }
+
+    fn relative_mem(&self) -> Option<i128> {
+        if let Arg::RelativeMem(x) = self {
+            Some(*x)
+        } else {
+            None
+        }
     }
 }
 
 impl ArgBase for OpArg {
-    fn is_value(&self) -> bool {
-        self.kind.is_value()
+    fn value(&self) -> Option<i128> {
+        self.kind.value()
+    }
+
+    fn relative_mem(&self) -> Option<i128> {
+        self.kind.relative_mem()
     }
 }
 
+impl<ArgType> GenericInstruction<ArgType>
+where
+    ArgType: ArgBase + From<OpArg>,
+{
+    pub fn parse(input: Input) -> Result<(Input, GenericInstruction<ArgType>), ParseError> {
+        FatInstruction::parse_fat(input).map(|(input, op)| (input, op.kind.map(|&f| f.into())))
+    }
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParseError {
     Empty,
@@ -268,14 +302,8 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
     }
 }
 
-impl Instruction {
-    pub fn parse(input: Input) -> Result<(Input, Instruction), ParseError> {
-        FatInstruction::parse(input).map(|(input, op)| (input, op.to_arg_instruction()))
-    }
-}
-
 impl FatInstruction {
-    pub fn parse(input: Input) -> Result<(Input, Op), ParseError> {
+    pub fn parse_fat(input: Input) -> Result<(Input, Op), ParseError> {
         let offset = input.offset;
         let (input, op) = input.read()?;
         let opcode = op % 100;
@@ -325,9 +353,7 @@ impl FatInstruction {
     }
 
     pub fn from_slice(offset: usize, prog: &[i128]) -> Option<Self> {
-        Self::parse(Input::new(offset, prog))
-            .ok()
-            .map(|(_, op)| op.kind)
+        Self::parse(Input::new(offset, prog)).ok().map(|(_, op)| op)
     }
 
     fn simplify(self) -> Self {

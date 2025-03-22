@@ -11,10 +11,6 @@ use crate::disasm::{data_flow_analysis, low_ir::Span};
 pub struct BlockId(usize);
 
 impl BlockId {
-    pub fn new(id: usize) -> Self {
-        BlockId(id)
-    }
-
     pub fn addr(&self) -> usize {
         self.0
     }
@@ -31,44 +27,44 @@ impl std::fmt::Display for BlockId {
         write!(f, "{}", self.0)
     }
 }
-use super::low_ir::{Arg, Input, Instruction, ParseError};
+use super::low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError};
 
 #[derive(Debug, Copy, Clone)]
-pub struct FunctionCall {
+pub struct FunctionCall<ArgType: ArgBase> {
     pub calling_block: BlockId,
-    pub function_addr: Arg,
+    pub function_addr: ArgType,
     pub return_block: BlockId,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct Condition {
+pub struct Condition<ArgType: ArgBase> {
     pub from_block: BlockId,
     pub jump_block: BlockId,
     pub follows_block: BlockId,
-    pub arg: Arg,
+    pub arg: ArgType,
     pub matches: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum NextKind {
+pub enum NextKind<ArgType: ArgBase> {
     Follows(BlockId), // block always immediately follows
-    Goto(Arg),        // unconditional jump
-    FunctionCall(FunctionCall),
-    Condition(Condition),
+    Goto(ArgType),    // unconditional jump
+    FunctionCall(FunctionCall<ArgType>),
+    Condition(Condition<ArgType>),
     Halt,
     Unknown,
     Return,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum PredecessorKind {
+pub enum PredecessorKind<ArgType: ArgBase> {
     FollowsFrom(BlockId), // block immediately before
     GotoFrom(BlockId),    // block the goto came from
-    FunctionCallReturns(FunctionCall),
-    ConditionalFollow(Condition),
-    ConditionalJump(Condition),
+    FunctionCallReturns(FunctionCall<ArgType>),
+    ConditionalFollow(Condition<ArgType>),
+    ConditionalJump(Condition<ArgType>),
 }
 
-impl PredecessorKind {
+impl<ArgType: ArgBase> PredecessorKind<ArgType> {
     pub fn addr(&self) -> BlockId {
         match self {
             PredecessorKind::FollowsFrom(addr) => *addr,
@@ -83,32 +79,36 @@ impl PredecessorKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block {
-    pub predecessors: Vec<PredecessorKind>,
-    pub ops: Vec<(usize, Instruction)>,
-    pub next: NextKind,
+pub struct Block<ArgType: ArgBase> {
+    pub predecessors: Vec<PredecessorKind<ArgType>>,
+    pub ops: Vec<(usize, GenericInstruction<ArgType>)>,
+    pub next: NextKind<ArgType>,
     pub span: Span, // includes the possible branching at the end.
 }
 
-impl Block {
+impl<ArgType> Block<ArgType>
+where
+    ArgType: ArgBase + From<OpArg> + Copy + Clone,
+{
     pub fn id(&self) -> BlockId {
         BlockId(self.span.start)
     }
 
     fn parse_function_call<'a>(
         input: Input<'a>,
-        block: &mut Block,
+        block: &mut Block<ArgType>,
     ) -> Result<Input<'a>, ParseError> {
         let assign_offset = input.offset;
-        let (input, assign_op) = Instruction::parse(input)?;
-        let Instruction::Assign(_, Arg::Value(return_addr)) = assign_op else {
-            return Err(ParseError::InvalidOpcode);
+        let (input, assign_op) = GenericInstruction::<ArgType>::parse(input)?;
+        let return_addr = match assign_op {
+            GenericInstruction::Assign(_, arg) if arg.is_value() => arg.value().unwrap(),
+            _ => return Err(ParseError::InvalidOpcode),
         };
         let return_addr = return_addr as usize;
 
         let goto_offset = input.offset;
-        let (input, goto_op) = Instruction::parse(input)?;
-        let Instruction::Goto(goto_arg) = goto_op else {
+        let (input, goto_op) = GenericInstruction::parse(input)?;
+        let GenericInstruction::Goto(goto_arg) = goto_op else {
             return Err(ParseError::InvalidOpcode);
         };
         if return_addr != input.offset {
@@ -124,22 +124,27 @@ impl Block {
         Ok(input)
     }
 
-    fn parse_return<'a>(input: Input<'a>, block: &mut Block) -> Result<Input<'a>, ParseError> {
+    fn parse_return<'a>(
+        input: Input<'a>,
+        block: &mut Block<ArgType>,
+    ) -> Result<Input<'a>, ParseError> {
         let adjust_offset = input.offset;
-        let (input, adjust_op) = Instruction::parse(input)?;
-        let Instruction::AdjustRelativeBase(Arg::Value(r)) = adjust_op else {
+        let (input, adjust_op) = GenericInstruction::<ArgType>::parse(input)?;
+        let GenericInstruction::AdjustRelativeBase(arg) = &adjust_op else {
             return Err(ParseError::NoMatch);
         };
-        if r >= 0 {
+        if arg.value().is_some_and(|r| r >= 0) {
             return Err(ParseError::NoMatch);
         }
         let goto_offset = input.offset;
-        let (input, goto_op) = Instruction::parse(input)?;
-        if let Instruction::Goto(Arg::RelativeMem(0)) = goto_op {
-            block.next = NextKind::Return;
-        } else {
+        let (input, goto_op) = GenericInstruction::<ArgType>::parse(input)?;
+        let GenericInstruction::Goto(goto_arg) = &goto_op else {
+            return Err(ParseError::NoMatch);
+        };
+        if goto_arg.relative_mem() == Some(0) {
             return Err(ParseError::NoMatch);
         }
+        block.next = NextKind::Return;
         block.ops.push((adjust_offset, adjust_op));
         block.ops.push((goto_offset, goto_op));
         Ok(input)
@@ -148,7 +153,7 @@ impl Block {
     // continues as long as it returns Ok(true), Ok(false) is successful completion.
     fn parse_single<'a>(
         input: Input<'a>,
-        block: &mut Block,
+        block: &mut Block<ArgType>,
     ) -> Result<(Input<'a>, bool), ParseError> {
         if let Ok(input) =
             Self::parse_function_call(input, block).or_else(|_| Self::parse_return(input, block))
@@ -156,40 +161,45 @@ impl Block {
             return Ok((input, false));
         }
         let offset = input.offset;
-        let (input, op) = Instruction::parse(input)?;
+        let (input, op) = GenericInstruction::parse(input)?;
         block.ops.push((offset, op.clone()));
 
-        match op {
-            Instruction::Goto(op_arg) => {
-                block.next = NextKind::Goto(op_arg);
+        match &op {
+            GenericInstruction::Goto(op_arg) => {
+                block.next = NextKind::Goto(*op_arg);
                 Ok((input, false))
             }
-            Instruction::JumpIf(arg, matches, Arg::Value(addr)) => {
+            GenericInstruction::JumpIf(arg, matches, jump_arg) if jump_arg.is_value() => {
+                let jump_block = BlockId(jump_arg.value().unwrap() as usize);
                 block.next = NextKind::Condition(Condition {
                     from_block: BlockId(block.span.start),
-                    jump_block: BlockId(addr as usize),
+                    jump_block,
                     follows_block: BlockId(input.offset),
-                    arg,
-                    matches,
+                    arg: *arg,
+                    matches: *matches,
                 });
                 Ok((input, false))
             }
-            Instruction::Halt => {
+            GenericInstruction::Halt => {
                 let input = Self::parse_halt_exit(block, input).unwrap_or(input);
                 block.next = NextKind::Halt; // needs to be here since parse_halt_exit may set to
                                              // return kind.
                 Ok((input, false))
             }
-            Instruction::Data(_) => unreachable!(),
+            GenericInstruction::Data(_) => unreachable!(),
             _ => Ok((input, true)),
         }
     }
 
-    fn parse_halt_exit<'a>(block: &mut Block, input: Input<'a>) -> Result<Input<'a>, ParseError> {
+    fn parse_halt_exit<'a>(
+        block: &mut Block<ArgType>,
+        input: Input<'a>,
+    ) -> Result<Input<'a>, ParseError> {
         let halt_offset = input.offset - 1;
-        let (input, op) = Instruction::parse(input)?;
-        let Instruction::Goto(Arg::Value(goto_offset)) = op else {
-            return Err(ParseError::NoMatch);
+        let (input, op) = GenericInstruction::<ArgType>::parse(input)?;
+        let goto_offset = match op {
+            GenericInstruction::Goto(arg) if arg.is_value() => arg.value().unwrap() as usize,
+            _ => return Err(ParseError::NoMatch),
         };
         if goto_offset as usize != halt_offset {
             return Err(ParseError::NoMatch);
@@ -199,7 +209,7 @@ impl Block {
         Ok(input)
     }
 
-    fn parse(input: Input, jump_targets: &HashSet<usize>) -> Result<Block, ParseError> {
+    fn parse(input: Input, jump_targets: &HashSet<usize>) -> Result<Block<ArgType>, ParseError> {
         let mut block = Block {
             predecessors: vec![],
             ops: vec![],
@@ -222,31 +232,30 @@ impl Block {
     }
 
     fn next_unconditional(&self) -> Option<BlockId> {
-        match self.next {
-            NextKind::Follows(block_id) => Some(block_id),
-            NextKind::Goto(Arg::Value(addr)) => Some(BlockId(addr as usize)),
+        match &self.next {
+            NextKind::Follows(block_id) => Some(*block_id),
+            NextKind::Goto(arg) if arg.is_value() => Some(BlockId(arg.value().unwrap() as usize)),
             _ => None,
         }
     }
 
     pub fn function_call_address(&self) -> Option<usize> {
-        match self.next {
+        match &self.next {
             NextKind::FunctionCall(
                 FunctionCall {
-                    function_addr: Arg::Value(addr),
-                    ..
+                    function_addr: arg, ..
                 },
                 ..,
-            ) => Some(addr as usize),
+            ) if arg.is_value() => Some(arg.value().unwrap() as usize),
             _ => None,
         }
     }
 
     pub fn next_blocks(&self) -> Vec<BlockId> {
-        match self.next {
-            NextKind::Follows(addr) => vec![addr],
-            NextKind::Goto(Arg::Value(addr)) => vec![BlockId(addr as usize)],
-            NextKind::FunctionCall(FunctionCall { return_block, .. }) => vec![return_block],
+        match &self.next {
+            NextKind::Follows(addr) => vec![*addr],
+            NextKind::Goto(arg) if arg.is_value() => vec![BlockId(arg.value().unwrap() as usize)],
+            NextKind::FunctionCall(FunctionCall { return_block, .. }) => vec![*return_block],
             NextKind::Halt => vec![],
             NextKind::Unknown => vec![],
             NextKind::Return => vec![],
@@ -254,13 +263,16 @@ impl Block {
                 jump_block,
                 follows_block,
                 ..
-            }) => vec![jump_block, follows_block],
+            }) => vec![*jump_block, *follows_block],
             _ => unreachable!(),
         }
     }
 }
 
-impl Display for Block {
+impl<ArgType> Display for Block<ArgType>
+where
+    ArgType: ArgBase + Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Block {}: ", self.span)?;
         for (addr, op) in &self.ops {
@@ -295,13 +307,17 @@ impl Display for Block {
 }
 
 #[derive(Debug, Clone)]
-pub struct Graph {
+pub struct Graph<ArgType: ArgBase> {
     pub start: BlockId,
     pub stack_size: usize,
-    pub blocks: HashMap<BlockId, Block>,
+    pub blocks: HashMap<BlockId, Block<ArgType>>,
 }
-impl Graph {
-    fn split_blocks(blocks: &mut HashMap<BlockId, Block>, jump_targets: &HashSet<usize>) {
+
+impl<ArgType: ArgBase> Graph<ArgType>
+where
+    ArgType: ArgBase + From<OpArg> + Copy + Clone + Display,
+{
+    fn split_blocks(blocks: &mut HashMap<BlockId, Block<ArgType>>, jump_targets: &HashSet<usize>) {
         let mut blocks_to_split = vec![];
         for (addr, block) in blocks.iter() {
             for jump_target in jump_targets.iter().sorted().rev() {
@@ -323,7 +339,7 @@ impl Graph {
 
             let new_block = Block {
                 ops: new_ops,
-                next: block.next,
+                next: block.next.clone(),
                 span: block.span.with_start(jump_target),
                 predecessors: vec![],
             };
@@ -334,9 +350,9 @@ impl Graph {
     }
 
     fn parse_stack_size(input: Input) -> Result<usize, ParseError> {
-        let (_, adjust_res) = Instruction::parse(input)?;
+        let (_, adjust_res) = GenericInstruction::parse(input)?;
         match adjust_res {
-            Instruction::AdjustRelativeBase(Arg::Value(r)) if r > 0 => {
+            GenericInstruction::AdjustRelativeBase(Arg::Value(r)) if r > 0 => {
                 if input.offset == 0 {
                     Ok(0)
                 } else {
@@ -347,7 +363,7 @@ impl Graph {
         }
     }
 
-    pub fn build_from(prog: &[i128], start: usize) -> Result<Graph, ParseError> {
+    pub fn build_from(prog: &[i128], start: usize) -> Result<Self, ParseError> {
         let mut blocks = HashMap::new();
         let mut seen = HashSet::new();
         let mut stack = Vec::new();
@@ -382,19 +398,19 @@ impl Graph {
         })
     }
 
-    fn scan(prog: &[i128]) -> Vec<Graph> {
+    fn scan(prog: &[i128]) -> Vec<Graph<ArgType>> {
         let mut graphs = vec![];
         let mut data = vec![];
         for start in 0..prog.len() {
-            if graphs.iter().any(|g: &Graph| {
+            if graphs.iter().any(|g: &Graph<ArgType>| {
                 g.blocks
                     .iter()
                     .any(|(_, block)| block.span.contains_address(start))
             }) {
                 continue;
             }
-            let Ok((_, Instruction::AdjustRelativeBase(Arg::Value(r)))) =
-                Instruction::parse(make_input(prog, start))
+            let Ok((_, GenericInstruction::AdjustRelativeBase(Arg::Value(r)))) =
+                GenericInstruction::parse(make_input(prog, start))
             else {
                 data.push(start);
                 continue;
@@ -426,7 +442,7 @@ impl Graph {
         graphs
     }
 
-    fn update_predecessor(blocks: &mut HashMap<BlockId, Block>) {
+    fn update_predecessor(blocks: &mut HashMap<BlockId, Block<ArgType>>) {
         let mut hm = HashMap::new();
         let mut add_pred = |dst, v| {
             hm.entry(dst).or_insert_with(Vec::new).push(v);
@@ -434,9 +450,10 @@ impl Graph {
         for (&src, ref block) in blocks.iter() {
             match block.next {
                 NextKind::Follows(p) => add_pred(p, PredecessorKind::FollowsFrom(src)),
-                NextKind::Goto(Arg::Value(p)) => {
-                    add_pred(BlockId(p as usize), PredecessorKind::GotoFrom(src))
-                }
+                NextKind::Goto(arg) if arg.is_value() => add_pred(
+                    BlockId(arg.value().unwrap() as usize),
+                    PredecessorKind::GotoFrom(src),
+                ),
                 NextKind::Goto(_) => unreachable!(),
                 NextKind::FunctionCall(function_call) => add_pred(
                     function_call.return_block,
@@ -467,7 +484,10 @@ fn make_input(prog: &[i128], offset: usize) -> Input<'_> {
     input
 }
 
-impl Display for Graph {
+impl<ArgType> Display for Graph<ArgType>
+where
+    ArgType: ArgBase + Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (addr, block) in self.blocks.iter().sorted_by_key(|x| x.0) {
             writeln!(f, "addr {}, {}", addr, block)?;
@@ -477,7 +497,7 @@ impl Display for Graph {
 }
 
 pub fn drive(prog: &[i128]) {
-    let graphs = Graph::scan(prog);
+    let graphs = Graph::<Arg>::scan(prog);
     for graph in graphs {
         println!("----------");
         println!("Graph at {}", graph.start);
