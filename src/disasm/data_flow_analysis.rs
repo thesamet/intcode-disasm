@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{
-    control_flow_graph::{Block, Graph},
+    control_flow_graph::{Block, BlockId, Graph},
     low_ir::Arg,
 };
 
@@ -14,7 +14,7 @@ use itertools::Itertools;
 pub struct Definition {
     pub instruction_addr: usize,
     pub arg: Arg,
-    pub block: usize,
+    pub block: BlockId,
 }
 
 impl Display for Definition {
@@ -60,7 +60,7 @@ impl BlockDef {
 
 #[derive(Debug)]
 pub struct GraphDataFlow {
-    pub block_defs: HashMap<usize, BlockDef>,
+    pub block_defs: HashMap<BlockId, BlockDef>,
 }
 
 fn get_definitions(block: &Block) -> HashMap<Arg, Definition> {
@@ -73,7 +73,7 @@ fn get_definitions(block: &Block) -> HashMap<Arg, Definition> {
                 Definition {
                     arg: *arg,
                     instruction_addr: *addr,
-                    block: block.span.start,
+                    block: block.id(),
                 },
             );
         }
@@ -132,7 +132,7 @@ impl GraphDataFlow {
             let mut changed = false;
             for (addr, block) in &graph.blocks {
                 let mut live_out_set = HashSet::new();
-                for succ in &block.next_addresses() {
+                for succ in &block.next_blocks() {
                     live_out_set.extend(flow.block_defs[succ].live_in.clone());
                 }
                 let block_def = flow.block_defs.get_mut(addr).unwrap();

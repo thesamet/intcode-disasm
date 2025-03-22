@@ -7,28 +7,51 @@ use itertools::Itertools;
 
 use crate::disasm::{data_flow_analysis, low_ir::Span};
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockId(usize);
+
+impl BlockId {
+    pub fn new(id: usize) -> Self {
+        BlockId(id)
+    }
+
+    pub fn addr(&self) -> usize {
+        self.0
+    }
+}
+
+impl From<usize> for BlockId {
+    fn from(id: usize) -> Self {
+        BlockId(id)
+    }
+}
+
+impl std::fmt::Display for BlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 use super::low_ir::{Arg, Input, Instruction, ParseError};
 
 #[derive(Debug, Copy, Clone)]
 pub struct FunctionCall {
-    pub calling_block: usize,
+    pub calling_block: BlockId,
     pub function_addr: Arg,
-    pub return_block: usize,
+    pub return_block: BlockId,
 }
-
 #[derive(Debug, Copy, Clone)]
 pub struct Condition {
-    pub from_block: usize,
-    pub jump_block: usize,
-    pub follows_block: usize,
+    pub from_block: BlockId,
+    pub jump_block: BlockId,
+    pub follows_block: BlockId,
     pub arg: Arg,
     pub matches: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub enum NextKind {
-    Follows(usize), // block always immediately follows
-    Goto(Arg),      // unconditional jump
+    Follows(BlockId), // block always immediately follows
+    Goto(Arg),        // unconditional jump
     FunctionCall(FunctionCall),
     Condition(Condition),
     Halt,
@@ -38,15 +61,15 @@ pub enum NextKind {
 
 #[derive(Debug, Copy, Clone)]
 pub enum PredecessorKind {
-    FollowsFrom(usize), // block immediately before
-    GotoFrom(usize),    // block the goto came from
+    FollowsFrom(BlockId), // block immediately before
+    GotoFrom(BlockId),    // block the goto came from
     FunctionCallReturns(FunctionCall),
     ConditionalFollow(Condition),
     ConditionalJump(Condition),
 }
 
 impl PredecessorKind {
-    pub fn addr(&self) -> usize {
+    pub fn addr(&self) -> BlockId {
         match self {
             PredecessorKind::FollowsFrom(addr) => *addr,
             PredecessorKind::GotoFrom(addr) => *addr,
@@ -68,6 +91,10 @@ pub struct Block {
 }
 
 impl Block {
+    pub fn id(&self) -> BlockId {
+        BlockId(self.span.start)
+    }
+
     fn parse_function_call<'a>(
         input: Input<'a>,
         block: &mut Block,
@@ -88,9 +115,9 @@ impl Block {
             return Err(ParseError::InvalidOpcode);
         }
         block.next = NextKind::FunctionCall(FunctionCall {
-            calling_block: 0,
+            calling_block: BlockId(0),
             function_addr: goto_arg,
-            return_block: return_addr,
+            return_block: BlockId(return_addr),
         });
         block.ops.push((assign_offset, assign_op));
         block.ops.push((goto_offset, goto_op));
@@ -139,9 +166,9 @@ impl Block {
             }
             Instruction::JumpIf(arg, matches, Arg::Value(addr)) => {
                 block.next = NextKind::Condition(Condition {
-                    from_block: block.span.start,
-                    jump_block: addr as usize,
-                    follows_block: input.offset,
+                    from_block: BlockId(block.span.start),
+                    jump_block: BlockId(addr as usize),
+                    follows_block: BlockId(input.offset),
                     arg,
                     matches,
                 });
@@ -186,7 +213,7 @@ impl Block {
             input = next_input;
             cont = next_cont;
             if cont && jump_targets.contains(&next_input.offset) {
-                block.next = NextKind::Follows(next_input.offset);
+                block.next = NextKind::Follows(BlockId(next_input.offset));
                 break;
             }
         }
@@ -194,10 +221,10 @@ impl Block {
         Ok(block)
     }
 
-    fn next_unconditional(&self) -> Option<usize> {
+    fn next_unconditional(&self) -> Option<BlockId> {
         match self.next {
-            NextKind::Follows(addr) => Some(addr),
-            NextKind::Goto(Arg::Value(addr)) => Some(addr as usize),
+            NextKind::Follows(block_id) => Some(block_id),
+            NextKind::Goto(Arg::Value(addr)) => Some(BlockId(addr as usize)),
             _ => None,
         }
     }
@@ -215,17 +242,10 @@ impl Block {
         }
     }
 
-    fn function_return_addr(&self) -> Option<usize> {
-        match self.next {
-            NextKind::FunctionCall(FunctionCall { return_block, .. }) => Some(return_block),
-            _ => None,
-        }
-    }
-
-    pub fn next_addresses(&self) -> Vec<usize> {
+    pub fn next_blocks(&self) -> Vec<BlockId> {
         match self.next {
             NextKind::Follows(addr) => vec![addr],
-            NextKind::Goto(Arg::Value(addr)) => vec![addr as usize],
+            NextKind::Goto(Arg::Value(addr)) => vec![BlockId(addr as usize)],
             NextKind::FunctionCall(FunctionCall { return_block, .. }) => vec![return_block],
             NextKind::Halt => vec![],
             NextKind::Unknown => vec![],
@@ -276,13 +296,12 @@ impl Display for Block {
 
 #[derive(Debug, Clone)]
 pub struct Graph {
-    pub start: usize,
+    pub start: BlockId,
     pub stack_size: usize,
-    pub blocks: HashMap<usize, Block>,
+    pub blocks: HashMap<BlockId, Block>,
 }
-
 impl Graph {
-    fn split_blocks(blocks: &mut HashMap<usize, Block>, jump_targets: &HashSet<usize>) {
+    fn split_blocks(blocks: &mut HashMap<BlockId, Block>, jump_targets: &HashSet<usize>) {
         let mut blocks_to_split = vec![];
         for (addr, block) in blocks.iter() {
             for jump_target in jump_targets.iter().sorted().rev() {
@@ -308,9 +327,9 @@ impl Graph {
                 span: block.span.with_start(jump_target),
                 predecessors: vec![],
             };
-            block.next = NextKind::Follows(jump_target);
+            block.next = NextKind::Follows(BlockId(jump_target));
             block.span.end = jump_target;
-            blocks.insert(jump_target, new_block);
+            blocks.insert(BlockId(jump_target), new_block);
         }
     }
 
@@ -342,9 +361,9 @@ impl Graph {
             seen.insert(offset);
             let input = make_input(prog, offset);
             let block = Block::parse(input, &jump_targets)?;
-            stack.extend(block.next_addresses());
-            jump_targets.extend(block.next_addresses());
-            blocks.insert(offset, block);
+            stack.extend(block.next_blocks().iter().map(|b| b.addr()));
+            jump_targets.extend(block.next_blocks().iter().map(|b| b.addr()));
+            blocks.insert(BlockId(offset), block);
         }
         Self::split_blocks(&mut blocks, &jump_targets);
         for (addr, block) in &mut blocks {
@@ -357,7 +376,7 @@ impl Graph {
         }
         Self::update_predecessor(&mut blocks);
         Ok(Graph {
-            start,
+            start: BlockId(start),
             stack_size,
             blocks,
         })
@@ -407,16 +426,16 @@ impl Graph {
         graphs
     }
 
-    fn update_predecessor(blocks: &mut HashMap<usize, Block>) {
+    fn update_predecessor(blocks: &mut HashMap<BlockId, Block>) {
         let mut hm = HashMap::new();
         let mut add_pred = |dst, v| {
             hm.entry(dst).or_insert_with(Vec::new).push(v);
         };
-        for (&src, block) in blocks.iter() {
+        for (&src, ref block) in blocks.iter() {
             match block.next {
                 NextKind::Follows(p) => add_pred(p, PredecessorKind::FollowsFrom(src)),
                 NextKind::Goto(Arg::Value(p)) => {
-                    add_pred(p as usize, PredecessorKind::GotoFrom(src))
+                    add_pred(BlockId(p as usize), PredecessorKind::GotoFrom(src))
                 }
                 NextKind::Goto(_) => unreachable!(),
                 NextKind::FunctionCall(function_call) => add_pred(
@@ -465,7 +484,7 @@ pub fn drive(prog: &[i128]) {
         let flow = data_flow_analysis::GraphDataFlow::build_for(&graph);
         for (_, block) in graph.blocks.iter().sorted_by_key(|x| x.0) {
             print!("{}", block);
-            let bd = flow.block_defs.get(&block.span.start).unwrap();
+            let bd = flow.block_defs.get(&block.id()).unwrap();
             println!(
                 " In={}\nOut={}\n LiveIn={}\nLiveOut={}",
                 bd.defs_in.iter().map(|x| x.to_string()).join(", "),

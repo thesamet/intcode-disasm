@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{
-    control_flow_graph::{Block, Graph},
+    control_flow_graph::{Block, BlockId, Graph},
     data_flow_analysis::GraphDataFlow,
     low_ir::{Arg, ArgBase, GenericInstruction},
 };
@@ -36,8 +36,8 @@ pub struct SSAConverter<'a> {
     graph: &'a Graph,
     flow: &'a GraphDataFlow,
     current_version: HashMap<Arg, usize>,
-    var_versions: HashMap<(usize, Arg), SSAArg>, // Maps (block, var) to SSA version
-    phi_nodes: HashMap<usize, HashMap<Arg, SSAInstruction>>,
+    var_versions: HashMap<(BlockId, Arg), SSAArg>, // Maps (block, var) to SSA version
+    phi_nodes: HashMap<BlockId, HashMap<Arg, SSAInstruction>>,
 }
 
 impl<'a> SSAConverter<'a> {
@@ -100,13 +100,13 @@ impl<'a> SSAConverter<'a> {
         self.rename_block(self.graph.start, &mut visited);
     }
 
-    fn rename_block(&mut self, block_addr: usize, visited: &mut HashSet<usize>) {
-        if !visited.insert(block_addr) {
+    fn rename_block(&mut self, block_id: BlockId, visited: &mut HashSet<BlockId>) {
+        if !visited.insert(block_id) {
             return; // Already processed
         }
 
         // Process phi nodes first (if any)
-        if let Some(phi_map) = self.phi_nodes.get_mut(&block_addr) {
+        if let Some(phi_map) = self.phi_nodes.get_mut(&block_id) {
             for (arg, phi) in phi_map {
                 // Assign new version to phi result
                 let new_version = *self.current_version.entry(*arg).or_insert(0) + 1;
@@ -119,12 +119,12 @@ impl<'a> SSAConverter<'a> {
                     arg: *arg,
                     version: new_version,
                 };
-                self.var_versions.insert((block_addr, *arg), *dest);
+                self.var_versions.insert((block_id, *arg), *dest);
             }
         }
 
         // Process regular instructions
-        let block = &self.graph.blocks[&block_addr];
+        let block = &self.graph.blocks[&block_id];
         for (_, instr) in &block.ops {
             // Rename used variables
             for read_arg in instr.reads() {
@@ -134,7 +134,7 @@ impl<'a> SSAConverter<'a> {
                 // Use the current version
                 let version = *self.current_version.entry(*read_arg).or_insert(0);
                 self.var_versions.insert(
-                    (block_addr, *read_arg),
+                    (block_id, *read_arg),
                     SSAArg {
                         arg: *read_arg,
                         version,
@@ -150,7 +150,7 @@ impl<'a> SSAConverter<'a> {
                 let new_version = *self.current_version.entry(*write_arg).or_insert(0) + 1;
                 self.current_version.insert(*write_arg, new_version);
                 self.var_versions.insert(
-                    (block_addr, *write_arg),
+                    (block_id, *write_arg),
                     SSAArg {
                         arg: *write_arg,
                         version: new_version,
@@ -160,10 +160,10 @@ impl<'a> SSAConverter<'a> {
         }
 
         // Process successors and update phi arguments
-        for succ_addr in block.next_addresses() {
+        for succ_addr in block.next_blocks() {
             if let Some(phi_map) = self.phi_nodes.get_mut(&succ_addr) {
                 for (arg, phi) in phi_map {
-                    if let Some(version) = self.var_versions.get(&(block_addr, *arg)) {
+                    if let Some(version) = self.var_versions.get(&(block_id, *arg)) {
                         if let GenericInstruction::Phi(_, args) = phi {
                             args.push(*version);
                         }
@@ -179,13 +179,13 @@ impl<'a> SSAConverter<'a> {
     fn build_ssa_graph(&self) -> Graph {
         let mut new_blocks = HashMap::new();
 
-        for (&addr, block) in &self.graph.blocks {
+        for (&block_id, block) in &self.graph.blocks {
             let mut new_ops = Vec::new();
 
             // Add phi functions at the beginning
-            if let Some(phi_map) = self.phi_nodes.get(&addr) {
+            if let Some(phi_map) = self.phi_nodes.get(&block_id) {
                 for phi in phi_map.values() {
-                    new_ops.push((addr, phi.clone()));
+                    new_ops.push((block_id.addr(), phi.clone()));
                 }
             }
 
@@ -197,7 +197,7 @@ impl<'a> SSAConverter<'a> {
                             arg: *arg,
                             version: 0,
                         }
-                    } else if let Some(version) = self.var_versions.get(&(addr, *arg)) {
+                    } else if let Some(version) = self.var_versions.get(&(block_id, *arg)) {
                         *version
                     } else {
                         unreachable!()
