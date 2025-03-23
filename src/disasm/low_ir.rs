@@ -199,7 +199,7 @@ where
     ArgType: ArgBase + From<OpArg>,
 {
     pub fn parse(input: Input) -> Result<(Input, GenericInstruction<ArgType>), ParseError> {
-        FatInstruction::parse_fat(input).map(|(input, op)| (input, op.kind.map(|&f| f.into())))
+        FatInstruction::parse_fat(input).map(|(input, op)| (input, op.kind.map(|f| (*f).into())))
     }
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -238,29 +238,63 @@ impl<'a> Input<'a> {
 }
 
 impl<ArgType: ArgBase> GenericInstruction<ArgType> {
-    pub fn map<F, T: ArgBase>(&self, f: F) -> GenericInstruction<T>
+    /* Maps the arguments of the instruction to a new type using the provided functions.
+     * The first function is used to map the read arguments, and the second function is used to map
+     * the write arguments. The read function is guaranteed to be called for all read arguments
+     * before the write function is called for any write arguments. This is useful for data flow
+     * functions.
+     */
+    pub fn map_rw<R, W, O, T: ArgBase>(
+        &self,
+        o: &mut O,
+        mut read_map: R,
+        mut write_map: W,
+    ) -> GenericInstruction<T>
     where
-        F: Fn(&ArgType) -> T,
+        R: FnMut(&mut O, &ArgType) -> T,
+        W: FnMut(&mut O, &ArgType) -> T,
     {
         match self {
-            GenericInstruction::Add(a, b, c) => GenericInstruction::Add(f(a), f(b), f(c)),
-            GenericInstruction::Mul(a, b, c) => GenericInstruction::Mul(f(a), f(b), f(c)),
-            GenericInstruction::Input(a) => GenericInstruction::Input(f(a)),
-            GenericInstruction::Output(a) => GenericInstruction::Output(f(a)),
-            GenericInstruction::JumpIf(a, b, c) => GenericInstruction::JumpIf(f(a), *b, f(c)),
-            GenericInstruction::LessThan(a, b, c) => GenericInstruction::LessThan(f(a), f(b), f(c)),
-            GenericInstruction::Equals(a, b, c) => GenericInstruction::Equals(f(a), f(b), f(c)),
+            GenericInstruction::Add(a, b, c) => {
+                GenericInstruction::Add(read_map(o, a), read_map(o, b), write_map(o, c))
+            }
+            GenericInstruction::Mul(a, b, c) => {
+                GenericInstruction::Mul(read_map(o, a), read_map(o, b), write_map(o, c))
+            }
+            GenericInstruction::Input(a) => GenericInstruction::Input(write_map(o, a)),
+            GenericInstruction::Output(a) => GenericInstruction::Output(read_map(o, a)),
+            GenericInstruction::JumpIf(a, b, c) => {
+                GenericInstruction::JumpIf(read_map(o, a), *b, read_map(o, c))
+            }
+            GenericInstruction::LessThan(a, b, c) => {
+                GenericInstruction::LessThan(read_map(o, a), read_map(o, b), write_map(o, c))
+            }
+            GenericInstruction::Equals(a, b, c) => {
+                GenericInstruction::Equals(read_map(o, a), read_map(o, b), write_map(o, c))
+            }
             GenericInstruction::AdjustRelativeBase(a) => {
-                GenericInstruction::AdjustRelativeBase(f(a))
+                GenericInstruction::AdjustRelativeBase(read_map(o, a))
             }
             GenericInstruction::Data(a) => GenericInstruction::Data(a.clone()),
             GenericInstruction::Halt => GenericInstruction::Halt,
-            GenericInstruction::Goto(a) => GenericInstruction::Goto(f(a)),
-            GenericInstruction::Assign(a, b) => GenericInstruction::Assign(f(a), f(b)),
+            GenericInstruction::Goto(a) => GenericInstruction::Goto(read_map(o, a)),
+            GenericInstruction::Assign(a, b) => {
+                let rb = read_map(o, b);
+                GenericInstruction::Assign(write_map(o, a), rb)
+            }
             GenericInstruction::Phi(a, b) => {
-                GenericInstruction::Phi(f(a), b.iter().map(f).collect())
+                let b = b.iter().map(|x| read_map(o, x)).collect();
+                GenericInstruction::Phi(write_map(o, a), b)
             }
         }
+    }
+
+    pub fn map<F, T: ArgBase>(&self, mut f: F) -> GenericInstruction<T>
+    where
+        F: FnMut(&ArgType) -> T + Clone + Copy,
+    {
+        let mut g = f.clone();
+        self.map_rw(&mut (), |_, a| f(a), |_, b| g(b))
     }
 
     pub fn reads(&self) -> Vec<&ArgType> {

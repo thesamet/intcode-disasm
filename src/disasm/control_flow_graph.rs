@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
 };
 
 use itertools::Itertools;
@@ -27,7 +27,10 @@ impl std::fmt::Display for BlockId {
         write!(f, "{}", self.0)
     }
 }
-use super::low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError};
+use super::{
+    low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError},
+    ssa_form::SSAConverter,
+};
 
 #[derive(Debug, Copy, Clone)]
 pub struct FunctionCall<ArgType: ArgBase> {
@@ -65,10 +68,10 @@ pub enum PredecessorKind<ArgType: ArgBase> {
 }
 
 impl<ArgType: ArgBase> PredecessorKind<ArgType> {
-    pub fn addr(&self) -> BlockId {
+    pub fn block_id(&self) -> BlockId {
         match self {
-            PredecessorKind::FollowsFrom(addr) => *addr,
-            PredecessorKind::GotoFrom(addr) => *addr,
+            PredecessorKind::FollowsFrom(block_id) => *block_id,
+            PredecessorKind::GotoFrom(block_id) => *block_id,
             PredecessorKind::FunctionCallReturns(FunctionCall { calling_block, .. }) => {
                 *calling_block
             }
@@ -88,7 +91,7 @@ pub struct Block<ArgType: ArgBase> {
 
 impl<ArgType> Block<ArgType>
 where
-    ArgType: ArgBase + From<OpArg> + Copy + Clone,
+    ArgType: ArgBase + From<OpArg> + Copy + Clone + std::fmt::Debug,
 {
     pub fn id(&self) -> BlockId {
         BlockId(self.span.start)
@@ -133,7 +136,7 @@ where
         let GenericInstruction::AdjustRelativeBase(arg) = &adjust_op else {
             return Err(ParseError::NoMatch);
         };
-        if arg.value().is_some_and(|r| r >= 0) {
+        if arg.value().is_none_or(|r| r >= 0) {
             return Err(ParseError::NoMatch);
         }
         let goto_offset = input.offset;
@@ -141,7 +144,7 @@ where
         let GenericInstruction::Goto(goto_arg) = &goto_op else {
             return Err(ParseError::NoMatch);
         };
-        if goto_arg.relative_mem() == Some(0) {
+        if goto_arg.relative_mem() != Some(0) {
             return Err(ParseError::NoMatch);
         }
         block.next = NextKind::Return;
@@ -201,7 +204,7 @@ where
             GenericInstruction::Goto(arg) if arg.is_value() => arg.value().unwrap() as usize,
             _ => return Err(ParseError::NoMatch),
         };
-        if goto_offset as usize != halt_offset {
+        if goto_offset != halt_offset {
             return Err(ParseError::NoMatch);
         }
         block.ops.push((halt_offset, op));
@@ -264,7 +267,9 @@ where
                 follows_block,
                 ..
             }) => vec![*jump_block, *follows_block],
-            _ => unreachable!(),
+            _ => {
+                unreachable!("next_blocks: {:?}", self.next);
+            }
         }
     }
 }
@@ -307,15 +312,15 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct Graph<ArgType: ArgBase> {
+pub struct ControlFlowGraph<ArgType: ArgBase> {
     pub start: BlockId,
     pub stack_size: usize,
     pub blocks: HashMap<BlockId, Block<ArgType>>,
 }
 
-impl<ArgType: ArgBase> Graph<ArgType>
+impl<ArgType: ArgBase> ControlFlowGraph<ArgType>
 where
-    ArgType: ArgBase + From<OpArg> + Copy + Clone + Display,
+    ArgType: ArgBase + From<OpArg> + Copy + Clone + Debug,
 {
     fn split_blocks(blocks: &mut HashMap<BlockId, Block<ArgType>>, jump_targets: &HashSet<usize>) {
         let mut blocks_to_split = vec![];
@@ -339,7 +344,7 @@ where
 
             let new_block = Block {
                 ops: new_ops,
-                next: block.next.clone(),
+                next: block.next,
                 span: block.span.with_start(jump_target),
                 predecessors: vec![],
             };
@@ -391,18 +396,18 @@ where
             assert!(x.1.span.end <= y.1.span.start);
         }
         Self::update_predecessor(&mut blocks);
-        Ok(Graph {
+        Ok(ControlFlowGraph {
             start: BlockId(start),
             stack_size,
             blocks,
         })
     }
 
-    fn scan(prog: &[i128]) -> Vec<Graph<ArgType>> {
+    fn scan(prog: &[i128]) -> Vec<ControlFlowGraph<ArgType>> {
         let mut graphs = vec![];
         let mut data = vec![];
         for start in 0..prog.len() {
-            if graphs.iter().any(|g: &Graph<ArgType>| {
+            if graphs.iter().any(|g: &ControlFlowGraph<ArgType>| {
                 g.blocks
                     .iter()
                     .any(|(_, block)| block.span.contains_address(start))
@@ -447,7 +452,7 @@ where
         let mut add_pred = |dst, v| {
             hm.entry(dst).or_insert_with(Vec::new).push(v);
         };
-        for (&src, ref block) in blocks.iter() {
+        for (&src, block) in blocks.iter() {
             match block.next {
                 NextKind::Follows(p) => add_pred(p, PredecessorKind::FollowsFrom(src)),
                 NextKind::Goto(arg) if arg.is_value() => add_pred(
@@ -484,7 +489,7 @@ fn make_input(prog: &[i128], offset: usize) -> Input<'_> {
     input
 }
 
-impl<ArgType> Display for Graph<ArgType>
+impl<ArgType> Display for ControlFlowGraph<ArgType>
 where
     ArgType: ArgBase + Display,
 {
@@ -497,21 +502,23 @@ where
 }
 
 pub fn drive(prog: &[i128]) {
-    let graphs = Graph::<Arg>::scan(prog);
+    let graphs = ControlFlowGraph::<Arg>::scan(prog);
     for graph in graphs {
         println!("----------");
         println!("Graph at {}", graph.start);
         let flow = data_flow_analysis::GraphDataFlow::build_for(&graph);
-        for (_, block) in graph.blocks.iter().sorted_by_key(|x| x.0) {
+        let ssa = SSAConverter::new(&graph, &flow);
+        let ssa_graph = ssa.convert();
+        for (_, block) in ssa_graph.blocks.iter().sorted_by_key(|x| x.0) {
             print!("{}", block);
-            let bd = flow.block_defs.get(&block.id()).unwrap();
-            println!(
-                " In={}\nOut={}\n LiveIn={}\nLiveOut={}",
-                bd.defs_in.iter().map(|x| x.to_string()).join(", "),
-                bd.defs_out.iter().map(|x| x.to_string()).join(", "),
-                bd.live_in.iter().map(|x| x.to_string()).join(", "),
-                bd.live_out.iter().map(|x| x.to_string()).join(", "),
-            );
+            // let bd = flow.block_defs.get(&block.id()).unwrap();
+            // println!(
+            //     " In={}\nOut={}\n LiveIn={}\nLiveOut={}",
+            //     bd.defs_in.iter().map(|x| x.to_string()).join(", "),
+            //     bd.defs_out.iter().map(|x| x.to_string()).join(", "),
+            //     bd.live_in.iter().map(|x| x.to_string()).join(", "),
+            //     bd.live_out.iter().map(|x| x.to_string()).join(", "),
+            // );
             println!();
         }
     }

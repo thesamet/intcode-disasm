@@ -4,11 +4,9 @@ use std::{
 };
 
 use super::{
-    control_flow_graph::{Block, BlockId, Graph},
+    control_flow_graph::{Block, BlockId, ControlFlowGraph},
     low_ir::{ArgBase, OpArg},
 };
-
-use itertools::Itertools;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Definition<ArgType> {
@@ -68,7 +66,7 @@ pub struct GraphDataFlow<ArgType> {
 
 fn get_definitions<ArgType>(block: &Block<ArgType>) -> HashMap<ArgType, Definition<ArgType>>
 where
-    ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy + From<OpArg>,
+    ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy + From<OpArg> + std::fmt::Debug,
 {
     let mut hm = HashMap::new();
     for (addr, inst) in &block.ops {
@@ -89,7 +87,7 @@ where
 
 fn get_read_before_write<ArgType>(block: &Block<ArgType>) -> HashSet<ArgType>
 where
-    ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy,
+    ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy + std::fmt::Debug,
 {
     let mut use_set = HashSet::new();
     let mut defines = HashSet::new();
@@ -108,19 +106,22 @@ where
 
 impl<ArgType> GraphDataFlow<ArgType>
 where
-    ArgType: ArgBase + Copy + Clone + Eq + std::hash::Hash + From<OpArg>,
+    ArgType: ArgBase + Copy + Clone + Eq + std::hash::Hash + From<OpArg> + std::fmt::Debug,
 {
     /** Get the set of definitions that potentially reach the given block */
 
-    fn forward_analysis(flow: &mut GraphDataFlow<ArgType>, graph: &Graph<ArgType>) {
+    fn forward_analysis(
+        data_flow: &mut GraphDataFlow<ArgType>,
+        control_flow: &ControlFlowGraph<ArgType>,
+    ) {
         loop {
             let mut changed = false;
-            for (addr, block) in &graph.blocks {
+            for (addr, block) in &control_flow.blocks {
                 let mut in_set = HashSet::new();
                 for pred in &block.predecessors {
-                    in_set.extend(flow.block_defs[&pred.addr()].defs_out.clone());
+                    in_set.extend(data_flow.block_defs[&pred.block_id()].defs_out.clone());
                 }
-                let block_def = flow.block_defs.get_mut(addr).unwrap();
+                let block_def = data_flow.block_defs.get_mut(addr).unwrap();
                 if in_set != block_def.defs_in {
                     changed = true;
                     block_def.defs_in = in_set;
@@ -139,15 +140,18 @@ where
         }
     }
 
-    fn live_variable_analysis(flow: &mut GraphDataFlow<ArgType>, graph: &Graph<ArgType>) {
+    fn live_variable_analysis(
+        data_flow: &mut GraphDataFlow<ArgType>,
+        control_flow: &ControlFlowGraph<ArgType>,
+    ) {
         loop {
             let mut changed = false;
-            for (addr, block) in &graph.blocks {
+            for (addr, block) in &control_flow.blocks {
                 let mut live_out_set = HashSet::new();
                 for succ in &block.next_blocks() {
-                    live_out_set.extend(flow.block_defs[succ].live_in.clone());
+                    live_out_set.extend(data_flow.block_defs[succ].live_in.clone());
                 }
-                let block_def = flow.block_defs.get_mut(addr).unwrap();
+                let block_def = data_flow.block_defs.get_mut(addr).unwrap();
                 if live_out_set != block_def.live_out {
                     changed = true;
                     block_def.live_out = live_out_set;
@@ -171,18 +175,18 @@ where
         }
     }
 
-    pub fn build_for(graph: &Graph<ArgType>) -> GraphDataFlow<ArgType> {
+    pub fn build_for(control_flow: &ControlFlowGraph<ArgType>) -> GraphDataFlow<ArgType> {
         let mut flow = GraphDataFlow {
             block_defs: HashMap::new(),
         };
-        for (addr, block) in &graph.blocks {
+        for (addr, block) in &control_flow.blocks {
             let mut block_def = BlockDef::new();
             block_def.gen_set = get_definitions(block);
             block_def.use_set = get_read_before_write(block);
             flow.block_defs.insert(*addr, block_def);
         }
-        Self::forward_analysis(&mut flow, graph);
-        Self::live_variable_analysis(&mut flow, graph);
+        Self::forward_analysis(&mut flow, control_flow);
+        Self::live_variable_analysis(&mut flow, control_flow);
         flow
     }
 }
