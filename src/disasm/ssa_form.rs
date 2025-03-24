@@ -142,6 +142,11 @@ impl<'a> SSAConverter<'a> {
                 .unwrap()
                 .remove(&source.arg);
         }
+        for block in self.out.blocks.values_mut() {
+            for (_, op) in block.ops.iter_mut() {
+                *op = op.map(|a| final_replacements.get(&a).map(|t| t.1).unwrap_or(*a));
+            }
+        }
     }
 
     fn populate_phi_functions(&mut self) {
@@ -294,8 +299,6 @@ impl<'a> SSAConverter<'a> {
 
     fn process_block(&mut self, block_id: BlockId) {
         self.visited.insert(block_id);
-        println!("Processing block {}", block_id);
-        println!("var_versions: {:?}", self.var_versions[&block_id]);
         self.insert_ops_with_renames(block_id);
         let cdef = &self.control_flow.blocks[&block_id];
         for next in cdef.next_blocks() {
