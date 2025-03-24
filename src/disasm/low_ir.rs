@@ -7,7 +7,7 @@ pub enum Arg {
     Mem(i128),
     Value(i128),
     RelativeMem(i128),
-    Pointer(usize),
+    Deref(usize),
 }
 
 impl Arg {
@@ -79,7 +79,7 @@ impl Arg {
         let arg = match mode {
             0 => {
                 if value == 0 {
-                    Arg::Pointer(offset)
+                    Arg::Deref(offset)
                 } else {
                     Arg::Mem(value)
                 }
@@ -106,7 +106,7 @@ impl Display for Arg {
             Arg::RelativeMem(x) if *x > 0 => write!(f, "[R+{}]", x),
             Arg::RelativeMem(x) if *x < 0 => write!(f, "[R{}]", x),
             Arg::RelativeMem(_) => write!(f, "[R]"),
-            Arg::Pointer(x) => write!(f, "[[{}]]", x),
+            Arg::Deref(x) => write!(f, "[[{}]]", x),
         }
     }
 }
