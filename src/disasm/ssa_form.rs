@@ -1,4 +1,5 @@
 use std::{
+    char,
     collections::{HashMap, HashSet},
     fmt::{self, Display, Formatter},
 };
@@ -57,8 +58,13 @@ struct PhiNode {
 pub struct SSAConverter<'a> {
     control_flow: &'a ControlFlowGraph<Arg>,
     data_flow: &'a GraphDataFlow<Arg>,
+    // Highest version number created for each variable. Used to allocate new versions.
     current_version: HashMap<Arg, usize>,
+    // Latest version of each variable in each block, used for passing into subsequent blocks and
+    // phi functions
     var_versions: HashMap<BlockId, HashMap<Arg, SSAArg>>,
+    // For each SSA variable, the unique location that it is assigned.
+    var_locations: HashMap<SSAArg, usize>,
     // for each block, map Arg to index of phi function in block.ops
     phi_nodes: HashMap<BlockId, HashMap<Arg, PhiNode>>,
     visited: HashSet<BlockId>,
@@ -72,6 +78,7 @@ impl<'a> SSAConverter<'a> {
             data_flow: flow,
             current_version: HashMap::new(),
             var_versions: HashMap::new(),
+            var_locations: HashMap::new(),
             phi_nodes: HashMap::new(),
             visited: HashSet::new(),
             out: ControlFlowGraph {
@@ -112,39 +119,73 @@ impl<'a> SSAConverter<'a> {
         }
         self.process_block(self.control_flow.start);
         self.prune_phi_functions();
+        self.renumber_all_vars();
         self.populate_phi_functions();
         self.out
     }
 
     fn prune_phi_functions(&mut self) {
-        let mut replacements = HashMap::new();
-        for (&block_id, phis) in &self.phi_nodes {
-            for phi in phis.values() {
-                if let Ok(input) = phi.inputs.iter().unique().exactly_one() {
-                    replacements.insert(phi.output, (block_id, *input));
+        let debug = true; // self.control_flow.start.addr() == 3010;
+        loop {
+            println!("ENTER");
+            let mut changed = false;
+            let mut replacements = HashMap::new();
+            let mut to_remove = HashSet::new();
+            for (&block_id, phis) in &self.phi_nodes {
+                for phi in phis.values() {
+                    if let Ok(input) = phi.inputs.iter().unique().exactly_one() {
+                        if debug {
+                            println!(
+                                "Replacing {:?} with {:?} due to unique input",
+                                phi.output, input
+                            );
+                        }
+                        replacements.insert(phi.output, (block_id, *input));
+                        changed = true;
+                    }
+                    if phi.inputs.is_empty() {
+                        println!("Removing {:?} due to empty inputs", phi.output);
+                        to_remove.insert((block_id, phi.output));
+                        changed = true;
+                    }
                 }
             }
-        }
-        let mut final_replacements = HashMap::new();
-        for (&source, (block_id, mut target)) in &replacements {
-            while let Some((_, replacement)) = replacements.get(&target) {
-                target = *replacement
+            let mut final_replacements = HashMap::new();
+            for (&source, (block_id, mut target)) in &replacements {
+                while let Some((_, replacement)) = replacements.get(&target) {
+                    println!("HERE {} {}", source, replacement);
+                    target = *replacement
+                }
+                if to_remove.contains(&(*block_id, target)) {
+                    to_remove.insert((*block_id, source));
+                } else {
+                    final_replacements.insert(source, (block_id, target));
+                }
             }
-            final_replacements.insert(source, (block_id, target));
-        }
-        println!("Replacement for graph {}", self.control_flow.start);
-        for rep in &final_replacements {
-            println!("rep: {:?}", rep);
-        }
-        for (source, (block_id, _)) in &final_replacements {
-            self.phi_nodes
-                .get_mut(block_id)
-                .unwrap()
-                .remove(&source.arg);
-        }
-        for block in self.out.blocks.values_mut() {
-            for (_, op) in block.ops.iter_mut() {
-                *op = op.map(|a| final_replacements.get(&a).map(|t| t.1).unwrap_or(*a));
+            for (block_id, arg) in &to_remove {
+                self.phi_nodes.get_mut(block_id).unwrap().remove(&arg.arg);
+            }
+            for (source, (block_id, _)) in &final_replacements {
+                self.phi_nodes
+                    .get_mut(block_id)
+                    .unwrap()
+                    .remove(&source.arg);
+                for phis in self.phi_nodes.values_mut() {
+                    for phi in phis.values_mut() {
+                        while let Some(index) = phi.inputs.iter().position(|i| i == source) {
+                            // println!("index rep {} {} {}", index, source, phi.output);
+                            phi.inputs[index] = final_replacements.get(source).unwrap().1;
+                        }
+                    }
+                }
+            }
+            for block in self.out.blocks.values_mut() {
+                for (_, op) in block.ops.iter_mut() {
+                    *op = op.map(|a| final_replacements.get(a).map(|t| t.1).unwrap_or(*a));
+                }
+            }
+            if !changed {
+                break;
             }
         }
     }
@@ -167,7 +208,7 @@ impl<'a> SSAConverter<'a> {
         }
     }
 
-    fn create_new_version_for_arg(&mut self, arg: Arg, block_id: BlockId) -> SSAArg {
+    fn create_new_version_for_arg(&mut self, arg: Arg, block_id: BlockId, offset: usize) -> SSAArg {
         let new_version = *self.current_version.entry(arg).or_default() + 1;
         self.current_version.insert(arg, new_version);
         let new_arg = SSAArg {
@@ -178,6 +219,7 @@ impl<'a> SSAConverter<'a> {
             .entry(block_id)
             .or_default()
             .insert(arg, new_arg);
+        self.var_locations.insert(new_arg, offset);
         new_arg
     }
 
@@ -190,6 +232,7 @@ impl<'a> SSAConverter<'a> {
     }
 
     fn block_needs_phi_function(&self, block_id: BlockId, arg: &Arg) -> bool {
+        let debug = self.control_flow.start.addr() == 3010;
         let control_def = &self.control_flow.blocks[&block_id];
         let predecessor_count = control_def.predecessors.len();
 
@@ -197,21 +240,36 @@ impl<'a> SSAConverter<'a> {
             return false;
         }
 
-        let mut total_defs = 0;
         let mut has_empty = false;
+        let mut def_set: HashSet<Definition<Arg>> = HashSet::new();
         for pred in &control_def.predecessors {
-            let count = self.data_flow.block_defs[&pred.block_id()]
+            let arg_defs = self.data_flow.block_defs[&pred.block_id()]
                 .defs_out
                 .iter()
-                .filter(|d| d.arg == *arg)
-                .count();
+                .filter(|d| d.arg == *arg);
+
+            def_set.extend(arg_defs.clone());
+            let count = arg_defs.count();
+            if debug {
+                println!(
+                    "predecessors {}: for {} count = {}",
+                    pred.block_id(),
+                    arg,
+                    count
+                );
+            }
             if count == 0 {
                 has_empty = true;
             }
-            total_defs += 1;
         }
+        println!(
+            "arg: {}, total_defs = {} has_empty = {}",
+            arg,
+            def_set.len(),
+            has_empty
+        );
 
-        total_defs > 1 || has_empty
+        def_set.len() > 1 || (!def_set.is_empty() && has_empty)
     }
 
     fn transform_next_to_ssa(
@@ -267,7 +325,7 @@ impl<'a> SSAConverter<'a> {
         {
             assert!(!arg.is_value(), "Immediate values should not be in use set");
             if self.block_needs_phi_function(block_id, arg) {
-                let output = self.create_new_version_for_arg(*arg, block_id);
+                let output = self.create_new_version_for_arg(*arg, block_id, block_id.addr());
                 self.phi_nodes.entry(block_id).or_default().insert(
                     *arg,
                     PhiNode {
@@ -286,10 +344,8 @@ impl<'a> SSAConverter<'a> {
                 &mut |s: &mut SSAConverter<'a>, read_arg: &Arg| {
                     s.current_version_of_arg_in_block(*read_arg, block_id)
                 },
-                // not writing directly to var_versions here since calls to the read_map closure
-                // should see the previous version of the variable
                 &mut |s: &mut SSAConverter<'a>, write_arg: &Arg| {
-                    s.create_new_version_for_arg(*write_arg, block_id)
+                    s.create_new_version_for_arg(*write_arg, block_id, *addr)
                 },
             );
             let block = self.out.blocks.get_mut(&block_id).unwrap();
@@ -330,217 +386,5 @@ impl<'a> SSAConverter<'a> {
             self.transform_next_to_ssa(block_id, cdef.next);
     }
 
-    /*
-
-                    out.graph.blocks[&block_id].ops.push(GenericInstruction::Phi(
-                        SSAArg {
-                            arg: *arg,
-                            version: 0,
-                        }, // Placeholder
-                        Vec::new(), // Will be populated during renaming
-                    ));
-                    graph.blocks[&block_id].ops.push(GenericInstruction::Phi(
-                        SSAArg {
-                            arg: *arg,
-                            version: 0,
-                        }, // Placeholder
-                        Vec::new(), // Will be populated during renaming
-                    ));
-
-                }
-    */
+    fn renumber_all_vars(&self) {}
 }
-
-/*
-fn place_phi_functions(&mut self) {
-    // For each block
-    for (block_id, block_def) in &self.flow.block_defs {
-        // For variables that are used in this block before being defined
-        for arg in &block_def.use_set {
-            assert!(!arg.is_value(), "Immediate values should not be in use set");
-
-            // Count distinct definitions reaching this block
-            let incoming_defs: HashSet<_> = block_def
-                .defs_in
-                .iter()
-                .filter(|def| def.arg == *arg)
-                .map(|def| def.block) // Group by source block
-                .collect();
-
-            // If multiple definitions reach this point, insert a phi function
-            if incoming_defs.len() > 1 {
-                self.phi_nodes.entry(*block_id).or_default().insert(
-                    *arg,
-                    GenericInstruction::Phi(
-                        SSAArg {
-                            arg: *arg,
-                            version: 0,
-                        }, // Placeholder
-                        Vec::new(), // Will be populated during renaming
-                    ),
-                );
-            }
-        }
-    }
-}
-
-fn rename_variables(&mut self) {
-    // Start with entry block and visit all blocks in a DFS fashion
-    let mut visited = HashSet::new();
-    self.rename_block(self.graph.start, &mut visited);
-}
-
-fn rename_block(&mut self, block_id: BlockId, visited: &mut HashSet<BlockId>) {
-    if !visited.insert(block_id) {
-        return; // Already processed
-    }
-
-    // Process phi nodes first (if any)
-    if let Some(phi_map) = self.phi_nodes.get_mut(&block_id) {
-        for (arg, phi) in phi_map {
-            // Assign new version to phi result
-            let new_version = *self.current_version.entry(*arg).or_insert(0) + 1;
-            self.current_version.insert(*arg, new_version);
-
-            let GenericInstruction::Phi(dest, _) = phi else {
-                panic!("Non-phi instruction in phi_map");
-            };
-            *dest = SSAArg {
-                arg: *arg,
-                version: new_version,
-            };
-            self.var_versions.insert((block_id, *arg), *dest);
-        }
-    }
-
-    // Process regular instructions
-    let block = &self.graph.blocks[&block_id];
-    for (_, instr) in &block.ops {
-        // Rename used variables
-        for read_arg in instr.reads() {
-            if read_arg.is_value() {
-                continue;
-            }
-            // Use the current version
-            let version = *self.current_version.entry(*read_arg).or_insert(0);
-            self.var_versions.insert(
-                (block_id, *read_arg),
-                SSAArg {
-                    arg: *read_arg,
-                    version,
-                },
-            );
-        }
-
-        // Generate new version for defined variables
-        if let Some(write_arg) = instr.writes() {
-            if write_arg.is_value() {
-                continue;
-            }
-            let new_version = *self.current_version.entry(*write_arg).or_insert(0) + 1;
-            self.current_version.insert(*write_arg, new_version);
-            self.var_versions.insert(
-                (block_id, *write_arg),
-                SSAArg {
-                    arg: *write_arg,
-                    version: new_version,
-                },
-            );
-        }
-    }
-
-    // Process successors and update phi arguments
-    for succ_addr in block.next_blocks().iter().rev() {
-        if let Some(phi_map) = self.phi_nodes.get_mut(&succ_addr) {
-            for (arg, phi) in phi_map {
-                if let Some(version) = self.var_versions.get(&(block_id, arg.arg)) {
-                    if let GenericInstruction::Phi(_, args) = phi {
-                        args.push(*version);
-                    }
-                }
-            }
-        }
-
-        // Recursively rename successors
-        self.rename_block(*succ_addr, visited);
-    }
-}
-
-fn build_ssa_graph(&self) -> SSAGraph {
-    let mut new_blocks = HashMap::new();
-
-    for (&block_id, block) in &self.graph.blocks {
-        let to_ssa = |arg: &Arg| {
-            if arg.is_value() {
-                SSAArg {
-                    arg: *arg,
-                    version: 0,
-                }
-            } else if let Some(version) = self.var_versions.get(&(block_id, *arg)) {
-                *version
-            } else {
-                unreachable!()
-            }
-        };
-        let mut new_ops = Vec::new();
-
-        // Add phi functions at the beginning
-        if let Some(phi_map) = self.phi_nodes.get(&block_id) {
-            for phi in phi_map.values() {
-                new_ops.push((block_id.addr(), phi.clone()));
-            }
-        }
-
-        // Add normal instructions with renamed variables
-        for &(op_addr, ref op) in &block.ops {
-            let new_op = op.map(to_ssa);
-            new_ops.push((op_addr, new_op));
-        }
-
-        let next = match block.next {
-            NextKind::Goto(arg) => NextKind::Goto(to_ssa(&arg)),
-            NextKind::FunctionCall(FunctionCall {
-                calling_block,
-                function_addr,
-                return_block,
-            }) => NextKind::FunctionCall(FunctionCall {
-                calling_block,
-                function_addr: to_ssa(&function_addr),
-                return_block,
-            }),
-            NextKind::Condition(Condition {
-                from_block,
-                jump_block,
-                follows_block,
-                arg,
-                matches,
-            }) => NextKind::Condition(Condition {
-                from_block,
-                jump_block,
-                follows_block,
-                arg: to_ssa(&arg),
-                matches,
-            }),
-            NextKind::Halt => NextKind::Halt,
-            NextKind::Unknown => NextKind::Unknown,
-            NextKind::Return => NextKind::Return,
-            NextKind::Follows(block_id) => NextKind::Follows(block_id),
-        };
-
-        let new_block = Block {
-            ops: new_ops,
-            span: block.span,
-            next,
-            predecessors: vec![],
-        };
-        new_blocks.insert(block_id, new_block);
-    }
-
-    // Return the new graph
-    Graph {
-        start: self.graph.start,
-        stack_size: self.graph.stack_size,
-        blocks: new_blocks,
-    }
-}
-*/
