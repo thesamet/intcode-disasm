@@ -1,5 +1,4 @@
 use std::{
-    char,
     collections::{HashMap, HashSet},
     fmt::{self, Display, Formatter},
 };
@@ -17,6 +16,7 @@ use itertools::Itertools;
 pub struct SSAArg {
     pub arg: Arg,
     pub version: usize,
+    pub deref_version: usize,
 }
 
 impl From<OpArg> for SSAArg {
@@ -24,6 +24,7 @@ impl From<OpArg> for SSAArg {
         SSAArg {
             arg: arg.kind,
             version: 0,
+            deref_version: 0,
         }
     }
 }
@@ -42,6 +43,7 @@ impl Display for SSAArg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.arg {
             Arg::Value(x) => write!(f, "{}", x), // No version for immediate values
+            Arg::Deref(addr) => write!(f, "[[{}]_{}]", addr, self.deref_version),
             _ => write!(f, "{}_{}", self.arg, self.version),
         }
     }
@@ -111,7 +113,14 @@ impl<'a> SSAConverter<'a> {
                 span: Span::new(start_addr, start_addr + 2),
             }
             .into();
-            hm.insert(arg, SSAArg { arg, version: 0 });
+            hm.insert(
+                arg,
+                SSAArg {
+                    arg,
+                    version: 0,
+                    deref_version: 0,
+                },
+            );
         }
         self.var_versions.insert(self.control_flow.start, hm);
         for block in self.control_flow.blocks.keys() {
@@ -125,26 +134,17 @@ impl<'a> SSAConverter<'a> {
     }
 
     fn prune_phi_functions(&mut self) {
-        let debug = true; // self.control_flow.start.addr() == 3010;
         loop {
-            println!("ENTER");
             let mut changed = false;
             let mut replacements = HashMap::new();
             let mut to_remove = HashSet::new();
             for (&block_id, phis) in &self.phi_nodes {
                 for phi in phis.values() {
                     if let Ok(input) = phi.inputs.iter().unique().exactly_one() {
-                        if debug {
-                            println!(
-                                "Replacing {:?} with {:?} due to unique input",
-                                phi.output, input
-                            );
-                        }
                         replacements.insert(phi.output, (block_id, *input));
                         changed = true;
                     }
                     if phi.inputs.is_empty() {
-                        println!("Removing {:?} due to empty inputs", phi.output);
                         to_remove.insert((block_id, phi.output));
                         changed = true;
                     }
@@ -153,7 +153,6 @@ impl<'a> SSAConverter<'a> {
             let mut final_replacements = HashMap::new();
             for (&source, (block_id, mut target)) in &replacements {
                 while let Some((_, replacement)) = replacements.get(&target) {
-                    println!("HERE {} {}", source, replacement);
                     target = *replacement
                 }
                 if to_remove.contains(&(*block_id, target)) {
@@ -173,7 +172,6 @@ impl<'a> SSAConverter<'a> {
                 for phis in self.phi_nodes.values_mut() {
                     for phi in phis.values_mut() {
                         while let Some(index) = phi.inputs.iter().position(|i| i == source) {
-                            // println!("index rep {} {} {}", index, source, phi.output);
                             phi.inputs[index] = final_replacements.get(source).unwrap().1;
                         }
                     }
@@ -209,11 +207,15 @@ impl<'a> SSAConverter<'a> {
     }
 
     fn create_new_version_for_arg(&mut self, arg: Arg, block_id: BlockId, offset: usize) -> SSAArg {
+        if let Arg::Deref(_) = arg {
+            return self.current_version_of_arg_in_block(arg, block_id);
+        }
         let new_version = *self.current_version.entry(arg).or_default() + 1;
         self.current_version.insert(arg, new_version);
         let new_arg = SSAArg {
             arg,
             version: new_version,
+            deref_version: 0,
         };
         self.var_versions
             .entry(block_id)
@@ -224,15 +226,31 @@ impl<'a> SSAConverter<'a> {
     }
 
     fn current_version_of_arg_in_block(&self, arg: Arg, block_id: BlockId) -> SSAArg {
+        if let Arg::Deref(addr) = arg {
+            return SSAArg {
+                arg,
+                version: 0,
+                deref_version: self
+                    .current_version_of_arg_in_block(Arg::Mem(addr as i128), block_id)
+                    .version,
+            };
+        }
+
         *self
             .var_versions
             .get(&block_id)
             .and_then(|hs| hs.get(&arg))
-            .unwrap_or(&SSAArg { arg, version: 0 })
+            .unwrap_or(&SSAArg {
+                arg,
+                version: 0,
+                deref_version: 0,
+            })
     }
 
     fn block_needs_phi_function(&self, block_id: BlockId, arg: &Arg) -> bool {
-        let debug = self.control_flow.start.addr() == 3010;
+        if matches!(arg, Arg::Deref(_)) {
+            return false;
+        }
         let control_def = &self.control_flow.blocks[&block_id];
         let predecessor_count = control_def.predecessors.len();
 
@@ -250,24 +268,10 @@ impl<'a> SSAConverter<'a> {
 
             def_set.extend(arg_defs.clone());
             let count = arg_defs.count();
-            if debug {
-                println!(
-                    "predecessors {}: for {} count = {}",
-                    pred.block_id(),
-                    arg,
-                    count
-                );
-            }
             if count == 0 {
                 has_empty = true;
             }
         }
-        println!(
-            "arg: {}, total_defs = {} has_empty = {}",
-            arg,
-            def_set.len(),
-            has_empty
-        );
 
         def_set.len() > 1 || (!def_set.is_empty() && has_empty)
     }
