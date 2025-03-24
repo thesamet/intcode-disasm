@@ -2,7 +2,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use itertools::Itertools;
 
-#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, PartialOrd, Ord)]
 pub enum Arg {
     Mem(i128),
     Value(i128),

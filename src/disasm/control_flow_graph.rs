@@ -175,7 +175,7 @@ where
             GenericInstruction::JumpIf(arg, matches, jump_arg) if jump_arg.is_value() => {
                 let jump_block = BlockId(jump_arg.value().unwrap() as usize);
                 block.next = NextKind::Condition(Condition {
-                    from_block: BlockId(block.span.start),
+                    from_block: BlockId(0), // filled in another pass since the block we are currently on may split.
                     jump_block,
                     follows_block: BlockId(input.offset),
                     arg: *arg,
@@ -452,7 +452,7 @@ where
         let mut add_pred = |dst, v| {
             hm.entry(dst).or_insert_with(Vec::new).push(v);
         };
-        for (&src, block) in blocks.iter() {
+        for (&src, block) in blocks.iter_mut() {
             match block.next {
                 NextKind::Follows(p) => add_pred(p, PredecessorKind::FollowsFrom(src)),
                 NextKind::Goto(arg) if arg.is_value() => add_pred(
@@ -460,18 +460,22 @@ where
                     PredecessorKind::GotoFrom(src),
                 ),
                 NextKind::Goto(_) => unreachable!(),
-                NextKind::FunctionCall(function_call) => add_pred(
-                    function_call.return_block,
-                    PredecessorKind::FunctionCallReturns(function_call),
-                ),
-                NextKind::Condition(condition) => {
+                NextKind::FunctionCall(ref mut function_call) => {
+                    function_call.calling_block = src;
+                    add_pred(
+                        function_call.return_block,
+                        PredecessorKind::FunctionCallReturns(*function_call),
+                    );
+                }
+                NextKind::Condition(ref mut condition) => {
+                    condition.from_block = src;
                     add_pred(
                         condition.jump_block,
-                        PredecessorKind::ConditionalJump(condition),
+                        PredecessorKind::ConditionalJump(*condition),
                     );
                     add_pred(
                         condition.follows_block,
-                        PredecessorKind::ConditionalFollow(condition),
+                        PredecessorKind::ConditionalFollow(*condition),
                     )
                 }
                 _ => {}

@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     control_flow_graph::{Block, BlockId, ControlFlowGraph},
-    low_ir::{ArgBase, OpArg},
+    low_ir::{Arg, ArgBase, GenericInstruction, OpArg, Span},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -64,11 +64,40 @@ pub struct GraphDataFlow<ArgType> {
     pub block_defs: HashMap<BlockId, BlockDef<ArgType>>,
 }
 
-fn get_definitions<ArgType>(block: &Block<ArgType>) -> HashMap<ArgType, Definition<ArgType>>
+struct CreateStack {
+    stack_size: usize,
+    instruction_addr: usize,
+}
+
+fn get_definitions<ArgType>(
+    block: &Block<ArgType>,
+    create_stack: Option<CreateStack>,
+) -> HashMap<ArgType, Definition<ArgType>>
 where
     ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy + From<OpArg> + std::fmt::Debug,
 {
     let mut hm = HashMap::new();
+    if let Some(CreateStack {
+        stack_size,
+        instruction_addr,
+    }) = create_stack
+    {
+        for r in 0..stack_size {
+            let arg = OpArg {
+                kind: Arg::RelativeMem(-(r as i128)),
+                span: Span::new(instruction_addr, instruction_addr + 2),
+            }
+            .into();
+            hm.insert(
+                arg,
+                Definition {
+                    arg,
+                    instruction_addr,
+                    block: block.id(),
+                },
+            );
+        }
+    }
     for (addr, inst) in &block.ops {
         if let Some(arg) = inst.writes() {
             // gives last from each block
@@ -181,7 +210,15 @@ where
         };
         for (addr, block) in &control_flow.blocks {
             let mut block_def = BlockDef::new();
-            block_def.gen_set = get_definitions(block);
+            let create_stack = if block.id() == control_flow.start && block.span.start != 0 {
+                Some(CreateStack {
+                    stack_size: control_flow.stack_size,
+                    instruction_addr: block.span.start,
+                })
+            } else {
+                None
+            };
+            block_def.gen_set = get_definitions(block, create_stack);
             block_def.use_set = get_read_before_write(block);
             flow.block_defs.insert(*addr, block_def);
         }
