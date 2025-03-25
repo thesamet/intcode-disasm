@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     control_flow_graph::{Block, BlockId, ControlFlowGraph},
-    low_ir::{Arg, ArgBase, GenericInstruction, OpArg, Span},
+    low_ir::{Arg, ArgBase, OpArg, Span},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,21 +82,23 @@ where
         instruction_addr,
     }) = create_stack
     {
-        for r in 0..stack_size {
-            let arg = OpArg {
-                kind: Arg::RelativeMem(-(r as i128)),
-                span: Span::new(instruction_addr, instruction_addr + 2),
-            }
-            .into();
-            hm.insert(
-                arg,
-                Definition {
-                    arg,
-                    instruction_addr,
-                    block: block.id(),
-                },
-            );
-        }
+        /*
+                for r in 0..stack_size {
+                    let arg = OpArg {
+                        kind: Arg::RelativeMem(-(r as i128)),
+                        span: Span::new(instruction_addr, instruction_addr + 2),
+                    }
+                    .into();
+                    hm.insert(
+                        arg,
+                        Definition {
+                            arg,
+                            instruction_addr,
+                            block: block.id(),
+                        },
+                    );
+                }
+        */
     }
     for (addr, inst) in &block.ops {
         if let Some(arg) = inst.writes() {

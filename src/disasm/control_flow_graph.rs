@@ -28,7 +28,9 @@ impl std::fmt::Display for BlockId {
     }
 }
 use super::{
+    data_flow_analysis::GraphDataFlow,
     low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError},
+    program_analysis::ProgramAnalysis,
     ssa_form::SSAConverter,
 };
 
@@ -403,7 +405,7 @@ where
         })
     }
 
-    fn scan(prog: &[i128]) -> Vec<ControlFlowGraph<ArgType>> {
+    pub fn scan(prog: &[i128]) -> Vec<ControlFlowGraph<ArgType>> {
         let mut graphs = vec![];
         let mut data = vec![];
         for start in 0..prog.len() {
@@ -506,24 +508,15 @@ where
 }
 
 pub fn drive(prog: &[i128]) {
-    let graphs = ControlFlowGraph::<Arg>::scan(prog);
-    for graph in graphs {
-        println!("----------");
-        println!("Graph at {}", graph.start);
-        let flow = data_flow_analysis::GraphDataFlow::build_for(&graph);
-        let ssa = SSAConverter::new(&graph, &flow);
-        let ssa_graph = ssa.convert();
-        for (_, block) in ssa_graph.blocks.iter().sorted_by_key(|x| x.0) {
-            print!("{}", block);
-            // let bd = flow.block_defs.get(&block.id()).unwrap();
-            // println!(
-            //     " In={}\nOut={}\n LiveIn={}\nLiveOut={}",
-            //     bd.defs_in.iter().map(|x| x.to_string()).join(", "),
-            //     bd.defs_out.iter().map(|x| x.to_string()).join(", "),
-            //     bd.live_in.iter().map(|x| x.to_string()).join(", "),
-            //     bd.live_out.iter().map(|x| x.to_string()).join(", "),
-            // );
-            println!();
+    let p = ProgramAnalysis::build(prog);
+    for f in p.control_flows.keys().sorted() {
+        if let Some(fc) = p.function_infos.get(f) {
+            println!(
+                "Function at {}: args={:?}, returns={:?}",
+                fc.start_block, fc.args, fc.return_vars
+            );
+        } else {
+            // println!("Missing function info for {}", f);
         }
     }
 }
