@@ -4,9 +4,7 @@ use std::{
 };
 
 use super::{
-    control_flow_graph::{
-        Block, BlockId, Condition, ControlFlowGraph, FunctionCall, NextKind, PredecessorKind,
-    },
+    control_flow_graph::{Block, BlockId, Condition, ControlFlowGraph, FunctionCall, NextKind},
     data_flow_analysis::{Definition, GraphDataFlow},
     low_ir::{Arg, ArgBase, GenericInstruction, OpArg, Span},
 };
@@ -130,6 +128,7 @@ impl<'a> SSAConverter<'a> {
         self.prune_phi_functions();
         self.renumber_all_vars();
         self.populate_phi_functions();
+        self.transform_next_fields();
         self.out
     }
 
@@ -161,14 +160,20 @@ impl<'a> SSAConverter<'a> {
                     final_replacements.insert(source, (block_id, target));
                 }
             }
+
             for (block_id, arg) in &to_remove {
                 self.phi_nodes.get_mut(block_id).unwrap().remove(&arg.arg);
+                self.var_versions
+                    .get_mut(block_id)
+                    .unwrap()
+                    .remove(&arg.arg);
             }
             for (source, (block_id, _)) in &final_replacements {
                 self.phi_nodes
                     .get_mut(block_id)
                     .unwrap()
                     .remove(&source.arg);
+                self.var_locations.remove(source);
                 for phis in self.phi_nodes.values_mut() {
                     for phi in phis.values_mut() {
                         while let Some(index) = phi.inputs.iter().position(|i| i == source) {
@@ -195,12 +200,14 @@ impl<'a> SSAConverter<'a> {
                 .ops
                 .splice(
                     0..0,
-                    phis.iter().map(|(_, phi)| {
-                        (
-                            block.span.start,
-                            GenericInstruction::Phi(phi.output, phi.inputs.clone()),
-                        )
-                    }),
+                    phis.iter()
+                        .sorted_by_key(|(_, phi)| phi.output.arg)
+                        .map(|(_, phi)| {
+                            (
+                                block.span.start,
+                                GenericInstruction::Phi(phi.output, phi.inputs.clone()),
+                            )
+                        }),
                 )
                 .collect_vec();
         }
@@ -329,7 +336,8 @@ impl<'a> SSAConverter<'a> {
         {
             assert!(!arg.is_value(), "Immediate values should not be in use set");
             if self.block_needs_phi_function(block_id, arg) {
-                let output = self.create_new_version_for_arg(*arg, block_id, block_id.addr());
+                let output =
+                    self.create_new_version_for_arg(*arg, block_id, control_def.span.start);
                 self.phi_nodes.entry(block_id).or_default().insert(
                     *arg,
                     PhiNode {
@@ -386,9 +394,67 @@ impl<'a> SSAConverter<'a> {
                 self.process_block(next);
             }
         }
-        self.out.blocks.get_mut(&block_id).unwrap().next =
-            self.transform_next_to_ssa(block_id, cdef.next);
     }
 
-    fn renumber_all_vars(&self) {}
+    fn renumber_all_vars(&mut self) {
+        let mut rename_list = HashMap::new();
+        for (_, vars) in self
+            .var_locations
+            .iter()
+            .sorted_by_key(|(&a, &v)| (a.arg, v))
+            .chunk_by(|(a, _)| a.arg)
+            .into_iter()
+        {
+            for (i, (ssa, _)) in vars.enumerate() {
+                let mut new_ssa = *ssa;
+                new_ssa.version = i;
+                rename_list.insert(ssa, new_ssa);
+            }
+        }
+
+        // All Derefs have version zero and a deref_version which refers to the pointer version.
+        let rename_var = |a: &SSAArg| {
+            let mut r = rename_list.get(&a).copied().unwrap_or(*a);
+            if let SSAArg {
+                arg: Arg::Deref(addr),
+                deref_version,
+                ..
+            } = r
+            {
+                r.deref_version = rename_list
+                    .get(&SSAArg {
+                        arg: Arg::Mem(addr as i128),
+                        version: deref_version,
+                        deref_version: 0,
+                    })
+                    .unwrap()
+                    .version;
+            }
+            r
+        };
+
+        for (_, block) in self.out.blocks.iter_mut() {
+            for (_, op) in block.ops.iter_mut() {
+                *op = op.map(rename_var);
+            }
+        }
+        for node in self.phi_nodes.values_mut() {
+            for (_, phi) in node.iter_mut() {
+                phi.output = rename_list.get(&phi.output).copied().unwrap_or(phi.output);
+                phi.inputs = phi.inputs.iter().map(rename_var).collect();
+            }
+        }
+        for hm in self.var_versions.values_mut() {
+            for arg in hm.values_mut() {
+                *arg = rename_var(arg);
+            }
+        }
+    }
+
+    fn transform_next_fields(&mut self) {
+        for (id, block) in &self.control_flow.blocks {
+            self.out.blocks.get_mut(id).unwrap().next =
+                self.transform_next_to_ssa(block.id(), block.next);
+        }
+    }
 }
