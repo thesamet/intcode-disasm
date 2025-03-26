@@ -440,6 +440,13 @@ pub fn parse_program(
                         return Err(("Undefined label", offset));
                     }
                 }
+                Instruction::Add(Argument::Label(label), b, c) => {
+                    if let Some(&target) = label_offsets.get(&label) {
+                        Instruction::Add(Argument::Immediate(target as i128), b, c)
+                    } else {
+                        return Err(("Undefined label", offset));
+                    }
+                }
                 _ => instr,
             };
             Ok((offset, resolved_instr))
@@ -450,6 +457,15 @@ pub fn parse_program(
         })?;
 
     Ok(resolved_instructions)
+}
+
+pub fn compile(code: &str) -> Vec<i128> {
+    let program = parse_program(code).unwrap();
+    let mut out = vec![];
+    for inst in program {
+        inst.1.serialize(&mut out);
+    }
+    out
 }
 
 #[cfg(test)]

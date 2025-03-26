@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
+use crate::disasm::type_inference::Var;
+
 use super::{
     control_flow_graph::{BlockId, ControlFlowGraph, PredecessorKind},
     data_flow_analysis::GraphDataFlow,
     low_ir::Arg,
+    ssa_form::convert_to_ssa,
+    type_inference::{Type, TypeInference, TypeVarId},
 };
 
 use itertools::Itertools;
@@ -113,22 +117,40 @@ impl ProgramAnalysis {
         }
     }
 
-    /*
-        let ssa = SSAConverter::new(&graph, &data_flow);
-        let ssa_graph = ssa.convert();
-        for (id, block) in ssa_graph.blocks.iter().sorted_by_key(|x| x.0) {
-            if *id == graph.start {
-                let bd = data_flow.block_defs.get(&block.id()).unwrap();
-                println!(
-                    "LiveIn={}",
-                    bd.live_in.iter().sorted().map(|x| x.to_string()).join(", "),
-                );
+    pub fn list_program_with_types(
+        &self,
+        ti: &mut TypeInference,
+        subst: &HashMap<TypeVarId, Type>,
+    ) {
+        for flow in self.control_flows.values().sorted_by_key(|c| c.start) {
+            let data = &self.data_flows[&flow.start];
+            let ssa = convert_to_ssa(flow, data);
+            for block in ssa.blocks.values().sorted_by_key(|b| b.span.start) {
+                for (addr, i) in block.ops.iter() {
+                    let istr = format!("{}", i);
+                    print!("{:8}  {:35}", addr, istr);
+                    let read_args = i
+                        .reads()
+                        .iter()
+                        .map(|&&a| ti.type_for_arg(Var::new(flow.start, a)))
+                        .map(|t| TypeInference::substitute(t, subst))
+                        .collect_vec();
+                    let write_args = i
+                        .writes()
+                        .iter()
+                        .map(|&&a| ti.type_for_arg(Var::new(flow.start, a)))
+                        .map(|t| TypeInference::substitute(t, subst))
+                        .collect_vec();
+
+                    if !read_args.is_empty() {
+                        print!("({})", read_args.iter().join(", "));
+                    }
+                    if !write_args.is_empty() {
+                        print!(" -> {}", write_args.iter().join(", "));
+                    }
+                    println!();
+                }
             }
-            print!("{}", block);
-            println!();
-        Self {
-            function_info: HashMap::new(),
         }
     }
-    */
 }

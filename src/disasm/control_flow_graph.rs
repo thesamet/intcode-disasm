@@ -5,7 +5,7 @@ use std::{
 
 use itertools::Itertools;
 
-use crate::disasm::{data_flow_analysis, low_ir::Span};
+use crate::disasm::low_ir::Span;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(usize);
@@ -28,10 +28,9 @@ impl std::fmt::Display for BlockId {
     }
 }
 use super::{
-    data_flow_analysis::GraphDataFlow,
     low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError},
     program_analysis::ProgramAnalysis,
-    ssa_form::SSAConverter,
+    type_inference::TypeInference,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -509,6 +508,12 @@ where
 
 pub fn drive(prog: &[i128]) {
     let p = ProgramAnalysis::build(prog);
+    let mut ti = TypeInference::new();
+    ti.generate_constaints_for_program(&p);
+    let subst = ti.unify().unwrap();
+    p.list_program_with_types(&mut ti, &subst)
+
+    /*
     for f in p.control_flows.keys().sorted() {
         if let Some(fc) = p.function_infos.get(f) {
             println!(
@@ -519,4 +524,5 @@ pub fn drive(prog: &[i128]) {
             // println!("Missing function info for {}", f);
         }
     }
+    */
 }

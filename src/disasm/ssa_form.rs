@@ -55,7 +55,15 @@ struct PhiNode {
     inputs: Vec<SSAArg>,
 }
 
-pub struct SSAConverter<'a> {
+pub fn convert_to_ssa(
+    control_flow: &ControlFlowGraph<Arg>,
+    data_flow: &GraphDataFlow<Arg>,
+) -> SSAGraph {
+    let converter = SSAConverter::new(control_flow, data_flow);
+    converter.convert()
+}
+
+struct SSAConverter<'a> {
     control_flow: &'a ControlFlowGraph<Arg>,
     data_flow: &'a GraphDataFlow<Arg>,
     // Highest version number created for each variable. Used to allocate new versions.

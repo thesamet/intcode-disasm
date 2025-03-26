@@ -1,0 +1,403 @@
+use std::{collections::HashMap, fmt};
+
+use itertools::Itertools;
+
+use super::{
+    control_flow_graph::{Block, BlockId, NextKind},
+    low_ir::{Arg, GenericInstruction},
+    program_analysis::ProgramAnalysis,
+    ssa_form::{convert_to_ssa, SSAArg},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Var {
+    block_id: BlockId,
+    ssa_arg: SSAArg,
+}
+
+impl Var {
+    pub fn new(block_id: BlockId, ssa_arg: SSAArg) -> Var {
+        Var { block_id, ssa_arg }
+    }
+}
+
+impl fmt::Display for Var {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "v{}:{}", self.block_id, self.ssa_arg)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeVarId(usize);
+
+impl fmt::Display for TypeVarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "t{}", self.0)
+    }
+}
+
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+pub enum Type {
+    Int,
+    Bool,
+    Char,
+    Pointer(Box<Type>),
+    FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
+    String,
+    TypeVar(TypeVarId),
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Int => write!(f, "int"),
+            Type::Bool => write!(f, "bool"),
+            Type::Char => write!(f, "char"),
+            Type::Pointer(t) => write!(f, "*{}", t),
+            Type::FunctionPointer { args, returns } => {
+                write!(f, "fn(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ") -> ")?;
+                for (i, ret) in returns.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ret)?;
+                }
+                if returns.is_empty() {
+                    write!(f, "void")?;
+                }
+                Ok(())
+            }
+            Type::String => write!(f, "string"),
+            Type::TypeVar(t @ TypeVarId(_)) => write!(f, "{}", t),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConstraintReason {
+    AddImpliesInt,
+    MulImpliesInt,
+    CompareDstImpliesBool,
+    CompareSrcImpliesInt,
+    OutputImpliesChar,
+    InputImpliesChar,
+    JumpConditionImpliesBool,
+    CompareSrcSameType,
+    Assignment,
+    Deref,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Constraint {
+    left: Type,
+    right: Type,
+    addr: usize,
+    reason: ConstraintReason,
+}
+
+impl fmt::Display for Constraint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Constraint: {} = {} at {} because {:?}",
+            self.left, self.right, self.addr, self.reason
+        )
+    }
+}
+
+pub struct TypeInference {
+    constraints: Vec<Constraint>,
+    type_vars: HashMap<Var, Type>,
+}
+
+impl TypeInference {
+    pub fn new() -> Self {
+        Self {
+            constraints: Vec::new(),
+            type_vars: HashMap::new(),
+        }
+    }
+
+    fn fresh_type_var(&self) -> Type {
+        Type::TypeVar(TypeVarId(self.type_vars.len() + 1))
+    }
+
+    pub fn type_for_arg(&mut self, var: Var) -> Type {
+        if let Some(typ) = self.type_vars.get(&var).cloned() {
+            return typ;
+        }
+        /*
+        match var.ssa_arg.arg {
+            super::low_ir::Arg::Mem(_) => todo!(),
+            super::low_ir::Arg::Value(_) => todo!(),
+            super::low_ir::Arg::RelativeMem(_) => todo!(),
+            super::low_ir::Arg::Deref(usize) => todo!(),
+        }
+        */
+        let typ = self.fresh_type_var();
+        self.type_vars.insert(var, typ.clone());
+        if let Arg::Deref(addr) = var.ssa_arg.arg {
+            let inner_var = SSAArg {
+                arg: Arg::Mem(addr as i128),
+                version: var.ssa_arg.deref_version,
+                deref_version: 0,
+            };
+            let pointer = self.type_for_arg(Var::new(var.block_id, inner_var));
+            self.add_constraint(
+                pointer,
+                Type::Pointer(Box::new(typ.clone())),
+                addr,
+                ConstraintReason::Deref,
+            );
+        }
+        typ
+    }
+
+    fn add_constraint(&mut self, left: Type, right: Type, addr: usize, reason: ConstraintReason) {
+        self.constraints.push(Constraint {
+            left,
+            right,
+            addr,
+            reason,
+        });
+    }
+
+    fn generate_constraint_for_op(
+        &mut self,
+        block_id: BlockId,
+        addr: usize,
+        op: &GenericInstruction<SSAArg>,
+    ) {
+        let var = |s: &SSAArg| Var::new(block_id, *s);
+        match op {
+            GenericInstruction::Assign(src, dst) => {
+                let dst_type = self.type_for_arg(var(dst));
+                let src_type = self.type_for_arg(var(src));
+                self.add_constraint(src_type, dst_type, addr, ConstraintReason::Assignment);
+            }
+            GenericInstruction::Add(src1, src2, dst) => {
+                let dst_type = self.type_for_arg(var(dst));
+                let src1_type = self.type_for_arg(var(src1));
+                let src2_type = self.type_for_arg(var(src2));
+                self.add_constraint(dst_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
+                self.add_constraint(src1_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
+                self.add_constraint(src2_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
+            }
+            GenericInstruction::Mul(src1, src2, dst) => {
+                let dst_type = self.type_for_arg(var(dst));
+                let src1_type = self.type_for_arg(var(src1));
+                let src2_type = self.type_for_arg(var(src2));
+                self.add_constraint(dst_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
+                self.add_constraint(src1_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
+                self.add_constraint(src2_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
+            }
+            GenericInstruction::LessThan(src1, src2, dst) => {
+                let dst_type = self.type_for_arg(var(dst));
+                let src1_type = self.type_for_arg(var(src1));
+                let src2_type = self.type_for_arg(var(src2));
+                self.add_constraint(
+                    dst_type,
+                    Type::Bool,
+                    addr,
+                    ConstraintReason::CompareDstImpliesBool,
+                );
+                self.add_constraint(
+                    src1_type,
+                    Type::Int,
+                    addr,
+                    ConstraintReason::CompareSrcImpliesInt,
+                );
+                self.add_constraint(
+                    src2_type,
+                    Type::Int,
+                    addr,
+                    ConstraintReason::CompareSrcImpliesInt,
+                );
+            }
+            GenericInstruction::Equals(src1, src2, dest) => {
+                let dst_type = self.type_for_arg(var(dest));
+                let src1_type = self.type_for_arg(var(src1));
+                let src2_type = self.type_for_arg(var(src2));
+                self.add_constraint(
+                    dst_type,
+                    Type::Bool,
+                    addr,
+                    ConstraintReason::CompareDstImpliesBool,
+                );
+                self.add_constraint(
+                    src1_type,
+                    src2_type,
+                    addr,
+                    ConstraintReason::CompareSrcSameType,
+                );
+            }
+            GenericInstruction::Output(src) => {
+                let src_type = self.type_for_arg(var(src));
+                self.add_constraint(
+                    src_type,
+                    Type::Char,
+                    addr,
+                    ConstraintReason::OutputImpliesChar,
+                );
+            }
+            GenericInstruction::Input(dst) => {
+                let dst_type = self.type_for_arg(var(dst));
+                self.add_constraint(
+                    dst_type,
+                    Type::Char,
+                    addr,
+                    ConstraintReason::InputImpliesChar,
+                );
+            }
+            GenericInstruction::JumpIf(src, ..) => {
+                let src_type = self.type_for_arg(var(src));
+                self.add_constraint(
+                    src_type,
+                    Type::Bool,
+                    addr,
+                    ConstraintReason::JumpConditionImpliesBool,
+                );
+            }
+            GenericInstruction::Phi(dst, srcs) => {
+                let dst_type = self.type_for_arg(var(dst));
+                for i in srcs {
+                    if dst == i {
+                        continue;
+                    }
+                    let s = self.type_for_arg(var(i));
+                    self.add_constraint(dst_type.clone(), s, addr, ConstraintReason::Assignment);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn generate_constraint_for_block(&mut self, scope: BlockId, block: &Block<SSAArg>) {
+        for (addr, op) in &block.ops {
+            self.generate_constraint_for_op(scope, *addr, op);
+        }
+        if let NextKind::FunctionCall(call) = &block.next {
+            let fcall = self.type_for_arg(Var::new(scope, call.function_addr));
+            self.add_constraint(
+                fcall,
+                Type::FunctionPointer {
+                    args: vec![],
+                    returns: vec![],
+                },
+                block.span.end,
+                ConstraintReason::Assignment,
+            );
+        }
+    }
+
+    pub fn generate_constaints_for_program(&mut self, program: &ProgramAnalysis) {
+        for cfg in program.control_flows.values().sorted_by_key(|c| c.start) {
+            let data_flow = &program.data_flows[&cfg.start];
+            let ssa_graph = convert_to_ssa(&cfg, &data_flow);
+            for block in ssa_graph.blocks.values().sorted_by_key(|b| b.span.start) {
+                self.generate_constraint_for_block(cfg.start, block);
+            }
+        }
+        for c in &self.constraints {
+            println!("{}", c);
+        }
+    }
+
+    pub fn substitute(t: Type, subst: &HashMap<TypeVarId, Type>) -> Type {
+        match t {
+            Type::Int => Type::Int,
+            Type::Bool => Type::Bool,
+            Type::Char => Type::Char,
+            Type::Pointer(t) => Type::Pointer(Box::new(Self::substitute(*t, subst))),
+            Type::FunctionPointer { args, returns } => Type::FunctionPointer {
+                args: args
+                    .into_iter()
+                    .map(|t| Self::substitute(t, subst))
+                    .collect(),
+                returns: returns
+                    .into_iter()
+                    .map(|t| Self::substitute(t, subst))
+                    .collect(),
+            },
+            Type::String => Type::String,
+            Type::TypeVar(id) => subst.get(&id).cloned().unwrap_or(Type::TypeVar(id)),
+        }
+    }
+
+    pub fn unify(&self) -> Result<HashMap<TypeVarId, Type>, String> {
+        let mut worklist = self.constraints.clone();
+        let mut subst = HashMap::new();
+        while let Some(constraint) = worklist.pop() {
+            let left = Self::substitute(constraint.left, &subst);
+            let right = Self::substitute(constraint.right, &subst);
+            match (&left, &right) {
+                (Type::TypeVar(id), _) => {
+                    println!("unify: {} => {}", id, right);
+                    subst.insert(*id, right);
+                }
+                (_, Type::TypeVar(id)) => {
+                    println!("unify: {} => {}", id, left);
+                    subst.insert(*id, left);
+                }
+                (Type::Char, Type::Bool) => {} // panic!("Cannot unify char and bool"),
+                _ => {}
+            }
+        }
+        println!("substitution: {}", subst.len());
+        for (x, y) in subst.iter() {
+            println!("{} => {}", x, y);
+        }
+        Ok(subst)
+    }
+
+    fn solve(&mut self) {
+        // TODO
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::disasm::{low_ir::FatInstruction, parser};
+
+    use super::*;
+
+    #[test]
+    fn test_type_inference() {
+        let code = r#"
+            R += 5000
+            [3] = [1] + [2]
+            [R] = @res
+            goto @f1
+          res:
+            halt
+        f1:
+            R += 4
+            [21] = [R-1]
+            if [0] goto @f1
+            R -= 4
+            goto [R]
+
+        "#;
+        let binary = parser::compile(code);
+        let program = ProgramAnalysis::build(&binary);
+        println!("{:?}", binary);
+        println!("{:?}", program.control_flows);
+        let mut ti = TypeInference::new();
+        ti.generate_constaints_for_program(&program);
+        for (k, v) in ti.type_vars.iter().sorted_by_key(|(_, v)| *v) {
+            // .sorted_by_key(|(_, v)| v.) {
+            println!("{} -> {}", v, k);
+        }
+        let result = ti.unify().unwrap();
+        program.list_program_with_types(&mut ti, &result);
+        assert!(false);
+    }
+}

@@ -8,3 +8,4 @@ pub mod mid_transform;
 pub mod parser;
 pub mod program_analysis;
 pub mod ssa_form;
+pub mod type_inference;
