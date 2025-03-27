@@ -306,9 +306,6 @@ impl TypeInference {
                 self.generate_constraint_for_block(cfg.start, block);
             }
         }
-        for c in &self.constraints {
-            println!("{}", c);
-        }
     }
 
     pub fn substitute(t: Type, subst: &HashMap<TypeVarId, Type>) -> Type {
@@ -351,11 +348,11 @@ impl TypeInference {
                 _ => {}
             }
         }
-        println!("substitution: {}", subst.len());
-        for (x, y) in subst.iter() {
-            println!("{} => {}", x, y);
+        let mut final_subst = HashMap::new();
+        for (k, _) in subst.iter() {
+            final_subst.insert(*k, Self::substitute(Type::TypeVar(*k), &subst));
         }
-        Ok(subst)
+        Ok(final_subst)
     }
 
     fn solve(&mut self) {
@@ -365,31 +362,68 @@ impl TypeInference {
 
 #[cfg(test)]
 mod tests {
-    use crate::disasm::{low_ir::FatInstruction, parser};
+    use crate::disasm::parser;
 
     use super::*;
+
+    struct TestContext {
+        binary: Vec<i128>,
+        program: ProgramAnalysis,
+        type_inference: TypeInference,
+        result: HashMap<TypeVarId, Type>,
+    }
+
+    impl TestContext {
+        fn new(code: &str) -> TestContext {
+            let binary = parser::compile(code);
+            let program = ProgramAnalysis::build(&binary);
+            let mut type_inference = TypeInference::new();
+            type_inference.generate_constaints_for_program(&program);
+            let result = type_inference.unify().unwrap();
+            Self {
+                binary,
+                program,
+                type_inference,
+                result,
+            }
+        }
+
+        fn assert_type(&self, addr: usize, expected: Type) {
+            let Type::TypeVar(type_var) = self
+                .type_inference
+                .type_vars
+                .iter()
+                .filter(|(k, _)| matches!(k.ssa_arg.arg, Arg::Mem(a) if a as usize==addr))
+                .max_by_key(|(k, _)| k.ssa_arg.version)
+                .expect("No type variable found for address")
+                .1
+            else {
+                panic!("No type variable found for address {}", addr);
+            };
+            let actual = self.result.get(type_var).unwrap();
+            assert_eq!(*actual, expected);
+        }
+    }
 
     #[test]
     fn test_type_inference() {
         let code = r#"
-            R += 5000
-            [3] = [1] + [2]
-            [R] = @res
-            goto @f1
-          res:
-            halt
-        f1:
-            R += 4
-            [21] = [R-1]
-            if [0] goto @f1
-            R -= 4
-            goto [R]
+        R += 5000
+        [3] = [1] + [2]
+        [R] = @res
+        goto @f1
+res:
+        halt
+f1:
+        R += 4
+        [21] = [R-1]
+        if [0] goto @f1
+        R -= 4
+        goto [R]
 
         "#;
         let binary = parser::compile(code);
         let program = ProgramAnalysis::build(&binary);
-        println!("{:?}", binary);
-        println!("{:?}", program.control_flows);
         let mut ti = TypeInference::new();
         ti.generate_constaints_for_program(&program);
         for (k, v) in ti.type_vars.iter().sorted_by_key(|(_, v)| *v) {
@@ -398,6 +432,53 @@ mod tests {
         }
         let result = ti.unify().unwrap();
         program.list_program_with_types(&mut ti, &result);
-        assert!(false);
+    }
+
+    #[test]
+    fn test_boolean_comparison() {
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+            [1000] = [1001] < [1002]
+            halt
+        "#,
+        );
+        ctx.assert_type(1000, Type::Bool);
+        ctx.assert_type(1001, Type::Int);
+        ctx.assert_type(1002, Type::Int);
+    }
+
+    #[test]
+    fn test_output_implies_char() {
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+            output [1001]
+            halt
+        "#,
+        );
+        ctx.assert_type(1001, Type::Char);
+    }
+
+    #[test]
+    fn test_function_addr() {
+        let ctx = TestContext::new(
+            r#"
+                R += 1000
+                [1001] = [R-2]
+                [R] = @ret
+                goto [R-2]
+                ret:
+                halt
+
+            "#,
+        );
+        ctx.assert_type(
+            1001,
+            Type::FunctionPointer {
+                args: vec![],
+                returns: vec![],
+            },
+        );
     }
 }
