@@ -69,11 +69,11 @@ impl ArgBase for Argument {
             Argument::RelativeMem(addr) => addr,
             Argument::Label(_) => unreachable!(),
         };
-        out.push(v);
+        out.push(*v);
     }
 }
 
-trait ArgBase {
+pub trait ArgBase {
     fn mode(&self) -> i128;
     fn serialize(&self, out: &mut Vec<i128>);
 }
@@ -242,14 +242,7 @@ fn parse_label_ref(input: &str) -> IResult<&str, Argument> {
 
 fn parse_argument(input: &str) -> IResult<&str, SourceArgument> {
     pair(
-        (
-            opt(complete::satisfy(|c| c.is_alphabetic())),
-            space0,
-            tag("@"),
-            space0,
-            space0,
-        )
-            .map(|(c, _, _, _, _)| c),
+        opt((tag("'"), complete::satisfy(|c| c.is_alphabetic()), space0).map(|(_, c, _)| c)),
         alt((
             parse_memory,
             parse_relative_mem,
@@ -546,6 +539,8 @@ pub fn compile(code: &str) -> Vec<i128> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
 
     type Instruction = GenericInstruction<Argument>;
@@ -564,7 +559,8 @@ mod tests {
         program
             .into_iter()
             .map(|(_, instr)| instr.map_result::<_, &str, Argument>(|arg| Ok(arg.arg.clone())))
-            .collect()
+            .collect::<Result<Vec<Instruction>, &str>>()
+            .unwrap()
     }
 
     #[test]
@@ -912,21 +908,17 @@ mod tests {
                 halt                 ; 27
         ";
 
-        let parsed = parse_program(program).unwrap();
-
-        println!("{:?}", parsed);
-        // Check if labels were correctly resolved to their offsets
-        let resolved_instructions: Vec<Instruction> = parsed.into_iter().map(|(_, i)| i).collect();
+        let ops = parse_test_program(program);
 
         // The if @loop goto @done should use the address of @loop as first arg
         assert_eq!(
-            resolved_instructions[2],
+            ops[2],
             Instruction::IfGoto(Argument::Immediate(11), Argument::Immediate(26))
         );
 
         // The [2] = @loop + 10 should use loop's address as first arg
         assert_eq!(
-            resolved_instructions[3],
+            ops[3],
             Instruction::Add(
                 Argument::Immediate(11),
                 Argument::Immediate(10),
@@ -936,12 +928,51 @@ mod tests {
 
         // The [3] = 5 < @done should use done's address as second arg
         assert_eq!(
-            resolved_instructions[4],
+            ops[4],
             Instruction::LessThan(
                 Argument::Immediate(5),
                 Argument::Immediate(26),
                 Argument::Memory(3)
             )
         );
+    }
+
+    #[test]
+    fn test_debug_marker() {
+        let program = "
+            'x[0] = 0 + 0    ; set debug marker 'x on first argument
+            [1] = 'y10 + 0   ; set debug marker 'y on second argument
+            [2] = 0 + 'z5    ; set debug marker 'z on third argument
+        ";
+
+        let instructions = parse_program(program).unwrap();
+        let instructions = instructions.into_iter().map(|(_, inst)| inst).collect_vec();
+
+        // Check first instruction: 'x[0] = 0 + 0
+        if let GenericInstruction::Add(arg1, arg2, arg3) = &instructions[0] {
+            assert_eq!(arg1.debug_marker, None);
+            assert_eq!(arg2.debug_marker, None);
+            assert_eq!(arg3.debug_marker, Some('x'));
+        } else {
+            panic!("Expected Add instruction");
+        }
+
+        // Check second instruction: [1] = 'y10 + 0
+        if let GenericInstruction::Add(arg1, arg2, arg3) = &instructions[1] {
+            assert_eq!(arg1.debug_marker, Some('y'));
+            assert_eq!(arg2.debug_marker, None);
+            assert_eq!(arg3.debug_marker, None);
+        } else {
+            panic!("Expected Add instruction");
+        }
+
+        // Check third instruction: [2] = 0 + 'z5
+        if let GenericInstruction::Add(arg1, arg2, arg3) = &instructions[2] {
+            assert_eq!(arg1.debug_marker, None);
+            assert_eq!(arg2.debug_marker, Some('z'));
+            assert_eq!(arg3.debug_marker, None);
+        } else {
+            panic!("Expected Add instruction");
+        }
     }
 }
