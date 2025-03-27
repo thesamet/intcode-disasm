@@ -113,7 +113,26 @@ impl Instruction {
             }
         }
     }
+
+    pub fn map_result<F, E>(&self, f: F) -> Result<Instruction, E>
+    where
+        F: Fn(&Argument) -> Result<Argument, E>,
+    {
+        match self {
+            Instruction::Add(a, b, c) => Ok(Instruction::Add(f(a)?, f(b)?, f(c)?)),
+            Instruction::Mul(a, b, c) => Ok(Instruction::Mul(f(a)?, f(b)?, f(c)?)),
+            Instruction::Input(a) => Ok(Instruction::Input(f(a)?)),
+            Instruction::Output(a) => Ok(Instruction::Output(f(a)?)),
+            Instruction::IfGoto(a, b) => Ok(Instruction::IfGoto(f(a)?, f(b)?)),
+            Instruction::IfNotGoto(a, b) => Ok(Instruction::IfNotGoto(f(a)?, f(b)?)),
+            Instruction::LessThan(a, b, c) => Ok(Instruction::LessThan(f(a)?, f(b)?, f(c)?)),
+            Instruction::Equals(a, b, c) => Ok(Instruction::Equals(f(a)?, f(b)?, f(c)?)),
+            Instruction::AdjustR(a) => Ok(Instruction::AdjustR(f(a)?)),
+            Instruction::Halt => Ok(Instruction::Halt),
+        }
+    }
 }
+
 // Parse a signed i128
 fn parse_i128(input: &str) -> IResult<&str, i128> {
     map_res(recognize(pair(opt(char('-')), digit1)), |s: &str| {
@@ -378,7 +397,7 @@ fn parse_label_def(input: &str) -> IResult<&str, String> {
 fn comment(input: &str) -> IResult<&str, ()> {
     value(
         (), // Output is thrown away.
-        pair(tag("//"), is_not("\n\r")),
+        pair(tag(";"), is_not("\n\r")),
     )
     .parse(input)
 }
@@ -425,33 +444,21 @@ pub fn parse_program(
     let resolved_instructions = instructions
         .into_iter()
         .map(|(offset, instr)| {
-            let resolved_instr = match instr {
-                Instruction::IfGoto(cond, Argument::Label(label)) => {
-                    if let Some(&target) = label_offsets.get(&label) {
-                        Instruction::IfGoto(cond, Argument::Immediate(target as i128))
+            instr
+                .map_result(|arg| {
+                    if let Argument::Label(label) = arg {
+                        if let Some(&target) = label_offsets.get(label) {
+                            Ok(Argument::Immediate(target as i128))
+                        } else {
+                            return Err(format!("Undefined label: {}", label));
+                        }
                     } else {
-                        return Err(("Undefined label", offset));
+                        Ok(arg.clone())
                     }
-                }
-                Instruction::IfNotGoto(cond, Argument::Label(label)) => {
-                    if let Some(&target) = label_offsets.get(&label) {
-                        Instruction::IfNotGoto(cond, Argument::Immediate(target as i128))
-                    } else {
-                        return Err(("Undefined label", offset));
-                    }
-                }
-                Instruction::Add(Argument::Label(label), b, c) => {
-                    if let Some(&target) = label_offsets.get(&label) {
-                        Instruction::Add(Argument::Immediate(target as i128), b, c)
-                    } else {
-                        return Err(("Undefined label", offset));
-                    }
-                }
-                _ => instr,
-            };
-            Ok((offset, resolved_instr))
+                })
+                .map(|arg| (offset, arg))
         })
-        .collect::<Result<Vec<_>, (&str, usize)>>()
+        .collect::<Result<Vec<(usize, Instruction)>, String>>()
         .map_err(|_| {
             nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
         })?;
@@ -459,6 +466,7 @@ pub fn parse_program(
     Ok(resolved_instructions)
 }
 
+#[cfg(test)]
 pub fn compile(code: &str) -> Vec<i128> {
     let program = parse_program(code).unwrap();
     let mut out = vec![];
@@ -614,14 +622,14 @@ mod tests {
     #[test]
     fn test_program_with_labels() {
         let program = "
-            INPUT [0]       // Get a number
-            [1] = 1 + 0     // Initialize counter
-            loop:           // Loop start
-                [2] = [1] * [0]  // Multiply
-                output [2]  // Output the result
-                [1] = [1] + 1    // Increment counter
-                [3] = [1] < 5    // Check if counter < 5
-                if [3] goto @loop  // Loop if true
+            INPUT [0]       ; Get a number
+            [1] = 1 + 0     ; Initialize counter
+            loop:           ; Loop start
+                [2] = [1] * [0]  ; Multiply
+                output [2]  ; Output the result
+                [1] = [1] + 1    ; Increment counter
+                [3] = [1] < 5    ; Check if counter < 5
+                if [3] goto @loop  ; Loop if true
             halt
         ";
 
@@ -654,32 +662,32 @@ mod tests {
     #[test]
     fn test_complex_program() {
         let program = "
-            // Initialize variables
-            [0] = 0 + 0    // sum = 0
-            [1] = 1 + 0    // i = 1
-            [10] = 10 + 0  // limit = 10
+            ; Initialize variables
+            [0] = 0 + 0    ; sum = 0
+            [1] = 1 + 0    ; i = 1
+            [10] = 10 + 0  ; limit = 10
 
-            // Main loop to calculate sum of 1 to 10
+            ; Main loop to calculate sum of 1 to 10
             loop:
-                // Check if i <= limit
-                [2] = [1] < [10]     // i < limit?
-                [3] = [1] == [10]    // i == limit?
-                [4] = [2] + [3]      // result of i <= limit
-                
-                // If i > limit, exit loop
+                ; Check if i <= limit
+                [2] = [1] < [10]     ; i < limit?
+                [3] = [1] == [10]    ; i == limit?
+                [4] = [2] + [3]      ; result of i <= limit
+
+                ; If i > limit, exit loop
                 if ![4] goto @done
-                
-                // sum += i
+
+                ; sum += i
                 [0] = [0] + [1]
-                
-                // i++
+
+                ; i++
                 [1] = [1] + 1
-                
-                // Continue loop
+
+                ; Continue loop
                 goto @loop
-                
+
             done:
-                // Output final sum
+                ; Output final sum
                 output [0]
                 halt
         ";
@@ -725,34 +733,34 @@ mod tests {
     #[test]
     fn test_nested_labels() {
         let program = "
-            // A program with nested control structures
-            [0] = 0 + 0    // result = 0
-            [1] = 1 + 0    // i = 1
-            [2] = 5 + 0    // max = 5
-            
+            ; A program with nested control structures
+            [0] = 0 + 0    ; result = 0
+            [1] = 1 + 0    ; i = 1
+            [2] = 5 + 0    ; max = 5
+
             outer_loop:
                 [3] = [1] < [2]
                 if ![3] goto @done
-                
-                [10] = 1 + 0    // j = 1
-                
+
+                [10] = 1 + 0    ; j = 1
+
                 inner_loop:
                     [11] = [10] < [1]
                     if ![11] goto @inner_done
-                    
-                    // result += i * j
+
+                    ; result += i * j
                     [20] = [1] * [10]
                     [0] = [0] + [20]
-                    
-                    // j++
+
+                    ; j++
                     [10] = [10] + 1
                     goto @inner_loop
-                    
+
                 inner_done:
-                    // i++
+                    ; i++
                     [1] = [1] + 1
                     goto @outer_loop
-                    
+
             done:
                 output [0]
                 halt
@@ -770,18 +778,18 @@ mod tests {
     #[test]
     fn test_comments_and_whitespace() {
         let program = "
-            // This program calculates 5 + 7
-            
-            // Initialize values
-            [0] = 5 + 0    // First value
-            
-            // Add second value
-            [0] = [0] + 7  // Add 7
-            
-            // Output the result
-            output [0]     // Should be 12
-            
-            // End program
+            ; This program calculates 5 + 7
+
+            ; Initialize values
+            [0] = 5 + 0    ; First value
+
+            ; Add second value
+            [0] = [0] + 7  ; Add 7
+
+            ; Output the result
+            output [0]     ; Should be 12
+
+            ; End program
             halt
         ";
 
@@ -801,5 +809,64 @@ mod tests {
         ];
 
         assert_eq!(parse_test_program(program), expected);
+    }
+    #[test]
+    fn test_label_position_in_args() {
+        let program = "
+            ; Test using labels in different positions
+            start:
+                [0] = 1 + 0  ; 0
+                [1] = 2 + 0  ; 4
+
+                ; Label as first argument
+                if @loop goto @done   ; 8
+
+                loop:
+                ; Label as second argument for arithmatic
+                [2] = @loop + 10      ; 11
+
+                ; Label in third position
+                [3] = 5 < @done       ; 15
+
+                ; Label as third argument
+                [4] = 100 + 200      ; 19
+                goto @loop           ; 23
+
+            done:
+                output [0]           ; 26
+                halt                 ; 27
+        ";
+
+        let parsed = parse_program(program).unwrap();
+
+        println!("{:?}", parsed);
+        // Check if labels were correctly resolved to their offsets
+        let resolved_instructions: Vec<Instruction> = parsed.into_iter().map(|(_, i)| i).collect();
+
+        // The if @loop goto @done should use the address of @loop as first arg
+        assert_eq!(
+            resolved_instructions[2],
+            Instruction::IfGoto(Argument::Immediate(11), Argument::Immediate(26))
+        );
+
+        // The [2] = @loop + 10 should use loop's address as first arg
+        assert_eq!(
+            resolved_instructions[3],
+            Instruction::Add(
+                Argument::Immediate(11),
+                Argument::Immediate(10),
+                Argument::Memory(2)
+            )
+        );
+
+        // The [3] = 5 < @done should use done's address as second arg
+        assert_eq!(
+            resolved_instructions[4],
+            Instruction::LessThan(
+                Argument::Immediate(5),
+                Argument::Immediate(26),
+                Argument::Memory(3)
+            )
+        );
     }
 }
