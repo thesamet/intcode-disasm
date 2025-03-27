@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_while1},
-    character::complete::{char, digit1, multispace0, space0, space1},
+    character::complete::{self, char, digit1, multispace0, space0, space1},
     combinator::{eof, map, map_res, opt, recognize, value},
     multi::{many1, separated_list0},
     sequence::{delimited, pair, preceded, terminated},
@@ -18,6 +18,28 @@ pub enum Argument {
     Label(String),     // For jump instructions
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceArgument {
+    pub arg: Argument,
+    pub debug_marker: Option<char>,
+}
+
+impl SourceArgument {
+    pub fn new(arg: Argument, debug_marker: Option<char>) -> Self {
+        SourceArgument { arg, debug_marker }
+    }
+}
+
+impl ArgBase for SourceArgument {
+    fn mode(&self) -> i128 {
+        self.arg.mode()
+    }
+
+    fn serialize(&self, out: &mut Vec<i128>) {
+        self.arg.serialize(out);
+    }
+}
+
 impl Argument {
     fn mode(&self) -> i128 {
         match self {
@@ -29,73 +51,108 @@ impl Argument {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Instruction {
-    Add(Argument, Argument, Argument),      // ADD a, b, c
-    Mul(Argument, Argument, Argument),      // MUL a, b, c
-    Input(Argument),                        // INPUT a
-    Output(Argument),                       // output a
-    IfGoto(Argument, Argument),             // if a goto b
-    IfNotGoto(Argument, Argument),          // if !a goto b
-    LessThan(Argument, Argument, Argument), // c = a < b
-    Equals(Argument, Argument, Argument),   // c = a == b
-    AdjustR(Argument),                      // R += a
-    Halt,                                   // halt
+impl Argument {
+    fn as_source(&self) -> SourceArgument {
+        SourceArgument::new(self.clone(), None)
+    }
 }
 
-impl Instruction {
+impl ArgBase for Argument {
+    fn mode(&self) -> i128 {
+        self.mode()
+    }
+
+    fn serialize(&self, out: &mut Vec<i128>) {
+        let v = match self {
+            Argument::Memory(addr) => addr,
+            Argument::Immediate(val) => val,
+            Argument::RelativeMem(addr) => addr,
+            Argument::Label(_) => unreachable!(),
+        };
+        out.push(v);
+    }
+}
+
+trait ArgBase {
+    fn mode(&self) -> i128;
+    fn serialize(&self, out: &mut Vec<i128>);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenericInstruction<ArgType> {
+    Add(ArgType, ArgType, ArgType),      // ADD a, b, c
+    Mul(ArgType, ArgType, ArgType),      // MUL a, b, c
+    Input(ArgType),                      // INPUT a
+    Output(ArgType),                     // output a
+    IfGoto(ArgType, ArgType),            // if a goto b
+    IfNotGoto(ArgType, ArgType),         // if !a goto b
+    LessThan(ArgType, ArgType, ArgType), // c = a < b
+    Equals(ArgType, ArgType, ArgType),   // c = a == b
+    AdjustR(ArgType),                    // R += a
+    Halt,                                // halt
+}
+
+type Instruction = GenericInstruction<SourceArgument>;
+
+impl<ArgType> GenericInstruction<ArgType> {
     pub fn size(&self) -> usize {
         match self {
-            Instruction::Add(_, _, _)
-            | Instruction::Mul(_, _, _)
-            | Instruction::LessThan(_, _, _)
-            | Instruction::Equals(_, _, _) => 4,
+            GenericInstruction::Add(_, _, _)
+            | GenericInstruction::Mul(_, _, _)
+            | GenericInstruction::LessThan(_, _, _)
+            | GenericInstruction::Equals(_, _, _) => 4,
 
-            Instruction::IfGoto(_, _) | Instruction::IfNotGoto(_, _) => 3,
+            GenericInstruction::IfGoto(_, _) | GenericInstruction::IfNotGoto(_, _) => 3,
 
-            Instruction::Input(_) | Instruction::Output(_) | Instruction::AdjustR(_) => 2,
+            GenericInstruction::Input(_)
+            | GenericInstruction::Output(_)
+            | GenericInstruction::AdjustR(_) => 2,
 
-            Instruction::Halt => 1,
+            GenericInstruction::Halt => 1,
         }
     }
 
-    fn arg(&self, index: usize) -> Option<&Argument> {
+    fn arg(&self, index: usize) -> Option<&ArgType> {
         match self {
-            Instruction::Add(a, b, c)
-            | Instruction::Mul(a, b, c)
-            | Instruction::LessThan(a, b, c)
-            | Instruction::Equals(a, b, c) => match index {
+            GenericInstruction::Add(a, b, c)
+            | GenericInstruction::Mul(a, b, c)
+            | GenericInstruction::LessThan(a, b, c)
+            | GenericInstruction::Equals(a, b, c) => match index {
                 0 => Some(a),
                 1 => Some(b),
                 2 => Some(c),
                 _ => None,
             },
-            Instruction::IfGoto(a, b) | Instruction::IfNotGoto(a, b) => match index {
+            GenericInstruction::IfGoto(a, b) | GenericInstruction::IfNotGoto(a, b) => match index {
                 0 => Some(a),
                 1 => Some(b),
                 _ => None,
             },
-            Instruction::Input(a) | Instruction::Output(a) | Instruction::AdjustR(a) => match index
-            {
+            GenericInstruction::Input(a)
+            | GenericInstruction::Output(a)
+            | GenericInstruction::AdjustR(a) => match index {
                 0 => Some(a),
                 _ => None,
             },
-            Instruction::Halt => None,
+            GenericInstruction::Halt => None,
         }
     }
 
-    pub fn serialize(&self, out: &mut Vec<i128>) {
+    pub fn serialize(&self, out: &mut Vec<i128>)
+    where
+        ArgType: ArgBase,
+    {
         let opcode = match self {
-            Instruction::Add(_, _, _) => 1,
-            Instruction::Mul(_, _, _) => 2,
-            Instruction::Input(_) => 3,
-            Instruction::Output(_) => 4,
-            Instruction::IfGoto(_, _) => 5,
-            Instruction::IfNotGoto(_, _) => 6,
-            Instruction::LessThan(_, _, _) => 7,
-            Instruction::Equals(_, _, _) => 8,
-            Instruction::AdjustR(_) => 9,
-            Instruction::Halt => 99,
+            GenericInstruction::Add(_, _, _) => 1,
+            GenericInstruction::Mul(_, _, _) => 2,
+            GenericInstruction::Input(_) => 3,
+            GenericInstruction::Output(_) => 4,
+            GenericInstruction::IfGoto(_, _) => 5,
+            GenericInstruction::IfNotGoto(_, _) => 6,
+            GenericInstruction::LessThan(_, _, _) => 7,
+            GenericInstruction::Equals(_, _, _) => 8,
+            GenericInstruction::AdjustR(_) => 9,
+            GenericInstruction::Halt => 99,
         } as i128;
         let mode = (0..=2)
             .map(|i| self.arg(i).map(|a| a.mode()).unwrap_or_default() * 10i128.pow((i as u32) + 2))
@@ -103,32 +160,30 @@ impl Instruction {
         out.push(opcode + mode);
         for i in 0..3 {
             if let Some(arg) = self.arg(i) {
-                let arg = match arg {
-                    Argument::Memory(x) => x,
-                    Argument::Immediate(x) => x,
-                    Argument::RelativeMem(x) => x,
-                    Argument::Label(_) => unreachable!(),
-                };
-                out.push(*arg);
+                arg.serialize(out)
             }
         }
     }
 
-    pub fn map_result<F, E>(&self, f: F) -> Result<Instruction, E>
+    pub fn map_result<F, E, ArgType2>(&self, f: F) -> Result<GenericInstruction<ArgType2>, E>
     where
-        F: Fn(&Argument) -> Result<Argument, E>,
+        F: Fn(&ArgType) -> Result<ArgType2, E>,
     {
         match self {
-            Instruction::Add(a, b, c) => Ok(Instruction::Add(f(a)?, f(b)?, f(c)?)),
-            Instruction::Mul(a, b, c) => Ok(Instruction::Mul(f(a)?, f(b)?, f(c)?)),
-            Instruction::Input(a) => Ok(Instruction::Input(f(a)?)),
-            Instruction::Output(a) => Ok(Instruction::Output(f(a)?)),
-            Instruction::IfGoto(a, b) => Ok(Instruction::IfGoto(f(a)?, f(b)?)),
-            Instruction::IfNotGoto(a, b) => Ok(Instruction::IfNotGoto(f(a)?, f(b)?)),
-            Instruction::LessThan(a, b, c) => Ok(Instruction::LessThan(f(a)?, f(b)?, f(c)?)),
-            Instruction::Equals(a, b, c) => Ok(Instruction::Equals(f(a)?, f(b)?, f(c)?)),
-            Instruction::AdjustR(a) => Ok(Instruction::AdjustR(f(a)?)),
-            Instruction::Halt => Ok(Instruction::Halt),
+            GenericInstruction::Add(a, b, c) => Ok(GenericInstruction::Add(f(a)?, f(b)?, f(c)?)),
+            GenericInstruction::Mul(a, b, c) => Ok(GenericInstruction::Mul(f(a)?, f(b)?, f(c)?)),
+            GenericInstruction::Input(a) => Ok(GenericInstruction::Input(f(a)?)),
+            GenericInstruction::Output(a) => Ok(GenericInstruction::Output(f(a)?)),
+            GenericInstruction::IfGoto(a, b) => Ok(GenericInstruction::IfGoto(f(a)?, f(b)?)),
+            GenericInstruction::IfNotGoto(a, b) => Ok(GenericInstruction::IfNotGoto(f(a)?, f(b)?)),
+            GenericInstruction::LessThan(a, b, c) => {
+                Ok(GenericInstruction::LessThan(f(a)?, f(b)?, f(c)?))
+            }
+            GenericInstruction::Equals(a, b, c) => {
+                Ok(GenericInstruction::Equals(f(a)?, f(b)?, f(c)?))
+            }
+            GenericInstruction::AdjustR(a) => Ok(GenericInstruction::AdjustR(f(a)?)),
+            GenericInstruction::Halt => Ok(GenericInstruction::Halt),
         }
     }
 }
@@ -185,13 +240,24 @@ fn parse_label_ref(input: &str) -> IResult<&str, Argument> {
     .parse(input)
 }
 
-fn parse_argument(input: &str) -> IResult<&str, Argument> {
-    alt((
-        parse_memory,
-        parse_relative_mem,
-        parse_label_ref,
-        parse_immediate,
-    ))
+fn parse_argument(input: &str) -> IResult<&str, SourceArgument> {
+    pair(
+        (
+            opt(complete::satisfy(|c| c.is_alphabetic())),
+            space0,
+            tag("@"),
+            space0,
+            space0,
+        )
+            .map(|(c, _, _, _, _)| c),
+        alt((
+            parse_memory,
+            parse_relative_mem,
+            parse_label_ref,
+            parse_immediate,
+        )),
+    )
+    .map(|(debug_marker, arg)| SourceArgument::new(arg, debug_marker))
     .parse(input)
 }
 
@@ -235,7 +301,7 @@ fn parse_mul(input: &str) -> IResult<&str, Instruction> {
 fn parse_assign(input: &str) -> IResult<&str, Instruction> {
     map(
         (parse_argument, space0, char('='), space0, parse_argument),
-        |(c, _, _, _, a)| Instruction::Add(a, Argument::Immediate(0), c),
+        |(c, _, _, _, a)| Instruction::Add(a, Argument::Immediate(0).as_source(), c),
     )
     .parse(input)
 }
@@ -295,7 +361,7 @@ fn parse_if_not_goto(input: &str) -> IResult<&str, Instruction> {
 
 fn parse_goto(input: &str) -> IResult<&str, Instruction> {
     map(preceded(pair(tag("goto"), space1), parse_argument), |a| {
-        Instruction::IfGoto(Argument::Immediate(1), a)
+        Instruction::IfGoto(Argument::Immediate(1).as_source(), a)
     })
     .parse(input)
 }
@@ -346,13 +412,12 @@ fn parse_adjust_r(input: &str) -> IResult<&str, Instruction> {
             (tag("R"), space0, tag("-="), space0, parse_argument),
             |(_, _, _, _, a)| {
                 // Need to negate the argument for subtract
-                match a {
-                    Argument::Immediate(val) => Instruction::AdjustR(Argument::Immediate(-val)),
-                    Argument::Memory(addr) => Instruction::AdjustR(Argument::Memory(addr)),
-                    Argument::RelativeMem(offset) => {
-                        Instruction::AdjustR(Argument::RelativeMem(-offset))
-                    }
-                    Argument::Label(label) => Instruction::AdjustR(Argument::Label(label)),
+                match a.arg {
+                    Argument::Immediate(val) => Instruction::AdjustR(SourceArgument::new(
+                        Argument::Immediate(-val),
+                        a.debug_marker,
+                    )),
+                    _ => panic!("Invalid argument for adjust register instruction"),
                 }
             },
         ),
@@ -446,9 +511,12 @@ pub fn parse_program(
         .map(|(offset, instr)| {
             instr
                 .map_result(|arg| {
-                    if let Argument::Label(label) = arg {
+                    if let Argument::Label(label) = &arg.arg {
                         if let Some(&target) = label_offsets.get(label) {
-                            Ok(Argument::Immediate(target as i128))
+                            Ok(SourceArgument::new(
+                                Argument::Immediate(target as i128),
+                                arg.debug_marker,
+                            ))
                         } else {
                             return Err(format!("Undefined label: {}", label));
                         }
@@ -480,16 +548,23 @@ pub fn compile(code: &str) -> Vec<i128> {
 mod tests {
     use super::*;
 
+    type Instruction = GenericInstruction<Argument>;
+
     // Helper function to parse a single instruction
     fn parse_single_instruction(input: &str) -> Instruction {
         let (_, (_, instr)) = parse_line(input).unwrap();
         instr
+            .map_result::<_, &str, Argument>(|arg| Ok(arg.arg.clone()))
+            .unwrap()
     }
 
     // Helper to parse a complete program and return just the instructions
     fn parse_test_program(input: &str) -> Vec<Instruction> {
         let program = parse_program(input).unwrap();
-        program.into_iter().map(|(_, instr)| instr).collect()
+        program
+            .into_iter()
+            .map(|(_, instr)| instr.map_result::<_, &str, Argument>(|arg| Ok(arg.arg.clone())))
+            .collect()
     }
 
     #[test]
