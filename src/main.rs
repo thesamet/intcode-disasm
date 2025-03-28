@@ -3,6 +3,7 @@ mod disasm;
 use clap::{Parser, Subcommand};
 use disasm::{control_flow_graph, low_ir::FatInstruction, mid_ir};
 
+use disasm::parser::SerializableInstruction;
 use itertools::Itertools;
 
 #[derive(Parser)]

@@ -132,7 +132,7 @@ pub trait ArgBase {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum GenericInstruction<ArgType: ArgBase> {
+pub enum GenericInstruction<ArgType> {
     Add(ArgType, ArgType, ArgType),
     Mul(ArgType, ArgType, ArgType),
     Input(ArgType),
@@ -198,7 +198,10 @@ impl<ArgType> GenericInstruction<ArgType>
 where
     ArgType: ArgBase + From<OpArg>,
 {
-    pub fn parse(input: Input) -> Result<(Input, GenericInstruction<ArgType>), ParseError> {
+    pub fn parse(input: Input) -> Result<(Input, GenericInstruction<ArgType>), ParseError>
+    where
+        ArgType: Debug,
+    {
         FatInstruction::parse_fat(input).map(|(input, op)| (input, op.kind.map(|f| (*f).into())))
     }
 }
@@ -237,14 +240,80 @@ impl<'a> Input<'a> {
     }
 }
 
-impl<ArgType: ArgBase> GenericInstruction<ArgType> {
+impl<ArgType> GenericInstruction<ArgType> {
     /* Maps the arguments of the instruction to a new type using the provided functions.
      * The first function is used to map the read arguments, and the second function is used to map
      * the write arguments. The read function is guaranteed to be called for all read arguments
      * before the write function is called for any write arguments. This is useful for data flow
      * functions.
      */
-    pub fn map_rw<R, W, O, T: ArgBase>(
+    pub fn map_rw_result<R, W, O, T, E>(
+        &self,
+        o: &mut O,
+        mut read_map: R,
+        mut write_map: W,
+    ) -> Result<GenericInstruction<T>, E>
+    where
+        R: FnMut(&mut O, &ArgType) -> Result<T, E>,
+        W: FnMut(&mut O, &ArgType) -> Result<T, E>,
+    {
+        match self {
+            GenericInstruction::Add(a, b, c) => Ok(GenericInstruction::Add(
+                read_map(o, a)?,
+                read_map(o, b)?,
+                write_map(o, c)?,
+            )),
+            GenericInstruction::Mul(a, b, c) => Ok(GenericInstruction::Mul(
+                read_map(o, a)?,
+                read_map(o, b)?,
+                write_map(o, c)?,
+            )),
+            GenericInstruction::Input(a) => Ok(GenericInstruction::Input(write_map(o, a)?)),
+            GenericInstruction::Output(a) => Ok(GenericInstruction::Output(read_map(o, a)?)),
+            GenericInstruction::JumpIf(a, b, c) => Ok(GenericInstruction::JumpIf(
+                read_map(o, a)?,
+                *b,
+                read_map(o, c)?,
+            )),
+            GenericInstruction::LessThan(a, b, c) => Ok(GenericInstruction::LessThan(
+                read_map(o, a)?,
+                read_map(o, b)?,
+                write_map(o, c)?,
+            )),
+            GenericInstruction::Equals(a, b, c) => Ok(GenericInstruction::Equals(
+                read_map(o, a)?,
+                read_map(o, b)?,
+                write_map(o, c)?,
+            )),
+            GenericInstruction::AdjustRelativeBase(a) => {
+                Ok(GenericInstruction::AdjustRelativeBase(read_map(o, a)?))
+            }
+            GenericInstruction::Data(a) => Ok(GenericInstruction::Data(a.clone())),
+            GenericInstruction::Halt => Ok(GenericInstruction::Halt),
+            GenericInstruction::Goto(a) => Ok(GenericInstruction::Goto(read_map(o, a)?)),
+            GenericInstruction::Assign(a, b) => {
+                let rb = read_map(o, b)?;
+                Ok(GenericInstruction::Assign(write_map(o, a)?, rb))
+            }
+            GenericInstruction::Phi(a, b) => {
+                let mut results = Vec::new();
+                for x in b.iter() {
+                    results.push(read_map(o, x)?);
+                }
+                Ok(GenericInstruction::Phi(write_map(o, a)?, results))
+            }
+        }
+    }
+
+    pub fn map_result<O, R, T, E>(&self, o: &mut O, map: R) -> Result<GenericInstruction<T>, E>
+    where
+        R: FnMut(&mut O, &ArgType) -> Result<T, E> + Clone,
+    {
+        let map2 = map.clone();
+        self.map_rw_result(o, map, map2)
+    }
+
+    pub fn map_rw<O, R, W, T>(
         &self,
         o: &mut O,
         mut read_map: R,
@@ -254,42 +323,15 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
         R: FnMut(&mut O, &ArgType) -> T,
         W: FnMut(&mut O, &ArgType) -> T,
     {
-        match self {
-            GenericInstruction::Add(a, b, c) => {
-                GenericInstruction::Add(read_map(o, a), read_map(o, b), write_map(o, c))
-            }
-            GenericInstruction::Mul(a, b, c) => {
-                GenericInstruction::Mul(read_map(o, a), read_map(o, b), write_map(o, c))
-            }
-            GenericInstruction::Input(a) => GenericInstruction::Input(write_map(o, a)),
-            GenericInstruction::Output(a) => GenericInstruction::Output(read_map(o, a)),
-            GenericInstruction::JumpIf(a, b, c) => {
-                GenericInstruction::JumpIf(read_map(o, a), *b, read_map(o, c))
-            }
-            GenericInstruction::LessThan(a, b, c) => {
-                GenericInstruction::LessThan(read_map(o, a), read_map(o, b), write_map(o, c))
-            }
-            GenericInstruction::Equals(a, b, c) => {
-                GenericInstruction::Equals(read_map(o, a), read_map(o, b), write_map(o, c))
-            }
-            GenericInstruction::AdjustRelativeBase(a) => {
-                GenericInstruction::AdjustRelativeBase(read_map(o, a))
-            }
-            GenericInstruction::Data(a) => GenericInstruction::Data(a.clone()),
-            GenericInstruction::Halt => GenericInstruction::Halt,
-            GenericInstruction::Goto(a) => GenericInstruction::Goto(read_map(o, a)),
-            GenericInstruction::Assign(a, b) => {
-                let rb = read_map(o, b);
-                GenericInstruction::Assign(write_map(o, a), rb)
-            }
-            GenericInstruction::Phi(a, b) => {
-                let b = b.iter().map(|x| read_map(o, x)).collect();
-                GenericInstruction::Phi(write_map(o, a), b)
-            }
-        }
+        self.map_rw_result(
+            o,
+            |o, arg| Ok::<T, std::convert::Infallible>(read_map(o, arg)),
+            |o, arg| Ok::<T, std::convert::Infallible>(write_map(o, arg)),
+        )
+        .unwrap()
     }
 
-    pub fn map<F, T: ArgBase>(&self, mut f: F) -> GenericInstruction<T>
+    pub fn map<F, T>(&self, mut f: F) -> GenericInstruction<T>
     where
         F: FnMut(&ArgType) -> T + Clone + Copy,
     {
@@ -297,7 +339,10 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
         self.map_rw(&mut (), |_, a| f(a), |_, b| g(b))
     }
 
-    pub fn reads(&self) -> Vec<&ArgType> {
+    pub fn reads(&self) -> Vec<&ArgType>
+    where
+        ArgType: ArgBase,
+    {
         let mut v = match self {
             Self::Add(a, b, _) => vec![a, b],
             Self::Mul(a, b, _) => vec![a, b],
@@ -332,6 +377,26 @@ impl<ArgType: ArgBase> GenericInstruction<ArgType> {
             Self::Goto(_) => None,
             Self::Assign(a, _) => Some(a),
             Self::Phi(a, _) => Some(a),
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        match self {
+            GenericInstruction::Add(..)
+            | GenericInstruction::Mul(..)
+            | GenericInstruction::LessThan(..)
+            | GenericInstruction::Equals(..)
+            | GenericInstruction::Assign(..) => 4,
+
+            GenericInstruction::Goto(..) | GenericInstruction::JumpIf(..) => 3,
+
+            GenericInstruction::Input(_)
+            | GenericInstruction::Output(_)
+            | GenericInstruction::AdjustRelativeBase(_) => 2,
+
+            GenericInstruction::Halt => 1,
+            GenericInstruction::Data(v) => v.len(),
+            GenericInstruction::Phi(_, _) => panic!("Phi instruction not supported"),
         }
     }
 }
@@ -433,24 +498,6 @@ impl FatInstruction {
                 addr,
             ) if (cond && c != 0) || (!cond && c == 0) => FatInstruction::Goto(addr),
             x => x,
-        }
-    }
-
-    pub fn size(&self) -> usize {
-        match self {
-            FatInstruction::Add(_, _, _) => 4,
-            FatInstruction::Mul(_, _, _) => 4,
-            FatInstruction::Input(_) => 2,
-            FatInstruction::Output(_) => 2,
-            FatInstruction::JumpIf(_, _, _) => 3,
-            FatInstruction::LessThan(_, _, _) => 4,
-            FatInstruction::Equals(_, _, _) => 4,
-            FatInstruction::AdjustRelativeBase(_) => 2,
-            FatInstruction::Halt => 1,
-            FatInstruction::Data(i) => i.len(),
-            FatInstruction::Goto(_) => 3,
-            FatInstruction::Assign(_, _) => 4,
-            FatInstruction::Phi(_, _) => unreachable!(),
         }
     }
 
