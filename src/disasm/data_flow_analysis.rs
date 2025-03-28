@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     control_flow_graph::{Block, BlockId, ControlFlowGraph},
-    low_ir::{Arg, ArgBase, OpArg, Span},
+    low_ir::{ArgBase, OpArg},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
