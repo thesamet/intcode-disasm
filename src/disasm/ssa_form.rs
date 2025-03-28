@@ -6,7 +6,7 @@ use std::{
 use super::{
     control_flow_graph::{Block, BlockId, Condition, ControlFlowGraph, FunctionCall, NextKind},
     data_flow_analysis::{Definition, GraphDataFlow},
-    low_ir::{Arg, ArgBase, GenericInstruction, OpArg, Span},
+    low_ir::{Arg, ArgBase, GenericInstruction, HasDebugMarker, OpArg, Span},
 };
 
 use itertools::Itertools;
@@ -15,6 +15,7 @@ pub struct SSAArg {
     pub arg: Arg,
     pub version: usize,
     pub deref_version: usize,
+    pub debug_marker: Option<char>,
 }
 
 impl From<OpArg> for SSAArg {
@@ -23,6 +24,7 @@ impl From<OpArg> for SSAArg {
             arg: arg.kind,
             version: 0,
             deref_version: 0,
+            debug_marker: arg.debug_marker,
         }
     }
 }
@@ -43,11 +45,20 @@ impl ArgBase for SSAArg {
 
 impl Display for SSAArg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        if let Some(marker) = self.debug_marker {
+            write!(f, "'{} ", marker)?;
+        }
         match self.arg {
             Arg::Value(x) => write!(f, "{}", x), // No version for immediate values
             Arg::Deref(addr) => write!(f, "[[{}]_{}]", addr, self.deref_version),
             _ => write!(f, "{}_{}", self.arg, self.version),
         }
+    }
+}
+
+impl HasDebugMarker for SSAArg {
+    fn debug_marker(&self) -> Option<char> {
+        self.debug_marker
     }
 }
 
@@ -60,7 +71,7 @@ struct PhiNode {
 }
 
 pub fn convert_to_ssa<
-    ArgType: ArgBase + std::fmt::Debug + std::hash::Hash + Eq + Copy + From<OpArg>,
+    ArgType: ArgBase + std::fmt::Debug + std::hash::Hash + Eq + Copy + From<OpArg> + HasDebugMarker,
 >(
     control_flow: &ControlFlowGraph<ArgType>,
     data_flow: &GraphDataFlow<ArgType>,
@@ -87,7 +98,7 @@ struct SSAConverter<'a, ArgType: ArgBase> {
 
 impl<'a, ArgType> SSAConverter<'a, ArgType>
 where
-    ArgType: ArgBase + Eq + std::hash::Hash + Copy + From<OpArg> + std::fmt::Debug,
+    ArgType: ArgBase + Eq + std::hash::Hash + Copy + From<OpArg> + std::fmt::Debug + HasDebugMarker,
 {
     pub fn new(
         control_flow: &'a ControlFlowGraph<ArgType>,
@@ -138,6 +149,7 @@ where
                     arg,
                     version: 0,
                     deref_version: 0,
+                    debug_marker: None,
                 },
             );
         }
@@ -234,7 +246,13 @@ where
         }
     }
 
-    fn create_new_version_for_arg(&mut self, arg: Arg, block_id: BlockId, offset: usize) -> SSAArg {
+    fn create_new_version_for_arg(
+        &mut self,
+        arg: Arg,
+        block_id: BlockId,
+        offset: usize,
+        debug_marker: Option<char>,
+    ) -> SSAArg {
         if let Arg::Deref(_) = arg {
             return self.current_version_of_arg_in_block(arg, block_id);
         }
@@ -244,6 +262,7 @@ where
             arg,
             version: new_version,
             deref_version: 0,
+            debug_marker,
         };
         self.var_versions
             .entry(block_id)
@@ -261,6 +280,7 @@ where
                 deref_version: self
                     .current_version_of_arg_in_block(Arg::Mem(addr as i128), block_id)
                     .version,
+                debug_marker: None,
             };
         }
 
@@ -272,6 +292,7 @@ where
                 arg,
                 version: 0,
                 deref_version: 0,
+                debug_marker: Some('?'),
             })
     }
 
@@ -362,6 +383,7 @@ where
                     *arg.as_arg(),
                     block_id,
                     control_def.span.start,
+                    None,
                 );
                 self.phi_nodes.entry(block_id).or_default().insert(
                     *arg.as_arg(),
@@ -382,7 +404,12 @@ where
                     s.current_version_of_arg_in_block(*read_arg.as_arg(), block_id)
                 },
                 &mut |s: &mut Self, write_arg: &ArgType| {
-                    s.create_new_version_for_arg(*write_arg.as_arg(), block_id, *addr)
+                    s.create_new_version_for_arg(
+                        *write_arg.as_arg(),
+                        block_id,
+                        *addr,
+                        write_arg.debug_marker(),
+                    )
                 },
             );
             let block = self.out.blocks.get_mut(&block_id).unwrap();
@@ -451,6 +478,7 @@ where
                         arg: Arg::Mem(addr as i128),
                         version: deref_version,
                         deref_version: 0,
+                        debug_marker: None,
                     })
                     .unwrap()
                     .version;

@@ -29,7 +29,6 @@ impl std::fmt::Display for BlockId {
 }
 use super::{
     low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError},
-    mid_ir::ArgType,
     program_analysis::ProgramAnalysis,
     type_inference::TypeInference,
 };

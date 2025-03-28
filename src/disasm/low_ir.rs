@@ -73,6 +73,12 @@ impl From<(usize, usize)> for Span {
     }
 }
 
+impl HasDebugMarker for OpArg {
+    fn debug_marker(&self) -> Option<char> {
+        self.debug_marker
+    }
+}
+
 impl Arg {
     fn parse(
         input: Input,
@@ -137,6 +143,10 @@ pub trait ArgBase {
     }
 
     fn as_arg(&self) -> &Arg;
+}
+
+pub trait HasDebugMarker {
+    fn debug_marker(&self) -> Option<char>;
 }
 
 #[derive(Clone, Debug, PartialEq)]

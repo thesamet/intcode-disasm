@@ -149,6 +149,7 @@ impl TypeInference {
                 arg: Arg::Mem(addr as i128),
                 version: var.ssa_arg.deref_version,
                 deref_version: 0,
+                debug_marker: None,
             };
             let pointer = self.type_for_arg(Var::new(var.block_id, inner_var));
             self.add_constraint(

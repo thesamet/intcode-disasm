@@ -5,7 +5,7 @@ use crate::disasm::type_inference::Var;
 use super::{
     control_flow_graph::{BlockId, ControlFlowGraph, PredecessorKind},
     data_flow_analysis::GraphDataFlow,
-    low_ir::Arg,
+    low_ir::{Arg, ArgBase, OpArg},
     ssa_form::convert_to_ssa,
     type_inference::{Type, TypeInference, TypeVarId},
 };
@@ -20,15 +20,15 @@ pub struct FunctionInfo {
 }
 
 pub struct ProgramAnalysis {
-    pub control_flows: HashMap<BlockId, ControlFlowGraph<Arg>>,
-    pub data_flows: HashMap<BlockId, GraphDataFlow<Arg>>,
+    pub control_flows: HashMap<BlockId, ControlFlowGraph<OpArg>>,
+    pub data_flows: HashMap<BlockId, GraphDataFlow<OpArg>>,
     pub function_infos: HashMap<BlockId, FunctionInfo>,
     pub call_graph: HashMap<BlockId, Vec<BlockId>>,
 }
 
 fn function_call_analysis(
-    control_flows: &HashMap<BlockId, ControlFlowGraph<Arg>>,
-    data_flows: &HashMap<BlockId, GraphDataFlow<Arg>>,
+    control_flows: &HashMap<BlockId, ControlFlowGraph<OpArg>>,
+    data_flows: &HashMap<BlockId, GraphDataFlow<OpArg>>,
 ) -> (
     HashMap<BlockId, FunctionInfo>,
     HashMap<BlockId, Vec<BlockId>>,
@@ -51,6 +51,7 @@ fn function_call_analysis(
             let return_vars = caller_data_flow.block_defs[&block_id]
                 .use_set
                 .iter()
+                .map(|a| a.as_arg())
                 .filter(|a| matches!(a, Arg::RelativeMem(r) if *r>0))
                 .sorted()
                 .copied()
@@ -66,7 +67,7 @@ fn function_call_analysis(
             let args = callee_data_flow
                 .live_in
                 .iter()
-                .filter_map(|f| match f {
+                .filter_map(|f| match f.as_arg() {
                     Arg::RelativeMem(r) if *r < 0 => {
                         Some(Arg::RelativeMem((callee_stack_size as i128) + *r))
                     }
@@ -97,8 +98,8 @@ fn function_call_analysis(
 
 impl ProgramAnalysis {
     pub fn build(binary: &[i128]) -> Self {
-        let control_flows: HashMap<BlockId, ControlFlowGraph<Arg>> =
-            ControlFlowGraph::<Arg>::scan(binary)
+        let control_flows: HashMap<BlockId, ControlFlowGraph<OpArg>> =
+            ControlFlowGraph::<OpArg>::scan(binary)
                 .into_iter()
                 .map(|cfg| (cfg.start, cfg))
                 .collect();
