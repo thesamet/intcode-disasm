@@ -404,6 +404,27 @@ mod tests {
             let actual = self.result.get(type_var).unwrap();
             assert_eq!(*actual, expected);
         }
+
+        fn get_marker(&self, debug_marker: char) -> &Type {
+            let (_, res) = self
+                .type_inference
+                .type_vars
+                .iter()
+                .find(|(k, _)| k.ssa_arg.debug_marker == Some(debug_marker))
+                .expect(&format!(
+                    "No type variable found for debug marker {}",
+                    debug_marker
+                ));
+            match res {
+                Type::TypeVar(type_var) => self.result.get(type_var).unwrap(),
+                _ => panic!("Unexpected type for debug marker {}", debug_marker),
+            }
+        }
+
+        fn assert_marker(&self, debug_marker: char, expected: Type) {
+            let actual = self.get_marker(debug_marker);
+            assert_eq!(*actual, expected);
+        }
     }
 
     #[test]
@@ -481,5 +502,32 @@ f1:
                 returns: vec![],
             },
         );
+    }
+
+    #[test]
+    fn test_function_addr_with_debug() {
+        let ctx = TestContext::new(
+            r#"
+                    R += 1000
+                    'a [R+2] = [R-2]
+                    'b [R+2] = 15
+                    'c [R+2] = [R+2] + 5
+                    [R] = @ret
+                    goto [R-2]
+                    ret:
+                    halt
+
+                "#,
+        );
+        ctx.assert_marker(
+            'a',
+            Type::FunctionPointer {
+                args: vec![],
+                returns: vec![],
+            },
+        );
+        println!("{}", ctx.get_marker('b'));
+        ctx.assert_marker('b', Type::Int);
+        ctx.assert_marker('c', Type::Int);
     }
 }
