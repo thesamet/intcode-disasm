@@ -35,6 +35,10 @@ impl ArgBase for SSAArg {
     fn relative_mem(&self) -> Option<i128> {
         self.arg.relative_mem()
     }
+
+    fn as_arg(&self) -> &Arg {
+        &self.arg
+    }
 }
 
 impl Display for SSAArg {
@@ -55,17 +59,19 @@ struct PhiNode {
     inputs: Vec<SSAArg>,
 }
 
-pub fn convert_to_ssa(
-    control_flow: &ControlFlowGraph<Arg>,
-    data_flow: &GraphDataFlow<Arg>,
+pub fn convert_to_ssa<
+    ArgType: ArgBase + std::fmt::Debug + std::hash::Hash + Eq + Copy + From<OpArg>,
+>(
+    control_flow: &ControlFlowGraph<ArgType>,
+    data_flow: &GraphDataFlow<ArgType>,
 ) -> SSAGraph {
     let converter = SSAConverter::new(control_flow, data_flow);
     converter.convert()
 }
 
-struct SSAConverter<'a> {
-    control_flow: &'a ControlFlowGraph<Arg>,
-    data_flow: &'a GraphDataFlow<Arg>,
+struct SSAConverter<'a, ArgType: ArgBase> {
+    control_flow: &'a ControlFlowGraph<ArgType>,
+    data_flow: &'a GraphDataFlow<ArgType>,
     // Highest version number created for each variable. Used to allocate new versions.
     current_version: HashMap<Arg, usize>,
     // Latest version of each variable in each block, used for passing into subsequent blocks and
@@ -79,8 +85,14 @@ struct SSAConverter<'a> {
     out: ControlFlowGraph<SSAArg>,
 }
 
-impl<'a> SSAConverter<'a> {
-    pub fn new(control_flow: &'a ControlFlowGraph<Arg>, flow: &'a GraphDataFlow<Arg>) -> Self {
+impl<'a, ArgType> SSAConverter<'a, ArgType>
+where
+    ArgType: ArgBase + Eq + std::hash::Hash + Copy + From<OpArg> + std::fmt::Debug,
+{
+    pub fn new(
+        control_flow: &'a ControlFlowGraph<ArgType>,
+        flow: &'a GraphDataFlow<ArgType>,
+    ) -> Self {
         let mut res = SSAConverter {
             control_flow,
             data_flow: flow,
@@ -117,6 +129,7 @@ impl<'a> SSAConverter<'a> {
             let arg = OpArg {
                 kind: Arg::RelativeMem(-(r as i128)),
                 span: Span::new(start_addr, start_addr + 2),
+                debug_marker: None,
             }
             .into();
             hm.insert(
@@ -262,8 +275,8 @@ impl<'a> SSAConverter<'a> {
             })
     }
 
-    fn block_needs_phi_function(&self, block_id: BlockId, arg: &Arg) -> bool {
-        if matches!(arg, Arg::Deref(_)) {
+    fn block_needs_phi_function(&self, block_id: BlockId, arg: &ArgType) -> bool {
+        if matches!(arg.as_arg(), Arg::Deref(_)) {
             return false;
         }
         let control_def = &self.control_flow.blocks[&block_id];
@@ -274,12 +287,12 @@ impl<'a> SSAConverter<'a> {
         }
 
         let mut has_empty = false;
-        let mut def_set: HashSet<Definition<Arg>> = HashSet::new();
+        let mut def_set: HashSet<Definition<ArgType>> = HashSet::new();
         for pred in &control_def.predecessors {
             let arg_defs = self.data_flow.block_defs[&pred.block_id()]
                 .defs_out
                 .iter()
-                .filter(|d| d.arg == *arg);
+                .filter(|d| d.arg.as_arg() == arg.as_arg());
 
             def_set.extend(arg_defs.clone());
             let count = arg_defs.count();
@@ -294,18 +307,19 @@ impl<'a> SSAConverter<'a> {
     fn transform_next_to_ssa(
         &self,
         block_id: BlockId,
-        next_kind: NextKind<Arg>,
+        next_kind: NextKind<ArgType>,
     ) -> NextKind<SSAArg> {
-        let to_ssa = |&arg| self.current_version_of_arg_in_block(arg, block_id);
+        let to_ssa = |arg: ArgType| self.current_version_of_arg_in_block(*arg.as_arg(), block_id);
+
         match next_kind {
-            NextKind::Goto(arg) => NextKind::Goto(to_ssa(&arg)),
+            NextKind::Goto(arg) => NextKind::Goto(to_ssa(arg)),
             NextKind::FunctionCall(FunctionCall {
                 calling_block,
                 function_addr,
                 return_block,
             }) => NextKind::FunctionCall(FunctionCall {
                 calling_block,
-                function_addr: to_ssa(&function_addr),
+                function_addr: to_ssa(function_addr),
                 return_block,
             }),
             NextKind::Condition(Condition {
@@ -318,7 +332,7 @@ impl<'a> SSAConverter<'a> {
                 from_block,
                 jump_block,
                 follows_block,
-                arg: to_ssa(&arg),
+                arg: to_ssa(arg),
                 matches,
             }),
             NextKind::Halt => NextKind::Halt,
@@ -339,15 +353,18 @@ impl<'a> SSAConverter<'a> {
             .iter()
             .map(|d| d.arg)
             .unique()
-            .sorted()
+            .sorted_by_key(|arg| *arg.as_arg())
             .collect_vec()
         {
             assert!(!arg.is_value(), "Immediate values should not be in use set");
             if self.block_needs_phi_function(block_id, arg) {
-                let output =
-                    self.create_new_version_for_arg(*arg, block_id, control_def.span.start);
+                let output = self.create_new_version_for_arg(
+                    *arg.as_arg(),
+                    block_id,
+                    control_def.span.start,
+                );
                 self.phi_nodes.entry(block_id).or_default().insert(
-                    *arg,
+                    *arg.as_arg(),
                     PhiNode {
                         output,
                         inputs: Vec::new(),
@@ -361,11 +378,11 @@ impl<'a> SSAConverter<'a> {
         for (addr, op) in self.control_flow.blocks[&block_id].ops.iter() {
             let new_op = op.map_rw(
                 self,
-                &mut |s: &mut SSAConverter<'a>, read_arg: &Arg| {
-                    s.current_version_of_arg_in_block(*read_arg, block_id)
+                &mut |s: &mut Self, read_arg: &ArgType| {
+                    s.current_version_of_arg_in_block(*read_arg.as_arg(), block_id)
                 },
-                &mut |s: &mut SSAConverter<'a>, write_arg: &Arg| {
-                    s.create_new_version_for_arg(*write_arg, block_id, *addr)
+                &mut |s: &mut Self, write_arg: &ArgType| {
+                    s.create_new_version_for_arg(*write_arg.as_arg(), block_id, *addr)
                 },
             );
             let block = self.out.blocks.get_mut(&block_id).unwrap();

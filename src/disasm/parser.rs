@@ -71,6 +71,10 @@ impl ArgBase for SourceArgument {
     fn relative_mem(&self) -> Option<i128> {
         self.arg.relative_mem()
     }
+
+    fn as_arg(&self) -> &Arg {
+        &self.arg
+    }
 }
 
 pub trait SerializableInstruction<ArgType> {
@@ -159,7 +163,16 @@ impl SerializableInstruction<SourceArgument> for GenericInstruction<SourceArgume
         } as i128;
         let mode = (0..=2)
             .map(|i| {
-                self.arg_at(i).map(|a| a.mode()).unwrap_or_default() * 10i128.pow((i as u32) + 2)
+                self.arg_at(i)
+                    .map(|a| {
+                        let debug_marker = a
+                            .debug_marker
+                            .map(|c| (c as i128) << (8 * i))
+                            .unwrap_or_default()
+                            * 100000;
+                        a.mode() * 10i128.pow((i as u32) + 2) + debug_marker
+                    })
+                    .unwrap_or_default()
             })
             .sum::<i128>();
         out.push(opcode + mode);

@@ -61,6 +61,7 @@ impl std::fmt::Debug for Span {
 pub struct OpArg {
     pub kind: Arg,
     pub span: Span,
+    pub debug_marker: Option<char>,
 }
 
 impl From<(usize, usize)> for Span {
@@ -73,7 +74,11 @@ impl From<(usize, usize)> for Span {
 }
 
 impl Arg {
-    fn parse(input: Input, mode: i128) -> Result<(Input, OpArg), ParseError> {
+    fn parse(
+        input: Input,
+        mode: i128,
+        debug_marker: Option<char>,
+    ) -> Result<(Input, OpArg), ParseError> {
         let offset = input.offset;
         let (new_input, value) = input.read()?;
         let arg = match mode {
@@ -93,6 +98,7 @@ impl Arg {
             OpArg {
                 kind: arg,
                 span: (offset, offset + 1).into(),
+                debug_marker,
             },
         ))
     }
@@ -129,6 +135,8 @@ pub trait ArgBase {
     fn is_relative_mem(&self) -> bool {
         Self::relative_mem(self).is_some()
     }
+
+    fn as_arg(&self) -> &Arg;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -151,9 +159,7 @@ pub enum GenericInstruction<ArgType> {
 
 pub type FatInstruction = GenericInstruction<OpArg>;
 
-pub type Instruction = GenericInstruction<Arg>;
-
-pub struct GenericOp<T: ArgBase> {
+pub struct GenericOp<T> {
     pub span: Span,
     pub kind: GenericInstruction<T>,
 }
@@ -182,6 +188,10 @@ impl ArgBase for Arg {
             None
         }
     }
+
+    fn as_arg(&self) -> &Arg {
+        &self
+    }
 }
 
 impl ArgBase for OpArg {
@@ -192,19 +202,12 @@ impl ArgBase for OpArg {
     fn relative_mem(&self) -> Option<i128> {
         self.kind.relative_mem()
     }
-}
 
-impl<ArgType> GenericInstruction<ArgType>
-where
-    ArgType: ArgBase + From<OpArg>,
-{
-    pub fn parse(input: Input) -> Result<(Input, GenericInstruction<ArgType>), ParseError>
-    where
-        ArgType: Debug,
-    {
-        FatInstruction::parse_fat(input).map(|(input, op)| (input, op.kind.map(|f| (*f).into())))
+    fn as_arg(&self) -> &Arg {
+        &self.kind
     }
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParseError {
     Empty,
@@ -303,6 +306,13 @@ impl<ArgType> GenericInstruction<ArgType> {
                 Ok(GenericInstruction::Phi(write_map(o, a)?, results))
             }
         }
+    }
+
+    pub fn parse(input: Input) -> Result<(Input, GenericInstruction<ArgType>), ParseError>
+    where
+        ArgType: From<OpArg>,
+    {
+        FatInstruction::parse_fat(input).map(|(input, op)| (input, op.kind.map(|f| (*f).into())))
     }
 
     pub fn map_result<O, R, T, E>(&self, o: &mut O, map: R) -> Result<GenericInstruction<T>, E>
@@ -407,6 +417,10 @@ impl FatInstruction {
         let (input, op) = input.read()?;
         let opcode = op % 100;
         let mode = |i| (op / 10i128.pow(i as u32 + 2)) % 10;
+        let debug_marker = |i: usize| match ((op / 100000) >> (8usize * i)) & 0xff {
+            0 => None,
+            x => Some((x as u8) as char),
+        };
         let arg_count = match opcode {
             1 => 3,
             2 => 3,
@@ -423,7 +437,7 @@ impl FatInstruction {
         let mut args: [Option<OpArg>; 3] = core::array::from_fn(|_| None);
         let mut input = input;
         for (i, mut_arg) in args.iter_mut().take(arg_count).enumerate() {
-            let (new_input, arg) = Arg::parse(input, mode(i))?;
+            let (new_input, arg) = Arg::parse(input, mode(i), debug_marker(i))?;
             input = new_input;
             *mut_arg = Some(arg);
         }

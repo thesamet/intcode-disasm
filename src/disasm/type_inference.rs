@@ -377,7 +377,6 @@ mod tests {
         fn new(code: &str) -> TestContext {
             let binary = parser::compile(code);
             let program = ProgramAnalysis::build(&binary);
-            println!("Program: {:?}", program.control_flows);
             let mut type_inference = TypeInference::new();
             type_inference.generate_constaints_for_program(&program);
             let result = type_inference.unify().unwrap();

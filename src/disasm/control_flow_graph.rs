@@ -29,18 +29,20 @@ impl std::fmt::Display for BlockId {
 }
 use super::{
     low_ir::{Arg, ArgBase, GenericInstruction, Input, OpArg, ParseError},
+    mid_ir::ArgType,
     program_analysis::ProgramAnalysis,
     type_inference::TypeInference,
 };
 
 #[derive(Debug, Copy, Clone)]
-pub struct FunctionCall<ArgType: ArgBase> {
+pub struct FunctionCall<ArgType> {
     pub calling_block: BlockId,
     pub function_addr: ArgType,
     pub return_block: BlockId,
 }
+
 #[derive(Debug, Copy, Clone)]
-pub struct Condition<ArgType: ArgBase> {
+pub struct Condition<ArgType> {
     pub from_block: BlockId,
     pub jump_block: BlockId,
     pub follows_block: BlockId,
@@ -49,7 +51,7 @@ pub struct Condition<ArgType: ArgBase> {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum NextKind<ArgType: ArgBase> {
+pub enum NextKind<ArgType> {
     Follows(BlockId), // block always immediately follows
     Goto(ArgType),    // unconditional jump
     FunctionCall(FunctionCall<ArgType>),
@@ -60,7 +62,7 @@ pub enum NextKind<ArgType: ArgBase> {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum PredecessorKind<ArgType: ArgBase> {
+pub enum PredecessorKind<ArgType> {
     FollowsFrom(BlockId), // block immediately before
     GotoFrom(BlockId),    // block the goto came from
     FunctionCallReturns(FunctionCall<ArgType>),
@@ -83,21 +85,20 @@ impl<ArgType: ArgBase> PredecessorKind<ArgType> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<ArgType: ArgBase> {
+pub struct Block<ArgType> {
     pub predecessors: Vec<PredecessorKind<ArgType>>,
     pub ops: Vec<(usize, GenericInstruction<ArgType>)>,
     pub next: NextKind<ArgType>,
     pub span: Span, // includes the possible branching at the end.
 }
 
-impl<ArgType> Block<ArgType>
-where
-    ArgType: ArgBase + From<OpArg> + Copy + Clone + std::fmt::Debug,
-{
+impl<ArgType> Block<ArgType> {
     pub fn id(&self) -> BlockId {
         BlockId(self.span.start)
     }
+}
 
+impl<ArgType: ArgBase + From<OpArg> + Copy + Debug> Block<ArgType> {
     fn parse_function_call<'a>(
         input: Input<'a>,
         block: &mut Block<ArgType>,
