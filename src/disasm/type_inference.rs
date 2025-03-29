@@ -454,7 +454,6 @@ f1:
             r#"
             R += 1000
             [1000] = [1001] < [1002]
-            halt
         "#,
         );
         ctx.assert_type(1000, Type::Bool);
@@ -468,7 +467,6 @@ f1:
             r#"
             R += 1000
             output [1001]
-            halt
         "#,
         );
         ctx.assert_type(1001, Type::Char);
@@ -506,9 +504,8 @@ f1:
                     'c [R+2] = [R+2] + 5
                     [R] = @ret
                     goto [R-2]
-                    ret:
+            ret:
                     halt
-
                 "#,
         );
         ctx.assert_marker(
@@ -518,7 +515,6 @@ f1:
                 returns: vec![],
             },
         );
-        println!("{}", ctx.get_marker('b'));
         ctx.assert_marker('b', Type::Int);
         ctx.assert_marker('c', Type::Int);
     }

@@ -103,7 +103,6 @@ impl ProgramAnalysis {
                 .into_iter()
                 .map(|cfg| (cfg.start, cfg))
                 .collect();
-        // println!("Program: {:?}", control_flows.blocks);
 
         let data_flows = control_flows
             .values()

@@ -159,6 +159,10 @@ impl<ArgType: ArgBase + From<OpArg> + Copy + Debug> Block<ArgType> {
         input: Input<'a>,
         block: &mut Block<ArgType>,
     ) -> Result<(Input<'a>, bool), ParseError> {
+        if input.prog.is_empty() {
+            block.next = NextKind::Halt;
+            return Ok((input, false));
+        }
         if let Ok(input) =
             Self::parse_function_call(input, block).or_else(|_| Self::parse_return(input, block))
         {
