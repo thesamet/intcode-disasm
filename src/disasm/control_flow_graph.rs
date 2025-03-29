@@ -33,11 +33,13 @@ use super::{
     type_inference::TypeInference,
 };
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct FunctionCall<ArgType> {
     pub calling_block: BlockId,
     pub function_addr: ArgType,
     pub return_block: BlockId,
+    pub arguments: Option<Vec<ArgType>>,
+    pub return_types: Option<Vec<ArgType>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -49,7 +51,7 @@ pub struct Condition<ArgType> {
     pub matches: bool,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum NextKind<ArgType> {
     Follows(BlockId), // block always immediately follows
     Goto(ArgType),    // unconditional jump
@@ -60,7 +62,7 @@ pub enum NextKind<ArgType> {
     Return,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum PredecessorKind<ArgType> {
     FollowsFrom(BlockId), // block immediately before
     GotoFrom(BlockId),    // block the goto came from
@@ -122,6 +124,8 @@ impl<ArgType: ArgBase + From<OpArg> + Copy + Debug> Block<ArgType> {
             calling_block: BlockId(0),
             function_addr: goto_arg,
             return_block: BlockId(return_addr),
+            arguments: None,
+            return_types: None,
         });
         block.ops.push((assign_offset, assign_op));
         block.ops.push((goto_offset, goto_op));
@@ -349,7 +353,7 @@ where
 
             let new_block = Block {
                 ops: new_ops,
-                next: block.next,
+                next: block.next.clone(),
                 span: block.span.with_start(jump_target),
                 predecessors: vec![],
             };
@@ -467,7 +471,7 @@ where
                     function_call.calling_block = src;
                     add_pred(
                         function_call.return_block,
-                        PredecessorKind::FunctionCallReturns(*function_call),
+                        PredecessorKind::FunctionCallReturns(function_call.clone()),
                     );
                 }
                 NextKind::Condition(ref mut condition) => {

@@ -12,8 +12,10 @@ use super::{
 
 use itertools::Itertools;
 
+#[derive(Debug)]
 pub struct FunctionInfo {
     pub start_block: BlockId,
+    pub stack_size: usize,
     pub args: Vec<Arg>,        // from caller perspective
     pub return_vars: Vec<Arg>, // stack references for returned data from caller perspective
     pub local_vars: Vec<Arg>,  // local stack vars from callee perspective
@@ -77,6 +79,7 @@ fn function_call_analysis(
                 .collect_vec();
             let fi = FunctionInfo {
                 start_block: callee_block,
+                stack_size: callee_stack_size,
                 args,
                 return_vars,
                 local_vars: vec![],
@@ -125,7 +128,7 @@ impl ProgramAnalysis {
     ) {
         for flow in self.control_flows.values().sorted_by_key(|c| c.start) {
             let data = &self.data_flows[&flow.start];
-            let ssa = convert_to_ssa(flow, data);
+            let ssa = convert_to_ssa(self, flow, data);
             for block in ssa.blocks.values().sorted_by_key(|b| b.span.start) {
                 for (addr, i) in block.ops.iter() {
                     let istr = format!("{}", i);
@@ -133,13 +136,13 @@ impl ProgramAnalysis {
                     let read_args = i
                         .reads()
                         .iter()
-                        .map(|&&a| ti.type_for_arg(Var::new(flow.start, a)))
+                        .map(|&&a| ti.type_for_ssa_arg(flow.start, a))
                         .map(|t| TypeInference::substitute(t, subst))
                         .collect_vec();
                     let write_args = i
                         .writes()
                         .iter()
-                        .map(|&&a| ti.type_for_arg(Var::new(flow.start, a)))
+                        .map(|&&a| ti.type_for_ssa_arg(flow.start, a))
                         .map(|t| TypeInference::substitute(t, subst))
                         .collect_vec();
 

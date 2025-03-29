@@ -6,7 +6,8 @@ use std::{
 use super::{
     control_flow_graph::{Block, BlockId, Condition, ControlFlowGraph, FunctionCall, NextKind},
     data_flow_analysis::{Definition, GraphDataFlow},
-    low_ir::{Arg, ArgBase, GenericInstruction, HasDebugMarker, OpArg, Span},
+    low_ir::{Arg, ArgBase, GenericInstruction, HasDebugMarker, OpArg},
+    program_analysis::ProgramAnalysis,
 };
 
 use itertools::Itertools;
@@ -24,7 +25,7 @@ impl From<OpArg> for SSAArg {
             arg: arg.kind,
             version: 0,
             deref_version: 0,
-            debug_marker: arg.debug_marker,
+            debug_marker: arg.debug_marker(),
         }
     }
 }
@@ -73,15 +74,17 @@ struct PhiNode {
 pub fn convert_to_ssa<
     ArgType: ArgBase + std::fmt::Debug + std::hash::Hash + Eq + Copy + From<OpArg> + HasDebugMarker,
 >(
+    program_analysis: &ProgramAnalysis,
     control_flow: &ControlFlowGraph<ArgType>,
     data_flow: &GraphDataFlow<ArgType>,
 ) -> SSAGraph {
-    let converter = SSAConverter::new(control_flow, data_flow);
+    let converter = SSAConverter::new(program_analysis, control_flow, data_flow);
     converter.convert()
 }
 
 struct SSAConverter<'a, ArgType: ArgBase> {
     control_flow: &'a ControlFlowGraph<ArgType>,
+    program_analysis: &'a ProgramAnalysis,
     data_flow: &'a GraphDataFlow<ArgType>,
     // Highest version number created for each variable. Used to allocate new versions.
     current_version: HashMap<Arg, usize>,
@@ -101,10 +104,12 @@ where
     ArgType: ArgBase + Eq + std::hash::Hash + Copy + From<OpArg> + std::fmt::Debug + HasDebugMarker,
 {
     pub fn new(
+        program_analysis: &'a ProgramAnalysis,
         control_flow: &'a ControlFlowGraph<ArgType>,
         flow: &'a GraphDataFlow<ArgType>,
     ) -> Self {
         let mut res = SSAConverter {
+            program_analysis,
             control_flow,
             data_flow: flow,
             current_version: HashMap::new(),
@@ -136,6 +141,7 @@ where
         // First pass
         let mut hm = HashMap::new();
         let start_addr = self.control_flow.start.addr();
+        /*
         for r in 0..(self.control_flow.stack_size) {
             let arg = OpArg {
                 kind: Arg::RelativeMem(-(r as i128)),
@@ -153,6 +159,7 @@ where
                 },
             );
         }
+        */
         self.var_versions.insert(self.control_flow.start, hm);
         for block in self.control_flow.blocks.keys() {
             self.insert_phi_functions(*block);
@@ -253,6 +260,10 @@ where
         offset: usize,
         debug_marker: Option<char>,
     ) -> SSAArg {
+        println!(
+            "Creating new version for arg: {:?} offset: {} debug_marker: {:?}",
+            arg, offset, debug_marker
+        );
         if let Arg::Deref(_) = arg {
             return self.current_version_of_arg_in_block(arg, block_id, None);
         }
@@ -333,9 +344,9 @@ where
     fn transform_next_to_ssa(
         &self,
         block_id: BlockId,
-        next_kind: NextKind<ArgType>,
+        next_kind: &NextKind<ArgType>,
     ) -> NextKind<SSAArg> {
-        let to_ssa = |arg: ArgType| {
+        let to_ssa = |arg: &ArgType| {
             self.current_version_of_arg_in_block(*arg.as_arg(), block_id, arg.debug_marker())
         };
 
@@ -345,11 +356,29 @@ where
                 calling_block,
                 function_addr,
                 return_block,
-            }) => NextKind::FunctionCall(FunctionCall {
-                calling_block,
-                function_addr: to_ssa(function_addr),
-                return_block,
-            }),
+                ..
+            }) => {
+                let args = if let Some(value) = function_addr.value() {
+                    let funcinfo =
+                        &self.program_analysis.function_infos[&((value as usize).into())];
+                    Some(
+                        funcinfo
+                            .args
+                            .iter()
+                            .map(|arg| self.current_version_of_arg_in_block(*arg, block_id, None))
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+                NextKind::FunctionCall(FunctionCall {
+                    calling_block: *calling_block,
+                    function_addr: to_ssa(function_addr),
+                    return_block: *return_block,
+                    arguments: args,
+                    return_types: None,
+                })
+            }
             NextKind::Condition(Condition {
                 from_block,
                 jump_block,
@@ -357,16 +386,16 @@ where
                 arg,
                 matches,
             }) => NextKind::Condition(Condition {
-                from_block,
-                jump_block,
-                follows_block,
+                from_block: *from_block,
+                jump_block: *jump_block,
+                follows_block: *follows_block,
                 arg: to_ssa(arg),
-                matches,
+                matches: *matches,
             }),
             NextKind::Halt => NextKind::Halt,
             NextKind::Unknown => NextKind::Unknown,
             NextKind::Return => NextKind::Return,
-            NextKind::Follows(block_id) => NextKind::Follows(block_id),
+            NextKind::Follows(block_id) => NextKind::Follows(*block_id),
         }
     }
 
@@ -518,7 +547,7 @@ where
     fn transform_next_fields(&mut self) {
         for (id, block) in &self.control_flow.blocks {
             self.out.blocks.get_mut(id).unwrap().next =
-                self.transform_next_to_ssa(block.id(), block.next);
+                self.transform_next_to_ssa(block.id(), &block.next);
         }
     }
 }

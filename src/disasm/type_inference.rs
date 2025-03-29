@@ -4,20 +4,44 @@ use itertools::Itertools;
 
 use super::{
     control_flow_graph::{Block, BlockId, NextKind},
-    low_ir::{Arg, GenericInstruction},
+    low_ir::{Arg, ArgBase, GenericInstruction},
     program_analysis::ProgramAnalysis,
     ssa_form::{convert_to_ssa, SSAArg},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SSAArgIdentity {
+    arg: Arg,
+    version: usize,
+    deref_version: usize,
+}
+
+impl fmt::Display for SSAArgIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.arg {
+            Arg::Value(x) => write!(f, "{}", x), // No version for immediate values
+            Arg::Deref(addr) => write!(f, "[[{}]_{}]", addr, self.deref_version),
+            _ => write!(f, "{}_{}", self.arg, self.version),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Var {
     block_id: BlockId,
-    ssa_arg: SSAArg,
+    ssa_arg: SSAArgIdentity,
 }
 
 impl Var {
     pub fn new(block_id: BlockId, ssa_arg: SSAArg) -> Var {
-        Var { block_id, ssa_arg }
+        Var {
+            block_id,
+            ssa_arg: SSAArgIdentity {
+                arg: ssa_arg.arg,
+                version: ssa_arg.version,
+                deref_version: ssa_arg.deref_version,
+            },
+        }
     }
 }
 
@@ -93,6 +117,7 @@ enum ConstraintReason {
     CompareSrcSameType,
     Assignment,
     Deref,
+    FunctionParameterBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +141,7 @@ impl fmt::Display for Constraint {
 pub struct TypeInference {
     constraints: Vec<Constraint>,
     type_vars: HashMap<Var, Type>,
+    debug_markers: HashMap<char, Var>,
 }
 
 impl TypeInference {
@@ -123,6 +149,7 @@ impl TypeInference {
         Self {
             constraints: Vec::new(),
             type_vars: HashMap::new(),
+            debug_markers: HashMap::new(),
         }
     }
 
@@ -130,7 +157,14 @@ impl TypeInference {
         Type::TypeVar(TypeVarId(self.type_vars.len() + 1))
     }
 
-    pub fn type_for_arg(&mut self, var: Var) -> Type {
+    pub fn type_for_ssa_arg(&mut self, block_id: BlockId, ssa_arg: SSAArg) -> Type {
+        self.type_for_arg(Var::new(block_id, ssa_arg), ssa_arg.debug_marker)
+    }
+
+    pub fn type_for_arg(&mut self, var: Var, debug_marker: Option<char>) -> Type {
+        if let Some(debug_marker) = debug_marker {
+            self.debug_markers.insert(debug_marker, var);
+        }
         if let Some(typ) = self.type_vars.get(&var).cloned() {
             return typ;
         }
@@ -151,7 +185,7 @@ impl TypeInference {
                 deref_version: 0,
                 debug_marker: None,
             };
-            let pointer = self.type_for_arg(Var::new(var.block_id, inner_var));
+            let pointer = self.type_for_arg(Var::new(var.block_id, inner_var), None);
             self.add_constraint(
                 pointer,
                 Type::Pointer(Box::new(typ.clone())),
@@ -163,6 +197,7 @@ impl TypeInference {
     }
 
     fn add_constraint(&mut self, left: Type, right: Type, addr: usize, reason: ConstraintReason) {
+        println!("Adding constraint: {:?} = {:?} ({:?})", left, right, reason);
         self.constraints.push(Constraint {
             left,
             right,
@@ -177,33 +212,32 @@ impl TypeInference {
         addr: usize,
         op: &GenericInstruction<SSAArg>,
     ) {
-        let var = |s: &SSAArg| Var::new(block_id, *s);
         match op {
             GenericInstruction::Assign(src, dst) => {
-                let dst_type = self.type_for_arg(var(dst));
-                let src_type = self.type_for_arg(var(src));
+                let dst_type = self.type_for_ssa_arg(block_id, *dst);
+                let src_type = self.type_for_ssa_arg(block_id, *src);
                 self.add_constraint(src_type, dst_type, addr, ConstraintReason::Assignment);
             }
             GenericInstruction::Add(src1, src2, dst) => {
-                let dst_type = self.type_for_arg(var(dst));
-                let src1_type = self.type_for_arg(var(src1));
-                let src2_type = self.type_for_arg(var(src2));
+                let dst_type = self.type_for_ssa_arg(block_id, *dst);
+                let src1_type = self.type_for_ssa_arg(block_id, *src1);
+                let src2_type = self.type_for_ssa_arg(block_id, *src2);
                 self.add_constraint(dst_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
                 self.add_constraint(src1_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
                 self.add_constraint(src2_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
             }
             GenericInstruction::Mul(src1, src2, dst) => {
-                let dst_type = self.type_for_arg(var(dst));
-                let src1_type = self.type_for_arg(var(src1));
-                let src2_type = self.type_for_arg(var(src2));
+                let dst_type = self.type_for_ssa_arg(block_id, *dst);
+                let src1_type = self.type_for_ssa_arg(block_id, *src1);
+                let src2_type = self.type_for_ssa_arg(block_id, *src2);
                 self.add_constraint(dst_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
                 self.add_constraint(src1_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
                 self.add_constraint(src2_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
             }
             GenericInstruction::LessThan(src1, src2, dst) => {
-                let dst_type = self.type_for_arg(var(dst));
-                let src1_type = self.type_for_arg(var(src1));
-                let src2_type = self.type_for_arg(var(src2));
+                let dst_type = self.type_for_ssa_arg(block_id, *dst);
+                let src1_type = self.type_for_ssa_arg(block_id, *src1);
+                let src2_type = self.type_for_ssa_arg(block_id, *src2);
                 self.add_constraint(
                     dst_type,
                     Type::Bool,
@@ -224,9 +258,9 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Equals(src1, src2, dest) => {
-                let dst_type = self.type_for_arg(var(dest));
-                let src1_type = self.type_for_arg(var(src1));
-                let src2_type = self.type_for_arg(var(src2));
+                let dst_type = self.type_for_ssa_arg(block_id, *dest);
+                let src1_type = self.type_for_ssa_arg(block_id, *src1);
+                let src2_type = self.type_for_ssa_arg(block_id, *src2);
                 self.add_constraint(
                     dst_type,
                     Type::Bool,
@@ -241,7 +275,7 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Output(src) => {
-                let src_type = self.type_for_arg(var(src));
+                let src_type = self.type_for_ssa_arg(block_id, *src);
                 self.add_constraint(
                     src_type,
                     Type::Char,
@@ -250,7 +284,7 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Input(dst) => {
-                let dst_type = self.type_for_arg(var(dst));
+                let dst_type = self.type_for_ssa_arg(block_id, *dst);
                 self.add_constraint(
                     dst_type,
                     Type::Char,
@@ -259,7 +293,7 @@ impl TypeInference {
                 );
             }
             GenericInstruction::JumpIf(src, ..) => {
-                let src_type = self.type_for_arg(var(src));
+                let src_type = self.type_for_ssa_arg(block_id, *src);
                 self.add_constraint(
                     src_type,
                     Type::Bool,
@@ -268,12 +302,12 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Phi(dst, srcs) => {
-                let dst_type = self.type_for_arg(var(dst));
+                let dst_type = self.type_for_ssa_arg(block_id, *dst);
                 for i in srcs {
                     if dst == i {
                         continue;
                     }
-                    let s = self.type_for_arg(var(i));
+                    let s = self.type_for_ssa_arg(block_id, *i);
                     self.add_constraint(dst_type.clone(), s, addr, ConstraintReason::Assignment);
                 }
             }
@@ -281,13 +315,17 @@ impl TypeInference {
         }
     }
 
-    fn generate_constraint_for_block(&mut self, scope: BlockId, block: &Block<SSAArg>) {
+    fn generate_constraint_for_block(
+        &mut self,
+        program: &ProgramAnalysis,
+        scope: BlockId,
+        block: &Block<SSAArg>,
+    ) {
         for (addr, op) in &block.ops {
-            println!("op: {:?}", op);
             self.generate_constraint_for_op(scope, *addr, op);
         }
         if let NextKind::FunctionCall(call) = &block.next {
-            let fcall = self.type_for_arg(Var::new(scope, call.function_addr));
+            let fcall = self.type_for_arg(Var::new(scope, call.function_addr), None);
             self.add_constraint(
                 fcall,
                 Type::FunctionPointer {
@@ -297,15 +335,40 @@ impl TypeInference {
                 block.span.end,
                 ConstraintReason::Assignment,
             );
+            if let Some(addr) = call.function_addr.value() {
+                if let Some(fun) = program.function_infos.get(&(addr as usize).into()) {
+                    for arg in call.arguments.as_ref().unwrap() {
+                        let rvalue = arg.as_arg().relative_mem().unwrap();
+                        let left = self.type_for_ssa_arg(block.id(), *arg);
+                        let rarg = Arg::RelativeMem(rvalue - (fun.stack_size as i128));
+                        let right = self.type_for_ssa_arg(
+                            fun.start_block,
+                            SSAArg {
+                                arg: Arg::RelativeMem(rvalue - (fun.stack_size as i128)),
+                                version: 0,
+                                deref_version: 0,
+                                debug_marker: None,
+                            },
+                        );
+                        println!("* larg: {:?} {}", arg, rarg);
+                        self.add_constraint(
+                            left,
+                            right,
+                            block.span.end,
+                            ConstraintReason::FunctionParameterBinding,
+                        );
+                    }
+                }
+            }
         }
     }
 
     pub fn generate_constaints_for_program(&mut self, program: &ProgramAnalysis) {
         for cfg in program.control_flows.values().sorted_by_key(|c| c.start) {
             let data_flow = &program.data_flows[&cfg.start];
-            let ssa_graph = convert_to_ssa(&cfg, &data_flow);
+            let ssa_graph = convert_to_ssa(program, &cfg, &data_flow);
             for block in ssa_graph.blocks.values().sorted_by_key(|b| b.span.start) {
-                self.generate_constraint_for_block(cfg.start, block);
+                self.generate_constraint_for_block(program, cfg.start, block);
             }
         }
     }
@@ -360,28 +423,30 @@ impl TypeInference {
 
 #[cfg(test)]
 mod tests {
+
     use crate::disasm::parser;
 
     use super::*;
 
     struct TestContext {
         binary: Vec<i128>,
-        program: ProgramAnalysis,
         type_inference: TypeInference,
+        program: ProgramAnalysis,
         result: HashMap<TypeVarId, Type>,
     }
 
-    impl TestContext {
+    impl<'a> TestContext {
         fn new(code: &str) -> TestContext {
             let binary = parser::compile(code);
-            let program = ProgramAnalysis::build(&binary);
+            let program: ProgramAnalysis = ProgramAnalysis::build(&binary);
             let mut type_inference = TypeInference::new();
             type_inference.generate_constaints_for_program(&program);
             let result = type_inference.unify().unwrap();
+            program.list_program_with_types(&mut type_inference, &result);
             Self {
                 binary,
-                program,
                 type_inference,
+                program,
                 result,
             }
         }
@@ -399,19 +464,21 @@ mod tests {
                 panic!("No type variable found for address {}", addr);
             };
             let actual = self.result.get(type_var).unwrap();
-            assert_eq!(*actual, expected);
+            assert_eq!(
+                *actual, expected,
+                "Expected type {:?} but got {:?} for memory address {}",
+                expected, actual, addr
+            );
         }
 
         fn get_marker(&self, debug_marker: char) -> &Type {
-            let (_, res) = self
-                .type_inference
-                .type_vars
-                .iter()
-                .find(|(k, _)| k.ssa_arg.debug_marker == Some(debug_marker))
-                .expect(&format!(
-                    "No type variable found for debug marker {}",
-                    debug_marker
-                ));
+            let Some(var) = self.type_inference.debug_markers.get(&debug_marker) else {
+                panic!("No type variable found for debug marker '{}", debug_marker);
+            };
+            let res = self.type_inference.type_vars.get(&var).expect(&format!(
+                "No type variable found for debug marker '{}",
+                debug_marker
+            ));
             match res {
                 Type::TypeVar(type_var) => self.result.get(type_var).unwrap(),
                 _ => panic!("Unexpected type for debug marker {}", debug_marker),
@@ -420,7 +487,11 @@ mod tests {
 
         fn assert_marker(&self, debug_marker: char, expected: Type) {
             let actual = self.get_marker(debug_marker);
-            assert_eq!(*actual, expected);
+            assert_eq!(
+                *actual, expected,
+                "Expected type {:?} but got {:?} for debug marker '{}",
+                expected, actual, debug_marker
+            );
         }
     }
 
@@ -517,5 +588,29 @@ f1:
         );
         ctx.assert_marker('b', Type::Int);
         ctx.assert_marker('c', Type::Int);
+    }
+
+    #[test]
+    fn test_link_function_params_to_argument_types() {
+        let ctx = TestContext::new(
+            r#"
+                R += 1000
+                output('d [R-3])
+                'a [R+1] = 65
+                [R] = @ret
+                goto @print
+    ret:
+                halt
+    print:
+                R += 4
+                output('b [R-3])
+                R -= 4
+                goto [R]
+            "#,
+        );
+        println!("program_info={:?}", ctx.program.function_infos);
+        ctx.assert_marker('d', Type::Char);
+        ctx.assert_marker('b', Type::Char);
+        ctx.assert_marker('a', Type::Char);
     }
 }
