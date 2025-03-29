@@ -283,6 +283,7 @@ impl TypeInference {
 
     fn generate_constraint_for_block(&mut self, scope: BlockId, block: &Block<SSAArg>) {
         for (addr, op) in &block.ops {
+            println!("op: {:?}", op);
             self.generate_constraint_for_op(scope, *addr, op);
         }
         if let NextKind::FunctionCall(call) = &block.next {
@@ -355,10 +356,6 @@ impl TypeInference {
         }
         Ok(final_subst)
     }
-
-    fn solve(&mut self) {
-        // TODO
-    }
 }
 
 #[cfg(test)]
@@ -429,9 +426,10 @@ mod tests {
 
     #[test]
     fn test_type_inference() {
-        let code = r#"
+        let ctx = TestContext::new(
+            r#"
         R += 5000
-        [3] = [1] + [2]
+        [3] = 'a [1] + [2]
         [R] = @res
         goto @f1
 res:
@@ -439,21 +437,15 @@ res:
 f1:
         R += 4
         [21] = [R-1]
-        if [0] goto @f1
+        if 'b [0] goto @f1
         R -= 4
         goto [R]
 
-        "#;
-        let binary = parser::compile(code);
-        let program = ProgramAnalysis::build(&binary);
-        let mut ti = TypeInference::new();
-        ti.generate_constaints_for_program(&program);
-        for (k, v) in ti.type_vars.iter().sorted_by_key(|(_, v)| *v) {
-            // .sorted_by_key(|(_, v)| v.) {
-            println!("{} -> {}", v, k);
-        }
-        let result = ti.unify().unwrap();
-        program.list_program_with_types(&mut ti, &result);
+        "#,
+        );
+        ctx.assert_type(1, Type::Int);
+        ctx.assert_marker('a', Type::Int);
+        // ctx.assert_marker('b', Type::Bool);
     }
 
     #[test]

@@ -254,7 +254,7 @@ where
         debug_marker: Option<char>,
     ) -> SSAArg {
         if let Arg::Deref(_) = arg {
-            return self.current_version_of_arg_in_block(arg, block_id);
+            return self.current_version_of_arg_in_block(arg, block_id, None);
         }
         let new_version = *self.current_version.entry(arg).or_default() + 1;
         self.current_version.insert(arg, new_version);
@@ -272,13 +272,18 @@ where
         new_arg
     }
 
-    fn current_version_of_arg_in_block(&self, arg: Arg, block_id: BlockId) -> SSAArg {
-        if let Arg::Deref(addr) = arg {
+    fn current_version_of_arg_in_block(
+        &self,
+        arg: Arg,
+        block_id: BlockId,
+        debug_marker: Option<char>,
+    ) -> SSAArg {
+        if let Arg::Deref(addr) = arg.as_arg() {
             return SSAArg {
-                arg,
+                arg: *arg.as_arg(),
                 version: 0,
                 deref_version: self
-                    .current_version_of_arg_in_block(Arg::Mem(addr as i128), block_id)
+                    .current_version_of_arg_in_block(Arg::Mem(*addr as i128), block_id, None)
                     .version,
                 debug_marker: None,
             };
@@ -287,12 +292,12 @@ where
         *self
             .var_versions
             .get(&block_id)
-            .and_then(|hs| hs.get(&arg))
+            .and_then(|hs| hs.get(arg.as_arg()))
             .unwrap_or(&SSAArg {
-                arg,
+                arg: *arg.as_arg(),
                 version: 0,
                 deref_version: 0,
-                debug_marker: Some('?'),
+                debug_marker,
             })
     }
 
@@ -330,7 +335,9 @@ where
         block_id: BlockId,
         next_kind: NextKind<ArgType>,
     ) -> NextKind<SSAArg> {
-        let to_ssa = |arg: ArgType| self.current_version_of_arg_in_block(*arg.as_arg(), block_id);
+        let to_ssa = |arg: ArgType| {
+            self.current_version_of_arg_in_block(*arg.as_arg(), block_id, arg.debug_marker())
+        };
 
         match next_kind {
             NextKind::Goto(arg) => NextKind::Goto(to_ssa(arg)),
@@ -401,7 +408,11 @@ where
             let new_op = op.map_rw(
                 self,
                 &mut |s: &mut Self, read_arg: &ArgType| {
-                    s.current_version_of_arg_in_block(*read_arg.as_arg(), block_id)
+                    s.current_version_of_arg_in_block(
+                        *read_arg.as_arg(),
+                        block_id,
+                        read_arg.debug_marker(),
+                    )
                 },
                 &mut |s: &mut Self, write_arg: &ArgType| {
                     s.create_new_version_for_arg(

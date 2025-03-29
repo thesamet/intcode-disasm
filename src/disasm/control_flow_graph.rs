@@ -427,7 +427,6 @@ where
             }
 
             if let Ok(res) = Self::build_from(prog, start) {
-                println!("Added graph starting at {}", start);
                 graphs.push(res);
             } else {
                 data.push(start);
@@ -444,7 +443,6 @@ where
                 }
             })
             .collect_vec();
-        println!("Data segments: {:?}", data_segments);
         graphs
     }
 

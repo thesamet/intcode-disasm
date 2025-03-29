@@ -1,7 +1,7 @@
 {
   pkgs ? import <nixpkgs> { },
 }:
-pkgs.mkShell rec {
+pkgs.mkShell {
   buildInputs = with pkgs; [
     rustup
     pkg-config

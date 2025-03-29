@@ -53,7 +53,7 @@ fn function_call_analysis(
                 .iter()
                 .map(|a| a.as_arg())
                 .filter(|a| matches!(a, Arg::RelativeMem(r) if *r>0))
-                .sorted()
+                .sorted_by_key(|a| a.as_arg())
                 .copied()
                 .collect_vec();
             let Some(callee_addr) = fc.function_addr.value() else {
@@ -103,13 +103,6 @@ impl ProgramAnalysis {
                 .into_iter()
                 .map(|cfg| (cfg.start, cfg))
                 .collect();
-        for c in &control_flows {
-            for b in &c.1.blocks {
-                for i in &b.1.ops {
-                    println!("Instruction: {:?}", i);
-                }
-            }
-        }
         // println!("Program: {:?}", control_flows.blocks);
 
         let data_flows = control_flows
