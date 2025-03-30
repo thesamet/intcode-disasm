@@ -99,7 +99,7 @@ impl fmt::Display for Constraint {
 pub struct TypeInference {
     constraints: Vec<Constraint>,
     type_vars: HashMap<SSAArg, Type>,
-    pub debug_markers: HashMap<char, SSAArg>,
+    debug_markers: HashMap<char, SSAArg>,
 }
 
 impl TypeInference {

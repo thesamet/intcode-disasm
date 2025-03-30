@@ -565,6 +565,11 @@ where
                 *arg = rename_var(arg);
             }
         }
+        self.debug_markers = self
+            .debug_markers
+            .iter()
+            .map(|(k, v)| (rename_var(k), *v))
+            .collect();
     }
 
     fn transform_next_fields(&mut self) {

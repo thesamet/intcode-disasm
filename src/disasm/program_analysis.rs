@@ -1,7 +1,6 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use crate::disasm::ssa_form::SSAGraph;
 
 use super::{
     control_flow_graph::{BlockId, ControlFlowGraph, PredecessorKind},
@@ -113,7 +112,11 @@ impl fmt::Display for AnnotatedVar {
         if let Some(marker) = self.debug_marker {
             write!(f, "'{} ", marker)?;
         }
-        write!(f, "{}: {}", self.ssa_arg, self.type_var)
+        write!(
+            f,
+            "{}: ({}={})",
+            self.ssa_arg, self.type_var, self.substituted_type
+        )
     }
 }
 
@@ -149,9 +152,8 @@ impl ProgramAnalysis {
             let ssa = convert_to_ssa(self, flow, data);
             for block in ssa.cfg.blocks.values().sorted_by_key(|b| b.span.start) {
                 for (addr, i) in block.ops.iter() {
-                    let mut p = (&mut ti, &ssa);
-                    let annotated = i.map_with_context(&mut p, |p, ssa_arg: &SSAArg| {
-                        let type_var = p.0.type_for_arg(*ssa_arg);
+                    let annotated = i.map_with_context(&mut ti, |p, ssa_arg: &SSAArg| {
+                        let type_var = p.type_for_arg(*ssa_arg);
                         let substituted_type = TypeInference::substitute(type_var.clone(), subst);
                         let debug_marker = ssa.debug_markers.get(ssa_arg).cloned();
                         AnnotatedVar {
