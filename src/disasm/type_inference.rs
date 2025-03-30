@@ -3,53 +3,11 @@ use std::{collections::HashMap, fmt};
 use itertools::Itertools;
 
 use super::{
-    control_flow_graph::{Block, BlockId, NextKind},
+    control_flow_graph::{Block, NextKind},
     low_ir::{Arg, ArgBase, GenericInstruction},
     program_analysis::ProgramAnalysis,
     ssa_form::{convert_to_ssa, SSAArg},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct SSAArgIdentity {
-    arg: Arg,
-    version: usize,
-    deref_version: usize,
-}
-
-impl fmt::Display for SSAArgIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.arg {
-            Arg::Value(x) => write!(f, "{}", x), // No version for immediate values
-            Arg::Deref(addr) => write!(f, "[[{}]_{}]", addr, self.deref_version),
-            _ => write!(f, "{}_{}", self.arg, self.version),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Var {
-    block_id: BlockId,
-    ssa_arg: SSAArgIdentity,
-}
-
-impl Var {
-    pub fn new(block_id: BlockId, ssa_arg: SSAArg) -> Var {
-        Var {
-            block_id,
-            ssa_arg: SSAArgIdentity {
-                arg: ssa_arg.arg,
-                version: ssa_arg.version,
-                deref_version: ssa_arg.deref_version,
-            },
-        }
-    }
-}
-
-impl fmt::Display for Var {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "v{}:{}", self.block_id, self.ssa_arg)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeVarId(usize);
@@ -140,8 +98,8 @@ impl fmt::Display for Constraint {
 
 pub struct TypeInference {
     constraints: Vec<Constraint>,
-    type_vars: HashMap<Var, Type>,
-    debug_markers: HashMap<char, Var>,
+    type_vars: HashMap<SSAArg, Type>,
+    pub debug_markers: HashMap<char, SSAArg>,
 }
 
 impl TypeInference {
@@ -157,15 +115,8 @@ impl TypeInference {
         Type::TypeVar(TypeVarId(self.type_vars.len() + 1))
     }
 
-    pub fn type_for_ssa_arg(&mut self, block_id: BlockId, ssa_arg: SSAArg) -> Type {
-        self.type_for_arg(Var::new(block_id, ssa_arg), ssa_arg.debug_marker)
-    }
-
-    pub fn type_for_arg(&mut self, var: Var, debug_marker: Option<char>) -> Type {
-        if let Some(debug_marker) = debug_marker {
-            self.debug_markers.insert(debug_marker, var);
-        }
-        if let Some(typ) = self.type_vars.get(&var).cloned() {
+    pub fn type_for_arg(&mut self, arg: SSAArg) -> Type {
+        if let Some(typ) = self.type_vars.get(&arg).cloned() {
             return typ;
         }
         /*
@@ -177,15 +128,15 @@ impl TypeInference {
         }
         */
         let typ = self.fresh_type_var();
-        self.type_vars.insert(var, typ.clone());
-        if let Arg::Deref(addr) = var.ssa_arg.arg {
+        self.type_vars.insert(arg, typ.clone());
+        if let Arg::Deref(addr) = arg.arg {
             let inner_var = SSAArg {
+                block_id: arg.block_id,
                 arg: Arg::Mem(addr as i128),
-                version: var.ssa_arg.deref_version,
+                version: arg.deref_version,
                 deref_version: 0,
-                debug_marker: None,
             };
-            let pointer = self.type_for_arg(Var::new(var.block_id, inner_var), None);
+            let pointer = self.type_for_arg(inner_var);
             self.add_constraint(
                 pointer,
                 Type::Pointer(Box::new(typ.clone())),
@@ -206,38 +157,33 @@ impl TypeInference {
         });
     }
 
-    fn generate_constraint_for_op(
-        &mut self,
-        block_id: BlockId,
-        addr: usize,
-        op: &GenericInstruction<SSAArg>,
-    ) {
+    fn generate_constraint_for_op(&mut self, addr: usize, op: &GenericInstruction<SSAArg>) {
         match op {
             GenericInstruction::Assign(src, dst) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dst);
-                let src_type = self.type_for_ssa_arg(block_id, *src);
+                let dst_type = self.type_for_arg(*dst);
+                let src_type = self.type_for_arg(*src);
                 self.add_constraint(src_type, dst_type, addr, ConstraintReason::Assignment);
             }
             GenericInstruction::Add(src1, src2, dst) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dst);
-                let src1_type = self.type_for_ssa_arg(block_id, *src1);
-                let src2_type = self.type_for_ssa_arg(block_id, *src2);
+                let dst_type = self.type_for_arg(*dst);
+                let src1_type = self.type_for_arg(*src1);
+                let src2_type = self.type_for_arg(*src2);
                 self.add_constraint(dst_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
                 self.add_constraint(src1_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
                 self.add_constraint(src2_type, Type::Int, addr, ConstraintReason::AddImpliesInt);
             }
             GenericInstruction::Mul(src1, src2, dst) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dst);
-                let src1_type = self.type_for_ssa_arg(block_id, *src1);
-                let src2_type = self.type_for_ssa_arg(block_id, *src2);
+                let dst_type = self.type_for_arg(*dst);
+                let src1_type = self.type_for_arg(*src1);
+                let src2_type = self.type_for_arg(*src2);
                 self.add_constraint(dst_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
                 self.add_constraint(src1_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
                 self.add_constraint(src2_type, Type::Int, addr, ConstraintReason::MulImpliesInt);
             }
             GenericInstruction::LessThan(src1, src2, dst) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dst);
-                let src1_type = self.type_for_ssa_arg(block_id, *src1);
-                let src2_type = self.type_for_ssa_arg(block_id, *src2);
+                let dst_type = self.type_for_arg(*dst);
+                let src1_type = self.type_for_arg(*src1);
+                let src2_type = self.type_for_arg(*src2);
                 self.add_constraint(
                     dst_type,
                     Type::Bool,
@@ -258,9 +204,9 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Equals(src1, src2, dest) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dest);
-                let src1_type = self.type_for_ssa_arg(block_id, *src1);
-                let src2_type = self.type_for_ssa_arg(block_id, *src2);
+                let dst_type = self.type_for_arg(*dest);
+                let src1_type = self.type_for_arg(*src1);
+                let src2_type = self.type_for_arg(*src2);
                 self.add_constraint(
                     dst_type,
                     Type::Bool,
@@ -275,7 +221,7 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Output(src) => {
-                let src_type = self.type_for_ssa_arg(block_id, *src);
+                let src_type = self.type_for_arg(*src);
                 self.add_constraint(
                     src_type,
                     Type::Char,
@@ -284,7 +230,7 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Input(dst) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dst);
+                let dst_type = self.type_for_arg(*dst);
                 self.add_constraint(
                     dst_type,
                     Type::Char,
@@ -293,7 +239,7 @@ impl TypeInference {
                 );
             }
             GenericInstruction::JumpIf(src, ..) => {
-                let src_type = self.type_for_ssa_arg(block_id, *src);
+                let src_type = self.type_for_arg(*src);
                 self.add_constraint(
                     src_type,
                     Type::Bool,
@@ -302,12 +248,12 @@ impl TypeInference {
                 );
             }
             GenericInstruction::Phi(dst, srcs) => {
-                let dst_type = self.type_for_ssa_arg(block_id, *dst);
+                let dst_type = self.type_for_arg(*dst);
                 for i in srcs {
                     if dst == i {
                         continue;
                     }
-                    let s = self.type_for_ssa_arg(block_id, *i);
+                    let s = self.type_for_arg(*i);
                     self.add_constraint(dst_type.clone(), s, addr, ConstraintReason::Assignment);
                 }
             }
@@ -315,17 +261,12 @@ impl TypeInference {
         }
     }
 
-    fn generate_constraint_for_block(
-        &mut self,
-        program: &ProgramAnalysis,
-        scope: BlockId,
-        block: &Block<SSAArg>,
-    ) {
+    fn generate_constraint_for_block(&mut self, program: &ProgramAnalysis, block: &Block<SSAArg>) {
         for (addr, op) in &block.ops {
-            self.generate_constraint_for_op(scope, *addr, op);
+            self.generate_constraint_for_op(*addr, op);
         }
         if let NextKind::FunctionCall(call) = &block.next {
-            let fcall = self.type_for_arg(Var::new(scope, call.function_addr), None);
+            let fcall = self.type_for_arg(call.function_addr);
             self.add_constraint(
                 fcall,
                 Type::FunctionPointer {
@@ -339,17 +280,14 @@ impl TypeInference {
                 if let Some(fun) = program.function_infos.get(&(addr as usize).into()) {
                     for arg in call.arguments.as_ref().unwrap() {
                         let rvalue = arg.as_arg().relative_mem().unwrap();
-                        let left = self.type_for_ssa_arg(block.id(), *arg);
+                        let left = self.type_for_arg(*arg);
                         let rarg = Arg::RelativeMem(rvalue - (fun.stack_size as i128));
-                        let right = self.type_for_ssa_arg(
-                            fun.start_block,
-                            SSAArg {
-                                arg: Arg::RelativeMem(rvalue - (fun.stack_size as i128)),
-                                version: 0,
-                                deref_version: 0,
-                                debug_marker: None,
-                            },
-                        );
+                        let right = self.type_for_arg(SSAArg {
+                            block_id: fun.start_block,
+                            arg: Arg::RelativeMem(rvalue - (fun.stack_size as i128)),
+                            version: 0,
+                            deref_version: 0,
+                        });
                         println!("* larg: {:?} {}", arg, rarg);
                         self.add_constraint(
                             left,
@@ -367,8 +305,16 @@ impl TypeInference {
         for cfg in program.control_flows.values().sorted_by_key(|c| c.start) {
             let data_flow = &program.data_flows[&cfg.start];
             let ssa_graph = convert_to_ssa(program, &cfg, &data_flow);
-            for block in ssa_graph.blocks.values().sorted_by_key(|b| b.span.start) {
-                self.generate_constraint_for_block(program, cfg.start, block);
+            for (k, v) in ssa_graph.debug_markers {
+                self.debug_markers.insert(v, k);
+            }
+            for block in ssa_graph
+                .cfg
+                .blocks
+                .values()
+                .sorted_by_key(|b| b.span.start)
+            {
+                self.generate_constraint_for_block(program, block);
             }
         }
     }
@@ -456,8 +402,8 @@ mod tests {
                 .type_inference
                 .type_vars
                 .iter()
-                .filter(|(k, _)| matches!(k.ssa_arg.arg, Arg::Mem(a) if a as usize==addr))
-                .max_by_key(|(k, _)| k.ssa_arg.version)
+                .filter(|(k, _)| matches!(k.arg, Arg::Mem(a) if a as usize==addr))
+                .max_by_key(|(k, _)| k.version)
                 .expect("No type variable found for address")
                 .1
             else {
@@ -508,7 +454,7 @@ res:
 f1:
         R += 4
         [21] = [R-1]
-        if 'b [0] goto @f1
+        if 'b [R-2] goto @f1
         R -= 4
         goto [R]
 
@@ -516,7 +462,7 @@ f1:
         );
         ctx.assert_type(1, Type::Int);
         ctx.assert_marker('a', Type::Int);
-        // ctx.assert_marker('b', Type::Bool);
+        ctx.assert_marker('b', Type::Bool);
     }
 
     #[test]

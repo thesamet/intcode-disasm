@@ -13,19 +13,28 @@ use super::{
 use itertools::Itertools;
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct SSAArg {
+    pub block_id: BlockId,
     pub arg: Arg,
     pub version: usize,
     pub deref_version: usize,
-    pub debug_marker: Option<char>,
 }
 
-impl From<OpArg> for SSAArg {
-    fn from(arg: OpArg) -> Self {
+impl SSAArg {
+    pub fn new(block_id: BlockId, arg: Arg, version: usize, deref_version: usize) -> Self {
         SSAArg {
-            arg: arg.kind,
+            block_id,
+            arg,
+            version,
+            deref_version,
+        }
+    }
+
+    fn from_op_arg(block_id: BlockId, op_arg: OpArg) -> Self {
+        SSAArg {
+            block_id,
+            arg: op_arg.kind,
             version: 0,
             deref_version: 0,
-            debug_marker: arg.debug_marker(),
         }
     }
 }
@@ -46,9 +55,6 @@ impl ArgBase for SSAArg {
 
 impl Display for SSAArg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        if let Some(marker) = self.debug_marker {
-            write!(f, "'{} ", marker)?;
-        }
         match self.arg {
             Arg::Value(x) => write!(f, "{}", x), // No version for immediate values
             Arg::Deref(addr) => write!(f, "[[{}]_{}]", addr, self.deref_version),
@@ -57,14 +63,10 @@ impl Display for SSAArg {
     }
 }
 
-impl HasDebugMarker for SSAArg {
-    fn debug_marker(&self) -> Option<char> {
-        self.debug_marker
-    }
+pub struct SSAGraph {
+    pub cfg: ControlFlowGraph<SSAArg>,
+    pub debug_markers: HashMap<SSAArg, char>,
 }
-
-type SSAGraph = ControlFlowGraph<SSAArg>;
-
 // output = phi(inputs)
 struct PhiNode {
     output: SSAArg,
@@ -96,6 +98,7 @@ struct SSAConverter<'a, ArgType: ArgBase> {
     // for each block, map Arg to index of phi function in block.ops
     phi_nodes: HashMap<BlockId, HashMap<Arg, PhiNode>>,
     visited: HashSet<BlockId>,
+    debug_markers: HashMap<SSAArg, char>,
     out: ControlFlowGraph<SSAArg>,
 }
 
@@ -117,6 +120,7 @@ where
             var_locations: HashMap::new(),
             phi_nodes: HashMap::new(),
             visited: HashSet::new(),
+            debug_markers: HashMap::new(),
             out: ControlFlowGraph {
                 start: control_flow.start,
                 stack_size: control_flow.stack_size,
@@ -138,10 +142,9 @@ where
     }
 
     pub fn convert(mut self) -> SSAGraph {
-        // First pass
-        let mut hm = HashMap::new();
-        let start_addr = self.control_flow.start.addr();
         /*
+        let start_addr = self.control_flow.start.addr();
+        let mut hm = HashMap::new();
         for r in 0..(self.control_flow.stack_size) {
             let arg = OpArg {
                 kind: Arg::RelativeMem(-(r as i128)),
@@ -159,8 +162,8 @@ where
                 },
             );
         }
-        */
         self.var_versions.insert(self.control_flow.start, hm);
+        */
         for block in self.control_flow.blocks.keys() {
             self.insert_phi_functions(*block);
         }
@@ -169,7 +172,10 @@ where
         self.renumber_all_vars();
         self.populate_phi_functions();
         self.transform_next_fields();
-        self.out
+        SSAGraph {
+            cfg: self.out,
+            debug_markers: self.debug_markers,
+        }
     }
 
     fn prune_phi_functions(&mut self) {
@@ -270,46 +276,57 @@ where
         let new_version = *self.current_version.entry(arg).or_default() + 1;
         self.current_version.insert(arg, new_version);
         let new_arg = SSAArg {
+            block_id,
             arg,
             version: new_version,
             deref_version: 0,
-            debug_marker,
         };
         self.var_versions
             .entry(block_id)
             .or_default()
             .insert(arg, new_arg);
         self.var_locations.insert(new_arg, offset);
+        if let Some(marker) = debug_marker {
+            self.debug_markers.insert(new_arg, marker);
+        }
         new_arg
     }
 
     fn current_version_of_arg_in_block(
-        &self,
+        &mut self,
         arg: Arg,
-        block_id: BlockId,
+        function_block_id: BlockId,
         debug_marker: Option<char>,
     ) -> SSAArg {
         if let Arg::Deref(addr) = arg.as_arg() {
             return SSAArg {
+                block_id: function_block_id,
                 arg: *arg.as_arg(),
                 version: 0,
                 deref_version: self
-                    .current_version_of_arg_in_block(Arg::Mem(*addr as i128), block_id, None)
+                    .current_version_of_arg_in_block(
+                        Arg::Mem(*addr as i128),
+                        function_block_id,
+                        None,
+                    )
                     .version,
-                debug_marker: None,
             };
         }
 
-        *self
+        let res = *self
             .var_versions
-            .get(&block_id)
+            .get(&function_block_id)
             .and_then(|hs| hs.get(arg.as_arg()))
             .unwrap_or(&SSAArg {
+                block_id: function_block_id,
                 arg: *arg.as_arg(),
                 version: 0,
                 deref_version: 0,
-                debug_marker,
-            })
+            });
+        if let Some(debug_marker) = debug_marker {
+            self.debug_markers.insert(res, debug_marker);
+        }
+        res
     }
 
     fn block_needs_phi_function(&self, block_id: BlockId, arg: &ArgType) -> bool {
@@ -341,17 +358,17 @@ where
         def_set.len() > 1 || (!def_set.is_empty() && has_empty)
     }
 
-    fn transform_next_to_ssa(
-        &self,
-        block_id: BlockId,
-        next_kind: &NextKind<ArgType>,
-    ) -> NextKind<SSAArg> {
-        let to_ssa = |arg: &ArgType| {
-            self.current_version_of_arg_in_block(*arg.as_arg(), block_id, arg.debug_marker())
+    fn transform_next_to_ssa(&mut self, next_kind: &NextKind<ArgType>) -> NextKind<SSAArg> {
+        let to_ssa = |s: &mut Self, arg: &ArgType| {
+            s.current_version_of_arg_in_block(
+                *arg.as_arg(),
+                self.control_flow.start,
+                arg.debug_marker(),
+            )
         };
 
         match next_kind {
-            NextKind::Goto(arg) => NextKind::Goto(to_ssa(arg)),
+            NextKind::Goto(arg) => NextKind::Goto(to_ssa(self, arg)),
             NextKind::FunctionCall(FunctionCall {
                 calling_block,
                 function_addr,
@@ -365,7 +382,13 @@ where
                         funcinfo
                             .args
                             .iter()
-                            .map(|arg| self.current_version_of_arg_in_block(*arg, block_id, None))
+                            .map(|arg| {
+                                self.current_version_of_arg_in_block(
+                                    *arg,
+                                    self.control_flow.start,
+                                    None,
+                                )
+                            })
                             .collect(),
                     )
                 } else {
@@ -373,7 +396,7 @@ where
                 };
                 NextKind::FunctionCall(FunctionCall {
                     calling_block: *calling_block,
-                    function_addr: to_ssa(function_addr),
+                    function_addr: to_ssa(self, function_addr),
                     return_block: *return_block,
                     arguments: args,
                     return_types: None,
@@ -389,7 +412,7 @@ where
                 from_block: *from_block,
                 jump_block: *jump_block,
                 follows_block: *follows_block,
-                arg: to_ssa(arg),
+                arg: to_ssa(self, arg),
                 matches: *matches,
             }),
             NextKind::Halt => NextKind::Halt,
@@ -417,7 +440,7 @@ where
             if self.block_needs_phi_function(block_id, arg) {
                 let output = self.create_new_version_for_arg(
                     *arg.as_arg(),
-                    block_id,
+                    self.control_flow.start,
                     control_def.span.start,
                     None,
                 );
@@ -446,7 +469,7 @@ where
                 &mut |s: &mut Self, write_arg: &ArgType| {
                     s.create_new_version_for_arg(
                         *write_arg.as_arg(),
-                        block_id,
+                        self.control_flow.start,
                         *addr,
                         write_arg.debug_marker(),
                     )
@@ -515,10 +538,10 @@ where
             {
                 r.deref_version = rename_list
                     .get(&SSAArg {
+                        block_id: a.block_id,
                         arg: Arg::Mem(addr as i128),
                         version: deref_version,
                         deref_version: 0,
-                        debug_marker: None,
                     })
                     .unwrap()
                     .version;
@@ -546,8 +569,7 @@ where
 
     fn transform_next_fields(&mut self) {
         for (id, block) in &self.control_flow.blocks {
-            self.out.blocks.get_mut(id).unwrap().next =
-                self.transform_next_to_ssa(block.id(), &block.next);
+            self.out.blocks.get_mut(id).unwrap().next = self.transform_next_to_ssa(&block.next);
         }
     }
 }

@@ -351,9 +351,17 @@ impl<ArgType> GenericInstruction<ArgType> {
         .unwrap()
     }
 
+    pub fn map_with_context<O, F, T>(&self, o: &mut O, f: F) -> GenericInstruction<T>
+    where
+        F: FnMut(&mut O, &ArgType) -> T + Clone,
+    {
+        let g = f.clone();
+        self.map_rw(o, f, g)
+    }
+
     pub fn map<F, T>(&self, mut f: F) -> GenericInstruction<T>
     where
-        F: FnMut(&ArgType) -> T + Clone + Copy,
+        F: FnMut(&ArgType) -> T + Clone,
     {
         let mut g = f.clone();
         self.map_rw(&mut (), |_, a| f(a), |_, b| g(b))
@@ -595,7 +603,7 @@ impl FatInstruction {
     }
 }
 
-impl<T: ArgBase + Display> Display for GenericInstruction<T> {
+impl<T: Display> Display for GenericInstruction<T> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Add(a, b, c) => write!(f, "{} = {} + {}", c, a, b),

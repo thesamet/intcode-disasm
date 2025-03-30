@@ -1,12 +1,13 @@
+use core::fmt;
 use std::collections::HashMap;
 
-use crate::disasm::type_inference::Var;
+use crate::disasm::ssa_form::SSAGraph;
 
 use super::{
     control_flow_graph::{BlockId, ControlFlowGraph, PredecessorKind},
     data_flow_analysis::GraphDataFlow,
     low_ir::{Arg, ArgBase, OpArg},
-    ssa_form::convert_to_ssa,
+    ssa_form::{convert_to_ssa, SSAArg},
     type_inference::{Type, TypeInference, TypeVarId},
 };
 
@@ -99,6 +100,23 @@ fn function_call_analysis(
     (function_infos, call_graph)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AnnotatedVar {
+    ssa_arg: SSAArg,
+    type_var: Type,
+    substituted_type: Type,
+    debug_marker: Option<char>,
+}
+
+impl fmt::Display for AnnotatedVar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(marker) = self.debug_marker {
+            write!(f, "'{} ", marker)?;
+        }
+        write!(f, "{}: {}", self.ssa_arg, self.type_var)
+    }
+}
+
 impl ProgramAnalysis {
     pub fn build(binary: &[i128]) -> Self {
         let control_flows: HashMap<BlockId, ControlFlowGraph<OpArg>> =
@@ -123,26 +141,38 @@ impl ProgramAnalysis {
 
     pub fn list_program_with_types(
         &self,
-        ti: &mut TypeInference,
+        mut ti: &mut TypeInference,
         subst: &HashMap<TypeVarId, Type>,
     ) {
         for flow in self.control_flows.values().sorted_by_key(|c| c.start) {
             let data = &self.data_flows[&flow.start];
             let ssa = convert_to_ssa(self, flow, data);
-            for block in ssa.blocks.values().sorted_by_key(|b| b.span.start) {
+            for block in ssa.cfg.blocks.values().sorted_by_key(|b| b.span.start) {
                 for (addr, i) in block.ops.iter() {
-                    let istr = format!("{}", i);
+                    let mut p = (&mut ti, &ssa);
+                    let annotated = i.map_with_context(&mut p, |p, ssa_arg: &SSAArg| {
+                        let type_var = p.0.type_for_arg(*ssa_arg);
+                        let substituted_type = TypeInference::substitute(type_var.clone(), subst);
+                        let debug_marker = ssa.debug_markers.get(ssa_arg).cloned();
+                        AnnotatedVar {
+                            ssa_arg: *ssa_arg,
+                            type_var: type_var,
+                            substituted_type,
+                            debug_marker,
+                        }
+                    });
+                    let istr = format!("{}", annotated);
                     print!("{:8}  {:35}", addr, istr);
                     let read_args = i
                         .reads()
                         .iter()
-                        .map(|&&a| ti.type_for_ssa_arg(flow.start, a))
+                        .map(|&&a| ti.type_for_arg(a))
                         .map(|t| TypeInference::substitute(t, subst))
                         .collect_vec();
                     let write_args = i
                         .writes()
                         .iter()
-                        .map(|&&a| ti.type_for_ssa_arg(flow.start, a))
+                        .map(|&&a| ti.type_for_arg(a))
                         .map(|t| TypeInference::substitute(t, subst))
                         .collect_vec();
 
