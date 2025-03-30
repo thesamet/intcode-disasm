@@ -7,12 +7,14 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated},
     IResult, Parser,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, convert::identity, process::id};
 
-use super::low_ir::{Arg, ArgBase, GenericInstruction};
+use super::low_ir::{Arg, ArgBase, GenericInstruction, PositionalArg};
 
 enum UnresolvedArgument {
     Label(String, Option<char>),
+    Pointer(String),
+    PointerDeref(String),
     Resolved(SourceArgument),
 }
 
@@ -79,73 +81,9 @@ impl ArgBase for SourceArgument {
 
 pub trait SerializableInstruction<ArgType> {
     fn serialize(&self, out: &mut Vec<i128>);
-
-    fn arg_at(&self, index: usize) -> Option<ArgType>;
 }
 
 impl SerializableInstruction<SourceArgument> for GenericInstruction<SourceArgument> {
-    fn arg_at(&self, index: usize) -> Option<SourceArgument> {
-        match &self {
-            Self::Add(a, b, c) => match index {
-                0 => Some(*a),
-                1 => Some(*b),
-                2 => Some(*c),
-                _ => None,
-            },
-            Self::Mul(a, b, c) => match index {
-                0 => Some(*a),
-                1 => Some(*b),
-                2 => Some(*c),
-                _ => None,
-            },
-            Self::Input(a) => match index {
-                0 => Some(*a),
-                _ => None,
-            },
-            Self::Output(a) => match index {
-                0 => Some(*a),
-                _ => None,
-            },
-            Self::JumpIf(a, _, b) => match index {
-                0 => Some(*a),
-                1 => Some(*b),
-                _ => None,
-            },
-            Self::LessThan(a, b, c) => match index {
-                0 => Some(*a),
-                1 => Some(*b),
-                2 => Some(*c),
-                _ => None,
-            },
-            Self::Equals(a, b, c) => match index {
-                0 => Some(*a),
-                1 => Some(*b),
-                2 => Some(*c),
-                _ => None,
-            },
-            Self::AdjustRelativeBase(a) => match index {
-                0 => Some(*a),
-                _ => None,
-            },
-            Self::Data(_) => unreachable!(),
-            Self::Halt => None,
-            Self::Goto(a) => match index {
-                // it is an if (1)
-                0 => Some(SourceArgument::new(Arg::Value(1), None)),
-                1 => Some(*a),
-                _ => None,
-            },
-            Self::Assign(a, b) => match index {
-                // it is an add a, 0, b
-                0 => Some(*b),
-                1 => Some(SourceArgument::new(Arg::Value(0), None)),
-                2 => Some(*a),
-                _ => None,
-            },
-            Self::Phi(_, _) => panic!("Phi is not implemented since it is a placeholder"),
-        }
-    }
-
     fn serialize(&self, out: &mut Vec<i128>) {
         let opcode = match self {
             GenericInstruction::Add(_, _, _) | GenericInstruction::Assign(..) => 1,
@@ -165,21 +103,29 @@ impl SerializableInstruction<SourceArgument> for GenericInstruction<SourceArgume
             .map(|i| {
                 self.arg_at(i)
                     .map(|a| {
-                        let debug_marker = a
-                            .debug_marker
-                            .map(|c| (c as i128) << (8 * i))
-                            .unwrap_or_default()
-                            * 100000;
-                        a.mode() * 10i128.pow((i as u32) + 2) + debug_marker
+                        let (mode, debug_marker) = match a {
+                            PositionalArg::Arg(arg) => {
+                                let debug_marker = arg
+                                    .debug_marker
+                                    .map(|c| (c as i128) << (8 * i))
+                                    .unwrap_or_default()
+                                    * 100000;
+                                (arg.mode(), debug_marker)
+                            }
+                            PositionalArg::Immediate(v) => (1, 0),
+                        };
+                        mode * 10i128.pow((i as u32) + 2) + debug_marker
                     })
                     .unwrap_or_default()
             })
             .sum::<i128>();
         out.push(opcode + mode);
         for i in 0..3 {
-            if let Some(arg) = self.arg_at(i) {
-                arg.serialize(out)
-            }
+            match self.arg_at(i) {
+                Some(PositionalArg::Arg(a)) => a.serialize(out),
+                Some(PositionalArg::Immediate(v)) => out.push(v as i128),
+                None => {}
+            };
         }
     }
 }
@@ -194,11 +140,18 @@ fn parse_i128(input: &str) -> IResult<&str, i128> {
     .parse(input)
 }
 
+fn identifier(input: &str) -> IResult<&str, &str> {
+    take_while1(|c: char| c.is_alphanumeric() || c == '_').parse(input)
+}
 // Parse arguments
-fn parse_memory(input: &str) -> IResult<&str, Arg> {
+fn parse_memory(input: &str, debug_marker: Option<char>) -> IResult<&str, UnresolvedArgument> {
     alt((
-        map(delimited(char('['), parse_i128, char(']')), Arg::Mem),
-        value(Arg::Mem(0), delimited(tag("[["), parse_i128, tag("]]"))),
+        map(delimited(char('['), parse_i128, char(']')), |a| {
+            UnresolvedArgument::Resolved(SourceArgument::new(Arg::Mem(a), debug_marker))
+        }),
+        (tag("*"), identifier)
+            .map(|(_, ident)| UnresolvedArgument::PointerDeref(ident.to_string())),
+        identifier.map(|ident| UnresolvedArgument::Pointer(ident.to_string())),
     ))
     .parse(input)
 }
@@ -222,27 +175,29 @@ fn parse_relative_mem(input: &str) -> IResult<&str, Arg> {
 }
 
 fn parse_label_ref(input: &str, debug_marker: Option<char>) -> IResult<&str, UnresolvedArgument> {
-    map(
-        preceded(
-            char('@'),
-            take_while1(|c: char| c.is_alphanumeric() || c == '_'),
-        ),
-        |s: &str| UnresolvedArgument::Label(s.to_string(), debug_marker),
-    )
+    map(preceded(char('@'), identifier), |s: &str| {
+        UnresolvedArgument::Label(s.to_string(), debug_marker)
+    })
     .parse(input)
+}
+fn debug_marker(input: &str) -> IResult<&str, char> {
+    (tag("'"), complete::satisfy(|c| c.is_alphabetic()), space0)
+        .map(|(_, c, _)| c)
+        .parse(input)
 }
 
 fn parse_argument(input: &str) -> IResult<&str, UnresolvedArgument> {
     alt((
         pair(
-            opt((tag("'"), complete::satisfy(|c| c.is_alphabetic()), space0).map(|(_, c, _)| c)),
-            alt((parse_memory, parse_relative_mem, parse_immediate)),
+            opt(debug_marker),
+            alt((parse_relative_mem, parse_immediate)),
         )
         .map(|(debug_marker, arg)| {
             UnresolvedArgument::Resolved(SourceArgument::new(arg, debug_marker))
         }),
-        opt((tag("'"), complete::satisfy(|c| c.is_alphabetic()), space0).map(|(_, c, _)| c))
+        opt(debug_marker)
             .flat_map(|debug_marker| move |input| parse_label_ref(input, debug_marker)),
+        opt(debug_marker).flat_map(|debug_marker| move |input| parse_memory(input, debug_marker)),
     ))
     .parse(input)
 }
@@ -437,14 +392,7 @@ fn parse_instruction(input: &str) -> IResult<&str, Instruction> {
 
 // Parse a label definition
 fn parse_label_def(input: &str) -> IResult<&str, String> {
-    map(
-        terminated(
-            take_while1(|c: char| c.is_alphanumeric() || c == '_'),
-            char(':'),
-        ),
-        String::from,
-    )
-    .parse(input)
+    map(terminated(identifier, char(':')), String::from).parse(input)
 }
 
 fn comment(input: &str) -> IResult<&str, ()> {
@@ -481,12 +429,21 @@ pub fn parse_program(
 
     // First pass: collect labels and their offsets
     let mut label_offsets = HashMap::new();
+    let mut pointers = HashMap::new();
     let mut current_offset = 0;
     let mut instructions = Vec::new();
 
     for (label, instruction) in &lines {
         if let Some(label) = label {
             label_offsets.insert(label.clone(), current_offset);
+        }
+        for i in 0..=2 {
+            match instruction.arg_at(i) {
+                Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name))) => {
+                    pointers.insert(name.clone(), current_offset + i + 1);
+                }
+                Some(_) | None => {}
+            }
         }
 
         instructions.push((current_offset, instruction));
@@ -506,6 +463,14 @@ pub fn parse_program(
                         ))
                     } else {
                         Err(format!("Undefined label: {}", label))
+                    }
+                }
+                UnresolvedArgument::PointerDeref(_) => Ok(SourceArgument::new(Arg::Mem(0), None)),
+                UnresolvedArgument::Pointer(name) => {
+                    if let Some(&target) = pointers.get(name) {
+                        Ok(SourceArgument::new(Arg::Mem(target as i128), None))
+                    } else {
+                        Err(format!("Undefined pointer: {}", name))
                     }
                 }
                 UnresolvedArgument::Resolved(arg) => Ok(arg.clone()),

@@ -4,7 +4,9 @@ use std::{
 };
 
 use super::{
-    control_flow_graph::{Block, BlockId, Condition, ControlFlowGraph, FunctionCall, NextKind},
+    control_flow_graph::{
+        Block, BlockId, Condition, ControlFlowGraph, FunctionCall, FunctionId, NextKind,
+    },
     data_flow_analysis::{Definition, GraphDataFlow},
     low_ir::{Arg, ArgBase, GenericInstruction, HasDebugMarker, OpArg},
     program_analysis::ProgramAnalysis,
@@ -13,25 +15,25 @@ use super::{
 use itertools::Itertools;
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct SSAArg {
-    pub block_id: BlockId,
+    pub scope: FunctionId,
     pub arg: Arg,
     pub version: usize,
     pub deref_version: usize,
 }
 
 impl SSAArg {
-    pub fn new(block_id: BlockId, arg: Arg, version: usize, deref_version: usize) -> Self {
+    pub fn new(scope: FunctionId, arg: Arg, version: usize, deref_version: usize) -> Self {
         SSAArg {
-            block_id,
+            scope,
             arg,
             version,
             deref_version,
         }
     }
 
-    fn from_op_arg(block_id: BlockId, op_arg: OpArg) -> Self {
+    fn from_op_arg(scope: FunctionId, op_arg: OpArg) -> Self {
         SSAArg {
-            block_id,
+            scope,
             arg: op_arg.kind,
             version: 0,
             deref_version: 0,
@@ -167,7 +169,7 @@ where
         for block in self.control_flow.blocks.keys() {
             self.insert_phi_functions(*block);
         }
-        self.process_block(self.control_flow.start);
+        self.process_block(self.control_flow.start.as_block_id());
         self.prune_phi_functions();
         self.renumber_all_vars();
         self.populate_phi_functions();
@@ -262,27 +264,23 @@ where
     fn create_new_version_for_arg(
         &mut self,
         arg: Arg,
-        block_id: BlockId,
+        block: BlockId,
         offset: usize,
         debug_marker: Option<char>,
     ) -> SSAArg {
-        println!(
-            "Creating new version for arg: {:?} offset: {} debug_marker: {:?}",
-            arg, offset, debug_marker
-        );
         if let Arg::Deref(_) = arg {
-            return self.current_version_of_arg_in_block(arg, block_id, None);
+            return self.current_version_of_arg_in_block(arg, block, None);
         }
         let new_version = *self.current_version.entry(arg).or_default() + 1;
         self.current_version.insert(arg, new_version);
         let new_arg = SSAArg {
-            block_id,
+            scope: self.control_flow.start,
             arg,
             version: new_version,
             deref_version: 0,
         };
         self.var_versions
-            .entry(block_id)
+            .entry(block)
             .or_default()
             .insert(arg, new_arg);
         self.var_locations.insert(new_arg, offset);
@@ -295,31 +293,27 @@ where
     fn current_version_of_arg_in_block(
         &mut self,
         arg: Arg,
-        function_block_id: BlockId,
+        block_id: BlockId,
         debug_marker: Option<char>,
     ) -> SSAArg {
         if let Arg::Deref(addr) = arg.as_arg() {
             return SSAArg {
-                block_id: function_block_id,
+                scope: self.control_flow.start,
                 arg: *arg.as_arg(),
                 version: 0,
                 deref_version: self
-                    .current_version_of_arg_in_block(
-                        Arg::Mem(*addr as i128),
-                        function_block_id,
-                        None,
-                    )
+                    .current_version_of_arg_in_block(Arg::Mem(*addr as i128), block_id, None)
                     .version,
             };
         }
 
         let res = *self
             .var_versions
-            .get(&function_block_id)
-            .and_then(|hs| hs.get(arg.as_arg()))
+            .get(&block_id)
+            .and_then(|hs| hs.get(&arg))
             .unwrap_or(&SSAArg {
-                block_id: function_block_id,
-                arg: *arg.as_arg(),
+                scope: self.control_flow.start,
+                arg,
                 version: 0,
                 deref_version: 0,
             });
@@ -358,13 +352,13 @@ where
         def_set.len() > 1 || (!def_set.is_empty() && has_empty)
     }
 
-    fn transform_next_to_ssa(&mut self, next_kind: &NextKind<ArgType>) -> NextKind<SSAArg> {
+    fn transform_next_to_ssa(
+        &mut self,
+        block_id: BlockId,
+        next_kind: &NextKind<ArgType>,
+    ) -> NextKind<SSAArg> {
         let to_ssa = |s: &mut Self, arg: &ArgType| {
-            s.current_version_of_arg_in_block(
-                *arg.as_arg(),
-                self.control_flow.start,
-                arg.debug_marker(),
-            )
+            s.current_version_of_arg_in_block(*arg.as_arg(), block_id, arg.debug_marker())
         };
 
         match next_kind {
@@ -382,13 +376,7 @@ where
                         funcinfo
                             .args
                             .iter()
-                            .map(|arg| {
-                                self.current_version_of_arg_in_block(
-                                    *arg,
-                                    self.control_flow.start,
-                                    None,
-                                )
-                            })
+                            .map(|arg| self.current_version_of_arg_in_block(*arg, block_id, None))
                             .collect(),
                     )
                 } else {
@@ -438,12 +426,8 @@ where
         {
             assert!(!arg.is_value(), "Immediate values should not be in use set");
             if self.block_needs_phi_function(block_id, arg) {
-                let output = self.create_new_version_for_arg(
-                    *arg.as_arg(),
-                    self.control_flow.start,
-                    control_def.span.start,
-                    None,
-                );
+                let output =
+                    self.create_new_version_for_arg(*arg.as_arg(), block_id, block_id.addr(), None);
                 self.phi_nodes.entry(block_id).or_default().insert(
                     *arg.as_arg(),
                     PhiNode {
@@ -469,7 +453,7 @@ where
                 &mut |s: &mut Self, write_arg: &ArgType| {
                     s.create_new_version_for_arg(
                         *write_arg.as_arg(),
-                        self.control_flow.start,
+                        block_id,
                         *addr,
                         write_arg.debug_marker(),
                     )
@@ -536,15 +520,13 @@ where
                 ..
             } = r
             {
-                r.deref_version = rename_list
-                    .get(&SSAArg {
-                        block_id: a.block_id,
-                        arg: Arg::Mem(addr as i128),
-                        version: deref_version,
-                        deref_version: 0,
-                    })
-                    .unwrap()
-                    .version;
+                let key = SSAArg {
+                    scope: a.scope,
+                    arg: Arg::Mem(addr as i128),
+                    version: deref_version,
+                    deref_version: 0,
+                };
+                r.deref_version = rename_list.get(&key).unwrap().version;
             }
             r
         };
@@ -574,7 +556,60 @@ where
 
     fn transform_next_fields(&mut self) {
         for (id, block) in &self.control_flow.blocks {
-            self.out.blocks.get_mut(id).unwrap().next = self.transform_next_to_ssa(&block.next);
+            self.out.blocks.get_mut(id).unwrap().next =
+                self.transform_next_to_ssa(block.id(), &block.next);
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::disasm::{control_flow_graph::PredecessorKind, low_ir::Span};
+
+    use super::*;
+
+    #[test]
+    fn test_ssa_arg_creation() {
+        let func_id = FunctionId::from(0);
+        let arg = Arg::RelativeMem(0);
+        let ssa_arg = SSAArg::new(func_id, arg, 1, 0);
+
+        assert_eq!(ssa_arg.scope, func_id);
+        assert_eq!(ssa_arg.arg, arg);
+        assert_eq!(ssa_arg.version, 1);
+        assert_eq!(ssa_arg.deref_version, 0);
+    }
+
+    #[test]
+    fn test_ssa_arg_from_op_arg() {
+        let func_id = FunctionId::from(0);
+        let op_arg = OpArg {
+            kind: Arg::RelativeMem(1),
+            span: Span::new(0, 2),
+            debug_marker: None,
+        };
+
+        let ssa_arg = SSAArg::from_op_arg(func_id, op_arg);
+
+        assert_eq!(ssa_arg.scope, func_id);
+        assert_eq!(ssa_arg.arg, op_arg.kind);
+        assert_eq!(ssa_arg.version, 0);
+        assert_eq!(ssa_arg.deref_version, 0);
+    }
+
+    #[test]
+    fn test_ssa_arg_display() {
+        let func_id = FunctionId::from(0);
+
+        // Test immediate value
+        let imm_arg = SSAArg::new(func_id, Arg::Value(42), 1, 0);
+        assert_eq!(format!("{}", imm_arg), "42");
+
+        // Test register
+        let reg_arg = SSAArg::new(func_id, Arg::RelativeMem(2), 3, 0);
+        assert_eq!(format!("{}", reg_arg), "[R+2]_3");
+
+        // Test deref
+        let deref_arg = SSAArg::new(func_id, Arg::Deref(0x100), 0, 2);
+        assert_eq!(format!("{}", deref_arg), "[[256]_2]");
     }
 }

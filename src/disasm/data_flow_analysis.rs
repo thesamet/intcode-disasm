@@ -213,14 +213,15 @@ where
         };
         for (addr, block) in &control_flow.blocks {
             let mut block_def = BlockDef::new();
-            let create_stack = if block.id() == control_flow.start && block.span.start != 0 {
-                Some(CreateStack {
-                    stack_size: control_flow.stack_size,
-                    instruction_addr: block.span.start,
-                })
-            } else {
-                None
-            };
+            let create_stack =
+                if block.id() == control_flow.start.as_block_id() && block.span.start != 0 {
+                    Some(CreateStack {
+                        stack_size: control_flow.stack_size,
+                        instruction_addr: block.span.start,
+                    })
+                } else {
+                    None
+                };
             block_def.gen_set = get_definitions(block, create_stack);
             block_def.use_set = get_read_before_write(block);
             flow.block_defs.insert(*addr, block_def);

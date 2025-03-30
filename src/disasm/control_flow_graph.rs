@@ -10,15 +10,40 @@ use crate::disasm::low_ir::Span;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(usize);
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FunctionId(usize);
+
 impl BlockId {
     pub fn addr(&self) -> usize {
         self.0
     }
 }
 
+impl FunctionId {
+    pub fn addr(&self) -> usize {
+        self.0
+    }
+
+    pub fn as_block_id(&self) -> BlockId {
+        BlockId(self.0)
+    }
+}
+
 impl From<usize> for BlockId {
     fn from(id: usize) -> Self {
         BlockId(id)
+    }
+}
+
+impl From<usize> for FunctionId {
+    fn from(id: usize) -> Self {
+        FunctionId(id)
+    }
+}
+
+impl std::fmt::Display for FunctionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "f{}", self.0)
     }
 }
 
@@ -322,7 +347,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct ControlFlowGraph<ArgType: ArgBase> {
-    pub start: BlockId,
+    pub start: FunctionId,
     pub stack_size: usize,
     pub blocks: HashMap<BlockId, Block<ArgType>>,
 }
@@ -406,7 +431,7 @@ where
         }
         Self::update_predecessor(&mut blocks);
         Ok(ControlFlowGraph {
-            start: BlockId(start),
+            start: FunctionId(start),
             stack_size,
             blocks,
         })

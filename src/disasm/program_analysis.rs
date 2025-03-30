@@ -1,9 +1,8 @@
 use core::fmt;
 use std::collections::HashMap;
 
-
 use super::{
-    control_flow_graph::{BlockId, ControlFlowGraph, PredecessorKind},
+    control_flow_graph::{BlockId, ControlFlowGraph, FunctionId, PredecessorKind},
     data_flow_analysis::GraphDataFlow,
     low_ir::{Arg, ArgBase, OpArg},
     ssa_form::{convert_to_ssa, SSAArg},
@@ -14,7 +13,7 @@ use itertools::Itertools;
 
 #[derive(Debug)]
 pub struct FunctionInfo {
-    pub start_block: BlockId,
+    pub function_id: FunctionId,
     pub stack_size: usize,
     pub args: Vec<Arg>,        // from caller perspective
     pub return_vars: Vec<Arg>, // stack references for returned data from caller perspective
@@ -22,21 +21,21 @@ pub struct FunctionInfo {
 }
 
 pub struct ProgramAnalysis {
-    pub control_flows: HashMap<BlockId, ControlFlowGraph<OpArg>>,
-    pub data_flows: HashMap<BlockId, GraphDataFlow<OpArg>>,
-    pub function_infos: HashMap<BlockId, FunctionInfo>,
-    pub call_graph: HashMap<BlockId, Vec<BlockId>>,
+    pub control_flows: HashMap<FunctionId, ControlFlowGraph<OpArg>>,
+    pub data_flows: HashMap<FunctionId, GraphDataFlow<OpArg>>,
+    pub function_infos: HashMap<FunctionId, FunctionInfo>,
+    pub call_graph: HashMap<FunctionId, Vec<FunctionId>>,
 }
 
 fn function_call_analysis(
-    control_flows: &HashMap<BlockId, ControlFlowGraph<OpArg>>,
-    data_flows: &HashMap<BlockId, GraphDataFlow<OpArg>>,
+    control_flows: &HashMap<FunctionId, ControlFlowGraph<OpArg>>,
+    data_flows: &HashMap<FunctionId, GraphDataFlow<OpArg>>,
 ) -> (
-    HashMap<BlockId, FunctionInfo>,
-    HashMap<BlockId, Vec<BlockId>>,
+    HashMap<FunctionId, FunctionInfo>,
+    HashMap<FunctionId, Vec<FunctionId>>,
 ) {
-    let mut function_infos: HashMap<BlockId, FunctionInfo> = HashMap::new();
-    let mut call_graph: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+    let mut function_infos: HashMap<FunctionId, FunctionInfo> = HashMap::new();
+    let mut call_graph: HashMap<FunctionId, Vec<FunctionId>> = HashMap::new();
     for (caller_id, caller_control_flow) in control_flows {
         let caller_data_flow = &data_flows[&caller_control_flow.start];
         for (block_id, block) in &caller_control_flow.blocks {
@@ -62,38 +61,42 @@ fn function_call_analysis(
                 continue; // non-literal address
             };
 
-            let callee_block = (callee_addr as usize).into();
-            let callee_data_flow = &data_flows[&callee_block].block_defs[&callee_block];
-            let callee_stack_size = control_flows[&callee_block].stack_size;
+            let callee_function_id: FunctionId = (callee_addr as usize).into();
+            let callee_data_flow =
+                &data_flows[&callee_function_id].block_defs[&callee_function_id.as_block_id()];
+            let callee_stack_size = control_flows[&callee_function_id].stack_size;
 
             let args = callee_data_flow
                 .live_in
                 .iter()
                 .filter_map(|f| match f.as_arg() {
                     Arg::RelativeMem(r) if *r < 0 => {
-                        Some(Arg::RelativeMem((callee_stack_size as i128) + *r))
+                        Some(Arg::RelativeMem((callee_stack_size as i128) + r))
                     }
                     _ => None,
                 })
                 .sorted()
                 .collect_vec();
             let fi = FunctionInfo {
-                start_block: callee_block,
+                function_id: callee_function_id,
                 stack_size: callee_stack_size,
                 args,
                 return_vars,
                 local_vars: vec![],
             };
-            if let Some(other_fi) = function_infos.get_mut(&callee_block) {
+            if let Some(other_fi) = function_infos.get_mut(&callee_function_id) {
                 assert_eq!(other_fi.args, fi.args);
                 assert_eq!(other_fi.local_vars, fi.local_vars);
                 other_fi.return_vars.extend(fi.return_vars);
                 other_fi.return_vars.dedup();
                 other_fi.return_vars.sort();
             } else {
-                function_infos.insert(callee_block, fi);
+                function_infos.insert(callee_function_id, fi);
             }
-            call_graph.entry(*caller_id).or_default().push(callee_block);
+            call_graph
+                .entry(*caller_id)
+                .or_default()
+                .push(callee_function_id);
         }
     }
     (function_infos, call_graph)
@@ -122,7 +125,7 @@ impl fmt::Display for AnnotatedVar {
 
 impl ProgramAnalysis {
     pub fn build(binary: &[i128]) -> Self {
-        let control_flows: HashMap<BlockId, ControlFlowGraph<OpArg>> =
+        let control_flows: HashMap<FunctionId, ControlFlowGraph<OpArg>> =
             ControlFlowGraph::<OpArg>::scan(binary)
                 .into_iter()
                 .map(|cfg| (cfg.start, cfg))

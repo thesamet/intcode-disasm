@@ -169,6 +169,7 @@ pub enum GenericInstruction<ArgType> {
 
 pub type FatInstruction = GenericInstruction<OpArg>;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenericOp<T> {
     pub span: Span,
     pub kind: GenericInstruction<T>,
@@ -251,6 +252,12 @@ impl<'a> Input<'a> {
             prog: &self.prog[count..],
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PositionalArg<'a, ArgType> {
+    Arg(&'a ArgType),
+    Immediate(u8),
 }
 
 impl<ArgType> GenericInstruction<ArgType> {
@@ -427,6 +434,68 @@ impl<ArgType> GenericInstruction<ArgType> {
             GenericInstruction::Phi(_, _) => panic!("Phi instruction not supported"),
         }
     }
+
+    pub fn arg_at<'a>(&'a self, index: usize) -> Option<PositionalArg<'a, ArgType>> {
+        match &self {
+            Self::Add(a, b, c) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                1 => Some(PositionalArg::Arg(b)),
+                2 => Some(PositionalArg::Arg(c)),
+                _ => None,
+            },
+            Self::Mul(a, b, c) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                1 => Some(PositionalArg::Arg(b)),
+                2 => Some(PositionalArg::Arg(c)),
+                _ => None,
+            },
+            Self::Input(a) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                _ => None,
+            },
+            Self::Output(a) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                _ => None,
+            },
+            Self::JumpIf(a, _, b) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                1 => Some(PositionalArg::Arg(b)),
+                _ => None,
+            },
+            Self::LessThan(a, b, c) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                1 => Some(PositionalArg::Arg(b)),
+                2 => Some(PositionalArg::Arg(c)),
+                _ => None,
+            },
+            Self::Equals(a, b, c) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                1 => Some(PositionalArg::Arg(b)),
+                2 => Some(PositionalArg::Arg(c)),
+                _ => None,
+            },
+            Self::AdjustRelativeBase(a) => match index {
+                0 => Some(PositionalArg::Arg(a)),
+                _ => None,
+            },
+            Self::Data(_) => unreachable!(),
+            Self::Halt => None,
+            Self::Goto(a) => match index {
+                // it is an if (1)
+                0 => Some(PositionalArg::Immediate(1)),
+                1 => Some(PositionalArg::Arg(a)),
+                _ => None,
+            },
+            Self::Assign(a, b) => match index {
+                // it is an add a, 0, b
+                0 => Some(PositionalArg::Arg(b)),
+                1 => Some(PositionalArg::Immediate(0)),
+                2 => Some(PositionalArg::Arg(a)),
+                _ => None,
+            },
+            Self::Phi(_, _) => panic!("Phi is not implemented since it is a placeholder"),
+        }
+    }
 }
 
 impl FatInstruction {
@@ -474,13 +543,11 @@ impl FatInstruction {
             _ => return Err(ParseError::InvalidOpcode),
         };
         let end_offset = input.offset;
-        Ok((
-            input,
-            Op {
-                span: (offset, end_offset).into(),
-                kind: val.simplify(),
-            },
-        ))
+        let op = Op {
+            span: (offset, end_offset).into(),
+            kind: val.simplify(),
+        };
+        Ok((input, op))
     }
 
     pub fn from_slice(offset: usize, prog: &[i128]) -> Option<Self> {

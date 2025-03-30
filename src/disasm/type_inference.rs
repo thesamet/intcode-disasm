@@ -131,7 +131,7 @@ impl TypeInference {
         self.type_vars.insert(arg, typ.clone());
         if let Arg::Deref(addr) = arg.arg {
             let inner_var = SSAArg {
-                block_id: arg.block_id,
+                scope: arg.scope,
                 arg: Arg::Mem(addr as i128),
                 version: arg.deref_version,
                 deref_version: 0,
@@ -283,12 +283,12 @@ impl TypeInference {
                         let left = self.type_for_arg(*arg);
                         let rarg = Arg::RelativeMem(rvalue - (fun.stack_size as i128));
                         let right = self.type_for_arg(SSAArg {
-                            block_id: fun.start_block,
-                            arg: Arg::RelativeMem(rvalue - (fun.stack_size as i128)),
+                            scope: fun.function_id,
+                            arg: rarg,
                             version: 0,
                             deref_version: 0,
                         });
-                        println!("* larg: {:?} {}", arg, rarg);
+                        println!("left: {:?}, right: {:?}", arg, rarg);
                         self.add_constraint(
                             left,
                             right,
@@ -558,5 +558,48 @@ f1:
         ctx.assert_marker('d', Type::Char);
         ctx.assert_marker('b', Type::Char);
         ctx.assert_marker('a', Type::Char);
+    }
+
+    #[test]
+    fn test_link_function_params_to_argument_types_multi() {
+        let ctx = TestContext::new(
+            r#"
+                R += 1000
+                'a [R+1] = 65
+                'b [R+2] = 66
+                'c [R+3] = 67
+                'd [R+4] = 68
+                [R] = @ret
+                goto @print
+    ret:
+                halt
+    print:
+                R += 10
+                output([R-9])
+                if [R-8] goto @fret
+    fret:
+                [R+1] = 3
+                [R] = @call_ret
+                goto [R-7]
+    call_ret:
+                ptr = [R-6]
+                [R-2] = *ptr
+                if [R-2] goto @done
+    done:
+                R -= 4
+                goto [R]
+            "#,
+        );
+        println!("program_info={:?}", ctx.program.function_infos);
+        ctx.assert_marker('a', Type::Char);
+        ctx.assert_marker('b', Type::Bool);
+        ctx.assert_marker(
+            'c',
+            Type::FunctionPointer {
+                args: vec![],
+                returns: vec![],
+            },
+        );
+        ctx.assert_marker('d', Type::Pointer(Box::new(Type::Bool)));
     }
 }
