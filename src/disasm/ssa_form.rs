@@ -563,15 +563,58 @@ where
 }
 #[cfg(test)]
 mod tests {
-    use crate::disasm::{control_flow_graph::PredecessorKind, low_ir::Span};
+    use crate::disasm::{control_flow_graph::PredecessorKind, low_ir::Span, parser};
 
+    macro_rules! ssa_main_rel {
+        ($offset:expr, $version:expr) => {
+            SSAArg::new(0usize.into(), Arg::RelativeMem($offset), $version, 0)
+        };
+    }
+
+    macro_rules! ssa_main_mem {
+        ($addr:expr, $version:expr) => {
+            SSAArg::new(0usize.into(), Arg::Mem($addr), $version, 0)
+        };
+    }
+
+    macro_rules! ssa_main_val {
+        ($val:expr) => {
+            SSAArg::new(0usize.into(), Arg::Value($val), 0, 0)
+        };
+    }
+
+    macro_rules! ssa_main_deref {
+        ($addr:expr, $deref_version:expr) => {
+            SSAArg::new(0usize.into(), Arg::Deref($addr), 0, $deref_version)
+        };
+    }
+    macro_rules! assert_marker_at_func {
+        ($self:expr, $marker:expr, $func_id:expr, $arg:expr) => {
+            let graph = $self.ssa_graphs.get(&$func_id).unwrap();
+            let Some((ssa, _)) = graph.debug_markers.iter().find(|&(k, v)| *v == $marker) else {
+                panic!("Marker '{}' found in function {}", $marker, $func_id);
+            };
+            assert_eq!(
+                *ssa, $arg,
+                "Expected SSAArg {} (with marker '{}') to match {:?}",
+                $arg, $marker, ssa
+            );
+        };
+    }
+
+    macro_rules! assert_marker_at_main {
+        ($self:expr, $marker:expr, $arg:expr) => {
+            let main_func_id = FunctionId::from(0);
+            assert_marker_at_func!($self, $marker, main_func_id, $arg);
+        };
+    }
     use super::*;
 
     #[test]
     fn test_ssa_arg_creation() {
         let func_id = FunctionId::from(0);
         let arg = Arg::RelativeMem(0);
-        let ssa_arg = SSAArg::new(func_id, arg, 1, 0);
+        let ssa_arg = ssa_main_rel!(0, 1);
 
         assert_eq!(ssa_arg.scope, func_id);
         assert_eq!(ssa_arg.arg, arg);
@@ -598,18 +641,120 @@ mod tests {
 
     #[test]
     fn test_ssa_arg_display() {
-        let func_id = FunctionId::from(0);
-
         // Test immediate value
-        let imm_arg = SSAArg::new(func_id, Arg::Value(42), 1, 0);
+        let imm_arg = ssa_main_val!(42);
         assert_eq!(format!("{}", imm_arg), "42");
 
         // Test register
-        let reg_arg = SSAArg::new(func_id, Arg::RelativeMem(2), 3, 0);
+        let reg_arg = ssa_main_rel!(2, 3);
         assert_eq!(format!("{}", reg_arg), "[R+2]_3");
 
         // Test deref
-        let deref_arg = SSAArg::new(func_id, Arg::Deref(0x100), 0, 2);
+        let deref_arg = ssa_main_deref!(0x100, 2);
         assert_eq!(format!("{}", deref_arg), "[[256]_2]");
+    }
+
+    #[test]
+    fn test_ssa_arg_display_with_deref() {
+        // Test immediate value
+        let imm_arg = ssa_main_val!(42);
+        assert_eq!(format!("{}", imm_arg), "42");
+
+        // Test register
+        let reg_arg = ssa_main_rel!(2, 3);
+        assert_eq!(format!("{}", reg_arg), "[R+2]_3");
+
+        // Test deref
+        let deref_arg = ssa_main_deref!(0x100, 2);
+        assert_eq!(format!("{}", deref_arg), "[[256]_2]");
+    }
+
+    struct TestContext {
+        ssa_graphs: HashMap<FunctionId, SSAGraph>,
+    }
+
+    impl TestContext {
+        fn new(code: &str) -> Self {
+            let binary = parser::compile(code);
+            let program: ProgramAnalysis = ProgramAnalysis::build(&binary);
+            let mut ssa_graphs = HashMap::new();
+            for (function_id, cflow) in &program.control_flows {
+                let ssa = convert_to_ssa(&program, &cflow, &program.data_flows[&function_id]);
+                ssa_graphs.insert(*function_id, ssa);
+            }
+            TestContext { ssa_graphs }
+        }
+
+        fn main(&self) -> &SSAGraph {
+            let main_func_id = FunctionId::from(0);
+            self.ssa_graphs.get(&main_func_id).unwrap()
+        }
+    }
+
+    #[test]
+    fn test_ssa_arg_display_with_deref_and_version() {
+        let func_id = FunctionId::from(0);
+
+        // Test immediate value
+        let imm_arg = ssa_main_val!(42);
+        assert_eq!(format!("{}", imm_arg), "42");
+
+        // Test register
+        let reg_arg = ssa_main_rel!(2, 3);
+        assert_eq!(format!("{}", reg_arg), "[R+2]_3");
+
+        // Test deref
+        let deref_arg = ssa_main_deref!(0x100, 2);
+        assert_eq!(format!("{}", deref_arg), "[[256]_2]");
+    }
+
+    #[test]
+    fn test_basic_versioning() {
+        let ctx = TestContext::new(
+            r#"
+            R += 5
+            'b [R+2] = 'a [R+3] + [R+4]
+            'c [R+2] = [R+3] + [R+4]
+        "#,
+        );
+        let main_graph = ctx.main();
+        println!("{:?}", main_graph.debug_markers);
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(3, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(2, 0));
+        assert_marker_at_main!(ctx, 'c', ssa_main_rel!(2, 1));
+    }
+
+    #[test]
+    fn test_deref_versioning() {
+        let ctx = TestContext::new(
+            r#"
+            R += 5
+            'b [R+2] = 'a [R+3] + [R+4]
+            'c [R+2] = [R+3] + [R+4]
+        "#,
+        );
+        let main_graph = ctx.main();
+        println!("{:?}", main_graph.debug_markers);
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(3, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(2, 0));
+        assert_marker_at_main!(ctx, 'c', ssa_main_rel!(2, 1));
+    }
+
+    #[test]
+    fn test_deref_versioning_with_deref() {
+        let ctx = TestContext::new(
+            r#"
+            R += 5
+            ptr = 500
+            ptr = ptr + [R+2]
+            ptr = 'a ptr + [R+3]
+            'b [R+1] = *ptr
+            "#,
+        );
+        let main_graph = ctx.main();
+        println!("{:?}", main_graph.debug_markers);
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(3, 0));
+        // assert_marker_at_main!(ctx, 'b', ssa_main_rel!(2, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(1, 0));
     }
 }
