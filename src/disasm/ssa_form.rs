@@ -634,7 +634,7 @@ mod tests {
     macro_rules! assert_marker_at_func {
         ($self:expr, $marker:expr, $func_id:expr, $arg:expr) => {
             if let Some(graph) = $self.ssa_graphs.get(&$func_id) {
-                if let Some((ssa, _)) = graph.debug_markers.iter().find(|&(k, v)| *v == $marker) {
+                if let Some((ssa, _)) = graph.debug_markers.iter().find(|&(_, v)| *v == $marker) {
                     assert_eq!(
                         *ssa, $arg,
                         "Expected SSAArg {} (with marker '{}') to match {:?}",
@@ -659,7 +659,6 @@ mod tests {
     #[test]
     fn test_ssa_arg_creation() {
         let func_id = FunctionId::from(0);
-        let arg = Arg::RelativeMem(0);
         let ssa_arg = ssa_main_rel!(0, 1);
 
         assert_eq!(ssa_arg.scope, func_id);
@@ -737,8 +736,6 @@ mod tests {
 
     #[test]
     fn test_ssa_arg_display_with_deref_and_version() {
-        let func_id = FunctionId::from(0);
-
         // Test immediate value
         let imm_arg = ssa_main_val!(42, 0);
         assert_eq!(format!("{}", imm_arg), "42");

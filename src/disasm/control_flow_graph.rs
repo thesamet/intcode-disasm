@@ -20,10 +20,6 @@ impl BlockId {
 }
 
 impl FunctionId {
-    pub fn addr(&self) -> usize {
-        self.0
-    }
-
     pub fn as_block_id(&self) -> BlockId {
         BlockId(self.0)
     }

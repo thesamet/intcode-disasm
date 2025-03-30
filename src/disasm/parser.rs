@@ -114,7 +114,7 @@ impl SerializableInstruction<SourceArgument> for GenericInstruction<SourceArgume
                                     * 100000;
                                 (arg.mode(), debug_marker)
                             }
-                            PositionalArg::Immediate(v) => (1, 0),
+                            PositionalArg::Immediate(_) => (1, 0),
                         };
                         mode * 10i128.pow((i as u32) + 2) + debug_marker
                     })
@@ -441,7 +441,7 @@ pub fn parse_program(
         }
         for i in 0..=2 {
             match instruction.arg_at(i) {
-                Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name, debug_marker))) => {
+                Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name, _))) => {
                     pointers.insert(name.clone(), current_offset + i + 1);
                 }
                 Some(_) | None => {}
