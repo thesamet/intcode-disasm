@@ -142,7 +142,7 @@ pub trait ArgBase {
         Self::relative_mem(self).is_some()
     }
 
-    fn as_arg(&self) -> &Arg;
+    fn as_arg(&self) -> Arg;
 }
 
 pub trait HasDebugMarker {
@@ -200,8 +200,8 @@ impl ArgBase for Arg {
         }
     }
 
-    fn as_arg(&self) -> &Arg {
-        &self
+    fn as_arg(&self) -> Arg {
+        *self
     }
 }
 
@@ -214,8 +214,8 @@ impl ArgBase for OpArg {
         self.kind.relative_mem()
     }
 
-    fn as_arg(&self) -> &Arg {
-        &self.kind
+    fn as_arg(&self) -> Arg {
+        self.kind
     }
 }
 

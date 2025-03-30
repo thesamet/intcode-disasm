@@ -6,7 +6,7 @@ use super::{
     control_flow_graph::{Block, NextKind},
     low_ir::{Arg, ArgBase, GenericInstruction},
     program_analysis::ProgramAnalysis,
-    ssa_form::{convert_to_ssa, SSAArg},
+    ssa_form::{convert_to_ssa, SSAArg, SSAArgKind},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -129,12 +129,15 @@ impl TypeInference {
         */
         let typ = self.fresh_type_var();
         self.type_vars.insert(arg, typ.clone());
-        if let Arg::Deref(addr) = arg.arg {
+        if let SSAArgKind::Deref {
+            addr,
+            deref_version,
+        } = arg.arg
+        {
             let inner_var = SSAArg {
                 scope: arg.scope,
-                arg: Arg::Mem(addr as i128),
-                version: arg.deref_version,
-                deref_version: 0,
+                arg: SSAArgKind::Mem(addr as i128),
+                version: deref_version,
             };
             let pointer = self.type_for_arg(inner_var);
             self.add_constraint(
@@ -281,12 +284,11 @@ impl TypeInference {
                     for arg in call.arguments.as_ref().unwrap() {
                         let rvalue = arg.as_arg().relative_mem().unwrap();
                         let left = self.type_for_arg(*arg);
-                        let rarg = Arg::RelativeMem(rvalue - (fun.stack_size as i128));
+                        let rarg = SSAArgKind::RelativeMem(rvalue - (fun.stack_size as i128));
                         let right = self.type_for_arg(SSAArg {
                             scope: fun.function_id,
                             arg: rarg,
                             version: 0,
-                            deref_version: 0,
                         });
                         println!("left: {:?}, right: {:?}", arg, rarg);
                         self.add_constraint(
@@ -370,7 +372,7 @@ impl TypeInference {
 #[cfg(test)]
 mod tests {
 
-    use crate::disasm::parser;
+    use crate::disasm::{parser, ssa_form::SSAArgKind};
 
     use super::*;
 
@@ -402,7 +404,7 @@ mod tests {
                 .type_inference
                 .type_vars
                 .iter()
-                .filter(|(k, _)| matches!(k.arg, Arg::Mem(a) if a as usize==addr))
+                .filter(|(k, _)| matches!(k.arg, SSAArgKind::Mem(a) if a as usize==addr))
                 .max_by_key(|(k, _)| k.version)
                 .expect("No type variable found for address")
                 .1

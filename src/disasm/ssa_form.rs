@@ -12,55 +12,81 @@ use super::{
     program_analysis::ProgramAnalysis,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, PartialOrd, Ord)]
+pub enum SSAArgKind {
+    Value(i128),
+    RelativeMem(i128),
+    Mem(i128),
+    Deref { addr: usize, deref_version: usize },
+}
+
+impl SSAArgKind {
+    fn from_arg(arg: Arg) -> Self {
+        match arg {
+            Arg::Value(x) => SSAArgKind::Value(x),
+            Arg::RelativeMem(x) => SSAArgKind::RelativeMem(x),
+            Arg::Mem(x) => SSAArgKind::Mem(x),
+            Arg::Deref(addr) => SSAArgKind::Deref {
+                addr,
+                deref_version: 0,
+            },
+        }
+    }
+}
+
 use itertools::Itertools;
+use log::debug;
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct SSAArg {
     pub scope: FunctionId,
-    pub arg: Arg,
+    pub arg: SSAArgKind,
     pub version: usize,
-    pub deref_version: usize,
 }
 
 impl SSAArg {
-    pub fn new(scope: FunctionId, arg: Arg, version: usize, deref_version: usize) -> Self {
+    pub fn new(scope: FunctionId, arg: SSAArgKind, version: usize) -> Self {
         SSAArg {
             scope,
             arg,
             version,
-            deref_version,
-        }
-    }
-
-    fn from_op_arg(scope: FunctionId, op_arg: OpArg) -> Self {
-        SSAArg {
-            scope,
-            arg: op_arg.kind,
-            version: 0,
-            deref_version: 0,
         }
     }
 }
 
 impl ArgBase for SSAArg {
     fn value(&self) -> Option<i128> {
-        self.arg.value()
+        match self.arg {
+            SSAArgKind::Value(x) => Some(x),
+            _ => None,
+        }
     }
 
     fn relative_mem(&self) -> Option<i128> {
-        self.arg.relative_mem()
+        match self.arg {
+            SSAArgKind::RelativeMem(x) => Some(x),
+            _ => None,
+        }
     }
 
-    fn as_arg(&self) -> &Arg {
-        &self.arg
+    fn as_arg(&self) -> Arg {
+        match self.arg {
+            SSAArgKind::Value(x) => Arg::Value(x),
+            SSAArgKind::RelativeMem(x) => Arg::RelativeMem(x),
+            SSAArgKind::Deref { addr, .. } => Arg::Deref(addr),
+            SSAArgKind::Mem(addr) => Arg::Mem(addr),
+        }
     }
 }
 
 impl Display for SSAArg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.arg {
-            Arg::Value(x) => write!(f, "{}", x), // No version for immediate values
-            Arg::Deref(addr) => write!(f, "[[{}]_{}]", addr, self.deref_version),
-            _ => write!(f, "{}_{}", self.arg, self.version),
+            SSAArgKind::Value(x) => write!(f, "{}", x), // No version for immediate values
+            SSAArgKind::Deref {
+                addr,
+                deref_version,
+            } => write!(f, "[[{}]_{}]", addr, deref_version),
+            _ => write!(f, "{}_{}", self.as_arg(), self.version),
         }
     }
 }
@@ -210,17 +236,20 @@ where
             }
 
             for (block_id, arg) in &to_remove {
-                self.phi_nodes.get_mut(block_id).unwrap().remove(&arg.arg);
+                self.phi_nodes
+                    .get_mut(block_id)
+                    .unwrap()
+                    .remove(&arg.as_arg());
                 self.var_versions
                     .get_mut(block_id)
                     .unwrap()
-                    .remove(&arg.arg);
+                    .remove(&arg.as_arg());
             }
             for (source, (block_id, _)) in &final_replacements {
                 self.phi_nodes
                     .get_mut(block_id)
                     .unwrap()
-                    .remove(&source.arg);
+                    .remove(&source.as_arg());
                 self.var_locations.remove(source);
                 for phis in self.phi_nodes.values_mut() {
                     for phi in phis.values_mut() {
@@ -269,16 +298,15 @@ where
         debug_marker: Option<char>,
     ) -> SSAArg {
         if let Arg::Deref(_) = arg {
-            return self.current_version_of_arg_in_block(arg, block, None);
+            return self.current_version_of_arg_in_block(arg, block, debug_marker);
         }
         let new_version = *self.current_version.entry(arg).or_default() + 1;
         self.current_version.insert(arg, new_version);
-        let new_arg = SSAArg {
-            scope: self.control_flow.start,
-            arg,
-            version: new_version,
-            deref_version: 0,
-        };
+        let new_arg = SSAArg::new(
+            self.control_flow.start,
+            SSAArgKind::from_arg(arg),
+            new_version,
+        );
         self.var_versions
             .entry(block)
             .or_default()
@@ -296,29 +324,36 @@ where
         block_id: BlockId,
         debug_marker: Option<char>,
     ) -> SSAArg {
-        if let Arg::Deref(addr) = arg.as_arg() {
-            return SSAArg {
+        println!(
+            "Current version of arg in block: {:?} {:?}",
+            arg, debug_marker
+        );
+        let res = if let Arg::Deref(addr) = arg.as_arg() {
+            let deref_version = self
+                .current_version_of_arg_in_block(Arg::Mem(addr as i128), block_id, None)
+                .version;
+            SSAArg {
                 scope: self.control_flow.start,
-                arg: *arg.as_arg(),
+                arg: SSAArgKind::Deref {
+                    addr,
+                    deref_version,
+                },
                 version: 0,
-                deref_version: self
-                    .current_version_of_arg_in_block(Arg::Mem(*addr as i128), block_id, None)
-                    .version,
-            };
-        }
-
-        let res = *self
-            .var_versions
-            .get(&block_id)
-            .and_then(|hs| hs.get(&arg))
-            .unwrap_or(&SSAArg {
-                scope: self.control_flow.start,
-                arg,
-                version: 0,
-                deref_version: 0,
-            });
+            }
+        } else {
+            *self
+                .var_versions
+                .get(&block_id)
+                .and_then(|hs| hs.get(&arg))
+                .unwrap_or(&SSAArg {
+                    scope: self.control_flow.start,
+                    arg: SSAArgKind::from_arg(arg),
+                    version: 0,
+                })
+        };
         if let Some(debug_marker) = debug_marker {
             self.debug_markers.insert(res, debug_marker);
+            println!("Debug marker inserted for arg: {:?}", res);
         }
         res
     }
@@ -358,7 +393,7 @@ where
         next_kind: &NextKind<ArgType>,
     ) -> NextKind<SSAArg> {
         let to_ssa = |s: &mut Self, arg: &ArgType| {
-            s.current_version_of_arg_in_block(*arg.as_arg(), block_id, arg.debug_marker())
+            s.current_version_of_arg_in_block(arg.as_arg(), block_id, arg.debug_marker())
         };
 
         match next_kind {
@@ -421,15 +456,15 @@ where
             .iter()
             .map(|d| d.arg)
             .unique()
-            .sorted_by_key(|arg| *arg.as_arg())
+            .sorted_by_key(|arg| arg.as_arg())
             .collect_vec()
         {
             assert!(!arg.is_value(), "Immediate values should not be in use set");
             if self.block_needs_phi_function(block_id, arg) {
                 let output =
-                    self.create_new_version_for_arg(*arg.as_arg(), block_id, block_id.addr(), None);
+                    self.create_new_version_for_arg(arg.as_arg(), block_id, block_id.addr(), None);
                 self.phi_nodes.entry(block_id).or_default().insert(
-                    *arg.as_arg(),
+                    arg.as_arg(),
                     PhiNode {
                         output,
                         inputs: Vec::new(),
@@ -445,14 +480,14 @@ where
                 self,
                 &mut |s: &mut Self, read_arg: &ArgType| {
                     s.current_version_of_arg_in_block(
-                        *read_arg.as_arg(),
+                        read_arg.as_arg(),
                         block_id,
                         read_arg.debug_marker(),
                     )
                 },
                 &mut |s: &mut Self, write_arg: &ArgType| {
                     s.create_new_version_for_arg(
-                        *write_arg.as_arg(),
+                        write_arg.as_arg(),
                         block_id,
                         *addr,
                         write_arg.debug_marker(),
@@ -515,18 +550,20 @@ where
         let rename_var = |a: &SSAArg| {
             let mut r = rename_list.get(&a).copied().unwrap_or(*a);
             if let SSAArg {
-                arg: Arg::Deref(addr),
-                deref_version,
+                arg:
+                    SSAArgKind::Deref {
+                        addr,
+                        ref mut deref_version,
+                    },
                 ..
             } = r
             {
                 let key = SSAArg {
                     scope: a.scope,
-                    arg: Arg::Mem(addr as i128),
-                    version: deref_version,
-                    deref_version: 0,
+                    arg: SSAArgKind::Mem(addr as i128),
+                    version: *deref_version,
                 };
-                r.deref_version = rename_list.get(&key).unwrap().version;
+                *deref_version = rename_list.get(&key).unwrap().version;
             }
             r
         };
@@ -563,29 +600,36 @@ where
 }
 #[cfg(test)]
 mod tests {
-    use crate::disasm::{control_flow_graph::PredecessorKind, low_ir::Span, parser};
+    use crate::disasm::{low_ir::Span, parser};
 
     macro_rules! ssa_main_rel {
         ($offset:expr, $version:expr) => {
-            SSAArg::new(0usize.into(), Arg::RelativeMem($offset), $version, 0)
+            SSAArg::new(0usize.into(), SSAArgKind::RelativeMem($offset), $version)
         };
     }
 
     macro_rules! ssa_main_mem {
         ($addr:expr, $version:expr) => {
-            SSAArg::new(0usize.into(), Arg::Mem($addr), $version, 0)
+            SSAArg::new(0usize.into(), SSAArgKind::Mem($addr), $version)
         };
     }
 
     macro_rules! ssa_main_val {
-        ($val:expr) => {
-            SSAArg::new(0usize.into(), Arg::Value($val), 0, 0)
+        ($val:expr, $version:expr) => {
+            SSAArg::new(0usize.into(), SSAArgKind::Value($val), $version);
         };
     }
 
     macro_rules! ssa_main_deref {
         ($addr:expr, $deref_version:expr) => {
-            SSAArg::new(0usize.into(), Arg::Deref($addr), 0, $deref_version)
+            SSAArg::new(
+                0usize.into(),
+                SSAArgKind::Deref {
+                    addr: $addr,
+                    deref_version: $deref_version,
+                },
+                0,
+            )
         };
     }
     macro_rules! assert_marker_at_func {
@@ -617,32 +661,30 @@ mod tests {
         let ssa_arg = ssa_main_rel!(0, 1);
 
         assert_eq!(ssa_arg.scope, func_id);
-        assert_eq!(ssa_arg.arg, arg);
         assert_eq!(ssa_arg.version, 1);
-        assert_eq!(ssa_arg.deref_version, 0);
     }
 
-    #[test]
-    fn test_ssa_arg_from_op_arg() {
-        let func_id = FunctionId::from(0);
-        let op_arg = OpArg {
-            kind: Arg::RelativeMem(1),
-            span: Span::new(0, 2),
-            debug_marker: None,
-        };
+    // #[test]
+    // fn test_ssa_arg_from_op_arg() {
+    //     let func_id = FunctionId::from(0);
+    //     let op_arg = OpArg {
+    //         kind: Arg::RelativeMem(1),
+    //         span: Span::new(0, 2),
+    //         debug_marker: None,
+    //     };
 
-        let ssa_arg = SSAArg::from_op_arg(func_id, op_arg);
+    //     let ssa_arg = SSAArg::from_op_arg(func_id, op_arg);
 
-        assert_eq!(ssa_arg.scope, func_id);
-        assert_eq!(ssa_arg.arg, op_arg.kind);
-        assert_eq!(ssa_arg.version, 0);
-        assert_eq!(ssa_arg.deref_version, 0);
-    }
+    //     assert_eq!(ssa_arg.scope, func_id);
+    //     assert_eq!(ssa_arg.arg, op_arg.kind);
+    //     assert_eq!(ssa_arg.version, 0);
+    //     assert_eq!(ssa_arg.deref_version, 0);
+    // }
 
     #[test]
     fn test_ssa_arg_display() {
         // Test immediate value
-        let imm_arg = ssa_main_val!(42);
+        let imm_arg = ssa_main_val!(42, 0);
         assert_eq!(format!("{}", imm_arg), "42");
 
         // Test register
@@ -657,7 +699,7 @@ mod tests {
     #[test]
     fn test_ssa_arg_display_with_deref() {
         // Test immediate value
-        let imm_arg = ssa_main_val!(42);
+        let imm_arg = ssa_main_val!(42, 0);
         assert_eq!(format!("{}", imm_arg), "42");
 
         // Test register
@@ -696,7 +738,7 @@ mod tests {
         let func_id = FunctionId::from(0);
 
         // Test immediate value
-        let imm_arg = ssa_main_val!(42);
+        let imm_arg = ssa_main_val!(42, 0);
         assert_eq!(format!("{}", imm_arg), "42");
 
         // Test register
@@ -746,15 +788,16 @@ mod tests {
             r#"
             R += 5
             ptr = 500
-            ptr = ptr + [R+2]
-            ptr = 'a ptr + [R+3]
-            'b [R+1] = *ptr
+            'a ptr = ptr + [R+2]
+            'b ptr = ptr + [R+3]
+            'd [R+1] = 'c *ptr
             "#,
         );
         let main_graph = ctx.main();
         println!("{:?}", main_graph.debug_markers);
-        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(3, 0));
-        // assert_marker_at_main!(ctx, 'b', ssa_main_rel!(2, 0));
-        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(1, 0));
+        assert_marker_at_main!(ctx, 'a', ssa_main_mem!(15, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_main_mem!(15, 2));
+        assert_marker_at_main!(ctx, 'c', ssa_main_deref!(15, 2));
+        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 0));
     }
 }

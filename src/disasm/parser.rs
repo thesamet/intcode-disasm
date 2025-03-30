@@ -7,25 +7,27 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated},
     IResult, Parser,
 };
-use std::{collections::HashMap, convert::identity, process::id};
+use std::collections::HashMap;
 
 use super::low_ir::{Arg, ArgBase, GenericInstruction, PositionalArg};
 
+type DebugMarker = Option<char>;
+
 enum UnresolvedArgument {
-    Label(String, Option<char>),
-    Pointer(String),
-    PointerDeref(String),
+    Label(String, DebugMarker),
+    Pointer(String, DebugMarker),
+    PointerDeref(String, DebugMarker),
     Resolved(SourceArgument),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceArgument {
     pub arg: Arg,
-    pub debug_marker: Option<char>,
+    pub debug_marker: DebugMarker,
 }
 
 impl SourceArgument {
-    pub fn new(arg: Arg, debug_marker: Option<char>) -> Self {
+    pub fn new(arg: Arg, debug_marker: DebugMarker) -> Self {
         SourceArgument { arg, debug_marker }
     }
 }
@@ -74,8 +76,8 @@ impl ArgBase for SourceArgument {
         self.arg.relative_mem()
     }
 
-    fn as_arg(&self) -> &Arg {
-        &self.arg
+    fn as_arg(&self) -> Arg {
+        self.arg
     }
 }
 
@@ -144,14 +146,14 @@ fn identifier(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_alphanumeric() || c == '_').parse(input)
 }
 // Parse arguments
-fn parse_memory(input: &str, debug_marker: Option<char>) -> IResult<&str, UnresolvedArgument> {
+fn parse_memory(input: &str, debug_marker: DebugMarker) -> IResult<&str, UnresolvedArgument> {
     alt((
         map(delimited(char('['), parse_i128, char(']')), |a| {
             UnresolvedArgument::Resolved(SourceArgument::new(Arg::Mem(a), debug_marker))
         }),
         (tag("*"), identifier)
-            .map(|(_, ident)| UnresolvedArgument::PointerDeref(ident.to_string())),
-        identifier.map(|ident| UnresolvedArgument::Pointer(ident.to_string())),
+            .map(|(_, ident)| UnresolvedArgument::PointerDeref(ident.to_string(), debug_marker)),
+        identifier.map(|ident| UnresolvedArgument::Pointer(ident.to_string(), debug_marker)),
     ))
     .parse(input)
 }
@@ -174,7 +176,7 @@ fn parse_relative_mem(input: &str) -> IResult<&str, Arg> {
     .parse(input)
 }
 
-fn parse_label_ref(input: &str, debug_marker: Option<char>) -> IResult<&str, UnresolvedArgument> {
+fn parse_label_ref(input: &str, debug_marker: DebugMarker) -> IResult<&str, UnresolvedArgument> {
     map(preceded(char('@'), identifier), |s: &str| {
         UnresolvedArgument::Label(s.to_string(), debug_marker)
     })
@@ -439,7 +441,7 @@ pub fn parse_program(
         }
         for i in 0..=2 {
             match instruction.arg_at(i) {
-                Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name))) => {
+                Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name, debug_marker))) => {
                     pointers.insert(name.clone(), current_offset + i + 1);
                 }
                 Some(_) | None => {}
@@ -465,10 +467,12 @@ pub fn parse_program(
                         Err(format!("Undefined label: {}", label))
                     }
                 }
-                UnresolvedArgument::PointerDeref(_) => Ok(SourceArgument::new(Arg::Mem(0), None)),
-                UnresolvedArgument::Pointer(name) => {
+                UnresolvedArgument::PointerDeref(_, debug_marker) => {
+                    Ok(SourceArgument::new(Arg::Mem(0), *debug_marker))
+                }
+                UnresolvedArgument::Pointer(name, debug_marker) => {
                     if let Some(&target) = pointers.get(name) {
-                        Ok(SourceArgument::new(Arg::Mem(target as i128), None))
+                        Ok(SourceArgument::new(Arg::Mem(target as i128), *debug_marker))
                     } else {
                         Err(format!("Undefined pointer: {}", name))
                     }
@@ -838,9 +842,11 @@ mod tests {
     #[test]
     fn test_debug_marker() {
         let program = "
-            'x[0] = 0 + 0    ; set debug marker 'x on first argument
-            [1] = 'y10 + 0   ; set debug marker 'y on second argument
-            [2] = 0 + 'z5    ; set debug marker 'z on third argument
+            'x [0] = 0 + 0    ; set debug marker 'x on first argument
+            [1] = 'y10 + 0    ; set debug marker 'y on second argument
+            [2] = 0 + 'z5     ; set debug marker 'z on third argument
+            'a ptr = 350      ; set debug marker 'a on pointer
+            [3] = 'b *ptr     ; read from pointer
         ";
 
         let instructions = parse_program(program).unwrap();
@@ -871,6 +877,19 @@ mod tests {
             assert_eq!(arg3.debug_marker, None);
         } else {
             panic!("Expected Add instruction");
+        }
+
+        if let GenericInstruction::Assign(arg1, arg2) = &instructions[3] {
+            assert_eq!(arg1.debug_marker, Some('a'));
+            assert_eq!(arg2.debug_marker, None);
+        } else {
+            panic!("Expected Assign instruction");
+        }
+        if let GenericInstruction::Assign(arg1, arg2) = &instructions[4] {
+            assert_eq!(arg1.debug_marker, None);
+            assert_eq!(arg2.debug_marker, Some('b'));
+        } else {
+            panic!("Expected Assign instruction");
         }
     }
 }

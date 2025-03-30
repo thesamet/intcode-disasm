@@ -55,7 +55,6 @@ fn function_call_analysis(
                 .map(|a| a.as_arg())
                 .filter(|a| matches!(a, Arg::RelativeMem(r) if *r>0))
                 .sorted_by_key(|a| a.as_arg())
-                .copied()
                 .collect_vec();
             let Some(callee_addr) = fc.function_addr.value() else {
                 continue; // non-literal address
@@ -70,7 +69,7 @@ fn function_call_analysis(
                 .live_in
                 .iter()
                 .filter_map(|f| match f.as_arg() {
-                    Arg::RelativeMem(r) if *r < 0 => {
+                    Arg::RelativeMem(r) if r < 0 => {
                         Some(Arg::RelativeMem((callee_stack_size as i128) + r))
                     }
                     _ => None,
