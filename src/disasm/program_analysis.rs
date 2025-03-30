@@ -2,7 +2,7 @@ use core::fmt;
 use std::collections::HashMap;
 
 use super::{
-    control_flow_graph::{BlockId, ControlFlowGraph, FunctionId, PredecessorKind},
+    control_flow_graph::{ControlFlowGraph, FunctionId, PredecessorKind},
     data_flow_analysis::GraphDataFlow,
     low_ir::{Arg, ArgBase, OpArg},
     ssa_form::{convert_to_ssa, SSAArg},

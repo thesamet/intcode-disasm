@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use super::{
     control_flow_graph::{Block, NextKind},
-    low_ir::{Arg, ArgBase, GenericInstruction},
+    low_ir::{ArgBase, GenericInstruction},
     program_analysis::ProgramAnalysis,
     ssa_form::{convert_to_ssa, SSAArg, SSAArgKind},
 };

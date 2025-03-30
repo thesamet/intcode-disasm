@@ -35,7 +35,6 @@ impl SSAArgKind {
 }
 
 use itertools::Itertools;
-use log::debug;
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct SSAArg {
     pub scope: FunctionId,
@@ -600,7 +599,7 @@ where
 }
 #[cfg(test)]
 mod tests {
-    use crate::disasm::{low_ir::Span, parser};
+    use crate::disasm::parser;
 
     macro_rules! ssa_main_rel {
         ($offset:expr, $version:expr) => {
@@ -616,7 +615,7 @@ mod tests {
 
     macro_rules! ssa_main_val {
         ($val:expr, $version:expr) => {
-            SSAArg::new(0usize.into(), SSAArgKind::Value($val), $version);
+            SSAArg::new(0usize.into(), SSAArgKind::Value($val), $version)
         };
     }
 
@@ -634,22 +633,25 @@ mod tests {
     }
     macro_rules! assert_marker_at_func {
         ($self:expr, $marker:expr, $func_id:expr, $arg:expr) => {
-            let graph = $self.ssa_graphs.get(&$func_id).unwrap();
-            let Some((ssa, _)) = graph.debug_markers.iter().find(|&(k, v)| *v == $marker) else {
+            if let Some(graph) = $self.ssa_graphs.get(&$func_id) {
+                if let Some((ssa, _)) = graph.debug_markers.iter().find(|&(k, v)| *v == $marker) {
+                    assert_eq!(
+                        *ssa, $arg,
+                        "Expected SSAArg {} (with marker '{}') to match {:?}",
+                        $arg, $marker, ssa
+                    );
+                } else {
+                    panic!("Marker '{}' not found in function {}", $marker, $func_id);
+                }
+            } else {
                 panic!("Marker '{}' found in function {}", $marker, $func_id);
-            };
-            assert_eq!(
-                *ssa, $arg,
-                "Expected SSAArg {} (with marker '{}') to match {:?}",
-                $arg, $marker, ssa
-            );
+            }
         };
     }
 
     macro_rules! assert_marker_at_main {
         ($self:expr, $marker:expr, $arg:expr) => {
-            let main_func_id = FunctionId::from(0);
-            assert_marker_at_func!($self, $marker, main_func_id, $arg);
+            assert_marker_at_func!($self, $marker, FunctionId::from(0), $arg)
         };
     }
     use super::*;
@@ -798,6 +800,6 @@ mod tests {
         assert_marker_at_main!(ctx, 'a', ssa_main_mem!(15, 1));
         assert_marker_at_main!(ctx, 'b', ssa_main_mem!(15, 2));
         assert_marker_at_main!(ctx, 'c', ssa_main_deref!(15, 2));
-        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 0));
+        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 0))
     }
 }
