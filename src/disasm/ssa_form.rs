@@ -39,15 +39,15 @@ use itertools::Itertools;
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct SSAArg {
     pub scope: FunctionId,
-    pub arg: SSAArgKind,
+    pub kind: SSAArgKind,
     pub version: usize,
 }
 
 impl SSAArg {
-    pub fn new(scope: FunctionId, arg: SSAArgKind, version: usize) -> Self {
+    pub fn new(scope: FunctionId, kind: SSAArgKind, version: usize) -> Self {
         SSAArg {
             scope,
-            arg,
+            kind,
             version,
         }
     }
@@ -55,21 +55,21 @@ impl SSAArg {
 
 impl ArgBase for SSAArg {
     fn value(&self) -> Option<i128> {
-        match self.arg {
+        match self.kind {
             SSAArgKind::Value(x) => Some(x),
             _ => None,
         }
     }
 
     fn relative_mem(&self) -> Option<i128> {
-        match self.arg {
+        match self.kind {
             SSAArgKind::RelativeMem(x) => Some(x),
             _ => None,
         }
     }
 
     fn as_arg(&self) -> Arg {
-        match self.arg {
+        match self.kind {
             SSAArgKind::Value(x) => Arg::Value(x),
             SSAArgKind::RelativeMem(x) => Arg::RelativeMem(x),
             SSAArgKind::Deref { addr, .. } => Arg::Deref(addr),
@@ -80,7 +80,7 @@ impl ArgBase for SSAArg {
 
 impl Display for SSAArg {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self.arg {
+        match self.kind {
             SSAArgKind::Value(x) => write!(f, "{}", x), // No version for immediate values
             SSAArgKind::Deref {
                 addr,
@@ -280,7 +280,7 @@ where
                 .splice(
                     0..0,
                     phis.iter()
-                        .sorted_by_key(|(_, phi)| phi.output.arg)
+                        .sorted_by_key(|(_, phi)| phi.output.kind)
                         .map(|(_, phi)| {
                             (
                                 block.span.start,
@@ -359,7 +359,7 @@ where
                 .version;
             Some(SSAArg {
                 scope: self.control_flow.start,
-                arg: SSAArgKind::Deref {
+                kind: SSAArgKind::Deref {
                     addr,
                     deref_version,
                 },
@@ -553,8 +553,8 @@ where
         for (_, vars) in self
             .var_locations
             .iter()
-            .sorted_by_key(|(&a, &v)| (a.arg, v))
-            .chunk_by(|(a, _)| a.arg)
+            .sorted_by_key(|(&a, &v)| (a.kind, v))
+            .chunk_by(|(a, _)| a.kind)
             .into_iter()
         {
             for (i, (ssa, _)) in vars.enumerate() {
@@ -568,7 +568,7 @@ where
         let rename_var = |a: &SSAArg| {
             let mut r = rename_list.get(&a).copied().unwrap_or(*a);
             if let SSAArg {
-                arg:
+                kind:
                     SSAArgKind::Deref {
                         addr,
                         ref mut deref_version,
@@ -578,7 +578,7 @@ where
             {
                 let key = SSAArg {
                     scope: a.scope,
-                    arg: SSAArgKind::Mem(addr as i128),
+                    kind: SSAArgKind::Mem(addr as i128),
                     version: *deref_version,
                 };
                 *deref_version = rename_list.get(&key).unwrap().version;

@@ -119,24 +119,16 @@ impl TypeInference {
         if let Some(typ) = self.type_vars.get(&arg).cloned() {
             return typ;
         }
-        /*
-        match var.ssa_arg.arg {
-            super::low_ir::Arg::Mem(_) => todo!(),
-            super::low_ir::Arg::Value(_) => todo!(),
-            super::low_ir::Arg::RelativeMem(_) => todo!(),
-            super::low_ir::Arg::Deref(usize) => todo!(),
-        }
-        */
         let typ = self.fresh_type_var();
         self.type_vars.insert(arg, typ.clone());
         if let SSAArgKind::Deref {
             addr,
             deref_version,
-        } = arg.arg
+        } = arg.kind
         {
             let inner_var = SSAArg {
                 scope: arg.scope,
-                arg: SSAArgKind::Mem(addr as i128),
+                kind: SSAArgKind::Mem(addr as i128),
                 version: deref_version,
             };
             let pointer = self.type_for_arg(inner_var);
@@ -287,7 +279,7 @@ impl TypeInference {
                         let rarg = SSAArgKind::RelativeMem(rvalue - (fun.stack_size as i128));
                         let right = self.type_for_arg(SSAArg {
                             scope: fun.function_id,
-                            arg: rarg,
+                            kind: rarg,
                             version: 0,
                         });
                         println!("left: {:?}, right: {:?}", arg, rarg);
@@ -404,7 +396,7 @@ mod tests {
                 .type_inference
                 .type_vars
                 .iter()
-                .filter(|(k, _)| matches!(k.arg, SSAArgKind::Mem(a) if a as usize==addr))
+                .filter(|(k, _)| matches!(k.kind, SSAArgKind::Mem(a) if a as usize==addr))
                 .max_by_key(|(k, _)| k.version)
                 .expect("No type variable found for address")
                 .1
@@ -609,4 +601,40 @@ f1:
         );
         ctx.assert_marker('d', Type::Pointer(Box::new(Type::Bool)));
     }
+
+    // #[test]
+    // fn test_link_function_return_type_single() {
+    //     let mut ctx = TestContext::new(
+    //         r#"
+    //             R += 1000
+    //             'a [R-3] = @add
+    //             'b [R+1] = 65
+    //             'c [R+2] = 65
+    //             'd [R+3] = 65
+    //             [R] = @ret
+    //             goto @add
+    // ret:
+    //             [R+1] = [R+2]
+    //             halt
+    // add:
+    //             R += 5
+    //             output([R-2])
+    //             [R-2] = [R-3] + [R-4]
+    //             R -= 5
+    //             goto [R]
+    //         "#,
+    //     );
+    //     println!("program_info={:?}", ctx.program.function_infos);
+    //     ctx.list_program_with_types();
+    //     // ctx.assert_marker(
+    //     //     'a',
+    //     //     Type::FunctionPointer {
+    //     //         args: vec![],
+    //     //         returns: vec![],
+    //     //     },
+    //     // );
+    //     ctx.assert_marker('b', Type::Int);
+    //     ctx.assert_marker('c', Type::Int);
+    //     ctx.assert_marker('d', Type::Char);
+    // }
 }
