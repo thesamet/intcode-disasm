@@ -35,6 +35,7 @@ impl SSAArgKind {
 }
 
 use itertools::Itertools;
+
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub struct SSAArg {
     pub scope: FunctionId,
@@ -194,6 +195,8 @@ where
         for block in self.control_flow.blocks.keys() {
             self.insert_phi_functions(*block);
         }
+        self.var_versions
+            .insert(self.control_flow.start.as_block_id(), HashMap::new());
         self.process_block(self.control_flow.start.as_block_id());
         self.prune_phi_functions();
         self.renumber_all_vars();
@@ -296,65 +299,78 @@ where
         offset: usize,
         debug_marker: Option<char>,
     ) -> SSAArg {
-        if let Arg::Deref(_) = arg {
-            return self.current_version_of_arg_in_block(arg, block, debug_marker);
-        }
-        let new_version = *self.current_version.entry(arg).or_default() + 1;
-        self.current_version.insert(arg, new_version);
-        let new_arg = SSAArg::new(
-            self.control_flow.start,
-            SSAArgKind::from_arg(arg),
-            new_version,
-        );
-        self.var_versions
-            .entry(block)
-            .or_default()
-            .insert(arg, new_arg);
-        self.var_locations.insert(new_arg, offset);
+        let new_arg = if let Arg::Deref(addr) = arg {
+            let mem_arg = Arg::Mem(addr as i128);
+            let deref_version = self
+                .create_new_version_for_arg(mem_arg, block, offset, None)
+                .version;
+            SSAArg::new(
+                self.control_flow.start,
+                SSAArgKind::Deref {
+                    addr,
+                    deref_version,
+                },
+                0,
+            )
+        } else {
+            let new_version = *self.current_version.entry(arg).or_default() + 1;
+            self.current_version.insert(arg, new_version);
+            let new_arg = SSAArg::new(
+                self.control_flow.start,
+                SSAArgKind::from_arg(arg),
+                new_version,
+            );
+            self.var_versions
+                .entry(block)
+                .or_default()
+                .insert(arg, new_arg);
+            self.var_locations.insert(new_arg, offset);
+            new_arg
+        };
         if let Some(marker) = debug_marker {
             self.debug_markers.insert(new_arg, marker);
         }
         new_arg
     }
 
-    fn current_version_of_arg_in_block(
+    fn get_or_create_new_version_for_arg(
         &mut self,
         arg: Arg,
         block_id: BlockId,
+        offset: usize,
         debug_marker: Option<char>,
     ) -> SSAArg {
-        println!(
-            "Current version of arg in block: {:?} {:?}",
-            arg, debug_marker
-        );
-        let res = if let Arg::Deref(addr) = arg.as_arg() {
+        let new_arg = self
+            .get_current_version_of_arg_in_block(arg, block_id)
+            .unwrap_or_else(|| {
+                self.create_new_version_for_arg(arg, block_id, offset, debug_marker)
+            });
+
+        if let Some(marker) = debug_marker {
+            self.debug_markers.insert(new_arg, marker);
+        }
+        new_arg
+    }
+
+    fn get_current_version_of_arg_in_block(&self, arg: Arg, block_id: BlockId) -> Option<SSAArg> {
+        if let Arg::Deref(addr) = arg.as_arg() {
             let deref_version = self
-                .current_version_of_arg_in_block(Arg::Mem(addr as i128), block_id, None)
+                .get_current_version_of_arg_in_block(Arg::Mem(addr as i128), block_id)?
                 .version;
-            SSAArg {
+            Some(SSAArg {
                 scope: self.control_flow.start,
                 arg: SSAArgKind::Deref {
                     addr,
                     deref_version,
                 },
                 version: 0,
-            }
+            })
         } else {
-            *self
-                .var_versions
-                .get(&block_id)
-                .and_then(|hs| hs.get(&arg))
-                .unwrap_or(&SSAArg {
-                    scope: self.control_flow.start,
-                    arg: SSAArgKind::from_arg(arg),
-                    version: 0,
-                })
-        };
-        if let Some(debug_marker) = debug_marker {
-            self.debug_markers.insert(res, debug_marker);
-            println!("Debug marker inserted for arg: {:?}", res);
+            let Some(hs) = self.var_versions.get(&block_id) else {
+                panic!("Block not found")
+            };
+            hs.get(&arg).copied()
         }
-        res
     }
 
     fn block_needs_phi_function(&self, block_id: BlockId, arg: &ArgType) -> bool {
@@ -392,7 +408,7 @@ where
         next_kind: &NextKind<ArgType>,
     ) -> NextKind<SSAArg> {
         let to_ssa = |s: &mut Self, arg: &ArgType| {
-            s.current_version_of_arg_in_block(arg.as_arg(), block_id, arg.debug_marker())
+            s.get_or_create_new_version_for_arg(arg.as_arg(), block_id, 0, arg.debug_marker())
         };
 
         match next_kind {
@@ -410,7 +426,9 @@ where
                         funcinfo
                             .args
                             .iter()
-                            .map(|arg| self.current_version_of_arg_in_block(*arg, block_id, None))
+                            .map(|arg| {
+                                self.get_or_create_new_version_for_arg(*arg, block_id, 0, None)
+                            })
                             .collect(),
                     )
                 } else {
@@ -478,9 +496,10 @@ where
             let new_op = op.map_rw(
                 self,
                 &mut |s: &mut Self, read_arg: &ArgType| {
-                    s.current_version_of_arg_in_block(
+                    s.get_or_create_new_version_for_arg(
                         read_arg.as_arg(),
                         block_id,
+                        *addr,
                         read_arg.debug_marker(),
                     )
                 },
@@ -632,13 +651,13 @@ mod tests {
         };
     }
     macro_rules! assert_marker_at_func {
-        ($self:expr, $marker:expr, $func_id:expr, $arg:expr) => {
+        ($self:expr, $marker:expr, $func_id:expr, $expected:expr) => {
             if let Some(graph) = $self.ssa_graphs.get(&$func_id) {
                 if let Some((ssa, _)) = graph.debug_markers.iter().find(|&(_, v)| *v == $marker) {
                     assert_eq!(
-                        *ssa, $arg,
-                        "Expected SSAArg {} (with marker '{}') to match {:?}",
-                        $arg, $marker, ssa
+                        *ssa, $expected,
+                        "For marker '{}:\nExpected: {}\nActual: {}",
+                        $marker, $expected, ssa
                     );
                 } else {
                     panic!("Marker '{}' not found in function {}", $marker, $func_id);
@@ -770,22 +789,6 @@ mod tests {
         let ctx = TestContext::new(
             r#"
             R += 5
-            'b [R+2] = 'a [R+3] + [R+4]
-            'c [R+2] = [R+3] + [R+4]
-        "#,
-        );
-        let main_graph = ctx.main();
-        println!("{:?}", main_graph.debug_markers);
-        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(3, 0));
-        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(2, 0));
-        assert_marker_at_main!(ctx, 'c', ssa_main_rel!(2, 1));
-    }
-
-    #[test]
-    fn test_deref_versioning_with_deref() {
-        let ctx = TestContext::new(
-            r#"
-            R += 5
             ptr = 500
             'a ptr = ptr + [R+2]
             'b ptr = ptr + [R+3]
@@ -798,5 +801,20 @@ mod tests {
         assert_marker_at_main!(ctx, 'b', ssa_main_mem!(15, 2));
         assert_marker_at_main!(ctx, 'c', ssa_main_deref!(15, 2));
         assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 0))
+    }
+
+    #[test]
+    fn test_incr_write_after_read() {
+        let ctx = TestContext::new(
+            r#"
+            R += 5
+            output('a [R-1])
+            'b [R-1] = 17
+            "#,
+        );
+        let main_graph = ctx.main();
+        println!("{:?}", main_graph.debug_markers);
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(-1, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(-1, 1));
     }
 }

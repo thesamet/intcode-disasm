@@ -441,6 +441,11 @@ mod tests {
                 expected, actual, debug_marker
             );
         }
+
+        fn list_program_with_types(&mut self) {
+            self.program
+                .list_program_with_types(&mut self.type_inference, &self.result);
+        }
     }
 
     #[test]
