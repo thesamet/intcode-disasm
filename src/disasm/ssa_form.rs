@@ -153,6 +153,7 @@ where
                 start: control_flow.start,
                 stack_size: control_flow.stack_size,
                 blocks: HashMap::new(),
+                exit_block: control_flow.exit_block,
             },
         };
         for block in control_flow.blocks.values() {
@@ -419,27 +420,36 @@ where
                 return_block,
                 ..
             }) => {
-                let args = if let Some(value) = function_addr.value() {
+                let (arguments, return_values) = if let Some(value) = function_addr.value() {
                     let funcinfo =
                         &self.program_analysis.function_infos[&((value as usize).into())];
-                    Some(
-                        funcinfo
-                            .args
-                            .iter()
-                            .map(|arg| {
-                                self.get_or_create_new_version_for_arg(*arg, block_id, 0, None)
-                            })
-                            .collect(),
-                    )
+                    let args = funcinfo
+                        .args
+                        .iter()
+                        .map(|arg| self.get_or_create_new_version_for_arg(*arg, block_id, 0, None))
+                        .collect();
+                    let return_values = funcinfo
+                        .return_vars
+                        .iter()
+                        .map(|arg| {
+                            self.get_current_version_of_arg_in_block(
+                                *arg,
+                                self.program_analysis.control_flows[&funcinfo.function_id]
+                                    .exit_block,
+                            )
+                            .unwrap()
+                        })
+                        .collect();
+                    (Some(args), Some(return_values))
                 } else {
-                    None
+                    (None, None)
                 };
                 NextKind::FunctionCall(FunctionCall {
                     calling_block: *calling_block,
                     function_addr: to_ssa(self, function_addr),
                     return_block: *return_block,
-                    arguments: args,
-                    return_types: None,
+                    arguments,
+                    return_values,
                 })
             }
             NextKind::Condition(Condition {

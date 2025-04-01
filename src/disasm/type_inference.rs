@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt};
 use itertools::Itertools;
 
 use super::{
-    control_flow_graph::{Block, NextKind},
+    control_flow_graph::{Block, FunctionCall, NextKind},
     low_ir::{ArgBase, GenericInstruction},
     program_analysis::ProgramAnalysis,
     ssa_form::{convert_to_ssa, SSAArg, SSAArgKind},
@@ -76,6 +76,9 @@ enum ConstraintReason {
     Assignment,
     Deref,
     FunctionParameterBinding,
+    FunctionReturnBinding,
+    PhiAssignment,
+    IndirectFunctionCall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,7 +146,10 @@ impl TypeInference {
     }
 
     fn add_constraint(&mut self, left: Type, right: Type, addr: usize, reason: ConstraintReason) {
-        println!("Adding constraint: {:?} = {:?} ({:?})", left, right, reason);
+        println!(
+            "Adding constraint: {} = {} ({:?} at {})",
+            left, right, reason, addr
+        );
         self.constraints.push(Constraint {
             left,
             right,
@@ -249,18 +255,33 @@ impl TypeInference {
                         continue;
                     }
                     let s = self.type_for_arg(*i);
-                    self.add_constraint(dst_type.clone(), s, addr, ConstraintReason::Assignment);
+                    self.add_constraint(dst_type.clone(), s, addr, ConstraintReason::PhiAssignment);
                 }
             }
             _ => {}
         }
     }
 
-    fn generate_constraint_for_block(&mut self, program: &ProgramAnalysis, block: &Block<SSAArg>) {
-        for (addr, op) in &block.ops {
-            self.generate_constraint_for_op(*addr, op);
-        }
-        if let NextKind::FunctionCall(call) = &block.next {
+    /// Process a function call and generate appropriate type constraints.
+    ///
+    /// This function handles both direct and indirect function calls, adding constraints
+    /// for function pointers only in the case of indirect calls. It also establishes
+    /// constraints between function parameters and arguments.
+    ///
+    /// # Parameters
+    /// * `program` - The program analysis context containing function information
+    /// * `block` - The block containing the function call
+    /// * `call` - The function call to process
+    ///
+    fn process_function_call(
+        &mut self,
+        program: &ProgramAnalysis,
+        block: &Block<SSAArg>,
+        call: &super::control_flow_graph::FunctionCall<SSAArg>,
+    ) {
+        // Only add function pointer constraints for indirect calls
+        // If the argument is a variable (Mem or RelativeMem) rather than immediate value
+        if !call.function_addr.is_value() {
             let fcall = self.type_for_arg(call.function_addr);
             self.add_constraint(
                 fcall,
@@ -269,29 +290,83 @@ impl TypeInference {
                     returns: vec![],
                 },
                 block.span.end,
-                ConstraintReason::Assignment,
+                ConstraintReason::IndirectFunctionCall,
             );
-            if let Some(addr) = call.function_addr.value() {
-                if let Some(fun) = program.function_infos.get(&(addr as usize).into()) {
-                    for arg in call.arguments.as_ref().unwrap() {
-                        let rvalue = arg.as_arg().relative_mem().unwrap();
-                        let left = self.type_for_arg(*arg);
-                        let rarg = SSAArgKind::RelativeMem(rvalue - (fun.stack_size as i128));
-                        let right = self.type_for_arg(SSAArg {
-                            scope: fun.function_id,
-                            kind: rarg,
-                            version: 0,
-                        });
-                        println!("left: {:?}, right: {:?}", arg, rarg);
-                        self.add_constraint(
-                            left,
-                            right,
-                            block.span.end,
-                            ConstraintReason::FunctionParameterBinding,
-                        );
+        }
+
+        // Process function arguments if available
+        if let Some(addr) = call.function_addr.value() {
+            if let Some(fun) = program.function_infos.get(&(addr as usize).into()) {
+                if let Some(args) = &call.arguments {
+                    for arg in args {
+                        if let Some(rvalue) = arg.relative_mem() {
+                            let left = self.type_for_arg(*arg);
+                            let rarg = SSAArgKind::RelativeMem(rvalue - (fun.stack_size as i128));
+                            let right = self.type_for_arg(SSAArg {
+                                scope: fun.function_id,
+                                kind: rarg,
+                                version: 0,
+                            });
+                            self.add_constraint(
+                                left,
+                                right,
+                                block.span.end,
+                                ConstraintReason::FunctionParameterBinding,
+                            );
+                        }
                     }
                 }
             }
+        }
+    }
+
+    /// Establishes connection between the returned value of this call and the arguments in this block.
+    /*
+    fn process_returning_from_function(
+        &mut self,
+        program: &ProgramAnalysis,
+        call: FunctionCall<SSAArg>,
+    ) {
+        // Get the function that is being returned from
+        if let Some(addr) = call.function_addr.value() {
+            if let Some(fun) = program.function_infos.get(&(addr as usize).into()) {
+                // Check if there are any return values (positive offsets from R)
+                if let Some(return_values) = &call.return_values {
+                    for ret_arg in return_values {
+                        let callee_side = self.type_for_arg(*ret_arg);
+                        let caller_side = self.type_for_arg(
+                        if let Some(rvalue) = ret_arg.relative_mem() {
+                            // Get type of the return argument in the function's scope
+                            let return_type = self.type_for_arg(SSAArg {
+                                scope: fun.function_id,
+                                kind: SSAArgKind::RelativeMem(rvalue),
+                                version: 0,
+                            });
+
+                            // Get type of the caller's variable receiving the return value
+                            let caller_type = self.type_for_arg(*ret_arg);
+
+                            // Add constraint that binds return value type to caller's variable type
+                            self.add_constraint(
+                                return_type,
+                                caller_type,
+                                fun.function_id,
+                                ConstraintReason::FunctionReturnBinding,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    */
+
+    fn generate_constraint_for_block(&mut self, program: &ProgramAnalysis, block: &Block<SSAArg>) {
+        for (addr, op) in &block.ops {
+            self.generate_constraint_for_op(*addr, op);
+        }
+        if let NextKind::FunctionCall(call) = &block.next {
+            self.process_function_call(program, block, call);
         }
     }
 
@@ -330,7 +405,10 @@ impl TypeInference {
                     .collect(),
             },
             Type::String => Type::String,
-            Type::TypeVar(id) => subst.get(&id).cloned().unwrap_or(Type::TypeVar(id)),
+            Type::TypeVar(id) => subst
+                .get(&id)
+                .map(|t| Self::substitute(t.clone(), subst))
+                .unwrap_or(Type::TypeVar(id)),
         }
     }
 
@@ -363,6 +441,8 @@ impl TypeInference {
 
 #[cfg(test)]
 mod tests {
+
+    use pathfinding::undirected::cliques;
 
     use crate::disasm::{parser, ssa_form::SSAArgKind};
 
@@ -553,7 +633,6 @@ f1:
                 goto [R]
             "#,
         );
-        println!("program_info={:?}", ctx.program.function_infos);
         ctx.assert_marker('d', Type::Char);
         ctx.assert_marker('b', Type::Char);
         ctx.assert_marker('a', Type::Char);
@@ -589,7 +668,6 @@ f1:
                 goto [R]
             "#,
         );
-        println!("program_info={:?}", ctx.program.function_infos);
         ctx.assert_marker('a', Type::Char);
         ctx.assert_marker('b', Type::Bool);
         ctx.assert_marker(
@@ -602,39 +680,41 @@ f1:
         ctx.assert_marker('d', Type::Pointer(Box::new(Type::Bool)));
     }
 
-    // #[test]
-    // fn test_link_function_return_type_single() {
-    //     let mut ctx = TestContext::new(
-    //         r#"
-    //             R += 1000
-    //             'a [R-3] = @add
-    //             'b [R+1] = 65
-    //             'c [R+2] = 65
-    //             'd [R+3] = 65
-    //             [R] = @ret
-    //             goto @add
-    // ret:
-    //             [R+1] = [R+2]
-    //             halt
-    // add:
-    //             R += 5
-    //             output([R-2])
-    //             [R-2] = [R-3] + [R-4]
-    //             R -= 5
-    //             goto [R]
-    //         "#,
-    //     );
-    //     println!("program_info={:?}", ctx.program.function_infos);
-    //     ctx.list_program_with_types();
-    //     // ctx.assert_marker(
-    //     //     'a',
-    //     //     Type::FunctionPointer {
-    //     //         args: vec![],
-    //     //         returns: vec![],
-    //     //     },
-    //     // );
-    //     ctx.assert_marker('b', Type::Int);
-    //     ctx.assert_marker('c', Type::Int);
-    //     ctx.assert_marker('d', Type::Char);
-    // }
+    #[test]
+    #[ignore]
+    fn test_link_function_return_type_single() {
+        let mut ctx = TestContext::new(
+            r#"
+                R += 1000
+                'a [R-3] = @add
+                'b [R+1] = 65
+                'c [R+2] = 65
+                'd [R+3] = 65
+                [R] = @ret
+                goto @add
+    ret:
+                'f [R+1] = [R+3]
+                halt
+    add:
+                R += 5
+                output([R-2])
+                'e [R-2] = [R-3] < [R-4]
+                R -= 5
+                goto [R]
+            "#,
+        );
+        // ctx.assert_marker(
+        //     'a',
+        //     Type::FunctionPointer {
+        //         args: vec![],
+        //         returns: vec![],
+        //     },
+        // );
+        println!("{:?}", ctx.program.function_infos);
+        ctx.assert_marker('b', Type::Int);
+        ctx.assert_marker('c', Type::Int);
+        ctx.assert_marker('d', Type::Char);
+        ctx.assert_marker('e', Type::Bool);
+        ctx.assert_marker('f', Type::Bool);
+    }
 }

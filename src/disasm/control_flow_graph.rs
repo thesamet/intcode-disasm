@@ -59,8 +59,9 @@ pub struct FunctionCall<ArgType> {
     pub calling_block: BlockId,
     pub function_addr: ArgType,
     pub return_block: BlockId,
+    // Both from the caller's perspective
     pub arguments: Option<Vec<ArgType>>,
-    pub return_types: Option<Vec<ArgType>>,
+    pub return_values: Option<Vec<ArgType>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -142,11 +143,11 @@ impl<ArgType: ArgBase + From<OpArg> + Copy + Debug> Block<ArgType> {
             return Err(ParseError::InvalidOpcode);
         }
         block.next = NextKind::FunctionCall(FunctionCall {
-            calling_block: BlockId(0),
+            calling_block: BlockId(0), // filled later. We will know the block id after the final split for blocks.
             function_addr: goto_arg,
             return_block: BlockId(return_addr),
             arguments: None,
-            return_types: None,
+            return_values: None,
         });
         block.ops.push((assign_offset, assign_op));
         block.ops.push((goto_offset, goto_op));
@@ -344,6 +345,7 @@ where
 #[derive(Debug, Clone)]
 pub struct ControlFlowGraph<ArgType: ArgBase> {
     pub start: FunctionId,
+    pub exit_block: BlockId,
     pub stack_size: usize,
     pub blocks: HashMap<BlockId, Block<ArgType>>,
 }
@@ -428,6 +430,7 @@ where
         Self::update_predecessor(&mut blocks);
         Ok(ControlFlowGraph {
             start: FunctionId(start),
+            exit_block: *blocks.keys().max().unwrap(), // TODO(nadav): this takes the last block address, but may not be the exit block. It is recommended to use a more reliable method to determine the exit block.
             stack_size,
             blocks,
         })

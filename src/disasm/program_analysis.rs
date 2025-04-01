@@ -16,7 +16,7 @@ pub struct FunctionInfo {
     pub function_id: FunctionId,
     pub stack_size: usize,
     pub args: Vec<Arg>,        // from caller perspective
-    pub return_vars: Vec<Arg>, // stack references for returned data from caller perspective
+    pub return_vars: Vec<Arg>, // stack references for returned data from callee perspective
     pub local_vars: Vec<Arg>,  // local stack vars from callee perspective
 }
 
@@ -49,21 +49,25 @@ fn function_call_analysis(
                 continue;
             };
 
-            let return_vars = caller_data_flow.block_defs[&block_id]
-                .use_set
-                .iter()
-                .map(|a| a.as_arg())
-                .filter(|a| matches!(a, Arg::RelativeMem(r) if *r>0))
-                .sorted_by_key(|a| a.as_arg())
-                .collect_vec();
             let Some(callee_addr) = fc.function_addr.value() else {
                 continue; // non-literal address
             };
-
             let callee_function_id: FunctionId = (callee_addr as usize).into();
             let callee_data_flow =
                 &data_flows[&callee_function_id].block_defs[&callee_function_id.as_block_id()];
             let callee_stack_size = control_flows[&callee_function_id].stack_size;
+
+            let return_vars = caller_data_flow.block_defs[&block_id]
+                .use_set
+                .iter()
+                .filter_map(|a| match a.as_arg() {
+                    Arg::RelativeMem(r) if r > 0 => {
+                        Some(Arg::RelativeMem(r - (callee_stack_size as i128)))
+                    }
+                    _ => None,
+                })
+                .sorted_by_key(|a| *a)
+                .collect_vec();
 
             let args = callee_data_flow
                 .live_in
