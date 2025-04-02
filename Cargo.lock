@@ -150,6 +150,7 @@ dependencies = [
  "pathfinding",
  "pretty_assertions",
  "test-log",
+ "thiserror",
 ]
 
 [[package]]

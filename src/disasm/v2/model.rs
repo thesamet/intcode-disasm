@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use crate::disasm::low_ir::{Arg, Span};
 
-use super::{id_types::define_id_type, instructions::Instruction};
+use super::{
+    id_types::define_id_type, instructions::Instruction,
+    listeners::image_scanner::ImageScannerResult,
+};
 
 define_id_type!(FunctionId);
 
@@ -10,8 +13,10 @@ define_id_type!(FunctionId);
 pub struct ProgramModel {
     pub image: Vec<i128>,
 
-    functions: HashMap<FunctionId, Function>,
-    blocks: HashMap<BlockId, Block>,
+    pub image_scanner_result: Option<ImageScannerResult>,
+
+    pub functions: HashMap<FunctionId, Function>,
+    pub blocks: HashMap<BlockId, Block>,
     // Define fields here
 }
 
@@ -19,9 +24,9 @@ impl ProgramModel {
     pub fn new() -> Self {
         Self {
             image: Vec::new(),
+            image_scanner_result: None,
             functions: HashMap::new(),
             blocks: HashMap::new(),
-            // Initialize fields here
         }
     }
 }

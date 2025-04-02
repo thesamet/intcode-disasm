@@ -7,8 +7,7 @@ event_types_enum! {Event, ProgramModel,
     pub struct ImageAddedEvent { }
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-    pub struct FunctionAddedEvent {
-        function_id: FunctionId,
+    pub struct ImageScannerComplete {
     }
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

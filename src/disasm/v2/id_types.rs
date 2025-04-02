@@ -11,6 +11,10 @@ macro_rules! define_id_type {
             pub fn index(&self) -> u64 {
                 self.0
             }
+
+            pub fn unassigned() -> Self {
+                Self(u64::MAX)
+            }
         }
 
         paste::paste! {
