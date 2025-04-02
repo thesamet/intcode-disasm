@@ -34,28 +34,32 @@ macro_rules! event_types_enum {
         )*
 
         paste::paste! {
-            pub type [<$enum_name Sender>]<'a> = crate::disasm::v2::dispatching::EventCollector<'a, $enum_name>;
+            // Type alias for the sender passed to listeners (it collects new events)
+            pub type Sender<'a> = crate::disasm::v2::dispatching::EventCollector<'a, $enum_name>;
 
             #[allow(unused)]
             pub trait ModelEventListener: $crate::disasm::v2::dispatching::EventListener<$enum_name, $model_path> {
 
                 $(
-                    fn [<on_ $name:snake>]<'a>(&mut self, model: &mut $model_path, event: $name, sender: &mut [<$enum_name Sender>]) {
+                    // Default implementation for specific event handlers
+                    fn [<on_ $name:snake>](&mut self, _model: &mut $model_path, _event: $name, _sender: &mut Sender) {
+                        // Default is no-op
                     }
                 )*
 
-                fn on_event<'a>(&mut self, model: &mut $model_path, event: $enum_name, sender: &mut [<$enum_name Sender>]) {
+                // Required on_event implementation dispatches to specific handlers
+                fn on_event(&mut self, model: &mut $model_path, event: $enum_name, sender: &mut Sender) {
                     match event {
                         $($enum_name::$name(e) => self.[<on_ $name:snake>](model, e, sender),)*
                     }
                 }
             }
 
-            impl<T: ModelEventListener> $crate::disasm::v2::dispatching::EventListener<$enum_name, $model_path> for T {
-                fn on_event(&mut self, model: &mut $model_path, event: $enum_name, sender: &mut [<$enum_name Sender>]) {
-                    match event {
-                        $($enum_name::$name(e) => self.[<on_ $name:snake>](model, e, sender),)*
-                    }
+            // Blanket implementation to satisfy the core EventListener trait using the ModelEventListener dispatch
+            impl<T: ModelEventListener + ?Sized> $crate::disasm::v2::dispatching::EventListener<$enum_name, $model_path> for T {
+                fn on_event(&mut self, model: &mut $model_path, event: $enum_name, sender: &mut Sender) {
+                    // Directly call the on_event defined in ModelEventListener which handles the dispatch
+                   <T as ModelEventListener>::on_event(self, model, event, sender);
                 }
             }
         }
@@ -63,31 +67,46 @@ macro_rules! event_types_enum {
 }
 pub(crate) use event_types_enum;
 
-/// Event collector for collecting events published by event listener.
+/// Collects events published by listeners during event processing.
+/// These collected events are typically added to the main queue afterwards.
 pub struct EventCollector<'a, E> {
     queue: &'a mut Vec<E>,
 }
 
 impl<'a, E> EventCollector<'a, E> {
-    fn new(queue: &'a mut Vec<E>) -> Self {
+    /// Creates a new collector wrapping a mutable reference to a queue.
+    /// Usually crate-internal, used by the publisher.
+    pub(crate) fn new(queue: &'a mut Vec<E>) -> Self {
         EventCollector { queue }
     }
 
-    pub fn publish(&mut self, event: E) {
-        self.queue.push(event);
+    /// Publishes an event by adding it to the collector's queue.
+    /// Accepts any type convertible into the event type `E`.
+    pub fn publish<T: Into<E>>(&mut self, event: T) {
+        self.queue.push(event.into());
     }
 }
 
+/// Trait for types that can listen to events.
 pub trait EventListener<E, M> {
+    /// Called when an event occurs.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - A mutable reference to the shared model.
+    /// * `event` - The event that occurred.
+    /// * `collector` - An `EventCollector` to publish new events triggered by this one.
     fn on_event(&mut self, model: &mut M, event: E, collector: &mut EventCollector<E>);
 }
 
+/// Manages listeners and dispatches events.
 pub struct EventPublisher<E, M> {
     listeners: Vec<Box<dyn EventListener<E, M>>>,
     work_list: VecDeque<E>,
 }
 
-impl<E: Copy, M> EventPublisher<E, M> {
+impl<E: Copy + std::fmt::Debug, M> EventPublisher<E, M> {
+    /// Creates a new, empty `EventPublisher`.
     pub fn new() -> Self {
         EventPublisher {
             listeners: Vec::new(),
@@ -95,23 +114,37 @@ impl<E: Copy, M> EventPublisher<E, M> {
         }
     }
 
+    /// Adds a listener to the publisher.
+    /// The listener will be notified of events during `process_events`.
     pub fn add_listener(&mut self, listener: Box<dyn EventListener<E, M>>) {
         self.listeners.push(listener);
     }
 
+    /// Publishes an event by adding it to the work queue.
+    /// Events are processed when `process_events` is called.
+    /// Accepts any type convertible into the event type `E`.
     pub fn publish<T: Into<E>>(&mut self, event: T) {
         self.work_list.push_back(event.into());
     }
 
+    /// Processes all events currently in the work queue.
+    /// Listeners are notified for each event. Events published by listeners
+    /// during this process are collected and added to the queue *after*
+    /// the current batch is processed, ensuring they are handled in a
+    /// subsequent call to `process_events` or a later iteration if looped.
     pub fn process_events(&mut self, model: &mut M) {
-        let mut added = Vec::new();
-        let mut collector = EventCollector::new(&mut added);
+        let mut added_events = Vec::new();
+        // Process only the events currently in the queue.
+        // New events published by listeners go into `added_events`.
         while let Some(event) = self.work_list.pop_front() {
+            // Create a collector for events generated during this event's processing.
+            let mut collector = EventCollector::new(&mut added_events);
             for listener in &mut self.listeners {
                 listener.on_event(model, event, &mut collector);
             }
         }
-        self.work_list.extend(added);
+        // Add the newly generated events to the main work list for the next processing cycle.
+        self.work_list.extend(added_events);
     }
 }
 use std::collections::VecDeque;

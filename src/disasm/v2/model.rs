@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crate::disasm::low_ir::{Arg, Span};
 
 use super::{
-    id_types::define_id_type, instructions::Instruction,
+    dispatching::EventPublisher,
+    events::{self, Event, ImageAddedEvent, ImageScannerComplete},
+    id_types::define_id_type,
+    instructions::Instruction,
     listeners::image_scanner::ImageScannerResult,
 };
 
@@ -11,12 +14,12 @@ define_id_type!(FunctionId);
 
 #[derive(Debug, Clone)]
 pub struct ProgramModel {
-    pub image: Vec<i128>,
+    image: Vec<i128>,
 
-    pub image_scanner_result: Option<ImageScannerResult>,
+    image_scanner_result: Option<ImageScannerResult>,
 
-    pub functions: HashMap<FunctionId, Function>,
-    pub blocks: HashMap<BlockId, Block>,
+    functions: HashMap<FunctionId, Function>,
+    blocks: HashMap<BlockId, Block>,
     // Define fields here
 }
 
@@ -28,6 +31,36 @@ impl ProgramModel {
             functions: HashMap::new(),
             blocks: HashMap::new(),
         }
+    }
+
+    pub fn load_image(&mut self, image: &[i128], sender: &mut EventPublisher<Event, Self>) {
+        self.image = image.to_vec();
+        sender.publish(ImageAddedEvent {});
+    }
+
+    pub fn get_image(&self) -> &Vec<i128> {
+        &self.image
+    }
+
+    pub fn set_image_scanner_result(
+        &mut self,
+        result: ImageScannerResult,
+        sender: &mut events::Sender,
+    ) {
+        self.image_scanner_result = Some(result);
+        sender.publish(ImageScannerComplete {});
+    }
+
+    pub fn get_image_scanner_result(&self) -> &ImageScannerResult {
+        self.image_scanner_result.as_ref().unwrap()
+    }
+
+    pub fn get_function(&self, function_id: FunctionId) -> &Function {
+        self.functions.get(&function_id).unwrap()
+    }
+
+    pub fn get_block(&self, block_id: BlockId) -> &Block {
+        self.blocks.get(&block_id).unwrap()
     }
 }
 

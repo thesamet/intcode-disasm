@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use itertools::Itertools;
 
 use crate::disasm::v2::{
-    events::{EventSender, ImageAddedEvent, ModelEventListener},
+    events::{self, ImageAddedEvent, ModelEventListener},
     instructions::{Instruction, Opcode, Operand, ParseError},
     model::ProgramModel,
     Span,
@@ -22,6 +22,7 @@ pub struct RecognizedFunction {
     pub span: Span,
     pub stack_size: usize,
     pub instructions: Vec<Instruction>,
+    // The span of the return starts at the R adjustment, and ends after the goto.
     pub returns: Option<Span>,
     pub jump_targets: HashSet<usize>,
     pub function_calls: Vec<BaseFunctionCall>,
@@ -41,11 +42,11 @@ impl ModelEventListener for ImageScanner {
     fn on_image_added_event<'a>(
         &mut self,
         model: &mut ProgramModel,
-        event: ImageAddedEvent,
-        sender: &mut EventSender,
+        _event: ImageAddedEvent,
+        sender: &mut events::Sender,
     ) {
         let mut i = 0;
-        let image = &model.image;
+        let image = &model.get_image();
         let mut data_offsets = vec![];
         let mut recognized_functions = vec![];
         while i < image.len() {
@@ -54,7 +55,7 @@ impl ModelEventListener for ImageScanner {
                 i += 1;
                 continue;
             };
-            let Ok(f) = scan_from(image, i + 2, stack_size) else {
+            let Ok(f) = scan_from(image, i, stack_size) else {
                 data_offsets.push(i);
                 i += 1;
                 continue;
@@ -78,7 +79,7 @@ impl ModelEventListener for ImageScanner {
             recognized_functions,
             data_segments,
         };
-        model.image_scanner_result = Some(result);
+        model.set_image_scanner_result(result, sender);
     }
 }
 
@@ -144,6 +145,7 @@ fn recognize_function_call(
     if return_address != goto_op.span.end {
         return Err(ParseError::NoMatch);
     }
+    println!("return address: {}", return_address);
     let function_call = BaseFunctionCall {
         span: Span::new(set_r.span.start, goto_op.span.end),
         target: assignment.target,
@@ -198,7 +200,7 @@ fn scan_from(
     instructions.sort_by_key(|i| i.span.start);
     assert!(returns.len() <= 1);
     Ok(RecognizedFunction {
-        span: Span::new(start - 2, instructions.last().unwrap().span.end),
+        span: Span::new(start, instructions.last().unwrap().span.end),
         stack_size: stack_size as usize,
         instructions,
         returns: returns.iter().exactly_one().ok().cloned(),
@@ -207,8 +209,117 @@ fn scan_from(
     })
 }
 
-fn draw_triangle(image: &mut [i128], x: usize, y: usize, color: i128) {
-    image[y * 16 + x] = color;
-    image[(y + 1) * 16 + x] = color;
-    image[(y + 2) * 16 + x] = color;
+#[cfg(test)]
+mod tests {
+    use events::Event;
+    use itertools::put_back;
+
+    use super::*;
+    use crate::disasm::{parser, v2::dispatching::EventPublisher};
+
+    fn parse_and_scan(code: &str) -> ImageScannerResult {
+        let binary = parser::compile(code);
+        let mut model = ProgramModel::new();
+        let scanner = ImageScanner {};
+        let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+        publisher.add_listener(Box::new(scanner));
+        model.load_image(&binary, &mut publisher);
+        publisher.process_events(&mut model);
+        model.get_image_scanner_result().clone()
+    }
+
+    #[test]
+    fn test_simple_function() {
+        let result = parse_and_scan(
+            r#"
+            R += 5
+            [R+2] = [R+3] + [R+4]
+            [R+2] = [R+3] + [R+4]
+            R -= 5
+            goto [R]
+            "#,
+        );
+        assert_eq!(result.recognized_functions.len(), 1);
+        let function = &result.recognized_functions[0];
+        assert_eq!(function.stack_size, 5);
+        assert_eq!(function.returns.unwrap().start, 10);
+        assert_eq!(function.instructions.len(), 5);
+    }
+
+    #[test]
+    fn test_function_with_call() {
+        let result = parse_and_scan(
+            r#"
+            R += 5      ;0
+            [R+1] = 42  ;2
+            [R] = @ret  ;6
+            goto @other_func   ; 10
+            ret:
+            R -= 5             ; 13
+            goto [R]
+            other_func:
+            R += 3
+            [R-1] = [R-2] + 1
+            R -= 3
+            goto [R]
+            "#,
+        );
+        assert_eq!(result.recognized_functions.len(), 2);
+        let main = &result.recognized_functions[0];
+        let other = &result.recognized_functions[1];
+
+        assert_eq!(main.stack_size, 5);
+        assert_eq!(other.stack_size, 3);
+
+        assert_eq!(main.function_calls.len(), 1);
+        assert_eq!(main.function_calls[0].return_address, 13);
+    }
+
+    #[test]
+    fn test_function_with_jumps() {
+        let result = parse_and_scan(
+            r#"
+            R += 5                   ; 0
+            if [R+1] goto @branch    ; 2
+            [R+2] = 42               ; 5
+            goto @merge              ; 9
+            branch:
+            [R+2] = 100              ; 12
+            merge:
+            R -= 5                   ; 16
+            goto [R]                 ; 18
+            "#,
+        );
+        assert_eq!(result.recognized_functions.len(), 1);
+        let function = &result.recognized_functions[0];
+
+        assert_eq!(function.jump_targets.len(), 2);
+        assert!(function.jump_targets.contains(&12)); // branch
+        assert!(function.jump_targets.contains(&16)); // merge
+    }
+
+    #[test]
+    fn test_data_segments() {
+        let result = parse_and_scan(
+            r#"
+            DATA 99
+            DATA 1, 2, 3, 4
+            R += 5         ; 5
+            [R+1] = 42     ; 7
+            R -= 5         ; 11
+            goto [R]       ; 13
+            DATA 99        ; 16
+            DATA 5, 6, 7, 8
+            "#,
+        );
+
+        assert_eq!(result.recognized_functions.len(), 1);
+        assert_eq!(result.data_segments.len(), 2);
+
+        assert_eq!(result.data_segments[0].start, 0);
+        assert_eq!(result.data_segments[0].end, 5);
+
+        assert_eq!(result.data_segments[1].start, 16);
+        assert_eq!(result.data_segments[1].end, 21);
+    }
 }

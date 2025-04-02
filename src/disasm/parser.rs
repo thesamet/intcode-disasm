@@ -3,7 +3,7 @@ use nom::{
     bytes::complete::{is_not, tag, take_while1},
     character::complete::{self, char, digit1, multispace0, space0, space1},
     combinator::{eof, map, map_res, opt, recognize, value},
-    multi::{many1, separated_list0},
+    multi::{many1, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, terminated},
     IResult, Parser,
 };
@@ -98,7 +98,10 @@ impl SerializableInstruction<SourceArgument> for GenericInstruction<SourceArgume
             GenericInstruction::Equals(_, _, _) => 8,
             GenericInstruction::AdjustRelativeBase(_) => 9,
             GenericInstruction::Halt => 99,
-            GenericInstruction::Data(_) => unreachable!(),
+            GenericInstruction::Data(v) => {
+                out.extend(v);
+                return;
+            }
             GenericInstruction::Phi(_, _) => unreachable!(),
         } as i128;
         let mode = (0..=2)
@@ -374,6 +377,23 @@ fn parse_halt(input: &str) -> IResult<&str, Instruction> {
     map(tag("halt"), |_| Instruction::Halt).parse(input)
 }
 
+fn parse_data_values(input: &str) -> IResult<&str, Vec<i128>> {
+    separated_list1(
+        // Use list1 to require at least one data value
+        delimited(space0, char(','), space0),
+        parse_i128,
+    )
+    .parse(input)
+}
+
+fn parse_data(input: &str) -> IResult<&str, Instruction> {
+    map(
+        preceded(pair(tag("DATA"), space1), parse_data_values),
+        Instruction::Data,
+    )
+    .parse(input)
+}
+
 fn parse_instruction(input: &str) -> IResult<&str, Instruction> {
     alt((
         parse_add,
@@ -388,6 +408,7 @@ fn parse_instruction(input: &str) -> IResult<&str, Instruction> {
         parse_adjust_r,
         parse_assign,
         parse_halt,
+        parse_data,
     ))
     .parse(input)
 }
@@ -439,12 +460,14 @@ pub fn parse_program(
         if let Some(label) = label {
             label_offsets.insert(label.clone(), current_offset);
         }
-        for i in 0..=2 {
-            match instruction.arg_at(i) {
-                Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name, _))) => {
-                    pointers.insert(name.clone(), current_offset + i + 1);
+        if !matches!(instruction, GenericInstruction::Data(_)) {
+            for i in 0..=2 {
+                match instruction.arg_at(i) {
+                    Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name, _))) => {
+                        pointers.insert(name.clone(), current_offset + i + 1);
+                    }
+                    Some(_) | None => {}
                 }
-                Some(_) | None => {}
             }
         }
 
@@ -891,5 +914,65 @@ mod tests {
         } else {
             panic!("Expected Assign instruction");
         }
+    }
+    #[test]
+    fn test_data_instruction() {
+        let program = "DATA 10, 20, -30";
+        let expected = Instruction::Data(vec![10, 20, -30]);
+        assert_eq!(parse_single_instruction(program), expected);
+    }
+
+    #[test]
+    fn test_program_with_data() {
+        let program = "
+            start:
+                [0] = 1 + 2
+                goto @data_section
+            halt ; Should not be reached
+
+            data_section:
+                DATA 100, 200, 300
+                output [0] ; Instruction after data
+                halt
+        ";
+
+        let instructions = parse_test_program(program);
+
+        let expected = vec![
+            Instruction::Add(Arg::Value(1), Arg::Value(2), Arg::Mem(0)), // Offset 0
+            Instruction::Goto(Arg::Value(8)),                            // Offset 4
+            Instruction::Halt,                                           // Offset 7 (unreachable)
+            Instruction::Data(vec![100, 200, 300]),                      // Offset 8
+            Instruction::Output(Arg::Mem(0)),                            // Offset 11
+            Instruction::Halt,                                           // Offset 13
+        ];
+
+        assert_eq!(instructions, expected);
+    }
+
+    #[test]
+    fn test_compile_with_data() {
+        let program = "
+            [0] = 1 + 2
+            DATA 10, 20, 30
+            halt
+        ";
+        // Add: 1, 1, 2, 0 -> Opcode 1, modes 110 -> 1101. Args: 1, 2, 0
+        // Data: 10, 20, 30
+        // Halt: 99
+        let expected_binary = vec![1101, 1, 2, 0, 10, 20, 30, 99];
+        let actual_binary = compile(program);
+        assert_eq!(actual_binary, expected_binary);
+    }
+
+    #[test]
+    fn test_compile_program_starts_with_data() {
+        let program = "
+            DATA 5, 6, 7
+            halt
+        ";
+        let expected_binary = vec![5, 6, 7, 99];
+        let actual_binary = compile(program);
+        assert_eq!(actual_binary, expected_binary);
     }
 }
