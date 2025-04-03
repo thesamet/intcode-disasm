@@ -178,6 +178,111 @@ impl DataFlowAnalyzer {
         }
     }
 
+    /// Determines if an operand is used in a block or any of its successors without
+    /// being redefined first and without crossing a function call boundary.
+    fn is_used_in_execution_paths(
+        &self,
+        model: &ProgramModel,
+        block_id: BlockId,
+        operand: &OperandKind,
+        function_block_ids: &[BlockId],
+        df_result: &DataFlowResult,
+        visited: &mut HashSet<BlockId>,
+    ) -> bool {
+        // Avoid infinite recursion in case of loops
+        if !visited.insert(block_id) {
+            return false;
+        }
+
+        // Check if directly used in this block
+        if let Some(block_flow) = df_result.block_results.get(&block_id) {
+            // If it's in the USE_BEFORE_DEF set, it's used before any redefinition
+            if block_flow.use_before_def.contains(operand) {
+                return true;
+            }
+
+            // If it's redefined in this block, the search stops here
+            if block_flow.gen.contains_key(operand) {
+                return false;
+            }
+        }
+
+        // Check successors (if not redefined and not a function call)
+        let block = model.get_block(block_id);
+        match &block.next {
+            NextKind::Follows(next_id) => {
+                if function_block_ids.contains(next_id) {
+                    return self.is_used_in_execution_paths(
+                        model,
+                        *next_id,
+                        operand,
+                        function_block_ids,
+                        df_result,
+                        visited,
+                    );
+                }
+            }
+            NextKind::Goto(op) => {
+                // For immediate goto targets (not function calls), continue search
+                if let Some(target_addr) = op.kind.get_immediate() {
+                    let target_id = BlockId::from(target_addr as usize);
+                    if function_block_ids.contains(&target_id) {
+                        return self.is_used_in_execution_paths(
+                            model,
+                            target_id,
+                            operand,
+                            function_block_ids,
+                            df_result,
+                            visited,
+                        );
+                    }
+                }
+                // Indirect jumps (like goto [r]) terminate the search path since we can't determine target statically
+            }
+            NextKind::Condition(cond) => {
+                // Check both branches
+                let target_result = if function_block_ids.contains(&cond.target_block) {
+                    self.is_used_in_execution_paths(
+                        model,
+                        cond.target_block,
+                        operand,
+                        function_block_ids,
+                        df_result,
+                        visited,
+                    )
+                } else {
+                    false
+                };
+
+                let follows_result = if function_block_ids.contains(&cond.follows_block) {
+                    self.is_used_in_execution_paths(
+                        model,
+                        cond.follows_block,
+                        operand,
+                        function_block_ids,
+                        df_result,
+                        visited,
+                    )
+                } else {
+                    false
+                };
+
+                if target_result || follows_result {
+                    return true;
+                }
+            }
+            NextKind::FunctionCall(_) => {
+                // Stop tracking here - any use after a function call should be
+                // attributed to that function call, not to a previous one
+                return false;
+            }
+            // Return or Halt terminates the search - we don't track across function returns
+            _ => {}
+        }
+
+        false
+    }
+
     /// Calculates the Defs-In set for a single block based on its predecessors.
     fn calculate_defs_in(
         &self,
@@ -208,9 +313,12 @@ impl DataFlowAnalyzer {
 
             match pred_kind {
                 PredecessorKind::FunctionCallReturns(call) => {
+                    // Definitions from predecessor that are not potential return values
                     let mut defs_from_caller = pred_flow.defs_out.clone();
                     defs_from_caller.retain(|def| !potential_return_kinds.contains(&def.location));
+                    new_defs_in.extend(defs_from_caller);
 
+                    // Only add return definitions for operands that will be used
                     let call_instruction_id = model
                         .get_block(call.calling_block)
                         .instructions
@@ -218,24 +326,37 @@ impl DataFlowAnalyzer {
                         .expect("Calling block cannot be empty")
                         .id;
 
+                    // For each potential return operand, check if it's actually used
                     for ret_kind in potential_return_kinds {
-                        defs_from_caller.insert(Definition {
-                            instruction_id: call_instruction_id,
-                            location: *ret_kind,
-                            block_id: call.calling_block,
-                            kind: DefinitionKind::FunctionReturn {
-                                function_addr: call.function_addr.kind,
-                            },
-                        });
+                        // Check if this return operand is used in the current block or its successors
+                        let mut visited = HashSet::new();
+                        if self.is_used_in_execution_paths(
+                            model,
+                            block_id,
+                            ret_kind,
+                            function_block_ids,
+                            df_result,
+                            &mut visited,
+                        ) {
+                            // Only add return definition if it's actually used
+                            new_defs_in.insert(Definition {
+                                instruction_id: call_instruction_id,
+                                location: *ret_kind,
+                                block_id: call.calling_block,
+                                kind: DefinitionKind::FunctionReturn {
+                                    function_addr: call.function_addr.kind,
+                                },
+                            });
+                        }
                     }
-                    new_defs_in.extend(defs_from_caller);
                 }
                 _ => {
-                    // Standard handling
+                    // Standard handling for non-function-return predecessors
                     new_defs_in.extend(&pred_flow.defs_out);
                 }
             }
         }
+
         if block_id == BlockId::from(1993) {
             println!("{}: new_defs_in: {:?}", block_id, new_defs_in);
         }
@@ -887,77 +1008,104 @@ mod tests {
             R += -3             ; 92
             goto [R]            ; 94
             func0:
-            R += 2              ; func0 @ 100
+            R += 2              ; func0 @ 97
             output [R-1]
             R -= 2
             goto [R]
             func1:
-            R += 2              ; func1
+            R += 2              ; func1 @ 106
             output [R-1]
             R -= 2
             goto [R]
             func2:
-            R += 2              ; func2
+            R += 2              ; func2 @ 115
             output [R-1]
             R -= 2
             goto [R]
             func3:
-            R += 2              ; func3
+            R += 2              ; func3 @ 124
             output [R-1]
             R -= 2
             goto [R]
         "#,
         );
 
-        let block0_id = BlockId::from(0);
-        let block6_id = BlockId::from(6);
-        let block9_id = BlockId::from(9);
-        let block12_id = BlockId::from(12);
-        let block16_id = BlockId::from(16);
-        let block20_id = BlockId::from(20);
-        let block23_id = BlockId::from(23);
-        let block26_id = BlockId::from(26);
-        let block30_id = BlockId::from(30);
-        use itertools::Itertools;
-        for (block_id, res) in model
-            .get_data_flow_result()
-            .unwrap()
-            .block_results
-            .iter()
-            .sorted_by_key(|(k, _)| *k)
-        {
-            let function_return_defs = res
-                .defs_in
-                .iter()
-                // Correctly use matches! to check the enum variant
-                .filter(|d| matches!(d.kind, DefinitionKind::FunctionReturn { .. }))
-                .sorted_by_key(|d| d.block_id)
-                .collect_vec(); // collect_vec() should be outside filter
+        let df_results = model.get_data_flow_result().unwrap();
 
-            if !function_return_defs.is_empty() {
-                let block = model.get_block(*block_id); // Get block info for span
-                println!(
-                    "Block {} has incoming function return definitions:",
-                    block.span
-                );
-                for r_def in function_return_defs.iter() {
-                    // Match on the kind to extract function_addr
-                    if let DefinitionKind::FunctionReturn { function_addr } = r_def.kind {
-                        println!(
-                            "- {}: usage of {} from func call targeting {:?}",
-                            r_def.instruction_id,
-                            r_def.location,
-                            function_addr, // Print the kind of the function address operand
-                        );
-                    } else {
-                        // This branch shouldn't be hit due to the filter, but included for completeness
-                        println!(
-                            "- Unexpected non-FunctionReturn def: {:?} for operand {:?}",
-                            r_def.kind, r_def.location
-                        );
-                    }
-                }
-            }
+        // Test blocks after function calls contain the expected return definitions
+        // The function call at offset 50 to func3 (addr 124) generates return definitions
+        // that propagate to multiple blocks
+        let func3_call_blocks = [
+            BlockId::from(53), // Direct return target
+            BlockId::from(56), // Reachable through control flow
+            BlockId::from(67),
+            BlockId::from(70),
+            BlockId::from(30),
+            BlockId::from(81),
+            BlockId::from(92),
+        ];
+
+        // Check that all these blocks have function return values from func3
+        for block_id in func3_call_blocks {
+            let has_func3_return = df_results
+                .block_results
+                .get(&block_id)
+                .map(|flow| {
+                    flow.defs_in.iter().any(|def| {
+                        matches!(def.kind, DefinitionKind::FunctionReturn { function_addr }
+                             if function_addr == imm_kind(124))
+                    })
+                })
+                .unwrap_or(false);
+
+            assert!(
+                has_func3_return,
+                "Block {} should have function return definition from func3",
+                block_id
+            );
         }
+        // Test there are no return values from calls that haven't happened yet
+        let cont_block = BlockId::from(26);
+        let cont_flow = df_results.block_results.get(&cont_block).unwrap();
+
+        // Block 26 (cont:) should not have any function return definitions from func2
+        let func2_addr = imm_kind(115);
+        let cont_block_func2_returns: Vec<_> = cont_flow
+            .defs_in
+            .iter()
+            .filter(|d| {
+                matches!(d.kind, DefinitionKind::FunctionReturn { function_addr } if function_addr == func2_addr)
+            })
+            .collect();
+
+        assert!(
+            cont_block_func2_returns.is_empty(),
+            "Block 26 should not have function return definitions from func2"
+        );
+
+        // Block 53 should have definition for [R+1] from func3 specifically
+        let block53 = BlockId::from(53);
+        let block53_flow = df_results.block_results.get(&block53).unwrap();
+        let func3_return_defs: Vec<_> = block53_flow
+            .defs_in
+            .iter()
+            .filter(|d| {
+                matches!(d.kind, DefinitionKind::FunctionReturn { function_addr }
+                         if function_addr == imm_kind(124))
+            })
+            .collect();
+
+        // Verify we have at least one definition
+        assert!(
+            !func3_return_defs.is_empty(),
+            "Block 53 should have at least one return definition from func3"
+        );
+
+        // Verify we have a definition for [R+1]
+        let func3_r_plus_1_def = func3_return_defs.iter().any(|d| d.location == rel_kind(1));
+        assert!(
+            func3_r_plus_1_def,
+            "Block 53 should have a return definition for [R+1] from func3"
+        );
     }
 }

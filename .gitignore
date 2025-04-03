@@ -18,3 +18,5 @@ target/
 
 .direnv
 .zed
+
+**/CLAUDE.local.md
