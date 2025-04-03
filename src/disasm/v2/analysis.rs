@@ -1,18 +1,15 @@
-use std::fmt::Debug;
-
-use itertools::put_back;
-
 use crate::disasm::v2::{listeners::image_scanner::ImageScanner, model::ProgramModel};
 
 use super::{
-    dispatching::EventPublisher,
-    events::{Event, ImageAddedEvent, ModelEventListener},
+    dispatching::EventPublisher, events::Event,
+    listeners::control_flow_builder::ControlFlowGraphBuilder,
 };
 
 pub fn run_analysis(image: Vec<i128>) {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner {}));
+    publisher.add_listener(Box::new(ControlFlowGraphBuilder {}));
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
     /*

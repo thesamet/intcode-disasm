@@ -58,11 +58,9 @@ impl OperandKind {
     }
 }
 
-define_id_type!(OperandId);
 // Operand is a value that is passed as a positional argument to an instruction.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Operand {
-    pub id: OperandId,
     pub kind: OperandKind,
     pub offset: usize,
     pub debug_marker: Option<char>,
@@ -307,7 +305,6 @@ impl Instruction {
                     x => Some((x as u8) as char),
                 };
                 Ok(Operand {
-                    id: OperandId::unassigned(),
                     kind,
                     offset: offset + i + 1 as usize,
                     debug_marker,

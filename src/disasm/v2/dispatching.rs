@@ -142,9 +142,10 @@ impl<E: Copy + std::fmt::Debug, M> EventPublisher<E, M> {
             for listener in &mut self.listeners {
                 listener.on_event(model, event, &mut collector);
             }
+            // Add the newly generated events to the main work list for the next processing cycle.
+            self.work_list.extend(&added_events);
+            added_events.clear();
         }
-        // Add the newly generated events to the main work list for the next processing cycle.
-        self.work_list.extend(added_events);
     }
 }
 use std::collections::VecDeque;
@@ -264,37 +265,38 @@ mod tests {
     }
 
     #[test]
-    fn test_listener_publishes_new_event_collected() {
+    fn test_listener_publishes_event_processed_in_same_cycle() {
         let mut model = TestModel::default();
         let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
 
         let event_b_to_publish = EventB { val_b: 95 };
-        let listener = TestListener::new(Some(event_b_to_publish.clone().into())); // Publish EventB on EventA
+        // Listener will publish EventB when it receives EventA
+        let listener = TestListener::new(Some(event_b_to_publish.clone().into()));
 
         publisher.add_listener(Box::new(listener.clone()));
 
         let event_a = EventA { val_a: 100 };
         publisher.publish(event_a);
 
-        // Process the first event (EventA)
+        // Process events. This should process EventA, which publishes EventB,
+        // which should then also be processed in the *same* call.
         publisher.process_events(&mut model);
 
-        // Check that EventA was received
+        // Check that both EventA and EventB were received
         let received = listener.received_events();
-        assert_eq!(received.len(), 1);
+        assert_eq!(received.len(), 2); // Both events should have been processed
         assert_eq!(received[0], TestEvent::EventA(event_a));
+        assert_eq!(received[1], TestEvent::EventB(event_b_to_publish));
 
-        // Check that EventB was added to the work list by the collector
-        assert_eq!(publisher.work_list.len(), 1);
-        assert_eq!(
-            publisher.work_list[0],
-            TestEvent::EventB(event_b_to_publish)
-        );
-        assert_eq!(model.counter, 1); // Model mutated once so far
+        // Check that the work list is now empty
+        assert!(publisher.work_list.is_empty());
+
+        // Check that the model was mutated twice
+        assert_eq!(model.counter, 2);
     }
 
     #[test]
-    fn test_collected_event_is_processed_on_next_cycle() {
+    fn test_listener_published_event_processed_immediately() {
         let mut model = TestModel::default();
         let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
 
@@ -307,30 +309,17 @@ mod tests {
         let event_a = EventA { val_a: 200 };
         publisher.publish(event_a);
 
-        // --- First processing cycle ---
+        // --- Single processing cycle ---
+        // This call should process EventA, see EventB published, and then process EventB.
         publisher.process_events(&mut model);
 
-        // Verify EventA processed and EventB queued
-        let received_after_1 = listener.received_events();
-        assert_eq!(received_after_1.len(), 1);
-        assert_eq!(received_after_1[0], TestEvent::EventA(event_a));
-        assert_eq!(publisher.work_list.len(), 1);
-        assert_eq!(
-            publisher.work_list[0],
-            TestEvent::EventB(event_b_to_publish.clone())
-        );
-        assert_eq!(model.counter, 1);
-
-        // --- Second processing cycle ---
-        publisher.process_events(&mut model);
-
-        // Verify EventB was processed
-        let received_after_2 = listener.received_events();
-        assert_eq!(received_after_2.len(), 2); // Now contains A and B
-        assert_eq!(received_after_2[0], TestEvent::EventA(event_a)); // First event still there
-        assert_eq!(received_after_2[1], TestEvent::EventB(event_b_to_publish)); // Second event added
-        assert_eq!(publisher.work_list.len(), 0); // Queue should be empty now
-        assert_eq!(model.counter, 2); // Model mutated again for EventB
+        // Verify both EventA and EventB were processed
+        let received = listener.received_events();
+        assert_eq!(received.len(), 2); // Should contain A and B
+        assert_eq!(received[0], TestEvent::EventA(event_a));
+        assert_eq!(received[1], TestEvent::EventB(event_b_to_publish));
+        assert!(publisher.work_list.is_empty()); // Queue should be empty now
+        assert_eq!(model.counter, 2); // Model mutated twice
     }
 
     #[test]

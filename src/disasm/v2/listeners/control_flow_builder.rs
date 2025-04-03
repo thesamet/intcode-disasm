@@ -13,6 +13,54 @@ use crate::disasm::{
 use super::image_scanner::RecognizedFunction;
 
 pub struct ControlFlowGraphBuilder {}
+/**
+ * Builds the Control Flow Graph (CFG) for each function identified by the `ImageScanner`.
+ *
+ * This listener reacts to the `ImageScannerComplete` event. For each `RecognizedFunction`
+ * provided by the scanner, it performs the following steps:
+ *
+ * 1.  **Identifies Block Boundaries:** It determines all addresses within the function's
+ *     instruction stream that mark the beginning of a new basic block. A basic block
+ *     is a sequence of instructions with exactly one entry point (the first instruction)
+ *     and one exit point (the last instruction). Control flow only enters at the beginning
+ *     and only leaves at the end (except for conditional jumps which have two possible exits).
+ *
+ *     Block boundaries are established at the following locations:
+ *     *   **Function Entry:** The very first instruction of the function (`recognized_func.span.start`).
+ *     *   **Jump Targets:** Any instruction that is the destination of a conditional or
+ *         unconditional jump (`recognized_func.jump_targets`).
+ *     *   **Instruction After Control Transfer:** The instruction immediately following:
+ *         *   A conditional jump (`if [...] goto @target`).
+ *         *   An unconditional jump (`goto @target`).
+ *         *   A function call sequence (`[R]=@ret; goto @func`). The instruction at `@ret` starts a new block.
+ *         *   The function return sequence (`R-=N; goto [R]`). The instruction *after* `goto [R]` (if any within the function span) would start a new block, although typically the return sequence is the end.
+ *         *   A `halt` instruction. Code after `halt` starts a new block *only if* it's a jump target.
+ *     *   **Return Sequence Start:** The `R -= N` instruction that begins the function's canonical return sequence, if present (`recognized_func.return_span.start`).
+ *
+ * 2.  **Creates Blocks:** It iterates through the function's instructions (`recognized_func.instructions`),
+ *     grouping them into `Block` objects based on the identified boundaries. Each block stores
+ *     its instruction list, its span, and its containing function ID. These blocks are added
+ *     to the `ProgramModel.blocks` map.
+ *
+ * 3.  **Determines Control Flow Links:** For each created block, it analyzes the *last* instruction
+ *     to determine how control flow exits:
+ *     *   **Conditional Jump:** Sets `NextKind::Condition`, linking to both the target block (if jump taken)
+ *       and the fallthrough block (if jump not taken).
+ *     *   **Unconditional Jump:** Sets `NextKind::Goto`, linking only to the target block. There is *no*
+ *       fallthrough from an unconditional jump.
+ *     *   **Function Call:** Sets `NextKind::FunctionCall`, storing call details and linking to the return block.
+ *     *   **Return Sequence:** Sets `NextKind::Return` if the block ends with the canonical `goto [R]`.
+ *     *   **Halt:** Sets `NextKind::Halt`.
+ *     *   **Other Instructions:** Sets `NextKind::Follows`, linking to the block starting at the next instruction's address.
+ *
+ * 4.  **Calculates Predecessors:** Based on the `NextKind` links established in the previous step, it
+ *     populates the `predecessors` list for each block, indicating how control flow can arrive at that block.
+ *
+ * 5.  **Updates Function Metadata:** Updates the corresponding `Function` object in `ProgramModel.functions`
+ *     with the list of `BlockId`s it contains and the ID of its specific `return_block`, if found.
+ *
+ * 6.  **Emits Events:** Publishes a `FunctionCfgBuilt` event for each function once its CFG is constructed.
+ */
 
 impl ControlFlowGraphBuilder {
     pub fn new() -> Self {
@@ -116,10 +164,6 @@ impl ControlFlowGraphBuilder {
                 predecessors: Vec::new(), // To be filled later
                 next: NextKind::Unknown,  // To be filled now
             };
-            println!(
-                "Adding block {:?} {} {}",
-                block_id, current_block_end, recognized_func.span.end
-            );
             model.add_block(block);
 
             // Prepare for the next block start address
@@ -207,6 +251,14 @@ impl ControlFlowGraphBuilder {
         } else {
             None
         };
+        for block_id in function_block_ids.iter() {
+            let block = model.get_block(*block_id);
+            println!("Block {}", block.span);
+            for pred in block.predecessors.iter() {
+                println!("Pred: {:?}", pred);
+            }
+            println!("Next: {:?}", block.next);
+        }
         let function = model.get_function_mut(func_id); // Pass func_id directly
         function.return_block = return_block;
         function.blocks = function_block_ids; // Store the list of block IDs for this function
@@ -311,7 +363,6 @@ mod tests {
         // Run the pipeline
         model.load_image(&binary, &mut publisher);
         publisher.process_events(&mut model); // ImageScanner runs
-        publisher.process_events(&mut model); // ControlFlowGraphBuilder runs
 
         model
     }
@@ -677,7 +728,6 @@ mod tests {
         let NextKind::FunctionCall(call) = &block0.next else {
             panic!("block0.next mismatch: {:?}", block0.next);
         };
-        println!("{:?}", call);
 
         assert_eq!(call.return_block, BlockId::from(17));
         assert_eq!(call.function_addr.kind.get_immediate().unwrap(), 24);

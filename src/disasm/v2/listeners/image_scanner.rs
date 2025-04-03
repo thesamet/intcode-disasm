@@ -146,7 +146,6 @@ fn recognize_function_call(
     if return_address != goto_op.span.end {
         return Err(ParseError::NoMatch);
     }
-    println!("return address: {}", return_address);
     let function_call = BaseFunctionCall {
         span: Span::new(set_r.span.start, goto_op.span.end),
         target: goto_op.goto_address().unwrap(),
