@@ -1,12 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use log::debug;
 
+use crate::disasm::v2::instructions::OperandKind;
 use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},
     data_flow::{BlockDataFlow, DataFlowResult, Definition, DefinitionKind},
     events::{self, DataFlowAnalysisComplete, FunctionCfgBuilt, ModelEventListener},
-    instructions::{Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
 };
 
@@ -50,13 +50,14 @@ impl DataFlowAnalyzer {
     fn find_potential_return_kinds(
         model: &ProgramModel,
         func_id: FunctionId,
-    ) -> HashSet<OperandKind> {
+    ) -> HashMap<BlockId, HashSet<OperandKind>> {
         // Implementation as provided previously... unchanged.
-        let mut return_kinds = HashSet::new();
+        let mut return_kinds: HashMap<BlockId, HashSet<OperandKind>> = HashMap::new();
         let func = model.get_function(func_id);
 
         for &block_id in &func.blocks {
             let block = model.get_block(block_id);
+            let mut block_return_kinds = HashSet::new();
             // Check if this block is entered via a function call return
             let is_return_target = block
                 .predecessors
@@ -74,12 +75,13 @@ impl DataFlowAnalyzer {
                                     "Found potential return operand: {} in block {} at {}",
                                     read_op.kind, block.span, instr.id
                                 );
-                                return_kinds.insert(read_op.kind);
+                                block_return_kinds.insert(read_op.kind);
                             }
                         }
                     }
                 }
             }
+            return_kinds.insert(block_id, block_return_kinds);
         }
         debug!(
             "Potential return kinds for {:?}: {:?}",
@@ -128,7 +130,7 @@ impl DataFlowAnalyzer {
         model: &ProgramModel,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
-        potential_return_kinds: &HashSet<OperandKind>,
+        potential_return_kinds: &HashMap<BlockId, HashSet<OperandKind>>,
     ) {
         let mut changed = true;
         while changed {
@@ -139,7 +141,7 @@ impl DataFlowAnalyzer {
                     block_id,
                     block_ids,
                     df_result,
-                    potential_return_kinds,
+                    potential_return_kinds.get(&block_id).unwrap(),
                 );
 
                 // Update block's IN set if changed
@@ -852,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multuple_function_calls() {
+    fn test_multiple_function_calls() {
         let model = setup_and_analyze(
             r#"
             R += 3              ; 0
@@ -957,6 +959,5 @@ mod tests {
                 }
             }
         }
-        assert!(false);
     }
 }
