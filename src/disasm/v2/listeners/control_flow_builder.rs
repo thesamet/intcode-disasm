@@ -251,14 +251,6 @@ impl ControlFlowGraphBuilder {
         } else {
             None
         };
-        for block_id in function_block_ids.iter() {
-            let block = model.get_block(*block_id);
-            println!("Block {}", block.span);
-            for pred in block.predecessors.iter() {
-                println!("Pred: {:?}", pred);
-            }
-            println!("Next: {:?}", block.next);
-        }
         let function = model.get_function_mut(func_id); // Pass func_id directly
         function.return_block = return_block;
         function.blocks = function_block_ids; // Store the list of block IDs for this function

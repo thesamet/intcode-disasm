@@ -1,6 +1,6 @@
 macro_rules! define_id_type {
     ($id_type:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $id_type(usize);
 
         impl $id_type {

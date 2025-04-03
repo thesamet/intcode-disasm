@@ -28,7 +28,7 @@ impl DataFlowAnalyzer {
         let block_ids = &func.blocks;
 
         // Pre-computation: Identify potential return operands
-        let potential_returns = find_potential_return_operands(model, func_id);
+        let potential_returns = Self::find_potential_return_operands(model, func_id);
 
         // Pass 1: Initialize GEN and USE_BEFORE_DEF for each block
         self.initialize_gen_use(model, block_ids, df_result);
@@ -40,6 +40,47 @@ impl DataFlowAnalyzer {
         self.run_liveness_analysis(model, block_ids, df_result);
 
         debug!("Data Flow Analysis passes complete for {}", func_id);
+    }
+
+    fn find_potential_return_operands(
+        model: &ProgramModel,
+        func_id: FunctionId,
+    ) -> HashSet<Operand> {
+        // Implementation as provided previously... unchanged.
+        let mut return_operands = HashSet::new();
+        let func = model.get_function(func_id);
+
+        for &block_id in &func.blocks {
+            let block = model.get_block(block_id);
+            // Check if this block is entered via a function call return
+            let is_return_target = block
+                .predecessors
+                .iter()
+                .any(|p| matches!(p, PredecessorKind::FunctionCallReturns(_)));
+
+            if is_return_target {
+                // Look for reads of [R+n] within this block
+                for instr in &block.instructions {
+                    for read_op in instr.reads() {
+                        // Check if it's a relative memory access with positive offset
+                        if let Some(offset) = read_op.kind.get_relative_memory() {
+                            if offset > 0 {
+                                println!(
+                                    "Found potential return operand: {} in block {} at {}",
+                                    read_op.kind, block.span, instr.id
+                                );
+                                return_operands.insert(*read_op);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        debug!(
+            "Potential return operands for {:?}: {:?}",
+            func_id, return_operands
+        );
+        return_operands
     }
 
     /// Pass 1: Initializes GEN and USE_BEFORE_DEF sets for all blocks in the function.
@@ -175,7 +216,9 @@ impl DataFlowAnalyzer {
                             instruction_id: call_instruction_id,
                             operand: *ret_op,
                             block_id: call.calling_block,
-                            kind: DefinitionKind::FunctionReturn,
+                            kind: DefinitionKind::FunctionReturn {
+                                function_addr: call.function_addr,
+                            },
                         });
                     }
                     new_defs_in.extend(defs_from_caller);
@@ -185,6 +228,9 @@ impl DataFlowAnalyzer {
                     new_defs_in.extend(&pred_flow.defs_out);
                 }
             }
+        }
+        if block_id == BlockId::from(1993) {
+            println!("{}: new_defs_in: {:?}", block_id, new_defs_in);
         }
         new_defs_in
     }
@@ -343,40 +389,4 @@ impl ModelEventListener for DataFlowAnalyzer {
         debug!("Data Flow Analysis committed for {}", event.function_id);
     }
 }
-
-// Helper function (can be placed inside DataFlowAnalyzer impl or outside)
-fn find_potential_return_operands(model: &ProgramModel, func_id: FunctionId) -> HashSet<Operand> {
-    // Implementation as provided previously... unchanged.
-    let mut return_operands = HashSet::new();
-    let func = model.get_function(func_id);
-
-    for &block_id in &func.blocks {
-        let block = model.get_block(block_id);
-        // Check if this block is entered via a function call return
-        let is_return_target = block
-            .predecessors
-            .iter()
-            .any(|p| matches!(p, PredecessorKind::FunctionCallReturns(_)));
-
-        if is_return_target {
-            // Look for reads of [R+n] within this block
-            for instr in &block.instructions {
-                for read_op in instr.reads() {
-                    // Check if it's a relative memory access with positive offset
-                    if let Some(offset) = read_op.kind.get_relative_memory() {
-                        if offset > 0 {
-                            return_operands.insert(*read_op);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    debug!(
-        "Potential return operands for {:?}: {:?}",
-        func_id, return_operands
-    );
-    return_operands
-}
-
 // TODO: Add tests

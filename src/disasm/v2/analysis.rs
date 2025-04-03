@@ -1,17 +1,69 @@
-use crate::disasm::v2::{listeners::image_scanner::ImageScanner, model::ProgramModel};
+use itertools::Itertools;
+
+use crate::disasm::v2::{
+    data_flow::DefinitionKind, listeners::image_scanner::ImageScanner, model::ProgramModel,
+};
 
 use super::{
-    dispatching::EventPublisher, events::Event,
-    listeners::control_flow_builder::ControlFlowGraphBuilder,
+    dispatching::EventPublisher,
+    events::Event,
+    listeners::{
+        control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
+    },
 };
 
 pub fn run_analysis(image: Vec<i128>) {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
-    publisher.add_listener(Box::new(ImageScanner {}));
-    publisher.add_listener(Box::new(ControlFlowGraphBuilder {}));
+    publisher.add_listener(Box::new(ImageScanner::new()));
+    publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+    publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
+
+    if let Some(data_flow_results) = model.get_data_flow_result() {
+        for (block_id, res) in data_flow_results
+            .block_results
+            .iter()
+            .sorted_by_key(|(k, _)| *k)
+        {
+            let function_return_defs = res
+                .defs_in
+                .iter()
+                // Correctly use matches! to check the enum variant
+                .filter(|d| matches!(d.kind, DefinitionKind::FunctionReturn { .. }))
+                .sorted_by_key(|d| d.block_id)
+                .collect_vec(); // collect_vec() should be outside filter
+
+            if !function_return_defs.is_empty() {
+                let block = model.get_block(*block_id); // Get block info for span
+                println!(
+                    "Block {} has incoming function return definitions:",
+                    block.span
+                );
+                for r_def in function_return_defs.iter() {
+                    // Match on the kind to extract function_addr
+                    if let DefinitionKind::FunctionReturn { function_addr } = r_def.kind {
+                        println!(
+                            "- {}: usage of {} from func call targeting {:?}",
+                            r_def.instruction_id,
+                            r_def.operand.kind,
+                            function_addr.kind, // Print the kind of the function address operand
+                        );
+                    } else {
+                        // This branch shouldn't be hit due to the filter, but included for completeness
+                        println!(
+                            "- Unexpected non-FunctionReturn def: {:?} for operand {:?}",
+                            r_def.kind, r_def.operand.kind
+                        );
+                    }
+                }
+            }
+        }
+    } else {
+        println!("Data flow analysis results not available.");
+    }
+
     /*
     for x in &model.image_scanner_result.unwrap().recognized_functions {
         println!("f start: {:?}", x.span);

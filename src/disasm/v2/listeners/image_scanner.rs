@@ -16,6 +16,11 @@ pub struct ImageScannerResult {
 }
 
 pub(crate) struct ImageScanner {}
+impl ImageScanner {
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RecognizedFunction {
@@ -64,9 +69,6 @@ impl ModelEventListener for ImageScanner {
                 continue;
             };
             i = f.span.end;
-            for i in f.instructions.iter_mut() {
-                i.id = InstructionId::fresh();
-            }
             recognized_functions.push(f);
             continue;
         }

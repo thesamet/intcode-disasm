@@ -12,7 +12,7 @@ pub enum DefinitionKind {
     #[default]
     InstructionWrite,
     /// Definition represents a value returned by a function call.
-    FunctionReturn,
+    FunctionReturn { function_addr: Operand },
     // Could add others like InitialValue, Parameter, etc. later if needed
 }
 
@@ -35,8 +35,10 @@ pub struct Definition {
 impl fmt::Display for Definition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let kind_str = match self.kind {
-            DefinitionKind::InstructionWrite => "",
-            DefinitionKind::FunctionReturn => "(ret) ",
+            DefinitionKind::InstructionWrite => "".to_string(),
+            DefinitionKind::FunctionReturn { function_addr } => {
+                format!("(ret from func {})", function_addr.kind)
+            }
         };
         write!(
             f,
