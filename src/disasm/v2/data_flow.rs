@@ -3,7 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::disasm::v2::{instructions::InstructionId, instructions::Operand, model::BlockId};
+use crate::disasm::v2::{
+    instructions::{InstructionId, OperandKind},
+    model::BlockId,
+};
 
 /// Distinguishes the source of a definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -12,7 +15,7 @@ pub enum DefinitionKind {
     #[default]
     InstructionWrite,
     /// Definition represents a value returned by a function call.
-    FunctionReturn { function_addr: Operand },
+    FunctionReturn { function_addr: OperandKind },
     // Could add others like InitialValue, Parameter, etc. later if needed
 }
 
@@ -24,8 +27,8 @@ pub struct Definition {
     /// The ID of the instruction that performs the write operation,
     /// or the ID of the call instruction (`goto @func`) for return values.
     pub instruction_id: InstructionId,
-    /// The operand representing the memory location being written to.
-    pub operand: Operand,
+    /// The location kind (memory or register) being defined.
+    pub location: OperandKind,
     /// The ID of the block containing the defining instruction or the call.
     pub block_id: BlockId,
     /// The kind of definition.
@@ -37,13 +40,13 @@ impl fmt::Display for Definition {
         let kind_str = match self.kind {
             DefinitionKind::InstructionWrite => "".to_string(),
             DefinitionKind::FunctionReturn { function_addr } => {
-                format!("(ret from func {})", function_addr.kind)
+                format!("(ret from func {})", function_addr)
             }
         };
         write!(
             f,
-            "Def({}{:?} in {:?} at i{})",
-            kind_str, self.operand, self.block_id, self.instruction_id
+            "Def({}{} in {} at i{})",
+            kind_str, self.location, self.block_id, self.instruction_id
         )
     }
 }
@@ -59,22 +62,22 @@ pub struct BlockDataFlow {
 
     /// **Live Variables (IN):** The set of Operands whose current value might be used later in the execution path
     /// starting from the entry of this block.
-    pub live_in: HashSet<Operand>,
+    pub live_in: HashSet<OperandKind>,
 
     /// **Live Variables (OUT):** The set of Operands whose current value might be used later in the execution path
     /// starting from the exit(s) of this block.
-    pub live_out: HashSet<Operand>,
+    pub live_out: HashSet<OperandKind>,
 
     /// **Generated Definitions (GEN):** Maps Operands defined within this block to the ID of the *last*
     /// instruction within the block that defines them. Definitions here "kill" definitions from `defs_in`.
-    /// Key: The `Operand` being defined (location).
+    /// Key: The `OperandKind` representing the location being defined.
     /// Value: The `InstructionId` of the defining instruction.
-    pub gen: HashMap<Operand, InstructionId>,
+    pub gen: HashMap<OperandKind, InstructionId>,
 
-    /// **Used Before Defined (USE):** The set of Operands that are read (used) within this block *before*
+    /// **Used Before Defined (USE):** The set of memory locations that are read (used) within this block *before*
     /// they are written to (defined) within the same block. These operands require a valid definition
     /// to be present in `defs_in`.
-    pub use_before_def: HashSet<Operand>,
+    pub use_before_def: HashSet<OperandKind>,
 }
 
 impl BlockDataFlow {

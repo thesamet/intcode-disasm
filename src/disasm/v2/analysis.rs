@@ -47,14 +47,14 @@ pub fn run_analysis(image: Vec<i128>) {
                         println!(
                             "- {}: usage of {} from func call targeting {:?}",
                             r_def.instruction_id,
-                            r_def.operand.kind,
-                            function_addr.kind, // Print the kind of the function address operand
+                            r_def.location,
+                            function_addr, // Print the kind of the function address operand
                         );
                     } else {
                         // This branch shouldn't be hit due to the filter, but included for completeness
                         println!(
                             "- Unexpected non-FunctionReturn def: {:?} for operand {:?}",
-                            r_def.kind, r_def.operand.kind
+                            r_def.kind, r_def.location
                         );
                     }
                 }

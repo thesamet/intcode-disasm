@@ -449,7 +449,6 @@ pub fn parse_program(
 ) -> Result<Vec<(usize, GenericInstruction<SourceArgument>)>, nom::Err<nom::error::Error<&str>>> {
     let (input, lines) = many1(parse_line).parse(input)?;
     let (_, _) = eof.parse(input)?;
-
     // First pass: collect labels and their offsets
     let mut label_offsets = HashMap::new();
     let mut pointers = HashMap::new();

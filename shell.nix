@@ -7,5 +7,6 @@ pkgs.mkShell {
     pkg-config
     openssl
     aoc-cli
+    nodejs
   ];
 }
