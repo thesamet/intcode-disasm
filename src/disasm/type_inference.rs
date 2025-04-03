@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt};
 use itertools::Itertools;
 
 use super::{
-    control_flow_graph::{Block, FunctionCall, NextKind},
+    control_flow_graph::{Block, NextKind},
     low_ir::{ArgBase, GenericInstruction},
     program_analysis::ProgramAnalysis,
     ssa_form::{convert_to_ssa, SSAArg, SSAArgKind},
@@ -442,7 +442,7 @@ impl TypeInference {
 #[cfg(test)]
 mod tests {
 
-    use pathfinding::undirected::cliques;
+    
 
     use crate::disasm::{parser, ssa_form::SSAArgKind};
 
@@ -683,7 +683,7 @@ f1:
     #[test]
     #[ignore]
     fn test_link_function_return_type_single() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
                 R += 1000
                 'a [R-3] = @add
