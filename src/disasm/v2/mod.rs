@@ -7,6 +7,7 @@ pub mod id_types;
 pub mod instructions;
 pub mod listeners;
 pub mod model;
+pub mod ssa_form;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {

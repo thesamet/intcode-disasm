@@ -6,15 +6,15 @@ use crate::disasm::low_ir::Span; // Assuming Span might be useful later
 
 // Describes how control flow leaves a block
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NextKind {
+pub enum NextKind<T = Operand> {
     // Block always falls through to the immediately following block
     Follows(BlockId),
-    // Unconditional jump to a target determined by Operand
-    Goto(Operand),
+    // Unconditional jump to a target determined by the operand
+    Goto(T),
     // A function call sequence ([R]=ret; goto target)
-    FunctionCall(FunctionCall),
-    // Conditional jump based on an Operand
-    Condition(Condition),
+    FunctionCall(FunctionCall<T>),
+    // Conditional jump based on an operand
+    Condition(Condition<T>),
     // Function returns ([R]-=N; goto [R])
     Return,
     // Program halts
@@ -51,25 +51,26 @@ impl PredecessorKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FunctionCall {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionCall<T = Operand> {
     pub calling_block: BlockId,
     // The operand representing the function address (can be immediate or indirect)
-    pub function_addr: Operand,
+    pub function_addr: T,
     pub return_block: BlockId, // The block execution resumes at after the call
-                               // TODO: Add fields for arguments/return values once analysis provides them
+    // The state of all variables at call site (empty for now, filled by SSA conversion)
+    pub call_site_state: Option<std::collections::HashMap<crate::disasm::v2::instructions::OperandKind, T>>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Condition {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Condition<T = Operand> {
     pub from_block: BlockId,        // Block containing the conditional jump
-    pub condition_operand: Operand, // The operand being tested
+    pub condition_operand: T,       // The operand being tested
     pub jump_if_true: bool,         // True for `if x`, False for `if !x`
     pub target_block: BlockId,      // Block jumped to if condition met
     pub follows_block: BlockId,     // Block fallen through to if condition not met
 }
 
-impl Default for NextKind {
+impl<T> Default for NextKind<T> {
     fn default() -> Self {
         NextKind::Unknown
     }
@@ -85,7 +86,7 @@ pub struct Block {
     pub instructions: Vec<Instruction>,
 
     // CFG Information (added by ControlFlowGraphBuilder)
-    pub next: NextKind,
+    pub next: NextKind<Operand>,
     pub predecessors: Vec<PredecessorKind>,
 }
 
@@ -95,7 +96,7 @@ impl Block {
         containing_function_id: FunctionId,
         span: Span,
         instructions: Vec<Instruction>,
-        next: NextKind,
+        next: NextKind<Operand>,
     ) -> Self {
         Self {
             id,

@@ -223,11 +223,11 @@ impl ControlFlowGraphBuilder {
                     predecessors_map
                         .entry(cond.target_block)
                         .or_default()
-                        .push(PredecessorKind::ConditionalJump(*cond));
+                        .push(PredecessorKind::ConditionalJump(cond.clone()));
                     predecessors_map
                         .entry(cond.follows_block)
                         .or_default()
-                        .push(PredecessorKind::ConditionalFollow(*cond));
+                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             }
@@ -308,6 +308,7 @@ fn determine_next_kind(
             calling_block: block_id,
             function_addr: call.target,
             return_block: BlockId::from(call.return_address),
+            call_site_state: None,
         })
     } else if let Some(target_addr) = last_instr.goto_address() {
         NextKind::Goto(target_addr)
@@ -543,9 +544,13 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.instructions.len(), 2); // R+=5, if [R+1] goto @true_branch
         assert_eq!(block0.span, Span::new(0, 5));
-        assert!(
-            matches!(block0.next, NextKind::Condition(cond) if cond.target_block == BlockId::from(12) && cond.follows_block == BlockId::from(5) && cond.jump_if_true)
-        );
+        if let NextKind::Condition(ref cond) = block0.next {
+            assert_eq!(cond.target_block, BlockId::from(12));
+            assert_eq!(cond.follows_block, BlockId::from(5));
+            assert!(cond.jump_if_true);
+        } else {
+            panic!("Expected NextKind::Condition");
+        }
         assert!(block0.predecessors.is_empty());
 
         // Block 5 (False branch)
@@ -554,9 +559,11 @@ mod tests {
         assert_eq!(block5.span, Span::new(5, 12));
         assert!(matches!(block5.next, NextKind::Goto(op) if op.kind.get_immediate() == Some(16)));
         assert_eq!(block5.predecessors.len(), 1);
-        assert!(
-            matches!(block5.predecessors[0], PredecessorKind::ConditionalFollow(cond) if cond.from_block == BlockId::from(0))
-        );
+        if let PredecessorKind::ConditionalFollow(ref cond) = block5.predecessors[0] {
+            assert_eq!(cond.from_block, BlockId::from(0));
+        } else {
+            panic!("Expected PredecessorKind::ConditionalFollow");
+        }
 
         // Block 12 (True branch)
         let block12 = model.get_block(BlockId::from(12));
@@ -564,9 +571,11 @@ mod tests {
         assert_eq!(block12.span, Span::new(12, 16));
         assert_eq!(block12.next, NextKind::Follows(BlockId::from(16))); // Falls through to merge
         assert_eq!(block12.predecessors.len(), 1);
-        assert!(
-            matches!(block12.predecessors[0], PredecessorKind::ConditionalJump(cond) if cond.from_block == BlockId::from(0))
-        );
+        if let PredecessorKind::ConditionalJump(ref cond) = block12.predecessors[0] {
+            assert_eq!(cond.from_block, BlockId::from(0));
+        } else {
+            panic!("Expected PredecessorKind::ConditionalJump");
+        }
 
         // Block 16 (Merge & Return)
         let block16 = model.get_block(BlockId::from(16));
