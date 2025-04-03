@@ -26,8 +26,9 @@ pub struct RecognizedFunction {
     pub return_span: Option<Span>,
     pub jump_targets: HashSet<usize>,
     // Locations from which a jump (conditional or unconditional) is taken.
-    pub jump_sources: Vec<usize>,
+    pub jump_instructions: Vec<Instruction>,
     pub function_calls: Vec<BaseFunctionCall>,
+    pub halts: Vec<Span>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +149,7 @@ fn recognize_function_call(
     println!("return address: {}", return_address);
     let function_call = BaseFunctionCall {
         span: Span::new(set_r.span.start, goto_op.span.end),
-        target: assignment.target,
+        target: goto_op.goto_address().unwrap(),
         return_address,
     };
     Ok((set_r, goto_op, function_call))
@@ -164,7 +165,8 @@ fn scan_from(
     let mut jump_targets = HashSet::new();
     let mut instructions = vec![];
     let mut function_calls = vec![];
-    let mut jump_sources = vec![];
+    let mut jump_instructions = vec![];
+    let mut halts = vec![];
     let mut seen = HashSet::new();
     while let Some(offset) = queue.pop() {
         if seen.contains(&offset) {
@@ -177,6 +179,7 @@ fn scan_from(
             instructions.push(i2);
             continue;
         } else if let Ok((i1, i2, fc)) = recognize_function_call(image, offset) {
+            queue.push(fc.return_address);
             instructions.push(i1);
             instructions.push(i2);
             function_calls.push(fc);
@@ -188,9 +191,11 @@ fn scan_from(
                     .or_else(|| instruction.conditional_jump_immediate_address());
                 if let Some(addr) = address {
                     queue.push(addr);
-                    jump_sources.push(addr);
+                    jump_instructions.push(instruction.clone());
                     jump_targets.insert(addr);
                 }
+            } else if instruction.is_halt() {
+                halts.push(instruction.span);
             }
 
             if !instruction.is_halt() && !instruction.is_goto() {
@@ -207,8 +212,9 @@ fn scan_from(
         instructions,
         return_span: returns.iter().exactly_one().ok().cloned(),
         jump_targets,
-        jump_sources,
+        jump_instructions,
         function_calls,
+        halts,
     })
 }
 
@@ -323,5 +329,58 @@ mod tests {
 
         assert_eq!(result.data_segments[1].start, 16);
         assert_eq!(result.data_segments[1].end, 21);
+    }
+
+    #[test]
+    fn test_another_funcion_call() {
+        let result = parse_and_scan(
+            r#"
+            ; Main Function (Offset 0)
+            main:
+            R += 5
+            ; Offset 2
+            [R+1] = 111 ; Arg 1
+            ; Offset 6
+            [R+2] = 222 ; Arg 2
+            ; Offset 10
+            [R] = @main_ret ; Set return address
+            ; Offset 14
+            goto @callee ; Call
+            ; Offset 17
+            main_ret:
+            output [R+1] ; Use return value
+            ; Offset 19
+            R -= 5
+            ; Offset 21
+            goto [R]
+
+            ; Callee Function (Offset 24)
+            callee:
+            R += 4 ; Stack frame for locals + args
+            ; Offset 26
+            [R-1] = [R-5] ; Access arg 1 ([R+1] from caller -> [R-5] in callee)
+            ; Offset 30
+            [R-2] = [R-6] ; Access arg 2 ([R+2] from caller -> [R-6] in callee)
+            ; Offset 34
+            [R-3] = [R-1] + [R-2] ; Local calc
+            ; Offset 38
+            [R-5] = [R-3] ; Put result in return slot 1 ([R-5] in callee -> [R+1] in caller)
+            ; Offset 42
+            R -= 4
+            ; Offset 44
+            goto [R]
+            "#,
+        );
+        assert_eq!(result.recognized_functions.len(), 2);
+        let main = &result.recognized_functions[0];
+        let other = &result.recognized_functions[1];
+
+        assert_eq!(main.stack_size, 5);
+        assert_eq!(main.span, Span::new(0, 24));
+        assert_eq!(other.stack_size, 4);
+        assert_eq!(other.span, Span::new(24, 47));
+
+        assert_eq!(main.function_calls.len(), 1);
+        assert_eq!(main.function_calls[0].return_address, 17);
     }
 }

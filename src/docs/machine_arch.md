@@ -88,6 +88,8 @@ operations are denoted as `[127] = [R+6] + 247` and `[127] = [R+6] * 247`, respe
 
 Adjustments of `R` (instruction opcode 9) are written as `R += 123` or `R -= 123`. The argument is always a fixed number (mode 1).
 
+Note that there are no substraction and division syntax. The following statement is not valid `[R] = [R+2] - 5`, however, it is valid to write `[R] = [R+2] + -5`.
+
 ## Conditional jumps
 
 If-ture jumps are written as follows:
@@ -112,6 +114,7 @@ The language offers the following syntax sugar for common constructs that are no
 
 For example, if the memory address 123 contains the value 50, the last instruction will jump to address 50 and execution will continue from there.
 
+When computing offsets manually, for example in tests, it is important to remember that the goto instruction is 3 numbers long, since it is implemented using if-true-jump.
 ### Assignment `x = y`
 
 The machine does not have direct assignment (copying the value from one location to another). This instruction is interpreted as addition of zero. For example:

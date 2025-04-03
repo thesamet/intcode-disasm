@@ -1,4 +1,3 @@
-// disasm/src/disasm/v2/listeners/control_flow_builder.rs
 use std::collections::{HashMap, HashSet};
 
 use crate::disasm::{
@@ -37,15 +36,15 @@ impl ControlFlowGraphBuilder {
             .map(|instr| instr.span.start)
             .collect();
 
-        // Add boundaries *after* jump/halt instructions
-        for instr in &recognized_func.instructions {
-            if instr.is_jump() || instr.is_halt() {
-                // Boundary is the start of the *next* instruction, if it exists within the function span
-                if instr.span.end < recognized_func.span.end {
-                    block_boundaries.insert(instr.span.end);
-                }
-            }
-        }
+        block_boundaries.extend(recognized_func.halts.iter().map(|h| h.end));
+        block_boundaries.extend(recognized_func.jump_targets.iter().map(|j| j));
+        block_boundaries.extend(recognized_func.jump_instructions.iter().map(|j| j.span.end));
+        block_boundaries.extend(
+            recognized_func
+                .function_calls
+                .iter()
+                .map(|j| j.return_address),
+        );
 
         // Add boundaries for the return sequence block
         if let Some(return_span) = recognized_func.return_span {
@@ -117,6 +116,10 @@ impl ControlFlowGraphBuilder {
                 predecessors: Vec::new(), // To be filled later
                 next: NextKind::Unknown,  // To be filled now
             };
+            println!(
+                "Adding block {:?} {} {}",
+                block_id, current_block_end, recognized_func.span.end
+            );
             model.add_block(block);
 
             // Prepare for the next block start address
@@ -160,7 +163,11 @@ impl ControlFlowGraphBuilder {
                     } // Else: Unknown target, no predecessor added yet
                 }
                 NextKind::FunctionCall(call) => {
-                    assert!(model.has_block(call.return_block));
+                    assert!(
+                        model.has_block(call.return_block),
+                        "Return block {:?} does not exist",
+                        call.return_block
+                    );
                     predecessors_map
                         .entry(call.return_block)
                         .or_default()
@@ -238,7 +245,7 @@ impl ModelEventListener for ControlFlowGraphBuilder {
 
 // Helper to determine NextKind based on the last instruction and context
 fn determine_next_kind(
-    bock_id: BlockId,
+    block_id: BlockId,
     last_instr: &Instruction,
     block_end_addr: usize,
     func: &RecognizedFunction,
@@ -250,11 +257,11 @@ fn determine_next_kind(
         .iter()
         .find(|c| c.span.end == last_instr.span.end)
     {
-        let Some(goto_addr) = last_instr.goto_address() else {
+        let Some(_) = last_instr.goto_address() else {
             panic!("Expected goto address");
         };
         NextKind::FunctionCall(FunctionCall {
-            calling_block: BlockId::from(last_instr.span.start), // Placeholder, will be updated
+            calling_block: block_id,
             function_addr: call.target,
             return_block: BlockId::from(call.return_address),
         })
@@ -264,7 +271,7 @@ fn determine_next_kind(
         let jump_if_true = last_instr.opcode == crate::disasm::v2::instructions::Opcode::JumpIfTrue;
         let condition_operand = last_instr.conditional_jump_condition().unwrap();
         NextKind::Condition(Condition {
-            from_block: bock_id,
+            from_block: block_id,
             condition_operand,
             jump_if_true,
             target_block: BlockId::from(target_addr as usize),
@@ -276,5 +283,441 @@ fn determine_next_kind(
         NextKind::Halt
     } else {
         NextKind::Follows(BlockId::from(block_end_addr))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::disasm::parser;
+    use crate::disasm::v2::{
+        dispatching::EventPublisher,
+        events::Event,
+        listeners::{control_flow_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner},
+    };
+    use itertools::Itertools;
+
+    use super::*;
+
+    // Helper function to run the pipeline up to CFG building
+    fn setup_and_build_cfg(assembly_code: &str) -> ProgramModel {
+        let binary = parser::compile(assembly_code);
+        let mut model = ProgramModel::new();
+        let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+
+        // Register listeners
+        publisher.add_listener(Box::new(ImageScanner {}));
+        publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+
+        // Run the pipeline
+        model.load_image(&binary, &mut publisher);
+        publisher.process_events(&mut model); // ImageScanner runs
+        publisher.process_events(&mut model); // ControlFlowGraphBuilder runs
+
+        model
+    }
+
+    #[test]
+    fn test_simple_return_function() {
+        let model = setup_and_build_cfg(
+            r#"
+            ; Offset 0
+            R += 5
+            ; Offset 2
+            R -= 5
+            ; Offset 4
+            goto [R]
+            "#,
+        );
+
+        let func_id = FunctionId::from(0);
+        let func = model.get_function(func_id);
+        assert_eq!(func.stack_size, 5);
+        assert_eq!(func.entry_block, BlockId::from(0));
+        assert_eq!(func.blocks.len(), 2);
+        assert_eq!(func.return_block, Some(BlockId::from(2))); // The whole function is the return block
+
+        let block0 = model.get_block(BlockId::from(0));
+        assert_eq!(block0.id, BlockId::from(0));
+        assert_eq!(block0.containing_function_id, func_id);
+        assert_eq!(block0.instructions.len(), 1);
+        assert_eq!(block0.span, Span::new(0, 2));
+        assert_eq!(block0.next, NextKind::Follows(BlockId::from(2)));
+
+        let block1 = model.get_block(BlockId::from(2));
+        assert_eq!(block1.id, BlockId::from(2));
+        assert_eq!(block1.containing_function_id, func_id);
+        assert_eq!(block1.instructions.len(), 2);
+        assert_eq!(block1.span, Span::new(2, 7));
+        assert_eq!(block1.next, NextKind::Return);
+        assert_eq!(
+            *block1.predecessors.iter().exactly_one().unwrap(),
+            PredecessorKind::FollowsFrom(BlockId::from(0))
+        );
+    }
+
+    #[test]
+    fn test_fallthrough_function() {
+        let model = setup_and_build_cfg(
+            r#"
+            ; Offset 0
+            R += 5
+            ; Offset 2
+            [R+1] = 10 ; Block 1
+            ; Offset 6
+            [R+2] = 20
+            ; Offset 10
+            R -= 5;   ; Block 2 (starts here)
+            ; Offset 12
+            goto [R]
+            "#,
+        );
+
+        let func_id = FunctionId::from(0);
+        let func = model.get_function(func_id);
+        assert_eq!(func.stack_size, 5);
+        assert_eq!(func.entry_block, BlockId::from(0));
+        assert_eq!(func.blocks.len(), 2);
+        assert_eq!(func.blocks, vec![BlockId::from(0), BlockId::from(10)]);
+        assert_eq!(func.return_block, Some(BlockId::from(10)));
+
+        let block0 = model.get_block(BlockId::from(0));
+        assert_eq!(block0.instructions.len(), 3); // R+=5, [R+1]=10, [R+2]=20
+        assert_eq!(block0.span, Span::new(0, 10));
+        assert_eq!(block0.next, NextKind::Follows(BlockId::from(10)));
+        assert!(block0.predecessors.is_empty());
+
+        let block6 = model.get_block(BlockId::from(10));
+        assert_eq!(block6.instructions.len(), 2); // R-=5, goto [R]
+        assert_eq!(block6.span, Span::new(10, 15));
+        assert_eq!(block6.next, NextKind::Return);
+        assert_eq!(block6.predecessors.len(), 1);
+        assert_eq!(
+            block6.predecessors[0],
+            PredecessorKind::FollowsFrom(BlockId::from(0))
+        );
+    }
+
+    #[test]
+    fn test_unconditional_jump_function() {
+        let model = setup_and_build_cfg(
+            r#"
+            ; Offset 0   ; Block 0
+            R += 5
+            ; Offset 2
+            goto @target
+            ; Offset 5: Unreachable code (should not be part of function/blocks)
+            halt;        ; Unnumbered.
+            ; Offset 6: Target block
+            target:
+            [R+1] = 30 ; Block 2 (starts here)
+            ; Offset 10
+            R -= 5     ; Block 3 (starts here)
+            ; Offset 12
+            goto [R]
+            "#,
+        );
+
+        let func_id = FunctionId::from(0);
+        let func = model.get_function(func_id);
+        assert_eq!(func.stack_size, 5);
+        assert_eq!(func.entry_block, BlockId::from(0));
+        assert_eq!(func.blocks.len(), 3);
+        assert_eq!(
+            func.blocks,
+            vec![BlockId::from(0), BlockId::from(6), BlockId::from(10)]
+        );
+        assert_eq!(func.return_block, Some(BlockId::from(10)));
+
+        let block0 = model.get_block(BlockId::from(0));
+        assert_eq!(block0.instructions.len(), 2);
+        assert_eq!(block0.span, Span::new(0, 5));
+        assert!(matches!(block0.next, NextKind::Goto(op) if op.kind.get_immediate() == Some(6)));
+        assert!(block0.predecessors.is_empty());
+
+        let block6 = model.get_block(BlockId::from(6));
+        assert_eq!(block6.instructions.len(), 1); // [R+1]=30
+        assert_eq!(block6.span, Span::new(6, 10));
+        assert_eq!(block6.next, NextKind::Follows(BlockId::from(10)));
+        assert_eq!(block6.predecessors.len(), 1);
+        assert_eq!(
+            block6.predecessors[0],
+            PredecessorKind::GotoFrom(BlockId::from(0))
+        );
+
+        let block10 = model.get_block(BlockId::from(10));
+        assert_eq!(block10.instructions.len(), 2); // R-=5, goto [R]
+        assert_eq!(block10.span, Span::new(10, 15));
+        assert_eq!(block10.next, NextKind::Return);
+        assert_eq!(block10.predecessors.len(), 1);
+        assert_eq!(
+            block10.predecessors[0],
+            PredecessorKind::FollowsFrom(BlockId::from(6))
+        );
+    }
+
+    #[test]
+    fn test_conditional_jump_function() {
+        let model = setup_and_build_cfg(
+            r#"
+            ; Offset 0
+            R += 5
+            ; Offset 2
+            if [R+1] goto @true_branch ; Block 0 (entry)
+            ; Offset 5
+            ; False branch (Block 5)
+            [R+2] = 100
+            ; Offset 9
+            goto @merge
+            ; Offset 12
+            ; True branch (Block 12)
+            true_branch:
+            [R+3] = 200
+            ; Offset 16
+            ; Merge point (Block 16)
+            merge:
+            R -= 5
+            ; Offset 18
+            goto [R]
+            "#,
+        );
+
+        let func_id = FunctionId::from(0);
+        let func = model.get_function(func_id);
+        assert_eq!(func.stack_size, 5);
+        assert_eq!(func.blocks.len(), 4);
+        assert_eq!(
+            func.blocks,
+            vec![
+                BlockId::from(0),
+                BlockId::from(5),
+                BlockId::from(12),
+                BlockId::from(16)
+            ]
+        );
+        assert_eq!(func.return_block, Some(BlockId::from(16)));
+
+        // Block 0 (Entry)
+        let block0 = model.get_block(BlockId::from(0));
+        assert_eq!(block0.instructions.len(), 2); // R+=5, if [R+1] goto @true_branch
+        assert_eq!(block0.span, Span::new(0, 5));
+        assert!(
+            matches!(block0.next, NextKind::Condition(cond) if cond.target_block == BlockId::from(12) && cond.follows_block == BlockId::from(5) && cond.jump_if_true)
+        );
+        assert!(block0.predecessors.is_empty());
+
+        // Block 5 (False branch)
+        let block5 = model.get_block(BlockId::from(5));
+        assert_eq!(block5.instructions.len(), 2); // [R+2]=100, goto @merge
+        assert_eq!(block5.span, Span::new(5, 12));
+        assert!(matches!(block5.next, NextKind::Goto(op) if op.kind.get_immediate() == Some(16)));
+        assert_eq!(block5.predecessors.len(), 1);
+        assert!(
+            matches!(block5.predecessors[0], PredecessorKind::ConditionalFollow(cond) if cond.from_block == BlockId::from(0))
+        );
+
+        // Block 12 (True branch)
+        let block12 = model.get_block(BlockId::from(12));
+        assert_eq!(block12.instructions.len(), 1); // [R+3]=200
+        assert_eq!(block12.span, Span::new(12, 16));
+        assert_eq!(block12.next, NextKind::Follows(BlockId::from(16))); // Falls through to merge
+        assert_eq!(block12.predecessors.len(), 1);
+        assert!(
+            matches!(block12.predecessors[0], PredecessorKind::ConditionalJump(cond) if cond.from_block == BlockId::from(0))
+        );
+
+        // Block 16 (Merge & Return)
+        let block16 = model.get_block(BlockId::from(16));
+        assert_eq!(block16.instructions.len(), 2); // R-=5, goto [R]
+        assert_eq!(block16.span, Span::new(16, 21));
+        assert_eq!(block16.next, NextKind::Return);
+        assert_eq!(block16.predecessors.len(), 2);
+        assert!(block16
+            .predecessors
+            .contains(&PredecessorKind::GotoFrom(BlockId::from(5))));
+        assert!(block16
+            .predecessors
+            .contains(&PredecessorKind::FollowsFrom(BlockId::from(12))));
+    }
+
+    #[test]
+    fn test_loop_function() {
+        let model = setup_and_build_cfg(
+            r#"
+            ; Offset 0
+            R += 5
+            ; Offset 2
+            loop_start:
+            [R+1] = [R+1] + -1 ; Block 2 (Loop body)
+            ; Offset 6
+            if [R+1] goto @loop_start ; Block 6 (Loop condition)
+            ; Offset 9
+            R -= 5 ;          ; Block 9 (Exit)
+            ; Offset 11
+            goto [R]
+            "#,
+        );
+
+        let func_id = FunctionId::from(0);
+        let func = model.get_function(func_id);
+        assert_eq!(func.blocks.len(), 3);
+        assert_eq!(
+            func.blocks,
+            vec![BlockId::from(0), BlockId::from(2), BlockId::from(9)]
+        );
+        assert_eq!(func.return_block, Some(BlockId::from(9)));
+
+        // Block 0 (Setup)
+        let block0 = model.get_block(BlockId::from(0));
+        assert_eq!(block0.instructions.len(), 1); // R+=5
+        assert_eq!(block0.span, Span::new(0, 2));
+        assert_eq!(block0.next, NextKind::Follows(BlockId::from(2)));
+        assert!(block0.predecessors.is_empty());
+
+        // Block 2 (Loop Body)
+        let block2 = model.get_block(BlockId::from(2));
+        assert_eq!(block2.instructions.len(), 2); // [R+1] = [R+1] - 1
+        assert_eq!(block2.span, Span::new(2, 9));
+        let NextKind::Condition(Condition {
+            target_block,
+            follows_block,
+            ..
+        }) = block2.next
+        else {
+            panic!("Expected condition");
+        };
+        assert_eq!(target_block, BlockId::from(2));
+        assert_eq!(follows_block, BlockId::from(9));
+        assert!(block2
+            .predecessors
+            .contains(&PredecessorKind::FollowsFrom(BlockId::from(0))));
+        // Block 6 is just the jump, so the loop jump goes FROM 6 TO 2.
+        // Block 2 predecessor should also include the loop back edge from Block 6.
+        assert!(block2
+            .predecessors
+            .contains(&PredecessorKind::ConditionalJump(Condition {
+                from_block: BlockId::from(2),
+                condition_operand: block2
+                    .instructions
+                    .last()
+                    .unwrap()
+                    .conditional_jump_condition()
+                    .unwrap(), // Check this assumption
+                jump_if_true: true,
+                target_block: BlockId::from(2),
+                follows_block: BlockId::from(9)
+            }))); // TODO: Need to get condition operand correctly
+
+        // Block 9 (Exit & Return)
+        let block9 = model.get_block(BlockId::from(9));
+        assert_eq!(block9.instructions.len(), 2); // The if, R-=5, goto [R]
+        assert_eq!(block9.span, Span::new(9, 14));
+        assert_eq!(
+            func.blocks,
+            vec![BlockId::from(0), BlockId::from(2), BlockId::from(9)]
+        ); // Block 0, Block 2 (body), Block 6 (if), Block 9 (return)
+    }
+
+    #[test]
+    fn test_function_call() {
+        let model = setup_and_build_cfg(
+            r#"
+            ; Main Function (Offset 0)
+            main:
+            R += 5
+            ; Offset 2
+            [R+1] = 111 ; Arg 1
+            ; Offset 6
+            [R+2] = 222 ; Arg 2
+            ; Offset 10
+            [R] = @main_ret ; Set return address
+            ; Offset 14
+            goto @callee ; Call
+            ; Offset 17
+            main_ret:
+            output [R+1] ; Use return value
+            ; Offset 19
+            R -= 5
+            ; Offset 21
+            goto [R]
+
+            ; Callee Function (Offset 24)
+            callee:
+            R += 4 ; Stack frame for locals + args
+            ; Offset 26
+            [R-1] = [R-5] ; Access arg 1 ([R+1] from caller -> [R-5] in callee)
+            ; Offset 30
+            [R-2] = [R-6] ; Access arg 2 ([R+2] from caller -> [R-6] in callee)
+            ; Offset 34
+            [R-3] = [R-1] + [R-2] ; Local calc
+            ; Offset 38
+            [R-5] = [R-3] ; Put result in return slot 1 ([R-5] in callee -> [R+1] in caller)
+            ; Offset 42
+            R -= 4
+            ; Offset 44
+            goto [R]
+            "#,
+        );
+
+        let main_id = FunctionId::from(0);
+        let callee_id = FunctionId::from(24);
+
+        // Check Main Function
+        let main_func = model.get_function(main_id);
+        assert_eq!(main_func.stack_size, 5);
+        assert_eq!(main_func.blocks.len(), 3); // Entry+Args+Call, Output, Return
+        assert_eq!(
+            main_func.blocks,
+            vec![BlockId::from(0), BlockId::from(17), BlockId::from(19)]
+        );
+        assert_eq!(main_func.return_block, Some(BlockId::from(19)));
+
+        let block0 = model.get_block(BlockId::from(0)); // The call block
+        assert_eq!(block0.instructions.len(), 5);
+        assert_eq!(block0.span, Span::new(0, 17));
+        let NextKind::FunctionCall(call) = &block0.next else {
+            panic!("block0.next mismatch: {:?}", block0.next);
+        };
+        println!("{:?}", call);
+
+        assert_eq!(call.return_block, BlockId::from(17));
+        assert_eq!(call.function_addr.kind.get_immediate().unwrap(), 24);
+        assert_eq!(call.calling_block, BlockId::from(0));
+
+        // Check Callee Function (Block 24)
+        let callee_func = model.get_function(callee_id);
+        assert_eq!(callee_func.stack_size, 4);
+        assert_eq!(callee_func.blocks.len(), 2);
+        assert_eq!(callee_func.return_block, Some(BlockId::from(42)));
+
+        // Check Return Block Predecessor in Main
+        let block17 = model.get_block(BlockId::from(17)); // The return block in main
+        assert_eq!(block17.predecessors.len(), 1);
+        assert_eq!(
+            block17.predecessors[0],
+            PredecessorKind::FunctionCallReturns(call.clone())
+        );
+
+        // Check Call Block Predecessor in Callee
+        let block24 = model.get_block(BlockId::from(24)); // The call block in callee
+        assert_eq!(block24.predecessors.len(), 0);
+    }
+
+    #[test]
+    fn test_halt_function() {
+        let model = setup_and_build_cfg(
+            r#"
+            R += 2
+            halt
+            "#,
+        );
+        let func_id = FunctionId::from(0);
+        let func = model.get_function(func_id);
+        assert_eq!(func.stack_size, 2);
+        assert_eq!(func.blocks.len(), 1);
+        assert!(func.return_block.is_none());
+
+        let block0 = model.get_block(BlockId::from(0));
+        assert_eq!(block0.instructions.len(), 2);
+        assert_eq!(block0.next, NextKind::Halt);
     }
 }
