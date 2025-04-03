@@ -318,4 +318,75 @@ impl Instruction {
             operands,
         })
     }
+
+    /// Returns a list of operands that are read by this instruction.
+    /// Does not include immediate values, only operands representing memory locations.
+    pub fn reads(&self) -> Vec<&Operand> {
+        let mut reads = Vec::new();
+        match self.opcode {
+            Opcode::Add | Opcode::Mul | Opcode::LessThan | Opcode::Equals => {
+                reads.push(&self.operands[0]); // Arg 1
+                reads.push(&self.operands[1]); // Arg 2
+            }
+            Opcode::Input => {
+                // Input reads from external source, not an operand location
+            }
+            Opcode::Output => {
+                reads.push(&self.operands[0]); // Value to output
+            }
+            Opcode::JumpIfTrue | Opcode::JumpIfFalse => {
+                reads.push(&self.operands[0]); // Condition
+                                               // The jump target (operands[1]) is also technically "read" if it's not immediate,
+                                               // but data flow usually focuses on values used *in* computation or conditions.
+                                               // Let's include it if it's not immediate, as its value determines control flow.
+                reads.push(&self.operands[1]); // Jump target
+            }
+            Opcode::AdjustRelativeBase => {
+                reads.push(&self.operands[0]); // Value to adjust by
+            }
+            Opcode::Halt => {} // No reads
+        }
+
+        // Filter out immediate values as they don't represent memory locations being read.
+        // Also filter Deref for now, as handling them requires pointer analysis.
+        // We *do* include Memory and RelativeMemory kinds.
+        reads
+            .into_iter()
+            .filter(|op| {
+                matches!(
+                    op.kind,
+                    OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
+                )
+            })
+            // .filter(|op| !matches!(op.kind, OperandKind::Immediate(_) | OperandKind::Deref(_)))
+            .collect()
+    }
+
+    /// Returns the operand that is written to by this instruction, if any.
+    pub fn writes(&self) -> Option<&Operand> {
+        let target_operand = match self.opcode {
+            Opcode::Add | Opcode::Mul | Opcode::LessThan | Opcode::Equals => {
+                Some(&self.operands[2]) // Destination
+            }
+            Opcode::Input => {
+                Some(&self.operands[0]) // Destination
+            }
+            // Opcodes that don't write to an operand location
+            Opcode::Output
+            | Opcode::JumpIfTrue
+            | Opcode::JumpIfFalse
+            | Opcode::AdjustRelativeBase // Modifies R register implicitly, not an operand location
+            | Opcode::Halt => None,
+        };
+
+        // Filter out writes to non-memory locations (shouldn't happen with current opcodes)
+        // and Deref (requires pointer analysis to know the target).
+        target_operand.filter(|op| {
+            matches!(
+                op.kind,
+                OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
+            )
+        })
+        // .filter(|op| !matches!(op.kind, OperandKind::Immediate(_) | OperandKind::Deref(_)))
+    }
 }

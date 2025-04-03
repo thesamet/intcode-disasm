@@ -1,7 +1,7 @@
 macro_rules! event_types_enum {
     (
         $enum_name:ident,
-        $model_path:path,
+        $model:path,
         // Capture attributes, visibility, name, and fields (with visibility) for each struct
         $(
             $(#[$struct_attr:meta])*
@@ -24,42 +24,41 @@ macro_rules! event_types_enum {
             $($name($name)),*
         }
 
-        // Generate From impls
         $(
         impl From<$name> for $enum_name {
             fn from(event: $name) -> Self {
                 $enum_name::$name(event)
             }
         }
+
         )*
 
         paste::paste! {
             // Type alias for the sender passed to listeners (it collects new events)
             pub type Sender<'a> = crate::disasm::v2::dispatching::EventCollector<'a, $enum_name>;
 
-            #[allow(unused)]
-            pub trait ModelEventListener: $crate::disasm::v2::dispatching::EventListener<$enum_name, $model_path> {
+             #[allow(unused_variables)] // Allow unused model, event, sender in default impls
+            pub trait ModelEventListener: $crate::disasm::v2::dispatching::EventListener<$enum_name, $model> {
 
                 $(
                     // Default implementation for specific event handlers
-                    fn [<on_ $name:snake>](&mut self, _model: &mut $model_path, _event: $name, _sender: &mut Sender) {
+                    fn [<on_ $name:snake>](&mut self, _model: &mut $model, _event: $name, _sender: &mut Sender) {
                         // Default is no-op
                     }
                 )*
 
-                // Required on_event implementation dispatches to specific handlers
-                fn on_event(&mut self, model: &mut $model_path, event: $enum_name, sender: &mut Sender) {
+                /// Dispatches the generic event to the specific typed handler.
+                fn on_event(&mut self, model: &mut $model, event: $enum_name, sender: &mut Sender) {
                     match event {
                         $($enum_name::$name(e) => self.[<on_ $name:snake>](model, e, sender),)*
                     }
                 }
             }
 
-            // Blanket implementation to satisfy the core EventListener trait using the ModelEventListener dispatch
-            impl<T: ModelEventListener + ?Sized> $crate::disasm::v2::dispatching::EventListener<$enum_name, $model_path> for T {
-                fn on_event(&mut self, model: &mut $model_path, event: $enum_name, sender: &mut Sender) {
-                    // Directly call the on_event defined in ModelEventListener which handles the dispatch
-                   <T as ModelEventListener>::on_event(self, model, event, sender);
+             // Blanket implementation to connect ModelEventListener to EventListener
+            impl<T: ModelEventListener + ?Sized> $crate::disasm::v2::dispatching::EventListener<$enum_name, $model> for T {
+                fn on_event(&mut self, model: &mut $model, event: $enum_name, sender: &mut Sender) {
+                     <Self as ModelEventListener>::on_event(self, model, event, sender);
                 }
             }
         }
@@ -156,9 +155,12 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    // Define a simple test model type for the macro invocation
+    type TestModel = crate::disasm::v2::dispatching::tests::TestModelData; // Use the actual struct below
+
     // Define simple test events using the macro
     event_types_enum! {
-        TestEvent, TestModel,
+        TestEvent, TestModel, // Pass the model type here
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)] // Add derives for comparison in tests
         pub struct EventA {
             pub val_a: u32,
@@ -170,9 +172,9 @@ mod tests {
         }
     }
 
-    // Define a simple test model
+    // Define a simple test model struct
     #[derive(Default, Debug, Clone)]
-    pub struct TestModel {
+    pub struct TestModelData {
         counter: u32,
     }
 
@@ -197,32 +199,35 @@ mod tests {
         }
     }
 
-    impl EventListener<TestEvent, TestModel> for TestListener {
-        fn on_event(
-            &mut self,
-            model: &mut TestModel,
-            event: TestEvent,
-            collector: &mut EventCollector<TestEvent>,
-        ) {
-            // Record the received event
-            self.received_events.borrow_mut().push(event);
+    // Implement the specific ModelEventListener for the test types
+    impl ModelEventListener for TestListener {
+        // Note: on_event is handled by the blanket impl using the specific handlers below
 
-            // Mutate the model (simple example)
+        fn on_event_a(&mut self, model: &mut TestModelData, event: EventA, collector: &mut Sender) {
+            // Record the received event (specific type)
+            self.received_events.borrow_mut().push(event.into()); // Convert to enum type
+
+            // Mutate the model
             model.counter += 1;
 
             // Optionally publish a new event
-            if let TestEvent::EventA(_) = event {
-                if let Some(event_to_publish) = self.publish_on_a {
-                    collector.publish(event_to_publish);
-                }
+            if let Some(event_to_publish) = self.publish_on_a {
+                collector.publish(event_to_publish);
             }
+        }
+
+        fn on_event_b(&mut self, model: &mut TestModelData, event: EventB, _sender: &mut Sender) {
+            // Record the received event (specific type)
+            self.received_events.borrow_mut().push(event.into()); // Convert to enum type
+                                                                  // Mutate the model
+            model.counter += 1;
         }
     }
 
     #[test]
     fn test_single_listener_receives_event() {
-        let mut model = TestModel::default();
-        let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
+        let mut model = TestModelData::default();
+        let mut publisher: EventPublisher<TestEvent, TestModelData> = EventPublisher::new();
         let listener = TestListener::new(None);
 
         publisher.add_listener(Box::new(listener.clone()));
@@ -239,8 +244,8 @@ mod tests {
 
     #[test]
     fn test_multiple_listeners_receive_event() {
-        let mut model = TestModel::default();
-        let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
+        let mut model = TestModelData::default();
+        let mut publisher: EventPublisher<TestEvent, TestModelData> = EventPublisher::new();
         let listener1 = TestListener::new(None);
         let listener2 = TestListener::new(None);
 
@@ -266,8 +271,8 @@ mod tests {
 
     #[test]
     fn test_listener_publishes_event_processed_in_same_cycle() {
-        let mut model = TestModel::default();
-        let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
+        let mut model = TestModelData::default();
+        let mut publisher: EventPublisher<TestEvent, TestModelData> = EventPublisher::new();
 
         let event_b_to_publish = EventB { val_b: 95 };
         // Listener will publish EventB when it receives EventA
@@ -297,8 +302,8 @@ mod tests {
 
     #[test]
     fn test_listener_published_event_processed_immediately() {
-        let mut model = TestModel::default();
-        let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
+        let mut model = TestModelData::default();
+        let mut publisher: EventPublisher<TestEvent, TestModelData> = EventPublisher::new();
 
         let event_b_to_publish = EventB { val_b: 37 };
         // Listener will publish EventB when it receives EventA
@@ -324,8 +329,8 @@ mod tests {
 
     #[test]
     fn test_process_empty_queue() {
-        let mut model = TestModel::default();
-        let mut publisher: EventPublisher<TestEvent, TestModel> = EventPublisher::new();
+        let mut model = TestModelData::default();
+        let mut publisher: EventPublisher<TestEvent, TestModelData> = EventPublisher::new();
         let listener = TestListener::new(None);
 
         publisher.add_listener(Box::new(listener.clone()));

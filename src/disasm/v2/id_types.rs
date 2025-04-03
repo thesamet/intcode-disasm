@@ -23,6 +23,17 @@ macro_rules! define_id_type {
             }
         }
 
+        impl std::fmt::Display for $id_type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let name_str = stringify!($id_type);
+                let prefix = name_str
+                    .get(0..2)
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_else(|| "id".to_string()); // Fallback prefix
+                write!(f, "{}{}", prefix, self.0)
+            }
+        }
+
         paste::paste! {
             mod [<counter_ $id_type:snake>] {
                 use std::sync::atomic::{AtomicUsize, Ordering};

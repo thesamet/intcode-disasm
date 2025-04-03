@@ -19,4 +19,10 @@ event_types_enum! {Event, ProgramModel,
     pub struct FunctionCfgBuilt {
         pub function_id: FunctionId,
     }
+
+    /// Signals that data flow analysis (reaching definitions, liveness) has completed for a function.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DataFlowAnalysisComplete {
+        pub function_id: FunctionId,
+    }
 }

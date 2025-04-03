@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::{
     control_flow::Block,
+    data_flow::DataFlowResult, // + Import DataFlowResult
     dispatching::EventPublisher,
     events::{self, Event, ImageAddedEvent, ImageScannerComplete},
     id_types::define_id_type,
@@ -15,6 +16,7 @@ pub struct ProgramModel {
     image: Vec<i128>,
 
     image_scanner_result: Option<ImageScannerResult>,
+    data_flow_result: Option<DataFlowResult>, // + Add field for data flow results
 
     functions: HashMap<FunctionId, Function>,
     blocks: HashMap<BlockId, Block>,
@@ -28,6 +30,7 @@ impl ProgramModel {
             image_scanner_result: None,
             functions: HashMap::new(),
             blocks: HashMap::new(),
+            data_flow_result: None, // + Initialize field
         }
     }
 
@@ -51,6 +54,22 @@ impl ProgramModel {
 
     pub fn get_image_scanner_result(&self) -> &ImageScannerResult {
         self.image_scanner_result.as_ref().unwrap()
+    }
+
+    /// Sets the computed data flow analysis results.
+    /// Typically called by the DataFlowAnalyzer listener.
+    pub fn set_data_flow_result(&mut self, result: DataFlowResult) {
+        self.data_flow_result = Some(result);
+        // Potentially emit a DataFlowAnalysisComplete event here if needed by subsequent stages
+    }
+
+    /// Gets an immutable reference to the data flow analysis results, if computed.
+    pub fn get_data_flow_result(&self) -> Option<&DataFlowResult> {
+        self.data_flow_result.as_ref()
+    }
+
+    pub fn get_data_flow_result_mut(&mut self) -> Option<&mut DataFlowResult> {
+        self.data_flow_result.as_mut()
     }
 
     pub fn add_function(&mut self, function: Function) {

@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod control_flow;
+pub mod data_flow;
 pub mod dispatching;
 mod events;
 pub mod id_types;
