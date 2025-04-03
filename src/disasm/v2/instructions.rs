@@ -60,7 +60,7 @@ impl OperandKind {
 
 define_id_type!(OperandId);
 // Operand is a value that is passed as a positional argument to an instruction.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Operand {
     pub id: OperandId,
     pub kind: OperandKind,
@@ -135,13 +135,13 @@ pub enum ParseError {
 }
 
 define_id_type!(InstructionId);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Instruction {
     // Basic structural info (always available)
     pub id: InstructionId,
     pub span: Span,
     pub opcode: Opcode,
-    pub operands: Vec<Operand>,
+    operands: Vec<Operand>,
 }
 
 impl fmt::Display for Instruction {
@@ -161,6 +161,18 @@ pub struct Assignment {
 }
 
 impl Instruction {
+    pub fn immediate_arg(&self, index: usize) -> Option<i128> {
+        self.operands[index].kind.get_immediate()
+    }
+
+    pub fn memory_arg(&self, index: usize) -> Option<i128> {
+        self.operands[index].kind.get_memory()
+    }
+
+    pub fn relative_memory_arg(&self, index: usize) -> Option<i128> {
+        self.operands[index].kind.get_relative_memory()
+    }
+
     pub fn is_jump(&self) -> bool {
         match self.opcode {
             Opcode::JumpIfTrue | Opcode::JumpIfFalse => true,
@@ -170,20 +182,10 @@ impl Instruction {
 
     pub fn goto_address(&self) -> Option<Operand> {
         match self.opcode {
-            Opcode::JumpIfTrue
-                if self.operands[0]
-                    .kind
-                    .get_immediate()
-                    .is_some_and(|v| v != 0) =>
-            {
+            Opcode::JumpIfTrue if self.immediate_arg(0).is_some_and(|v| v != 0) => {
                 Some(self.operands[1])
             }
-            Opcode::JumpIfFalse
-                if self.operands[0]
-                    .kind
-                    .get_immediate()
-                    .is_some_and(|v| v == 0) =>
-            {
+            Opcode::JumpIfFalse if self.immediate_arg(0).is_some_and(|v| v == 0) => {
                 Some(self.operands[1])
             }
             _ => None,
@@ -203,16 +205,36 @@ impl Instruction {
             .and_then(|a| a.kind.get_immediate().map(|a| a as usize))
     }
 
-    pub fn conditional_immediate_jump(&self) -> Option<usize> {
-        if self.is_goto() {
+    pub fn is_conditional_jump(&self) -> bool {
+        (self.opcode == Opcode::JumpIfTrue || self.opcode == Opcode::JumpIfFalse) && !self.is_goto()
+    }
+
+    pub fn conditional_jump_address(&self) -> Option<Operand> {
+        if !self.is_conditional_jump() {
             return None;
         }
-        match self.opcode {
-            Opcode::JumpIfTrue | Opcode::JumpIfFalse => {
-                self.operands[1].kind.get_immediate().map(|a| a as usize)
-            }
-            _ => None,
+        Some(self.operands[1])
+    }
+
+    pub fn conditional_jump_condition(&self) -> Option<Operand> {
+        if !self.is_conditional_jump() {
+            return None;
         }
+        Some(self.operands[0])
+    }
+
+    pub fn conditional_jump_immediate_address(&self) -> Option<usize> {
+        if !self.is_conditional_jump() {
+            return None;
+        }
+        self.immediate_arg(1).map(|a| a as usize)
+    }
+
+    pub fn relative_base_adjustment(&self) -> Option<i128> {
+        if self.opcode != Opcode::AdjustRelativeBase {
+            return None;
+        }
+        self.immediate_arg(0)
     }
 
     pub fn as_assignment(&self) -> Option<Assignment> {

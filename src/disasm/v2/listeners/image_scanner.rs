@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::disasm::v2::{
     events::{self, ImageAddedEvent, ModelEventListener},
-    instructions::{Instruction, Opcode, Operand, ParseError},
+    instructions::{Instruction, InstructionId, Opcode, Operand, ParseError},
     model::ProgramModel,
     Span,
 };
@@ -23,16 +23,18 @@ pub struct RecognizedFunction {
     pub stack_size: usize,
     pub instructions: Vec<Instruction>,
     // The span of the return starts at the R adjustment, and ends after the goto.
-    pub returns: Option<Span>,
+    pub return_span: Option<Span>,
     pub jump_targets: HashSet<usize>,
+    // Locations from which a jump (conditional or unconditional) is taken.
+    pub jump_sources: Vec<usize>,
     pub function_calls: Vec<BaseFunctionCall>,
 }
 
 #[derive(Debug, Clone)]
-struct BaseFunctionCall {
-    span: Span,
-    target: Operand,
-    return_address: usize,
+pub struct BaseFunctionCall {
+    pub span: Span,
+    pub target: Operand,
+    pub return_address: usize,
 }
 
 /* The image scanner does an initial first pass over the binary image.
@@ -55,12 +57,15 @@ impl ModelEventListener for ImageScanner {
                 i += 1;
                 continue;
             };
-            let Ok(f) = scan_from(image, i, stack_size) else {
+            let Ok(mut f) = scan_from(image, i, stack_size) else {
                 data_offsets.push(i);
                 i += 1;
                 continue;
             };
             i = f.span.end;
+            for i in f.instructions.iter_mut() {
+                i.id = InstructionId::fresh();
+            }
             recognized_functions.push(f);
             continue;
         }
@@ -90,11 +95,7 @@ fn recognize_function_start(image: &[i128], offset: usize) -> Option<i128> {
     if instruction.opcode != Opcode::AdjustRelativeBase {
         return None;
     }
-    instruction
-        .operands
-        .get(0)
-        .and_then(|o| o.kind.get_immediate())
-        .filter(|r| *r > 0)
+    instruction.relative_base_adjustment().filter(|r| *r > 0)
 }
 
 fn recognize_return(
@@ -106,8 +107,7 @@ fn recognize_return(
     if adj_r.opcode != Opcode::AdjustRelativeBase {
         return Err(ParseError::NoMatch);
     }
-    let Some(negated_stack_size) = adj_r.operands.get(0).and_then(|o| o.kind.get_immediate())
-    else {
+    let Some(negated_stack_size) = adj_r.relative_base_adjustment() else {
         return Err(ParseError::InvalidStackAdjustment(offset));
     };
     if stack_size != -negated_stack_size {
@@ -164,6 +164,7 @@ fn scan_from(
     let mut jump_targets = HashSet::new();
     let mut instructions = vec![];
     let mut function_calls = vec![];
+    let mut jump_sources = vec![];
     let mut seen = HashSet::new();
     while let Some(offset) = queue.pop() {
         if seen.contains(&offset) {
@@ -184,9 +185,10 @@ fn scan_from(
             if instruction.is_jump() {
                 let address = instruction
                     .immediate_goto()
-                    .or_else(|| instruction.conditional_immediate_jump());
+                    .or_else(|| instruction.conditional_jump_immediate_address());
                 if let Some(addr) = address {
                     queue.push(addr);
+                    jump_sources.push(addr);
                     jump_targets.insert(addr);
                 }
             }
@@ -203,8 +205,9 @@ fn scan_from(
         span: Span::new(start, instructions.last().unwrap().span.end),
         stack_size: stack_size as usize,
         instructions,
-        returns: returns.iter().exactly_one().ok().cloned(),
+        return_span: returns.iter().exactly_one().ok().cloned(),
         jump_targets,
+        jump_sources,
         function_calls,
     })
 }
@@ -212,7 +215,6 @@ fn scan_from(
 #[cfg(test)]
 mod tests {
     use events::Event;
-    use itertools::put_back;
 
     use super::*;
     use crate::disasm::{parser, v2::dispatching::EventPublisher};
@@ -242,7 +244,7 @@ mod tests {
         assert_eq!(result.recognized_functions.len(), 1);
         let function = &result.recognized_functions[0];
         assert_eq!(function.stack_size, 5);
-        assert_eq!(function.returns.unwrap().start, 10);
+        assert_eq!(function.return_span.unwrap().start, 10);
         assert_eq!(function.instructions.len(), 5);
     }
 

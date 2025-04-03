@@ -14,4 +14,9 @@ event_types_enum! {Event, ProgramModel,
     pub struct BlockAddedEvent {
         block_id: BlockId,
     }
+
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    pub struct FunctionCfgBuilt {
+        pub function_id: FunctionId,
+    }
 }
