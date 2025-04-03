@@ -312,7 +312,7 @@ impl Instruction {
             })
             .collect::<Result<_, _>>()?;
         Ok(Instruction {
-            id: InstructionId::unassigned(),
+            id: InstructionId::from(offset),
             span: Span::new(offset, offset + operand_count + 1),
             opcode: Opcode::from_i128(opcode % 100)?,
             operands,
