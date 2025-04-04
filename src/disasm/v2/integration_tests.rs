@@ -58,11 +58,11 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create some SSA variables to infer types for
-        let int_var = SsaVar::new(memory_operand(100), 1, InstructionId::from(1));
+        let int_var = SsaVar::new(memory_operand(100), 1);
 
-        let bool_var = SsaVar::new(memory_operand(101), 1, InstructionId::from(2));
+        let bool_var = SsaVar::new(memory_operand(101), 1);
 
-        let char_var = SsaVar::new(memory_operand(102), 1, InstructionId::from(3));
+        let char_var = SsaVar::new(memory_operand(102), 1);
 
         // Get type variables for these SSA variables
         let int_type = type_inference.type_for_var(&int_var);
@@ -110,7 +110,7 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create an SSA variable for a function pointer
-        let func_ptr_var = SsaVar::new(memory_operand(200), 1, InstructionId::from(1));
+        let func_ptr_var = SsaVar::new(memory_operand(200), 1);
 
         // Get type variable
         let func_ptr_type = type_inference.type_for_var(&func_ptr_var);
@@ -145,11 +145,11 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create variables for testing pointer relationships
-        let int_var = SsaVar::new(memory_operand(100), 1, InstructionId::from(1));
+        let int_var = SsaVar::new(memory_operand(100), 1);
 
-        let ptr_var = SsaVar::new(memory_operand(101), 1, InstructionId::from(2));
+        let ptr_var = SsaVar::new(memory_operand(101), 1);
 
-        let deref_var = SsaVar::new(deref_operand(101), 1, InstructionId::from(3));
+        let deref_var = SsaVar::new(deref_operand(101), 1);
 
         // Get type variables
         let int_type = type_inference.type_for_var(&int_var);

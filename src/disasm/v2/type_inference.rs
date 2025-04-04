@@ -5,8 +5,10 @@ use crate::disasm::v2::{
     control_flow::NextKind,
     instructions::{Opcode, OperandKind},
     model::BlockId,
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaProgram, SsaVar},
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaProgram, SsaVar},
 };
+
+use super::{instructions::InstructionId, ssa_form::SsaInstruction};
 
 /// Unique identifier for a type variable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -214,7 +216,7 @@ impl TypeInference {
             if let Some(other_var) = candidates.first() {
                 // If we find it, add a deref constraint
                 let pointer_type = self.type_for_var(other_var);
-                let instr_id = var.def_id.index();
+                let instr_id = 5555;
                 self.add_constraint(
                     pointer_type,
                     Type::Pointer(Box::new(typ.clone())),
@@ -235,7 +237,7 @@ impl TypeInference {
         addr: usize,
         reason: ConstraintReason,
     ) {
-        debug!(
+        println!(
             "Adding constraint: {} = {} ({:?} at {})",
             left, right, reason, addr
         );
@@ -250,7 +252,7 @@ impl TypeInference {
     /// Generate constraints for a phi function
     fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, block_id: BlockId) {
         let result_type = self.type_for_var(&phi.result);
-        let result_instr_id = phi.result.def_id.index();
+        let result_instr_id = 5556;
 
         // Add constraints between each input and the result
         for (_, input_var) in &phi.inputs {
@@ -265,8 +267,11 @@ impl TypeInference {
     }
 
     /// Generate constraints for an instruction
-    fn generate_constraints_for_instruction(&mut self, instr: &SsaInstruction, block_id: BlockId) {
-        let instruction = &instr.instruction;
+    fn generate_constraints_for_instruction(
+        &mut self,
+        instruction: &SsaInstruction,
+        block_id: BlockId,
+    ) {
         let instr_id = instruction.id.index();
 
         // Infer types based on the instruction
@@ -500,6 +505,7 @@ impl TypeInference {
 
     /// Substitute type variables according to the substitution map
     pub fn substitute(t: Type, subst: &HashMap<TypeVarId, Type>) -> Type {
+        println!("Subsititute: {}", t);
         match t {
             Type::Int => Type::Int,
             Type::Bool => Type::Bool,
@@ -925,6 +931,14 @@ mod tests {
         }
     }
 
+    fn deref_operand(offset: usize) -> Operand {
+        Operand {
+            kind: OperandKind::Deref(offset),
+            offset: 0,
+            debug_marker: None,
+        }
+    }
+
     /// Direct API test for type inference (no assembly parsing)
     #[test]
     fn test_basic_type_inference_api() {
@@ -932,11 +946,11 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create some SSA variables to infer types for
-        let int_var = SsaVar::new(memory_operand(100), 1, InstructionId::from(1));
+        let int_var = SsaVar::new(memory_operand(100), 1);
 
-        let bool_var = SsaVar::new(memory_operand(101), 1, InstructionId::from(2));
+        let bool_var = SsaVar::new(memory_operand(101), 1);
 
-        let char_var = SsaVar::new(memory_operand(102), 1, InstructionId::from(3));
+        let char_var = SsaVar::new(memory_operand(102), 1);
 
         // Mark variables for easier identification in tests
         type_inference.mark_var(int_var.clone(), 'a');
@@ -989,7 +1003,7 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create an SSA variable for a function pointer
-        let func_ptr_var = SsaVar::new(memory_operand(200), 1, InstructionId::from(1));
+        let func_ptr_var = SsaVar::new(memory_operand(200), 1);
 
         // Mark variable
         type_inference.mark_var(func_ptr_var.clone(), 'a');
@@ -1028,13 +1042,13 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create variables for testing pointer relationships
-        let int_var = SsaVar::new(memory_operand(100), 1, InstructionId::from(1));
+        let int_var = SsaVar::new(memory_operand(100), 1);
 
         // For a pointer variable, we use Memory kind in SSA
-        let ptr_var = SsaVar::new(memory_operand(101), 1, InstructionId::from(2));
+        let ptr_var = SsaVar::new(memory_operand(101), 1);
 
         // For dereferenced variables, we use the Deref kind
-        let deref_var = SsaVar::new(memory_operand(101), 1, InstructionId::from(3));
+        let deref_var = SsaVar::new(deref_operand(101), 1);
 
         // Mark variables
         type_inference.mark_var(int_var.clone(), 'a');
@@ -1090,13 +1104,13 @@ mod tests {
         let mut type_inference = TypeInference::new();
 
         // Create a variable
-        let var = SsaVar::new(memory_operand(100), 1, InstructionId::from(1));
+        let var = SsaVar::new(memory_operand(100), 1);
 
         // Get type variable
         let var_type = type_inference.type_for_var(&var);
 
         // Create another variable that will be unified with var_type
-        let another_var = SsaVar::new(memory_operand(101), 1, InstructionId::from(2));
+        let another_var = SsaVar::new(memory_operand(101), 1);
         let another_type = type_inference.type_for_var(&another_var);
 
         // First, directly set var_type to int type

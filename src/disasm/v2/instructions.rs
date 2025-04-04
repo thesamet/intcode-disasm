@@ -438,17 +438,22 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
         positions
     }
 
-    fn map_rw<R, W, S>(&self, map_read: &mut R, map_write: &mut W) -> GenericInstruction<S>
+    pub fn map_rw<C, R, W, S>(
+        &self,
+        context: &mut C,
+        map_read: &mut R,
+        map_write: &mut W,
+    ) -> GenericInstruction<S>
     where
-        R: FnMut(&T) -> S,
-        W: FnMut(&T) -> S,
+        R: FnMut(&mut C, &T) -> S,
+        W: FnMut(&mut C, &T) -> S,
     {
         let mut new_operands = Vec::new();
         for (i, op) in self.operands.iter().enumerate() {
             if self.read_positions().contains(&i) {
-                new_operands.push(map_read(&op));
+                new_operands.push(map_read(context, &op));
             } else {
-                new_operands.push(map_write(&op));
+                new_operands.push(map_write(context, &op));
             }
         }
         GenericInstruction {

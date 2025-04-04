@@ -30,8 +30,6 @@ pub struct SsaVar {
     pub operand: Operand,
     /// Version number of this SSA variable
     pub version: usize,
-    /// The definition that created this SSA variable
-    pub def_id: InstructionId,
     /// Source information for this variable
     pub source: SsaVarSource,
 }
@@ -44,11 +42,10 @@ impl HasOperand for SsaVar {
 
 impl SsaVar {
     /// Create a new SSA variable with Regular source
-    pub fn new(operand: Operand, version: usize, def_id: InstructionId) -> Self {
+    pub fn new(operand: Operand, version: usize) -> Self {
         Self {
             operand,
             version,
-            def_id,
             source: SsaVarSource::Regular,
         }
     }
@@ -58,7 +55,6 @@ impl SsaVar {
         Self {
             operand,
             version,
-            def_id: def.instruction_id,
             source: SsaVarSource::FunctionReturn { def },
         }
     }
@@ -79,12 +75,7 @@ pub struct PhiFunction {
     pub inputs: HashMap<BlockId, SsaVar>,
 }
 
-/// SSA form of an instruction with additional metadata
-#[derive(Debug, Clone)]
-pub struct SsaInstruction {
-    /// The generic instruction using SSA variables
-    pub instruction: GenericInstruction<SsaVar>,
-}
+pub type SsaInstruction = GenericInstruction<SsaVar>;
 
 /// Represents a basic block in SSA form
 #[derive(Debug, Clone)]
@@ -241,8 +232,8 @@ impl SsaProgram {
                     for instr in &block.instructions {
                         let instruction_str = format!(
                             "{:<8}  {}",
-                            format!("{}", instr.instruction.id.index()),
-                            format_ssa_instruction(&instr.instruction)
+                            format!("{}", instr.id.index()),
+                            format_ssa_instruction(&instr)
                         );
                         indented.line(&instruction_str);
                     }
@@ -609,7 +600,6 @@ pub mod conversion {
                                 result: SsaVar::new(
                                     var,
                                     0, // Temporary version number, will be updated during renaming
-                                    InstructionId::from(0), // Temporary, will be updated
                                 ),
                                 inputs: HashMap::new(), // Will be filled during renaming
                             };
@@ -692,7 +682,7 @@ pub mod conversion {
 
             // Update instructions
             for instr in &mut block.instructions {
-                for operand in &mut instr.instruction.operands {
+                for operand in &mut instr.operands {
                     if let Some(replacement) = replacements.get(operand) {
                         *operand = replacement.clone();
                     }
@@ -710,81 +700,22 @@ pub mod conversion {
         }
     }
 
-    /// Create an SSA representation of an instruction
-    fn create_ssa_instruction(
-        original: &Instruction,
-        current_versions: &HashMap<OperandKind, SsaVar>,
-        data_flow: &DataFlowResult,
-        block_id: BlockId,
-    ) -> SsaInstruction {
-        let mut ssa_operands = Vec::with_capacity(original.operands.len());
-        let mut operands_from_function_returns = Vec::new();
-
-        // Process each operand in the instruction
-        for operand in &original.operands {
-            // Skip non-variable operands (like immediates with no symbolic meaning)
-            if let Some(op_kind) = operand.kind.as_variable() {
-                // Check if this is a read operand
-                let is_read = original.reads().iter().any(|r| r.kind == op_kind);
-
-                // Track function returns for read operands
-                if is_read {
-                    // Find if this read comes from a function return
-                    if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                        let function_return_defs: Vec<_> = block_flow
-                            .defs_in
-                            .iter()
-                            .filter(|d| {
-                                d.location == op_kind
-                                    && matches!(d.kind, DefinitionKind::FunctionReturn { .. })
-                            })
-                            .collect();
-
-                        if !function_return_defs.is_empty() {
-                            // For each function return definition, add it to our tracking
-                            for def in &function_return_defs {
-                                operands_from_function_returns.push((*def).clone());
-                            }
-                        }
-                    }
-                }
-
-                // Use the current version of this variable if available
-                if let Some(ssa_var) = current_versions.get(&op_kind) {
-                    ssa_operands.push(ssa_var.clone());
-                } else {
-                    // Create a new version if not found (unusual, but handle gracefully)
-                    let ssa_var = SsaVar::new(
-                        *operand,
-                        0,           // Initial version
-                        original.id, // Use instruction ID as definition ID
-                    );
-                    ssa_operands.push(ssa_var);
-                }
-            } else {
-                // Non-variable operand, create a dummy SSA var to hold it
-                let ssa_var = SsaVar {
-                    operand: *operand,
-                    version: 0, // Not meaningful for non-variables
-                    def_id: original.id,
-                    source: SsaVarSource::Regular,
-                };
-                ssa_operands.push(ssa_var);
-            }
-        }
-
-        // Create the SSA instruction using the to_generic helper
-        let ssa_instruction = GenericInstruction {
-            id: original.id,
-            span: original.span,
-            opcode: original.opcode,
-            operands: ssa_operands,
-            debug_info: original.debug_info.clone(),
+    fn create_next_version(
+        current_versions: &mut HashMap<OperandKind, SsaVar>,
+        var: Operand,
+    ) -> SsaVar {
+        let version = current_versions
+            .get(&var.kind)
+            .map(|v| v.version)
+            .unwrap_or(0)
+            + 1;
+        let new_version = SsaVar {
+            operand: var,
+            version,
+            source: SsaVarSource::Regular,
         };
-
-        SsaInstruction {
-            instruction: ssa_instruction,
-        }
+        current_versions.insert(var.kind, new_version);
+        new_version
     }
 
     fn get_or_create_ssa_var(
@@ -796,18 +727,17 @@ pub mod conversion {
                 ssa_var.clone()
             } else {
                 // Create a new version if not found
-                SsaVar::new(
-                    op,
-                    0,                      // Initial version
-                    InstructionId::from(0), // Default ID
-                )
+                SsaVar {
+                    operand: op,
+                    version: 0,
+                    source: SsaVarSource::Regular,
+                }
             }
         } else {
             // Non-variable operand
             SsaVar {
                 operand: op,
                 version: 0,
-                def_id: InstructionId::from(0),
                 source: SsaVarSource::Regular,
             }
         }
@@ -857,14 +787,6 @@ pub mod conversion {
             }
         }
 
-        // Helper function to get a new version number for a variable
-        let mut get_next_version = |var: &OperandKind| {
-            let version = next_version.entry(*var).or_insert(0);
-            let result = *version;
-            *version += 1;
-            result
-        };
-
         // Helper function to recursively process a block and its children in the dominator tree
         fn process_block(
             block_id: BlockId,
@@ -874,7 +796,6 @@ pub mod conversion {
             phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
             data_flow: &DataFlowResult,
             current_versions: &mut HashMap<OperandKind, SsaVar>,
-            get_next_version: &mut impl FnMut(&OperandKind) -> usize,
             ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
             var_defs: &mut HashMap<SsaVar, Definition>,
         ) {
@@ -883,14 +804,7 @@ pub mod conversion {
             if let Some(phis) = phi_placements.get(&block_id) {
                 for phi in phis {
                     let var = phi.result.operand;
-                    let version = get_next_version(var.kind());
-
-                    // Create a new SSA variable for phi result with updated version
-                    let phi_result = SsaVar::new(
-                        var,
-                        version,
-                        InstructionId::from(0), // Phi functions don't have real instruction IDs
-                    );
+                    let phi_result = create_next_version(current_versions, var);
 
                     // Update the current version of this variable
                     current_versions.insert(var.kind, phi_result.clone());
@@ -911,33 +825,12 @@ pub mod conversion {
 
             for instr in &original_block.instructions {
                 // Create SSA instruction
-                let ssa_instr =
-                    create_ssa_instruction(instr, current_versions, data_flow, block_id);
-
-                // For each variable defined by this instruction, assign a new version
-                if let Some(write_op) = instr.writes() {
-                    let var = write_op.kind;
-                    let version = get_next_version(&var);
-
-                    // Create a new SSA variable
-                    let ssa_var = SsaVar::new(*write_op, version, instr.id);
-
-                    // Update the current version of this variable
-                    current_versions.insert(var, ssa_var.clone());
-
-                    // Add definition to the var_defs map
-                    if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                        if let Some(&instr_id) = block_flow.gen.get(&var) {
-                            let def = Definition {
-                                instruction_id: instr_id.0,
-                                location: var,
-                                block_id,
-                                kind: DefinitionKind::InstructionWrite,
-                            };
-                            var_defs.insert(ssa_var.clone(), def);
-                        }
-                    }
-                }
+                let ssa_instr = instr.map_rw(
+                    current_versions,
+                    &mut |c, op| get_or_create_ssa_var(c, *op),
+                    &mut |c, op| create_next_version(c, *op),
+                );
+                println!("{} -> {:?}", instr, ssa_instr);
 
                 block_instructions.push(ssa_instr);
             }
@@ -1022,7 +915,6 @@ pub mod conversion {
                         phi_placements,
                         data_flow,
                         &mut child_versions,
-                        get_next_version,
                         ssa_blocks,
                         var_defs,
                     );
@@ -1078,7 +970,6 @@ pub mod conversion {
             phi_placements,
             data_flow,
             &mut current_versions,
-            &mut get_next_version,
             &mut ssa_blocks,
             &mut var_defs,
         );
@@ -1128,11 +1019,10 @@ mod tests {
     #[test]
     fn test_ssa_var_creation() {
         let operand = memory_operand(100);
-        let var = SsaVar::new(operand, 1, InstructionId::from(42));
+        let var = SsaVar::new(operand, 1);
 
         assert_eq!(var.operand, operand);
         assert_eq!(var.version, 1);
-        assert_eq!(var.def_id, InstructionId::from(42));
         assert!(matches!(var.source, SsaVarSource::Regular));
     }
 
@@ -1152,7 +1042,6 @@ mod tests {
 
         assert_eq!(var.operand, operand);
         assert_eq!(var.version, 2);
-        assert_eq!(var.def_id, InstructionId::from(10));
 
         match var.source {
             SsaVarSource::FunctionReturn {
@@ -1228,7 +1117,7 @@ mod tests {
         let mut versions_found = HashSet::new();
         for instr in &entry_block.instructions {
             // Check operands for SSA vars with memory location 100
-            for operand in &instr.instruction.operands {
+            for operand in &instr.operands {
                 if operand.operand.kind() == &OperandKind::Memory(100) {
                     versions_found.insert(operand.version);
                 }
@@ -1317,7 +1206,7 @@ mod tests {
             if block
                 .instructions
                 .iter()
-                .any(|instr| instr.instruction.opcode == Opcode::Output)
+                .any(|instr| instr.opcode == Opcode::Output)
             {
                 merge_block_id = Some(*block_id);
                 break;
@@ -1338,10 +1227,10 @@ mod tests {
         let output_instr = merge_block
             .instructions
             .iter()
-            .find(|instr| instr.instruction.opcode == Opcode::Output)
+            .find(|instr| instr.opcode == Opcode::Output)
             .expect("Should have an output instruction");
 
-        let output_operand = &output_instr.instruction.operands[0];
+        let output_operand = &output_instr.operands[0];
 
         // Verify that the operand is [100]
         assert_eq!(
@@ -1385,7 +1274,7 @@ mod tests {
             ; Callee function @ 30
             callee:
             R += 2
-            [R-1] = [R-3] + 1 ; increment arg and store in return slot
+            [R-1] = [R-1] + 1 ; increment arg and store in return slot
             R -= 2
             goto [R]      ; return
             "#,
@@ -1411,7 +1300,7 @@ mod tests {
         for (block_id, block) in &ssa_function.blocks {
             if !block.instructions.is_empty() {
                 let first_instr = &block.instructions[0];
-                if first_instr.instruction.opcode == Opcode::Output {
+                if first_instr.opcode == Opcode::Output {
                     println!("Found block with output: {}", block_id);
                     found_return_block = Some(block);
                     break;
@@ -1424,11 +1313,12 @@ mod tests {
 
         // Find the output instruction that uses the return value
         let output_instr = return_block.instructions.first().unwrap();
+        println!("Output instruction: {:?}", output_instr);
 
         // The function return should be tracked in operands_from_function_returns
         assert!(
             matches!(
-                output_instr.instruction.operands[0].source,
+                output_instr.operands[0].source,
                 SsaVarSource::FunctionReturn { .. }
             ),
             "Output instruction should track function return operands"
@@ -1477,16 +1367,14 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                instr.instruction.opcode == Opcode::Add &&
-                instr.instruction.operands.len() == 3 &&
-                instr.instruction.operands[0].operand == relative_memory_operand(-4) && // Read operand is R-4
-                instr.instruction.operands[2].operand == relative_memory_operand(-4)
+                instr.opcode == Opcode::Add &&
+                instr.operands.len() == 3 &&
+                instr.operands[0].operand.kind().get_relative_memory() == Some(-4) && // Read operand is R-4
+                instr.operands[2].operand.kind().get_relative_memory() == Some(-4)
                 // Write operand is R-4
             })
             .expect("Should have found the addition instruction");
 
-        assert!(
-            add_instr.instruction.operands[0].version < add_instr.instruction.operands[2].version
-        );
+        assert!(add_instr.operands[0].version < add_instr.operands[2].version);
     }
 }
