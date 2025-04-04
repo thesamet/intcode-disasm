@@ -11,7 +11,7 @@ use std::fmt;
 use super::instructions::HasOperand;
 
 /// Source information for an SSA variable
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SsaVarSource {
     /// Regular variable definition
     Regular,
@@ -24,7 +24,7 @@ pub enum SsaVarSource {
 }
 
 /// Represents an SSA variable
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct SsaVar {
     /// Original operand this variable represents
     pub operand: Operand,
@@ -699,35 +699,9 @@ pub mod conversion {
                 }
             }
 
-            // Update the block's next terminator
-            match &mut block.next {
-                NextKind::Goto(var) => {
-                    if let Some(replacement) = replacements.get(var) {
-                        *var = replacement.clone();
-                    }
-                }
-                NextKind::Condition(cond) => {
-                    if let Some(replacement) = replacements.get(&cond.condition_operand) {
-                        cond.condition_operand = replacement.clone();
-                    }
-                }
-                NextKind::FunctionCall(call) => {
-                    if let Some(replacement) = replacements.get(&call.function_addr) {
-                        call.function_addr = replacement.clone();
-                    }
-
-                    if let Some(state) = &mut call.call_site_state {
-                        for (_, var) in state.iter_mut() {
-                            if let Some(replacement) = replacements.get(var) {
-                                *var = replacement.clone();
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    // No SSA vars to update in other NextKind variants
-                }
-            }
+            block.next = block
+                .next
+                .map(&mut |var| replacements.get(&var).cloned().unwrap_or(var));
         }
 
         // Update var_defs map by removing entries for pruned phis
@@ -813,134 +787,38 @@ pub mod conversion {
         }
     }
 
+    fn get_or_create_ssa_var(
+        current_versions: &HashMap<OperandKind, SsaVar>,
+        op: Operand,
+    ) -> SsaVar {
+        if let Some(op_kind) = op.kind.as_variable() {
+            if let Some(ssa_var) = current_versions.get(&op_kind) {
+                ssa_var.clone()
+            } else {
+                // Create a new version if not found
+                SsaVar::new(
+                    op,
+                    0,                      // Initial version
+                    InstructionId::from(0), // Default ID
+                )
+            }
+        } else {
+            // Non-variable operand
+            SsaVar {
+                operand: op,
+                version: 0,
+                def_id: InstructionId::from(0),
+                source: SsaVarSource::Regular,
+            }
+        }
+    }
+
     /// Create an SSA representation of a NextKind
     fn create_ssa_next_kind(
         original: &NextKind<Operand>,
         current_versions: &HashMap<OperandKind, SsaVar>,
     ) -> NextKind<SsaVar> {
-        match original {
-            NextKind::Halt => NextKind::Halt,
-            NextKind::Unknown => NextKind::Unknown,
-            NextKind::Return => NextKind::Return,
-            NextKind::Follows(block_id) => NextKind::Follows(*block_id),
-
-            NextKind::Goto(operand) => {
-                // Convert the operand to SSA form
-                if let Some(op_kind) = operand.kind.as_variable() {
-                    if let Some(ssa_var) = current_versions.get(&op_kind) {
-                        NextKind::Goto(ssa_var.clone())
-                    } else {
-                        // Create a new version if not found
-                        let ssa_var = SsaVar::new(
-                            *operand,
-                            0,                      // Initial version
-                            InstructionId::from(0), // Default ID
-                        );
-                        NextKind::Goto(ssa_var)
-                    }
-                } else {
-                    // Non-variable operand
-                    let ssa_var = SsaVar {
-                        operand: *operand,
-                        version: 0,
-                        def_id: InstructionId::from(0),
-                        source: SsaVarSource::Regular,
-                    };
-                    NextKind::Goto(ssa_var)
-                }
-            }
-
-            NextKind::Condition(cond) => {
-                // Convert the condition operand to SSA form
-                let ssa_cond_operand =
-                    if let Some(op_kind) = cond.condition_operand.kind.as_variable() {
-                        if let Some(ssa_var) = current_versions.get(&op_kind) {
-                            ssa_var.clone()
-                        } else {
-                            // Create a new version if not found
-                            SsaVar::new(
-                                cond.condition_operand,
-                                0,                      // Initial version
-                                InstructionId::from(0), // Default ID
-                            )
-                        }
-                    } else {
-                        // Non-variable operand
-                        SsaVar {
-                            operand: cond.condition_operand,
-                            version: 0,
-                            def_id: InstructionId::from(0),
-                            source: SsaVarSource::Regular,
-                        }
-                    };
-
-                // Create the SSA condition
-                let ssa_cond = Condition {
-                    from_block: cond.from_block,
-                    condition_operand: ssa_cond_operand,
-                    jump_if_true: cond.jump_if_true,
-                    target_block: cond.target_block,
-                    follows_block: cond.follows_block,
-                };
-
-                NextKind::Condition(ssa_cond)
-            }
-
-            NextKind::FunctionCall(call) => {
-                // Convert the function address operand to SSA form
-                let ssa_func_addr = if let Some(op_kind) = call.function_addr.kind.as_variable() {
-                    if let Some(ssa_var) = current_versions.get(&op_kind) {
-                        ssa_var.clone()
-                    } else {
-                        // Create a new version if not found
-                        SsaVar::new(
-                            call.function_addr,
-                            0,                      // Initial version
-                            InstructionId::from(0), // Default ID
-                        )
-                    }
-                } else {
-                    // Non-variable operand
-                    SsaVar {
-                        operand: call.function_addr,
-                        version: 0,
-                        def_id: InstructionId::from(0),
-                        source: SsaVarSource::Regular,
-                    }
-                };
-
-                // Create call site state mapping
-                let call_site_state = if let Some(state) = &call.call_site_state {
-                    let mut ssa_state = HashMap::new();
-                    for (&op_kind, operand) in state {
-                        let ssa_var = if let Some(var) = current_versions.get(&op_kind) {
-                            var.clone()
-                        } else {
-                            // Create a new version if not found
-                            SsaVar::new(
-                                *operand,
-                                0,                      // Initial version
-                                InstructionId::from(0), // Default ID
-                            )
-                        };
-                        ssa_state.insert(op_kind, ssa_var);
-                    }
-                    Some(ssa_state)
-                } else {
-                    None
-                };
-
-                // Create the SSA function call
-                let ssa_call = FunctionCall {
-                    calling_block: call.calling_block,
-                    function_addr: ssa_func_addr,
-                    return_block: call.return_block,
-                    call_site_state,
-                };
-
-                NextKind::FunctionCall(ssa_call)
-            }
-        }
+        original.map(&mut |op| get_or_create_ssa_var(current_versions, op))
     }
 
     /// Rename variables by traversing the dominance tree

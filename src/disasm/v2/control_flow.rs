@@ -24,14 +24,14 @@ pub enum NextKind<T> {
 }
 
 impl<T> NextKind<T> {
-    pub fn map<F, S>(self, map: &mut F) -> NextKind<S>
+    pub fn map<F, S>(&self, map: &mut F) -> NextKind<S>
     where
         F: FnMut(T) -> S,
         T: Copy + Clone,
     {
         match self {
-            NextKind::Follows(id) => NextKind::Follows(id),
-            NextKind::Goto(op) => NextKind::Goto(map(op)),
+            NextKind::Follows(id) => NextKind::Follows(*id),
+            NextKind::Goto(op) => NextKind::Goto(map(*op)),
             NextKind::FunctionCall(call) => NextKind::FunctionCall(call.map(map)),
             NextKind::Condition(cond) => NextKind::Condition(cond.map(map)),
             NextKind::Return => NextKind::Return,
@@ -109,7 +109,7 @@ impl<T> FunctionCall<T> {
             call_site_state: None,
         }
     }
-    pub fn map<F, S>(self, map: &mut F) -> FunctionCall<S>
+    pub fn map<F, S>(&self, map: &mut F) -> FunctionCall<S>
     where
         F: FnMut(T) -> S,
         T: Copy + Clone,
@@ -120,6 +120,7 @@ impl<T> FunctionCall<T> {
             return_block: self.return_block,
             call_site_state: self
                 .call_site_state
+                .as_ref()
                 .map(|hm| hm.iter().map(|(k, v)| (k.clone(), map(*v))).collect()),
         }
     }
@@ -150,9 +151,10 @@ impl<T> Condition<T> {
             follows_block,
         }
     }
-    pub fn map<F, S>(self, map: &mut F) -> Condition<S>
+    pub fn map<F, S>(&self, map: &mut F) -> Condition<S>
     where
         F: FnMut(T) -> S,
+        T: Copy + Clone,
     {
         Condition {
             from_block: self.from_block,
