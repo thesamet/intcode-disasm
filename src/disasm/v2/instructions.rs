@@ -5,14 +5,12 @@ use thiserror::Error;
 use super::{id_types::define_id_type, Span};
 
 /// Debug information for an instruction
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct DebugInfo {
     /// Optional marker character for this instruction
     pub marker: Option<char>,
     /// Optional source line information
     pub source_line: Option<usize>,
-    /// Optional comment
-    pub comment: Option<String>,
 }
 
 define_id_type!(InstructionId);
@@ -386,7 +384,6 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
             Some(DebugInfo {
                 marker: debug_markers.first().cloned(),
                 source_line: None,
-                comment: None,
             })
         } else {
             None
@@ -439,6 +436,28 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
             Opcode::Halt => {}               // No writes
         };
         positions
+    }
+
+    fn map_rw<R, W, S>(&self, map_read: &mut R, map_write: &mut W) -> GenericInstruction<S>
+    where
+        R: FnMut(&T) -> S,
+        W: FnMut(&T) -> S,
+    {
+        let mut new_operands = Vec::new();
+        for (i, op) in self.operands.iter().enumerate() {
+            if self.read_positions().contains(&i) {
+                new_operands.push(map_read(&op));
+            } else {
+                new_operands.push(map_write(&op));
+            }
+        }
+        GenericInstruction {
+            id: self.id,
+            span: self.span,
+            opcode: self.opcode,
+            operands: new_operands,
+            debug_info: self.debug_info,
+        }
     }
 
     /// Returns a list of operands that are read by this instruction.

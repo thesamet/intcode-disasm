@@ -5,7 +5,7 @@ use crate::disasm::{
     v2::{
         control_flow::{Block, Condition, FunctionCall, NextKind, PredecessorKind},
         events::{self, FunctionCfgBuilt, ImageScannerComplete, ModelEventListener}, // + FunctionCfgBuilt
-        instructions::Instruction,
+        instructions::{Instruction, Operand},
         model::{BlockId, FunctionId, ProgramModel},
     },
 };
@@ -174,7 +174,7 @@ impl ControlFlowGraphBuilder {
         }
 
         // --- Pass 2: Determine NextKind and Predecessors ---
-        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind>> = HashMap::new();
+        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> = HashMap::new();
 
         for block_id in &function_block_ids {
             let block = model.get_block(*block_id); // immutable borrow
@@ -293,7 +293,7 @@ fn determine_next_kind(
     last_instr: &Instruction,
     block_end_addr: usize,
     func: &RecognizedFunction,
-) -> NextKind {
+) -> NextKind<Operand> {
     if func.return_span.map(|r| r.end) == Some(block_end_addr) {
         NextKind::Return
     } else if let Some(call) = func
