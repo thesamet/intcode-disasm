@@ -82,15 +82,19 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> String {
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     
     // Add the SSA converter
-    let mut ssa_converter = SsaConverter::new();
+    let ssa_converter = SsaConverter::new();
     publisher.add_listener(Box::new(ssa_converter.clone()));
     
     // Process the image
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
     
-    // Since the events don't seem to be updating our copy of the converter,
-    // let's directly convert to SSA form
+    // Check if data flow analysis was completed
+    if model.get_data_flow_result().is_none() {
+        return "No SSA form available due to missing data flow analysis".to_string();
+    }
+    
+    // Convert to SSA form
     let ssa_program = SsaProgram::from_program_model(&model);
     
     // Pretty-print the SSA form
