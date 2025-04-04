@@ -1,7 +1,7 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
-use disasm::v2::analysis::run_analysis;
+use disasm::v2::analysis::{run_analysis, run_analysis_ssa};
 use disasm::{control_flow_graph, low_ir::FatInstruction, mid_ir};
 
 use disasm::parser::SerializableInstruction;
@@ -21,6 +21,7 @@ enum Command {
     Intermediate { input: String },
     Cfg { input: String },
     Pipeline { input: String },
+    Ssa { input: String },
 }
 
 fn main() {
@@ -33,6 +34,7 @@ fn main() {
         Command::Disassemble { input } => disassemble(input),
         Command::Cfg { input } => cfg(input),
         Command::Pipeline { input } => pipeline(input),
+        Command::Ssa { input } => ssa(input),
     }
 }
 
@@ -87,4 +89,15 @@ fn pipeline(input: String) {
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
     run_analysis(prog)
+}
+
+fn ssa(input: String) {
+    let prog = std::fs::read_to_string(input)
+        .unwrap()
+        .trim()
+        .split(',')
+        .map(|x| x.parse().unwrap())
+        .collect::<Vec<i128>>();
+    let ssa_output = run_analysis_ssa(prog);
+    println!("{}", ssa_output);
 }

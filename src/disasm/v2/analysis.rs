@@ -1,17 +1,23 @@
 use itertools::Itertools;
 
 use crate::disasm::v2::{
-    data_flow::DefinitionKind, listeners::image_scanner::ImageScanner, model::ProgramModel,
+    data_flow::DefinitionKind, 
+    listeners::image_scanner::ImageScanner, 
+    model::ProgramModel,
+    ssa_form::SsaProgram,
 };
 
 use super::{
     dispatching::EventPublisher,
     events::Event,
     listeners::{
-        control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
+        control_flow_builder::ControlFlowGraphBuilder, 
+        data_flow_analyzer::DataFlowAnalyzer,
+        ssa_converter::SsaConverter,
     },
 };
 
+/// Run the analysis pipeline and print data flow information
 pub fn run_analysis(image: Vec<i128>) {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
@@ -63,12 +69,32 @@ pub fn run_analysis(image: Vec<i128>) {
     } else {
         println!("Data flow analysis results not available.");
     }
+}
 
-    /*
-    for x in &model.image_scanner_result.unwrap().recognized_functions {
-        println!("f start: {:?}", x.span);
-    }
-    */
+/// Run the analysis pipeline and print the program in SSA form
+pub fn run_analysis_ssa(image: Vec<i128>) -> String {
+    let mut model = ProgramModel::new();
+    let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+    
+    // Initialize all the required listeners
+    publisher.add_listener(Box::new(ImageScanner::new()));
+    publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+    publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+    
+    // Add the SSA converter
+    let mut ssa_converter = SsaConverter::new();
+    publisher.add_listener(Box::new(ssa_converter.clone()));
+    
+    // Process the image
+    model.load_image(&image, &mut publisher);
+    publisher.process_events(&mut model);
+    
+    // Since the events don't seem to be updating our copy of the converter,
+    // let's directly convert to SSA form
+    let ssa_program = SsaProgram::from_program_model(&model);
+    
+    // Pretty-print the SSA form
+    ssa_program.pretty_print()
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use crate::disasm::v2::{
     dispatching::{EventCollector, EventListener},
@@ -35,14 +35,25 @@ impl EventListener<Event, ProgramModel> for SsaConverter {
         event: Event,
         collector: &mut EventCollector<Event>,
     ) {
+        info!("SsaConverter received event: {:?}", event);
+        
         match event {
             // Wait for data flow analysis to complete for all functions
             Event::DataFlowAnalysisComplete(_) => {
                 // Check if all functions have been analyzed
                 let functions = model.functions().keys().count();
+                info!("Function count: {}", functions);
+                
                 let ready_for_ssa = model.get_data_flow_result()
-                    .map(|dfa| dfa.block_results.len() > 0)
-                    .unwrap_or(false);
+                    .map(|dfa| {
+                        let has_results = dfa.block_results.len() > 0;
+                        info!("Data flow analysis has {} block results", dfa.block_results.len());
+                        has_results
+                    })
+                    .unwrap_or_else(|| {
+                        warn!("No data flow analysis results available");
+                        false
+                    });
                 
                 if ready_for_ssa && functions > 0 {
                     info!("Converting program to SSA form");
@@ -56,10 +67,14 @@ impl EventListener<Event, ProgramModel> for SsaConverter {
                     collector.publish(SsaConversionComplete {
                         completed: true,
                     });
+                } else {
+                    warn!("Not ready for SSA conversion: ready_for_ssa={}, functions={}", 
+                          ready_for_ssa, functions);
                 }
             }
             _ => {
                 // Ignore other events
+                info!("Ignoring unhandled event");
             }
         }
     }
