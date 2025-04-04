@@ -174,7 +174,7 @@ impl SsaProgram {
                 dominance_frontiers,
                 immediate_dominators,
             };
-            
+
             // 6. Prune unnecessary phi functions
             conversion::prune_phi_functions(&mut ssa_function);
 
@@ -631,7 +631,7 @@ pub mod conversion {
 
         phi_placements
     }
-    
+
     /// Prune unnecessary phi functions from an SSA function
     ///
     /// This function:
@@ -639,17 +639,20 @@ pub mod conversion {
     /// 2. Replaces phi functions with a single input with that input
     pub fn prune_phi_functions(function: &mut SsaFunction) {
         let mut replacements: HashMap<SsaVar, SsaVar> = HashMap::new();
-        
+
         // First pass: identify phi functions to prune
         for (block_id, block) in &mut function.blocks {
             let mut phi_to_keep = Vec::new();
-            
+
             for phi in &block.phi_functions {
                 match phi.inputs.len() {
                     0 => {
                         // Case 1: Phi with no inputs can be removed
                         // We'll need to handle all uses of this phi's result
-                        debug!("Pruning phi with no inputs: {} in block {}", phi.result, block_id);
+                        debug!(
+                            "Pruning phi with no inputs: {} in block {}",
+                            phi.result, block_id
+                        );
                         // Phi functions with no inputs are removed without replacement
                     }
                     1 => {
@@ -667,11 +670,11 @@ pub mod conversion {
                     }
                 }
             }
-            
+
             // Update the block to only keep necessary phi functions
             block.phi_functions = phi_to_keep;
         }
-        
+
         // Second pass: apply replacements to all SSA vars that use pruned phi results
         for (_, block) in &mut function.blocks {
             // Update phi inputs
@@ -682,7 +685,7 @@ pub mod conversion {
                     }
                 }
             }
-            
+
             // Update instructions
             for instr in &mut block.instructions {
                 for operand in &mut instr.instruction.operands {
@@ -691,7 +694,7 @@ pub mod conversion {
                     }
                 }
             }
-            
+
             // Update the block's next terminator
             match &mut block.next {
                 NextKind::Goto(var) => {
@@ -708,7 +711,7 @@ pub mod conversion {
                     if let Some(replacement) = replacements.get(&call.function_addr) {
                         call.function_addr = replacement.clone();
                     }
-                    
+
                     if let Some(state) = &mut call.call_site_state {
                         for (_, var) in state.iter_mut() {
                             if let Some(replacement) = replacements.get(var) {
@@ -722,7 +725,7 @@ pub mod conversion {
                 }
             }
         }
-        
+
         // Update var_defs map by removing entries for pruned phis
         for var in replacements.keys() {
             function.var_defs.remove(var);
@@ -746,6 +749,7 @@ pub mod conversion {
                 // Check if this is a read operand
                 let is_read = original.reads().iter().any(|r| r.kind == op_kind);
 
+                // Track function returns for read operands
                 if is_read {
                     // Find if this read comes from a function return
                     if let Some(block_flow) = data_flow.block_results.get(&block_id) {
@@ -1218,6 +1222,7 @@ mod tests {
             image_scanner::ImageScanner,
         },
     };
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_ssa_var_creation() {
@@ -1408,7 +1413,11 @@ mod tests {
         // Find the block with the output instruction (the merge block)
         let mut merge_block_id = None;
         for (block_id, block) in &ssa_function.blocks {
-            if block.instructions.iter().any(|instr| instr.instruction.opcode == Opcode::Output) {
+            if block
+                .instructions
+                .iter()
+                .any(|instr| instr.instruction.opcode == Opcode::Output)
+            {
                 merge_block_id = Some(*block_id);
                 break;
             }
@@ -1449,7 +1458,7 @@ mod tests {
             "Output should have a non-zero version, got: {}",
             output_operand.version
         );
-        
+
         // Note: We're no longer expecting to find phi functions in the merge block
         // since they would be eliminated by pruning if they had 0 or 1 inputs.
         // This is expected behavior after implementing phi function pruning.
@@ -1528,5 +1537,52 @@ mod tests {
 
         // If the implementation is improved later, we can add stronger tests for return values,
         // but for now we'll settle for checking that the test runs without crashing.
+    }
+
+    #[test]
+    fn test_proper_version_increments_for_writes() {
+        // Test a simple program that reads and writes the same register
+        let model = setup_analyzed_model(
+            r#"
+            ; Offset 0
+            R += 3                  ; stack frame setup
+            [R-4] = 5               ; Initialize R-4 with 5
+            [R-4] = [R-4] + 10      ; Use R-4 and update it, adding 10
+            output [R-4]            ; Use the updated R-4
+            R -= 3                  ; stack frame teardown
+            goto [R]                ; return
+            "#,
+        );
+
+        // Convert to SSA form
+        let ssa_program = SsaProgram::from_program_model(&model);
+
+        // Print the SSA program for debugging
+        println!("SSA Program:\n{}", ssa_program.pretty_print());
+
+        // Get the function
+        let func_id = FunctionId::from(0);
+        let ssa_function = ssa_program.functions.get(&func_id).unwrap();
+
+        // Get the block
+        let block_id = BlockId::from(0);
+        let block = ssa_function.blocks.get(&block_id).unwrap();
+
+        // Now find the instruction: [R-4] = [R-4] + 10
+        let add_instr = block
+            .instructions
+            .iter()
+            .find(|instr| {
+                instr.instruction.opcode == Opcode::Add &&
+                instr.instruction.operands.len() == 3 &&
+                instr.instruction.operands[0].operand == OperandKind::RelativeMemory(-4) && // Read operand is R-4
+                instr.instruction.operands[2].operand == OperandKind::RelativeMemory(-4)
+                // Write operand is R-4
+            })
+            .expect("Should have found the addition instruction");
+
+        assert!(
+            add_instr.instruction.operands[0].version < add_instr.instruction.operands[2].version
+        );
     }
 }
