@@ -1,7 +1,7 @@
 use super::model::{BlockId, FunctionId, ProgramModel};
-
 use super::dispatching::event_types_enum;
 
+/// Define all event types for the system
 event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub struct ImageAddedEvent { }
@@ -24,5 +24,17 @@ event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct DataFlowAnalysisComplete {
         pub function_id: FunctionId,
+    }
+    
+    /// Signals that SSA conversion has completed
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct SsaConversionComplete {
+        pub completed: bool,
+    }
+    
+    /// Signals that type inference has completed
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct TypeInferenceComplete {
+        pub completed: bool,
     }
 }

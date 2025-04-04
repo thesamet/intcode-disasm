@@ -4,6 +4,30 @@ use thiserror::Error;
 
 use super::{id_types::define_id_type, Span};
 
+/// Debug information for an instruction
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DebugInfo {
+    /// Optional marker character for this instruction
+    pub marker: Option<char>,
+    /// Optional source line information
+    pub source_line: Option<usize>,
+    /// Optional comment
+    pub comment: Option<String>,
+}
+
+/// A generic instruction that can use different operand types
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericInstruction<T> {
+    /// The instruction ID
+    pub id: InstructionId,
+    /// The opcode
+    pub opcode: Opcode,
+    /// The operands
+    pub operands: Vec<T>,
+    /// Optional debug information
+    pub debug_info: Option<DebugInfo>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, PartialOrd, Ord)]
 pub enum OperandKind {
     Memory(i128),
@@ -54,6 +78,21 @@ impl OperandKind {
         match self {
             OperandKind::Deref(offset) => Some(*offset),
             _ => None,
+        }
+    }
+    
+    /// Returns true if this is a variable operand, not an immediate value
+    pub fn is_variable(&self) -> bool {
+        !matches!(self, OperandKind::Immediate(_))
+    }
+    
+    /// Returns this operand if it's a variable (not an immediate value)
+    /// Used for SSA conversion
+    pub fn as_variable(&self) -> Option<Self> {
+        if self.is_variable() {
+            Some(*self)
+        } else {
+            None
         }
     }
 }
@@ -159,7 +198,23 @@ pub struct Instruction {
     pub id: InstructionId,
     pub span: Span,
     pub opcode: Opcode,
-    operands: Vec<Operand>,
+    pub operands: Vec<Operand>,
+    pub debug_info: Option<DebugInfo>,
+}
+
+impl Instruction {
+    /// Convert this instruction to a generic instruction with a different operand type
+    pub fn to_generic<T, F>(&self, convert_operand: F) -> GenericInstruction<T> 
+    where
+        F: Fn(&Operand) -> T
+    {
+        GenericInstruction {
+            id: self.id,
+            opcode: self.opcode,
+            operands: self.operands.iter().map(convert_operand).collect(),
+            debug_info: self.debug_info.clone(),
+        }
+    }
 }
 
 impl fmt::Display for Instruction {
@@ -312,7 +367,7 @@ impl Instruction {
         if offset + operand_count >= input.len() {
             return Err(ParseError::EndOfFile(offset));
         }
-        let operands = (0..operand_count)
+        let operands: Vec<Operand> = (0..operand_count)
             .map(|i| -> Result<Operand, ParseError> {
                 let kind = match input[offset] / 10_i128.pow(i as u32 + 2) % 10 {
                     0 => Ok(OperandKind::Memory(input[offset + i + 1])),
@@ -331,11 +386,27 @@ impl Instruction {
                 })
             })
             .collect::<Result<_, _>>()?;
+        // Check if any operands have debug markers
+        let debug_markers: Vec<_> = operands.iter()
+            .filter_map(|op| op.debug_marker)
+            .collect();
+        
+        let debug_info = if !debug_markers.is_empty() {
+            Some(DebugInfo {
+                marker: debug_markers.first().cloned(),
+                source_line: None,
+                comment: None,
+            })
+        } else {
+            None
+        };
+        
         Ok(Instruction {
             id: InstructionId::from(offset),
             span: Span::new(offset, offset + operand_count + 1),
             opcode: Opcode::from_i128(opcode % 100)?,
             operands,
+            debug_info,
         })
     }
 

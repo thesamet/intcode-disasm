@@ -2,11 +2,14 @@ use std::collections::HashMap;
 
 use super::{
     control_flow::Block,
-    data_flow::DataFlowResult, // + Import DataFlowResult
-    dispatching::EventPublisher,
+    data_flow::DataFlowResult,
+    dispatching::{EventPublisher, EventCollector},
     events::{self, Event, ImageAddedEvent, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::image_scanner::ImageScannerResult,
+    listeners::{
+        image_scanner::ImageScannerResult,
+        ssa_converter::SsaConverter,
+    },
 };
 
 define_id_type!(FunctionId);
@@ -16,11 +19,13 @@ pub struct ProgramModel {
     image: Vec<i128>,
 
     image_scanner_result: Option<ImageScannerResult>,
-    data_flow_result: Option<DataFlowResult>, // + Add field for data flow results
+    data_flow_result: Option<DataFlowResult>,
 
     functions: HashMap<FunctionId, Function>,
     blocks: HashMap<BlockId, Block>,
-    // Define fields here
+    
+    /// Reference to the SSA converter
+    pub ssa_converter: Option<SsaConverter>,
 }
 
 impl ProgramModel {
@@ -30,7 +35,8 @@ impl ProgramModel {
             image_scanner_result: None,
             functions: HashMap::new(),
             blocks: HashMap::new(),
-            data_flow_result: None, // + Initialize field
+            data_flow_result: None,
+            ssa_converter: None,
         }
     }
 
@@ -46,7 +52,7 @@ impl ProgramModel {
     pub fn set_image_scanner_result(
         &mut self,
         result: ImageScannerResult,
-        sender: &mut events::Sender,
+        sender: &mut EventCollector<Event>,
     ) {
         self.image_scanner_result = Some(result);
         sender.publish(ImageScannerComplete {});
@@ -60,7 +66,6 @@ impl ProgramModel {
     /// Typically called by the DataFlowAnalyzer listener.
     pub fn set_data_flow_result(&mut self, result: DataFlowResult) {
         self.data_flow_result = Some(result);
-        // Potentially emit a DataFlowAnalysisComplete event here if needed by subsequent stages
     }
 
     /// Gets an immutable reference to the data flow analysis results, if computed.
@@ -71,6 +76,11 @@ impl ProgramModel {
     pub fn get_data_flow_result_mut(&mut self) -> Option<&mut DataFlowResult> {
         self.data_flow_result.as_mut()
     }
+    
+    /// Sets the SSA converter
+    pub fn set_ssa_converter(&mut self, converter: SsaConverter) {
+        self.ssa_converter = Some(converter);
+    }
 
     pub fn add_function(&mut self, function: Function) {
         self.functions.insert(function.function_id, function);
@@ -79,12 +89,17 @@ impl ProgramModel {
     pub fn has_function(&self, function_id: FunctionId) -> bool {
         self.functions.contains_key(&function_id)
     }
+    
     pub fn get_function(&self, function_id: FunctionId) -> &Function {
         self.functions.get(&function_id).unwrap()
     }
 
     pub fn get_function_mut(&mut self, function_id: FunctionId) -> &mut Function {
         self.functions.get_mut(&function_id).unwrap()
+    }
+    
+    pub fn functions(&self) -> &HashMap<FunctionId, Function> {
+        &self.functions
     }
 
     pub fn add_block(&mut self, block: Block) {

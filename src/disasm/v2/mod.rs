@@ -2,12 +2,15 @@ pub mod analysis;
 pub mod control_flow;
 pub mod data_flow;
 pub mod dispatching;
-mod events;
+pub mod events;
 pub mod id_types;
 pub mod instructions;
 pub mod listeners;
 pub mod model;
 pub mod ssa_form;
+pub mod type_inference;
+#[cfg(test)]
+mod integration_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
