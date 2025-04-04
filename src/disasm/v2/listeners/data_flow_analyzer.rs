@@ -111,7 +111,9 @@ impl DataFlowAnalyzer {
                 }
                 // Calculate GEN for this instruction
                 if let Some(write_operand) = instr.writes() {
-                    block_flow.gen.insert(write_operand.kind, instr.id);
+                    block_flow
+                        .gen
+                        .insert(write_operand.kind, (instr.id, *write_operand));
                     defined_in_block.insert(write_operand.kind);
                 }
             }
@@ -159,7 +161,7 @@ impl DataFlowAnalyzer {
                 current_defs_out.retain(|def| !killed_kinds.contains(&def.location));
 
                 // Add GEN set
-                for (location, instruction_id) in &block_flow.gen {
+                for (location, (instruction_id, _)) in &block_flow.gen {
                     current_defs_out.insert(Definition {
                         instruction_id: *instruction_id,
                         location: *location,
@@ -534,6 +536,7 @@ mod tests {
             model::*, // Bring model types into scope
         },
     };
+    use itertools::Itertools;
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;
 
@@ -660,12 +663,12 @@ mod tests {
         // GEN/USE
         assert_eq!(flow0.gen.len(), 2);
         assert_eq!(
-            flow0.gen[&mem_kind(100)],
+            flow0.gen[&mem_kind(100)].0,
             InstructionId::from(2),
             "GEN[100] @ B0"
         );
         assert_eq!(
-            flow0.gen[&mem_kind(101)],
+            flow0.gen[&mem_kind(101)].0,
             InstructionId::from(6),
             "GEN[101] @ B0"
         );
@@ -764,19 +767,19 @@ mod tests {
 
         // --- Check GEN in branches ---
         assert_eq!(
-            flow9.gen,
+            flow9.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
             [(mem_kind(101), InstructionId::from(9))]
                 .iter()
                 .cloned()
-                .collect(),
+                .collect_vec(),
             "GEN @ B9"
         );
         assert_eq!(
-            flow16.gen,
+            flow16.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
             [(mem_kind(101), InstructionId::from(16))]
                 .iter()
                 .cloned()
-                .collect(),
+                .collect_vec(),
             "GEN @ B16"
         );
 
@@ -843,11 +846,11 @@ mod tests {
         // --- Check GEN in loop block (Block 6) ---
         // The last write to [100] is at instruction 8
         assert_eq!(
-            flow6.gen,
+            flow6.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
             [(mem_kind(100), InstructionId::from(8))]
                 .iter()
                 .cloned()
-                .collect(),
+                .collect_vec(),
             "GEN @ B6"
         );
 
@@ -957,11 +960,11 @@ mod tests {
 
         // GEN should only contain the *last* write
         assert_eq!(
-            flow0.gen,
+            flow0.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
             [(mem_kind(100), InstructionId::from(6))] // Only Def B
                 .iter()
                 .cloned()
-                .collect(),
+                .collect_vec(),
             "GEN @ B0"
         );
 

@@ -2,13 +2,13 @@ use crate::disasm::code_printer::{CodePrinter, CodeWriter};
 use crate::disasm::v2::{
     control_flow::{Condition, FunctionCall, NextKind},
     data_flow::{DataFlowResult, Definition, DefinitionKind},
-    instructions::{
-        DebugInfo, GenericInstruction, Instruction, InstructionId, Opcode, Operand, OperandKind,
-    },
+    instructions::{GenericInstruction, Instruction, InstructionId, Opcode, Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+
+use super::instructions::HasOperand;
 
 /// Source information for an SSA variable
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -27,7 +27,7 @@ pub enum SsaVarSource {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SsaVar {
     /// Original operand this variable represents
-    pub operand: OperandKind,
+    pub operand: Operand,
     /// Version number of this SSA variable
     pub version: usize,
     /// The definition that created this SSA variable
@@ -36,9 +36,15 @@ pub struct SsaVar {
     pub source: SsaVarSource,
 }
 
+impl HasOperand for SsaVar {
+    fn operand(&self) -> &Operand {
+        &self.operand
+    }
+}
+
 impl SsaVar {
     /// Create a new SSA variable with Regular source
-    pub fn new(operand: OperandKind, version: usize, def_id: InstructionId) -> Self {
+    pub fn new(operand: Operand, version: usize, def_id: InstructionId) -> Self {
         Self {
             operand,
             version,
@@ -48,7 +54,7 @@ impl SsaVar {
     }
 
     /// Create a new SSA variable from a function return
-    pub fn from_function_return(operand: OperandKind, version: usize, def: Definition) -> Self {
+    pub fn from_function_return(operand: Operand, version: usize, def: Definition) -> Self {
         Self {
             operand,
             version,
@@ -60,7 +66,7 @@ impl SsaVar {
 
 impl fmt::Display for SsaVar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}_{}", self.operand, self.version)
+        write!(f, "{}_{}", self.operand.kind, self.version)
     }
 }
 
@@ -311,7 +317,7 @@ fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
         Opcode::JumpIfTrue => {
             if operands.len() >= 2 {
                 // Extract operand value to detect unconditional jumps
-                let is_unconditional = match &instr.operands[0].operand {
+                let is_unconditional = match &instr.operands[0].operand.kind {
                     OperandKind::Immediate(1) => true,
                     _ => false,
                 };
@@ -329,7 +335,7 @@ fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
         Opcode::JumpIfFalse => {
             if operands.len() >= 2 {
                 // Extract operand value to detect unconditional jumps
-                let is_unconditional = match &instr.operands[0].operand {
+                let is_unconditional = match &instr.operands[0].operand.kind {
                     OperandKind::Immediate(0) => true,
                     _ => false,
                 };
@@ -363,7 +369,7 @@ fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
         Opcode::AdjustRelativeBase => {
             if !operands.is_empty() {
                 // Extract the operand value to format R+= or R-=
-                match &instr.operands[0].operand {
+                match &instr.operands[0].operand.kind {
                     OperandKind::Immediate(val) => {
                         if *val > 0 {
                             format!("R += {}", val)
@@ -388,7 +394,7 @@ fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
 /// Helper functions for SSA conversion
 pub mod conversion {
     use super::*;
-    use log::{debug, trace};
+    use log::debug;
     use std::collections::VecDeque;
 
     /// Compute immediate dominators for a function using the iterative algorithm
@@ -540,7 +546,7 @@ pub mod conversion {
         model: &ProgramModel,
         function_id: FunctionId,
         data_flow: &DataFlowResult,
-    ) -> HashSet<OperandKind> {
+    ) -> HashSet<Operand> {
         let function = model.get_function(function_id);
         let mut result = HashSet::new();
 
@@ -548,8 +554,8 @@ pub mod conversion {
         for &block_id in &function.blocks {
             if let Some(block_flow) = data_flow.block_results.get(&block_id) {
                 // Add all variables that are defined (written to) in this block
-                for operand in block_flow.gen.keys() {
-                    result.insert(*operand);
+                for (_, op) in block_flow.gen.values() {
+                    result.insert(*op);
                 }
             }
         }
@@ -581,7 +587,7 @@ pub mod conversion {
             let mut def_blocks = HashSet::new();
             for &block_id in &function.blocks {
                 if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                    if block_flow.gen.contains_key(&var) {
+                    if block_flow.gen.contains_key(&var.operand().kind) {
                         def_blocks.insert(block_id);
                     }
                 }
@@ -615,7 +621,7 @@ pub mod conversion {
                             // If this block also defines the variable, add it to the worklist
                             if let Some(block_flow) = data_flow.block_results.get(&df_block) {
                                 if !def_blocks.contains(&df_block)
-                                    && block_flow.gen.contains_key(&var)
+                                    && block_flow.gen.contains_key(&var.operand().kind)
                                 {
                                     def_blocks.insert(df_block);
                                     worklist.push_back(df_block);
@@ -741,7 +747,7 @@ pub mod conversion {
         let mut operands_from_function_returns = Vec::new();
 
         // Process each operand in the instruction
-        for (idx, operand) in original.operands.iter().enumerate() {
+        for operand in &original.operands {
             // Skip non-variable operands (like immediates with no symbolic meaning)
             if let Some(op_kind) = operand.kind.as_variable() {
                 // Check if this is a read operand
@@ -775,7 +781,7 @@ pub mod conversion {
                 } else {
                     // Create a new version if not found (unusual, but handle gracefully)
                     let ssa_var = SsaVar::new(
-                        op_kind,
+                        *operand,
                         0,           // Initial version
                         original.id, // Use instruction ID as definition ID
                     );
@@ -784,7 +790,7 @@ pub mod conversion {
             } else {
                 // Non-variable operand, create a dummy SSA var to hold it
                 let ssa_var = SsaVar {
-                    operand: operand.kind,
+                    operand: *operand,
                     version: 0, // Not meaningful for non-variables
                     def_id: original.id,
                     source: SsaVarSource::Regular,
@@ -826,7 +832,7 @@ pub mod conversion {
                     } else {
                         // Create a new version if not found
                         let ssa_var = SsaVar::new(
-                            op_kind,
+                            *operand,
                             0,                      // Initial version
                             InstructionId::from(0), // Default ID
                         );
@@ -835,7 +841,7 @@ pub mod conversion {
                 } else {
                     // Non-variable operand
                     let ssa_var = SsaVar {
-                        operand: operand.kind,
+                        operand: *operand,
                         version: 0,
                         def_id: InstructionId::from(0),
                         source: SsaVarSource::Regular,
@@ -853,7 +859,7 @@ pub mod conversion {
                         } else {
                             // Create a new version if not found
                             SsaVar::new(
-                                op_kind,
+                                cond.condition_operand,
                                 0,                      // Initial version
                                 InstructionId::from(0), // Default ID
                             )
@@ -861,7 +867,7 @@ pub mod conversion {
                     } else {
                         // Non-variable operand
                         SsaVar {
-                            operand: cond.condition_operand.kind,
+                            operand: cond.condition_operand,
                             version: 0,
                             def_id: InstructionId::from(0),
                             source: SsaVarSource::Regular,
@@ -888,7 +894,7 @@ pub mod conversion {
                     } else {
                         // Create a new version if not found
                         SsaVar::new(
-                            op_kind,
+                            call.function_addr,
                             0,                      // Initial version
                             InstructionId::from(0), // Default ID
                         )
@@ -896,7 +902,7 @@ pub mod conversion {
                 } else {
                     // Non-variable operand
                     SsaVar {
-                        operand: call.function_addr.kind,
+                        operand: call.function_addr,
                         version: 0,
                         def_id: InstructionId::from(0),
                         source: SsaVarSource::Regular,
@@ -912,7 +918,7 @@ pub mod conversion {
                         } else {
                             // Create a new version if not found
                             SsaVar::new(
-                                op_kind,
+                                *operand,
                                 0,                      // Initial version
                                 InstructionId::from(0), // Default ID
                             )
@@ -994,14 +1000,12 @@ pub mod conversion {
             ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
             var_defs: &mut HashMap<SsaVar, Definition>,
         ) {
-            let block = model.get_block(block_id);
-
             // 1. Process phi functions, assign new versions to their results
             let mut block_phi_functions = Vec::new();
             if let Some(phis) = phi_placements.get(&block_id) {
                 for phi in phis {
                     let var = phi.result.operand;
-                    let version = get_next_version(&var);
+                    let version = get_next_version(var.kind());
 
                     // Create a new SSA variable for phi result with updated version
                     let phi_result = SsaVar::new(
@@ -1011,7 +1015,7 @@ pub mod conversion {
                     );
 
                     // Update the current version of this variable
-                    current_versions.insert(var, phi_result.clone());
+                    current_versions.insert(var.kind, phi_result.clone());
 
                     // Create a new phi function with empty inputs (will be filled later)
                     let new_phi = PhiFunction {
@@ -1038,7 +1042,7 @@ pub mod conversion {
                     let version = get_next_version(&var);
 
                     // Create a new SSA variable
-                    let ssa_var = SsaVar::new(var, version, instr.id);
+                    let ssa_var = SsaVar::new(*write_op, version, instr.id);
 
                     // Update the current version of this variable
                     current_versions.insert(var, ssa_var.clone());
@@ -1047,7 +1051,7 @@ pub mod conversion {
                     if let Some(block_flow) = data_flow.block_results.get(&block_id) {
                         if let Some(&instr_id) = block_flow.gen.get(&var) {
                             let def = Definition {
-                                instruction_id: instr_id,
+                                instruction_id: instr_id.0,
                                 location: var,
                                 block_id,
                                 kind: DefinitionKind::InstructionWrite,
@@ -1169,7 +1173,7 @@ pub mod conversion {
                     // Add the current version of each phi's variable as input from this predecessor
                     for (i, phi) in phis.iter().enumerate() {
                         let var = phi.result.operand;
-                        if let Some(current_var) = current_versions.get(&var) {
+                        if let Some(current_var) = current_versions.get(var.kind()) {
                             ssa_block.phi_functions[i]
                                 .inputs
                                 .insert(pred_id, current_var.clone());
@@ -1222,9 +1226,33 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
 
+    fn memory_operand(offset: usize) -> Operand {
+        Operand {
+            kind: OperandKind::Memory(offset as i128),
+            offset: 0,
+            debug_marker: None,
+        }
+    }
+
+    fn relative_memory_operand(offset: i128) -> Operand {
+        Operand {
+            kind: OperandKind::RelativeMemory(offset),
+            offset: 0,
+            debug_marker: None,
+        }
+    }
+
+    fn immediate_operand(value: i128) -> Operand {
+        Operand {
+            kind: OperandKind::Immediate(value),
+            offset: 0,
+            debug_marker: None,
+        }
+    }
+
     #[test]
     fn test_ssa_var_creation() {
-        let operand = OperandKind::Memory(100);
+        let operand = memory_operand(100);
         let var = SsaVar::new(operand, 1, InstructionId::from(42));
 
         assert_eq!(var.operand, operand);
@@ -1235,10 +1263,10 @@ mod tests {
 
     #[test]
     fn test_ssa_var_from_function_return() {
-        let operand = OperandKind::RelativeMemory(1);
+        let operand = relative_memory_operand(1);
         let def = Definition {
             instruction_id: InstructionId::from(10),
-            location: operand,
+            location: operand.kind,
             block_id: BlockId::from(5),
             kind: DefinitionKind::FunctionReturn {
                 function_addr: OperandKind::Immediate(100),
@@ -1326,7 +1354,7 @@ mod tests {
         for instr in &entry_block.instructions {
             // Check operands for SSA vars with memory location 100
             for operand in &instr.instruction.operands {
-                if operand.operand == OperandKind::Memory(100) {
+                if operand.operand.kind() == &OperandKind::Memory(100) {
                     versions_found.insert(operand.version);
                 }
             }
@@ -1442,7 +1470,7 @@ mod tests {
 
         // Verify that the operand is [100]
         assert_eq!(
-            output_operand.operand,
+            *output_operand.operand.kind(),
             OperandKind::Memory(100),
             "Output should use [100]"
         );
@@ -1576,8 +1604,8 @@ mod tests {
             .find(|instr| {
                 instr.instruction.opcode == Opcode::Add &&
                 instr.instruction.operands.len() == 3 &&
-                instr.instruction.operands[0].operand == OperandKind::RelativeMemory(-4) && // Read operand is R-4
-                instr.instruction.operands[2].operand == OperandKind::RelativeMemory(-4)
+                instr.instruction.operands[0].operand == relative_memory_operand(-4) && // Read operand is R-4
+                instr.instruction.operands[2].operand == relative_memory_operand(-4)
                 // Write operand is R-4
             })
             .expect("Should have found the addition instruction");

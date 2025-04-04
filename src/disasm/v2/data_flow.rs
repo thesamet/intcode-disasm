@@ -8,6 +8,8 @@ use crate::disasm::v2::{
     model::BlockId,
 };
 
+use super::instructions::Operand;
+
 /// Distinguishes the source of a definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DefinitionKind {
@@ -72,7 +74,7 @@ pub struct BlockDataFlow {
     /// instruction within the block that defines them. Definitions here "kill" definitions from `defs_in`.
     /// Key: The `OperandKind` representing the location being defined.
     /// Value: The `InstructionId` of the defining instruction.
-    pub gen: HashMap<OperandKind, InstructionId>,
+    pub gen: HashMap<OperandKind, (InstructionId, Operand)>,
 
     /// **Used Before Defined (USE):** The set of memory locations that are read (used) within this block *before*
     /// they are written to (defined) within the same block. These operands require a valid definition

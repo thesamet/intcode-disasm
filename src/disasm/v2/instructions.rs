@@ -128,7 +128,7 @@ pub struct Operand {
     pub debug_marker: Option<char>,
 }
 
-trait HasOperand {
+pub trait HasOperand {
     fn operand(&self) -> &Operand;
 
     fn kind(&self) -> &OperandKind {
