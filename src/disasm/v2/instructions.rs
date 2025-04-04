@@ -15,11 +15,14 @@ pub struct DebugInfo {
     pub comment: Option<String>,
 }
 
+define_id_type!(InstructionId);
 /// A generic instruction that can use different operand types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct GenericInstruction<T> {
     /// The instruction ID
     pub id: InstructionId,
+    /// The span of the instruction in the image
+    pub span: Span,
     /// The opcode
     pub opcode: Opcode,
     /// The operands
@@ -80,12 +83,12 @@ impl OperandKind {
             _ => None,
         }
     }
-    
+
     /// Returns true if this is a variable operand, not an immediate value
     pub fn is_variable(&self) -> bool {
         !matches!(self, OperandKind::Immediate(_))
     }
-    
+
     /// Returns this operand if it's a variable (not an immediate value)
     /// Used for SSA conversion
     pub fn as_variable(&self) -> Option<Self> {
@@ -123,6 +126,20 @@ pub struct Operand {
     pub kind: OperandKind,
     pub offset: usize,
     pub debug_marker: Option<char>,
+}
+
+trait HasOperand {
+    fn operand(&self) -> &Operand;
+
+    fn kind(&self) -> &OperandKind {
+        &self.operand().kind
+    }
+}
+
+impl HasOperand for Operand {
+    fn operand(&self) -> &Operand {
+        self
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -191,31 +208,7 @@ pub enum ParseError {
     NoMatch,
 }
 
-define_id_type!(InstructionId);
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Instruction {
-    // Basic structural info (always available)
-    pub id: InstructionId,
-    pub span: Span,
-    pub opcode: Opcode,
-    pub operands: Vec<Operand>,
-    pub debug_info: Option<DebugInfo>,
-}
-
-impl Instruction {
-    /// Convert this instruction to a generic instruction with a different operand type
-    pub fn to_generic<T, F>(&self, convert_operand: F) -> GenericInstruction<T> 
-    where
-        F: Fn(&Operand) -> T
-    {
-        GenericInstruction {
-            id: self.id,
-            opcode: self.opcode,
-            operands: self.operands.iter().map(convert_operand).collect(),
-            debug_info: self.debug_info.clone(),
-        }
-    }
-}
+pub type Instruction = GenericInstruction<Operand>;
 
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -228,22 +221,22 @@ impl fmt::Display for Instruction {
 }
 
 #[derive(Debug, Clone)]
-pub struct Assignment {
-    pub target: Operand,
-    pub source: Operand,
+pub struct Assignment<T> {
+    pub target: T,
+    pub source: T,
 }
 
-impl Instruction {
+impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
     pub fn immediate_arg(&self, index: usize) -> Option<i128> {
-        self.operands[index].kind.get_immediate()
+        self.operands[index].kind().get_immediate()
     }
 
     pub fn memory_arg(&self, index: usize) -> Option<i128> {
-        self.operands[index].kind.get_memory()
+        self.operands[index].kind().get_memory()
     }
 
     pub fn relative_memory_arg(&self, index: usize) -> Option<i128> {
-        self.operands[index].kind.get_relative_memory()
+        self.operands[index].kind().get_relative_memory()
     }
 
     pub fn is_jump(&self) -> bool {
@@ -253,7 +246,7 @@ impl Instruction {
         }
     }
 
-    pub fn goto_address(&self) -> Option<Operand> {
+    pub fn goto_address(&self) -> Option<T> {
         match self.opcode {
             Opcode::JumpIfTrue if self.immediate_arg(0).is_some_and(|v| v != 0) => {
                 Some(self.operands[1])
@@ -275,21 +268,21 @@ impl Instruction {
 
     pub fn immediate_goto(&self) -> Option<usize> {
         self.goto_address()
-            .and_then(|a| a.kind.get_immediate().map(|a| a as usize))
+            .and_then(|a| a.kind().get_immediate().map(|a| a as usize))
     }
 
     pub fn is_conditional_jump(&self) -> bool {
         (self.opcode == Opcode::JumpIfTrue || self.opcode == Opcode::JumpIfFalse) && !self.is_goto()
     }
 
-    pub fn conditional_jump_address(&self) -> Option<Operand> {
+    pub fn conditional_jump_address(&self) -> Option<T> {
         if !self.is_conditional_jump() {
             return None;
         }
         Some(self.operands[1])
     }
 
-    pub fn conditional_jump_condition(&self) -> Option<Operand> {
+    pub fn conditional_jump_condition(&self) -> Option<T> {
         if !self.is_conditional_jump() {
             return None;
         }
@@ -310,15 +303,15 @@ impl Instruction {
         self.immediate_arg(0)
     }
 
-    pub fn as_assignment(&self) -> Option<Assignment> {
+    pub fn as_assignment(&self) -> Option<Assignment<T>> {
         match self.opcode {
             Opcode::Add => {
-                if let Some(0) = self.operands[0].kind.get_immediate() {
+                if let Some(0) = self.operands[0].kind().get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[1],
                     })
-                } else if let Some(0) = self.operands[1].kind.get_immediate() {
+                } else if let Some(0) = self.operands[1].kind().get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[0],
@@ -328,12 +321,12 @@ impl Instruction {
                 }
             }
             Opcode::Mul => {
-                if let Some(1) = self.operands[0].kind.get_immediate() {
+                if let Some(1) = self.operands[0].kind().get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[1],
                     })
-                } else if let Some(1) = self.operands[1].kind.get_immediate() {
+                } else if let Some(1) = self.operands[1].kind().get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[0],
@@ -387,10 +380,8 @@ impl Instruction {
             })
             .collect::<Result<_, _>>()?;
         // Check if any operands have debug markers
-        let debug_markers: Vec<_> = operands.iter()
-            .filter_map(|op| op.debug_marker)
-            .collect();
-        
+        let debug_markers: Vec<_> = operands.iter().filter_map(|op| op.debug_marker).collect();
+
         let debug_info = if !debug_markers.is_empty() {
             Some(DebugInfo {
                 marker: debug_markers.first().cloned(),
@@ -400,7 +391,7 @@ impl Instruction {
         } else {
             None
         };
-        
+
         Ok(Instruction {
             id: InstructionId::from(offset),
             span: Span::new(offset, offset + operand_count + 1),
@@ -410,9 +401,49 @@ impl Instruction {
         })
     }
 
+    pub fn read_positions(&self) -> Vec<usize> {
+        let mut positions = Vec::new();
+        match self.opcode {
+            Opcode::Add | Opcode::Mul | Opcode::LessThan | Opcode::Equals => {
+                positions.push(0); // Arg 1
+                positions.push(1); // Arg 2
+            }
+            Opcode::Input => {}
+            Opcode::Output => {
+                positions.push(0); // Arg 1
+            }
+            Opcode::JumpIfTrue | Opcode::JumpIfFalse => {
+                positions.push(0); // Arg 1
+                positions.push(1); // Arg 1
+            }
+            Opcode::AdjustRelativeBase => {
+                positions.push(0); // Value to adjust by
+            }
+            Opcode::Halt => {} // No reads
+        };
+        positions
+    }
+
+    pub fn write_positions(&self) -> Vec<usize> {
+        let mut positions = Vec::new();
+        match self.opcode {
+            Opcode::Add | Opcode::Mul | Opcode::LessThan | Opcode::Equals => {
+                positions.push(2); // Destination
+            }
+            Opcode::Input => {
+                positions.push(0); // Destination
+            }
+            Opcode::Output => {}
+            Opcode::JumpIfTrue | Opcode::JumpIfFalse => {}
+            Opcode::AdjustRelativeBase => {} // Modifies R register implicitly, not an operand location
+            Opcode::Halt => {}               // No writes
+        };
+        positions
+    }
+
     /// Returns a list of operands that are read by this instruction.
     /// Does not include immediate values, only operands representing memory locations.
-    pub fn reads(&self) -> Vec<&Operand> {
+    pub fn reads(&self) -> Vec<&T> {
         let mut reads = Vec::new();
         match self.opcode {
             Opcode::Add | Opcode::Mul | Opcode::LessThan | Opcode::Equals => {
@@ -445,7 +476,7 @@ impl Instruction {
             .into_iter()
             .filter(|op| {
                 matches!(
-                    op.kind,
+                    op.kind(),
                     OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
                 )
             })
@@ -454,7 +485,7 @@ impl Instruction {
     }
 
     /// Returns the operand that is written to by this instruction, if any.
-    pub fn writes(&self) -> Option<&Operand> {
+    pub fn writes(&self) -> Option<&T> {
         let target_operand = match self.opcode {
             Opcode::Add | Opcode::Mul | Opcode::LessThan | Opcode::Equals => {
                 Some(&self.operands[2]) // Destination
@@ -474,7 +505,7 @@ impl Instruction {
         // and Deref (requires pointer analysis to know the target).
         target_operand.filter(|op| {
             matches!(
-                op.kind,
+                op.kind(),
                 OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
             )
         })

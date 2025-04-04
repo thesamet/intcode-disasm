@@ -78,8 +78,6 @@ pub struct PhiFunction {
 pub struct SsaInstruction {
     /// The generic instruction using SSA variables
     pub instruction: GenericInstruction<SsaVar>,
-    /// Tracks operands that originate from function returns
-    pub operands_from_function_returns: Vec<Definition>,
 }
 
 /// Represents a basic block in SSA form
@@ -798,6 +796,7 @@ pub mod conversion {
         // Create the SSA instruction using the to_generic helper
         let ssa_instruction = GenericInstruction {
             id: original.id,
+            span: original.span,
             opcode: original.opcode,
             operands: ssa_operands,
             debug_info: original.debug_info.clone(),
@@ -805,7 +804,6 @@ pub mod conversion {
 
         SsaInstruction {
             instruction: ssa_instruction,
-            operands_from_function_returns,
         }
     }
 
@@ -1526,7 +1524,10 @@ mod tests {
 
         // The function return should be tracked in operands_from_function_returns
         assert!(
-            !output_instr.operands_from_function_returns.is_empty(),
+            matches!(
+                output_instr.instruction.operands[0].source,
+                SsaVarSource::FunctionReturn { .. }
+            ),
             "Output instruction should track function return operands"
         );
 
