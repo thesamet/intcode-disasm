@@ -956,17 +956,14 @@ pub mod conversion {
                         ssa_blocks,
                     );
                 }
-                NextKind::Goto(op) => {
-                    if let Some(target_addr) = op.kind.get_immediate() {
-                        let target_id = BlockId::from(target_addr as usize);
-                        fill_phi_inputs(
-                            target_id,
-                            block_id,
-                            current_versions,
-                            phi_placements,
-                            ssa_blocks,
-                        );
-                    }
+                NextKind::Goto(target_id) => {
+                    fill_phi_inputs(
+                        *target_id,
+                        block_id,
+                        current_versions,
+                        phi_placements,
+                        ssa_blocks,
+                    );
                 }
                 NextKind::Condition(cond) => {
                     // Fill phi inputs for both the target and follows blocks

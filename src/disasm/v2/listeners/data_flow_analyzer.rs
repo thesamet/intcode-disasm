@@ -224,20 +224,17 @@ impl DataFlowAnalyzer {
                     );
                 }
             }
-            NextKind::Goto(op) => {
+            NextKind::Goto(target_id) => {
                 // For immediate goto targets (not function calls), continue search
-                if let Some(target_addr) = op.kind.get_immediate() {
-                    let target_id = BlockId::from(target_addr as usize);
-                    if function_block_ids.contains(&target_id) {
-                        return self.is_used_in_execution_paths(
-                            model,
-                            target_id,
-                            operand,
-                            function_block_ids,
-                            df_result,
-                            visited,
-                        );
-                    }
+                if function_block_ids.contains(&target_id) {
+                    return self.is_used_in_execution_paths(
+                        model,
+                        *target_id,
+                        operand,
+                        function_block_ids,
+                        df_result,
+                        visited,
+                    );
                 }
                 // Indirect jumps (like goto [r]) terminate the search path since we can't determine target statically
             }
@@ -445,17 +442,9 @@ impl DataFlowAnalyzer {
             NextKind::Follows(succ_id) => {
                 add_live_in_from_successor(*succ_id, &mut new_live_out);
             }
-            NextKind::Goto(operand) => {
+            NextKind::Goto(target_addr) => {
                 // Only consider immediate jumps for intra-procedural analysis
-                if let Some(target_addr) = operand.kind.get_immediate() {
-                    add_live_in_from_successor(
-                        BlockId::from(target_addr as usize),
-                        &mut new_live_out,
-                    );
-                } else {
-                    debug!("Non-immediate goto target {:?} from {:?}, cannot determine successor live_in", operand, block_id);
-                    // Cannot determine successor statically here
-                }
+                add_live_in_from_successor(*target_addr, &mut new_live_out);
             }
             NextKind::Condition(cond) => {
                 add_live_in_from_successor(cond.target_block, &mut new_live_out);

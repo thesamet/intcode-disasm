@@ -9,8 +9,8 @@ use crate::disasm::low_ir::Span; // Assuming Span might be useful later
 pub enum NextKind<T> {
     // Block always falls through to the immediately following block
     Follows(BlockId),
-    // Unconditional jump to a target determined by the operand
-    Goto(T),
+    // Unconditional jump to a target within the current function.
+    Goto(BlockId),
     // A function call sequence ([R]=ret; goto target)
     FunctionCall(FunctionCall<T>),
     // Conditional jump based on an operand
@@ -31,7 +31,7 @@ impl<T> NextKind<T> {
     {
         match self {
             NextKind::Follows(id) => NextKind::Follows(*id),
-            NextKind::Goto(op) => NextKind::Goto(map(*op)),
+            NextKind::Goto(block_id) => NextKind::Goto(*block_id),
             NextKind::FunctionCall(call) => NextKind::FunctionCall(call.map(map)),
             NextKind::Condition(cond) => NextKind::Condition(cond.map(map)),
             NextKind::Return => NextKind::Return,

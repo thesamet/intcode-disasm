@@ -196,15 +196,12 @@ impl ControlFlowGraphBuilder {
                         .or_default()
                         .push(PredecessorKind::FollowsFrom(*block_id));
                 }
-                NextKind::Goto(operand) => {
-                    if let Some(target_addr) = operand.kind.get_immediate() {
-                        let target_id = BlockId::from(target_addr as usize);
-                        assert!(model.has_block(target_id));
-                        predecessors_map
-                            .entry(target_id)
-                            .or_default()
-                            .push(PredecessorKind::GotoFrom(*block_id));
-                    } // Else: Unknown target, no predecessor added yet
+                NextKind::Goto(target_block_id) => {
+                    assert!(model.has_block(*target_block_id));
+                    predecessors_map
+                        .entry(*target_block_id)
+                        .or_default()
+                        .push(PredecessorKind::GotoFrom(*block_id));
                 }
                 NextKind::FunctionCall(call) => {
                     assert!(
@@ -310,8 +307,10 @@ fn determine_next_kind(
             return_block: BlockId::from(call.return_address),
             call_site_state: None,
         })
-    } else if let Some(target_addr) = last_instr.goto_address() {
-        NextKind::Goto(target_addr)
+    } else if let Some(target_addr) = last_instr.immediate_goto() {
+        NextKind::Goto(BlockId::from(target_addr as usize))
+    } else if let Some(_) = last_instr.goto_address() {
+        panic!("Unexpected non-immediate goto");
     } else if let Some(target_addr) = last_instr.conditional_jump_immediate_address() {
         let jump_if_true = last_instr.opcode == crate::disasm::v2::instructions::Opcode::JumpIfTrue;
         let condition_operand = last_instr.conditional_jump_condition().unwrap();
@@ -475,7 +474,7 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.instructions.len(), 2);
         assert_eq!(block0.span, Span::new(0, 5));
-        assert!(matches!(block0.next, NextKind::Goto(op) if op.kind.get_immediate() == Some(6)));
+        assert!(matches!(block0.next, NextKind::Goto(address) if address == BlockId::from(6)));
         assert!(block0.predecessors.is_empty());
 
         let block6 = model.get_block(BlockId::from(6));
@@ -557,7 +556,7 @@ mod tests {
         let block5 = model.get_block(BlockId::from(5));
         assert_eq!(block5.instructions.len(), 2); // [R+2]=100, goto @merge
         assert_eq!(block5.span, Span::new(5, 12));
-        assert!(matches!(block5.next, NextKind::Goto(op) if op.kind.get_immediate() == Some(16)));
+        assert!(matches!(block5.next, NextKind::Goto(b) if b == BlockId::from(16)));
         assert_eq!(block5.predecessors.len(), 1);
         if let PredecessorKind::ConditionalFollow(ref cond) = block5.predecessors[0] {
             assert_eq!(cond.from_block, BlockId::from(0));
