@@ -452,17 +452,17 @@ impl TypeInference {
                     );
                 }
 
+                /*
                 // Process call site state for function parameters and returns
-                if let Some(state) = &call.call_site_state {
-                    for (op_kind, var) in state {
-                        // These are variables that are preserved across the call
-                        // We could add constraints here to model parameter passing
-                        let var_type = self.type_for_var(var);
+                for (op_kind, var) in call.call_site_state {
+                    // These are variables that are preserved across the call
+                    // We could add constraints here to model parameter passing
+                    let var_type = self.type_for_var(&var);
 
-                        // If we had information about the callee, we could add constraints
-                        // between caller and callee variables
-                    }
+                    // If we had information about the callee, we could add constraints
+                    // between caller and callee variables
                 }
+                */
             }
 
             // Other control flow types don't add constraints

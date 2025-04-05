@@ -305,7 +305,7 @@ fn determine_next_kind(
             calling_block: block_id,
             function_addr: call.target,
             return_block: BlockId::from(call.return_address),
-            call_site_state: None,
+            call_site_state: vec![],
         })
     } else if let Some(target_addr) = last_instr.immediate_goto() {
         NextKind::Goto(BlockId::from(target_addr as usize))

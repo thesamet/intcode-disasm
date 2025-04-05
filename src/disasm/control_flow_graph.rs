@@ -54,7 +54,7 @@ use super::{
     type_inference::TypeInference,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionCall<ArgType> {
     pub calling_block: BlockId,
     pub function_addr: ArgType,

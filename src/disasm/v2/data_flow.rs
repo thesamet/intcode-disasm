@@ -8,6 +8,7 @@ use crate::disasm::v2::{
     model::BlockId,
 };
 
+use super::control_flow::FunctionCall;
 use super::instructions::Operand;
 
 /// Distinguishes the source of a definition.
@@ -80,6 +81,18 @@ pub struct BlockDataFlow {
     /// they are written to (defined) within the same block. These operands require a valid definition
     /// to be present in `defs_in`.
     pub use_before_def: HashSet<OperandKind>,
+
+    // Instructions in this block that write to [R+n] and thus invalidate all incoming function return values.
+    pub writes_above_r: bool,
+
+    // Function call returns that might reach the entry point of this block.
+    pub function_returns_in: HashSet<FunctionCall<Operand>>,
+
+    // Function call returns that might reach the exit point of this block.
+    // This may get reset to an empty set if the function writes to any positive relative offsets.
+    // The value is not affected if this block calls a function - it is added to the returns block
+    // function_returns_in
+    pub function_returns_out: HashSet<FunctionCall<Operand>>,
 }
 
 impl BlockDataFlow {

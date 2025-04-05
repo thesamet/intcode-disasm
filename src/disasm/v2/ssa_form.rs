@@ -1,8 +1,9 @@
 use crate::disasm::code_printer::{CodePrinter, CodeWriter};
+use crate::disasm::v2::instructions::GenericInstruction;
 use crate::disasm::v2::{
-    control_flow::{Condition, FunctionCall, NextKind},
-    data_flow::{DataFlowResult, Definition, DefinitionKind},
-    instructions::{GenericInstruction, Instruction, InstructionId, Opcode, Operand, OperandKind},
+    control_flow::NextKind,
+    data_flow::{DataFlowResult, Definition},
+    instructions::{Opcode, Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
 };
 use std::collections::{HashMap, HashSet};
@@ -768,9 +769,6 @@ pub mod conversion {
         // Track the current version of each variable
         let mut current_versions: HashMap<OperandKind, SsaVar> = HashMap::new();
 
-        // Track the next version number for each variable
-        let mut next_version: HashMap<OperandKind, usize> = HashMap::new();
-
         // Build the dominator tree for traversal
         let mut dom_tree: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
         for &block_id in &function.blocks {
@@ -982,6 +980,8 @@ pub mod conversion {
 mod tests {
     use super::*;
     use crate::disasm::parser;
+    use crate::disasm::v2::data_flow::DefinitionKind;
+    use crate::disasm::v2::instructions::InstructionId;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,

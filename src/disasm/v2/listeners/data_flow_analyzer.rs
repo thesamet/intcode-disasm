@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use log::debug;
 
-use crate::disasm::v2::instructions::OperandKind;
+use crate::disasm::v2::control_flow::FunctionCall;
+use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},
     data_flow::{BlockDataFlow, DataFlowResult, Definition, DefinitionKind},
@@ -102,6 +103,7 @@ impl DataFlowAnalyzer {
             let block_flow = df_result.block_results.entry(block_id).or_default();
 
             let mut defined_in_block = HashSet::new();
+            block_flow.writes_above_r = false;
             for instr in &block.instructions {
                 // Calculate USE for this instruction
                 for read_operand in instr.reads() {
@@ -115,8 +117,19 @@ impl DataFlowAnalyzer {
                         .gen
                         .insert(write_operand.kind, (instr.id, *write_operand));
                     defined_in_block.insert(write_operand.kind);
+                    if let Some(n) = write_operand.kind.get_relative_memory() {
+                        if n > 0 {
+                            block_flow.writes_above_r = true;
+                        }
+                    }
                 }
             }
+            block_flow.function_returns_in = block
+                .predecessors
+                .iter()
+                .filter_map(|p| p.get_function_call_returns())
+                .cloned()
+                .collect();
             debug!(
                 "Block {}: GEN={:?}, USE={:?}",
                 block_id,
@@ -145,6 +158,8 @@ impl DataFlowAnalyzer {
                     df_result,
                     potential_return_kinds.get(&block_id).unwrap(),
                 );
+
+                let new_func_in = self.calculate_function_returns_in(model, block_id, df_result);
 
                 // Update block's IN set if changed
                 // Use get_mut for direct modification
@@ -175,6 +190,15 @@ impl DataFlowAnalyzer {
                     debug!("Block {:?}: DefsOut changed", block_id);
                     block_flow.defs_out = current_defs_out;
                     // Change automatically handled by the outer loop condition
+                }
+
+                if new_func_in != block_flow.function_returns_in {
+                    changed = true;
+                    block_flow.function_returns_in = new_func_in.clone();
+                    assert!(new_func_in.len() <= 1);
+                    if !block_flow.writes_above_r {
+                        block_flow.function_returns_out = new_func_in;
+                    }
                 }
             }
         }
@@ -311,6 +335,7 @@ impl DataFlowAnalyzer {
                 .expect("Predecessor block data flow info should exist");
 
             match pred_kind {
+                /*
                 PredecessorKind::FunctionCallReturns(call) => {
                     // Definitions from predecessor that are not potential return values
                     let mut defs_from_caller = pred_flow.defs_out.clone();
@@ -349,6 +374,7 @@ impl DataFlowAnalyzer {
                         }
                     }
                 }
+                */
                 _ => {
                     // Standard handling for non-function-return predecessors
                     new_defs_in.extend(&pred_flow.defs_out);
@@ -360,6 +386,28 @@ impl DataFlowAnalyzer {
             println!("{}: new_defs_in: {:?}", block_id, new_defs_in);
         }
         new_defs_in
+    }
+
+    fn calculate_function_returns_in(
+        &self,
+        model: &ProgramModel,
+        block_id: BlockId,
+        df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
+    ) -> HashSet<FunctionCall<Operand>> {
+        let block_flow = df_result.block_results.get(&block_id).unwrap();
+        let mut new_func_in = block_flow.function_returns_in.clone();
+        for pred in model.get_block(block_id).predecessors.iter() {
+            // Update block's IN set if changed
+            let pred_block_id = pred.source_block_id();
+            let function_returns_out = df_result
+                .block_results
+                .get(&pred_block_id)
+                .unwrap()
+                .function_returns_out
+                .clone();
+            new_func_in.extend(function_returns_out);
+        }
+        new_func_in
     }
 
     /// Pass 3: Computes Liveness iteratively.

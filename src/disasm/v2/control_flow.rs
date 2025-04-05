@@ -1,12 +1,15 @@
 use super::{
-    instructions::{Instruction, Operand},
+    instructions::{Instruction, Operand, OperandKind},
     model::{BlockId, FunctionId},
 };
 use crate::disasm::low_ir::Span; // Assuming Span might be useful later
 
 // Describes how control flow leaves a block
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NextKind<T> {
+pub enum NextKind<T>
+where
+    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+{
     // Block always falls through to the immediately following block
     Follows(BlockId),
     // Unconditional jump to a target within the current function.
@@ -23,11 +26,14 @@ pub enum NextKind<T> {
     Unknown,
 }
 
-impl<T> NextKind<T> {
+impl<T> NextKind<T>
+where
+    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+{
     pub fn map<F, S>(&self, map: &mut F) -> NextKind<S>
     where
         F: FnMut(T) -> S,
-        T: Copy + Clone,
+        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
     {
         match self {
             NextKind::Follows(id) => NextKind::Follows(*id),
@@ -43,7 +49,10 @@ impl<T> NextKind<T> {
 
 // Describes how control flow enters a block
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PredecessorKind<T> {
+pub enum PredecessorKind<T>
+where
+    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+{
     // Entered from the immediately preceding block
     FollowsFrom(BlockId),
     // Entered via an unconditional jump from the source block
@@ -56,7 +65,7 @@ pub enum PredecessorKind<T> {
     ConditionalJump(Condition<T>),
 }
 
-impl<T> PredecessorKind<T> {
+impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> PredecessorKind<T> {
     /// Gets the ID of the block where this predecessor originates.
     pub fn source_block_id(&self) -> BlockId {
         match self {
@@ -68,10 +77,17 @@ impl<T> PredecessorKind<T> {
         }
     }
 
+    pub fn get_function_call_returns(&self) -> Option<&FunctionCall<T>> {
+        match self {
+            PredecessorKind::FunctionCallReturns(call) => Some(call),
+            _ => None,
+        }
+    }
+
     fn map<F, S>(self, map: &mut F) -> PredecessorKind<S>
     where
         F: FnMut(T) -> S,
-        T: Copy + Clone,
+        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
     {
         match self {
             PredecessorKind::FollowsFrom(id) => PredecessorKind::FollowsFrom(id),
@@ -89,30 +105,32 @@ impl<T> PredecessorKind<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionCall<T> {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionCall<T>
+where
+    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+{
     pub calling_block: BlockId,
     // The operand representing the function address (can be immediate or indirect)
     pub function_addr: T,
     pub return_block: BlockId, // The block execution resumes at after the call
     // The state of all variables at call site (empty for now, filled by SSA conversion)
-    pub call_site_state:
-        Option<std::collections::HashMap<crate::disasm::v2::instructions::OperandKind, T>>,
+    pub call_site_state: Vec<(OperandKind, T)>,
 }
 
-impl<T> FunctionCall<T> {
+impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
     pub fn new(calling_block: BlockId, function_addr: T, return_block: BlockId) -> Self {
         Self {
             calling_block,
             function_addr,
             return_block,
-            call_site_state: None,
+            call_site_state: vec![],
         }
     }
     pub fn map<F, S>(&self, map: &mut F) -> FunctionCall<S>
     where
         F: FnMut(T) -> S,
-        T: Copy + Clone,
+        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
     {
         FunctionCall {
             calling_block: self.calling_block,
@@ -120,8 +138,9 @@ impl<T> FunctionCall<T> {
             return_block: self.return_block,
             call_site_state: self
                 .call_site_state
-                .as_ref()
-                .map(|hm| hm.iter().map(|(k, v)| (k.clone(), map(*v))).collect()),
+                .iter()
+                .map(|(k, v)| (k.clone(), map(*v)))
+                .collect(),
         }
     }
 }
@@ -166,7 +185,10 @@ impl<T> Condition<T> {
     }
 }
 
-impl<T> Default for NextKind<T> {
+impl<T> Default for NextKind<T>
+where
+    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+{
     fn default() -> Self {
         NextKind::Unknown
     }
