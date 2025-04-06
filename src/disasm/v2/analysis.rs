@@ -1,18 +1,12 @@
-use itertools::Itertools;
-
 use crate::disasm::v2::{
-    data_flow::DefinitionKind, 
-    listeners::image_scanner::ImageScanner, 
-    model::ProgramModel,
-    ssa_form::SsaProgram,
+    listeners::image_scanner::ImageScanner, model::ProgramModel, ssa_form::SsaProgram,
 };
 
 use super::{
     dispatching::EventPublisher,
     events::Event,
     listeners::{
-        control_flow_builder::ControlFlowGraphBuilder, 
-        data_flow_analyzer::DataFlowAnalyzer,
+        control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
         ssa_converter::SsaConverter,
     },
 };
@@ -26,77 +20,34 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
-
-    if let Some(data_flow_results) = model.get_data_flow_result() {
-        for (block_id, res) in data_flow_results
-            .block_results
-            .iter()
-            .sorted_by_key(|(k, _)| *k)
-        {
-            let function_return_defs = res
-                .defs_in
-                .iter()
-                // Correctly use matches! to check the enum variant
-                .filter(|d| matches!(d.kind, DefinitionKind::FunctionReturn { .. }))
-                .sorted_by_key(|d| d.block_id)
-                .collect_vec(); // collect_vec() should be outside filter
-
-            if !function_return_defs.is_empty() {
-                let block = model.get_block(*block_id); // Get block info for span
-                println!(
-                    "Block {} has incoming function return definitions:",
-                    block.span
-                );
-                for r_def in function_return_defs.iter() {
-                    // Match on the kind to extract function_addr
-                    if let DefinitionKind::FunctionReturn { function_addr } = r_def.kind {
-                        println!(
-                            "- {}: usage of {} from func call targeting {:?}",
-                            r_def.instruction_id,
-                            r_def.location,
-                            function_addr, // Print the kind of the function address operand
-                        );
-                    } else {
-                        // This branch shouldn't be hit due to the filter, but included for completeness
-                        println!(
-                            "- Unexpected non-FunctionReturn def: {:?} for operand {:?}",
-                            r_def.kind, r_def.location
-                        );
-                    }
-                }
-            }
-        }
-    } else {
-        println!("Data flow analysis results not available.");
-    }
 }
 
 /// Run the analysis pipeline and print the program in SSA form
 pub fn run_analysis_ssa(image: Vec<i128>) -> String {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
-    
+
     // Initialize all the required listeners
     publisher.add_listener(Box::new(ImageScanner::new()));
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
-    
+
     // Add the SSA converter
     let ssa_converter = SsaConverter::new();
     publisher.add_listener(Box::new(ssa_converter.clone()));
-    
+
     // Process the image
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
-    
+
     // Check if data flow analysis was completed
     if model.get_data_flow_result().is_none() {
         return "No SSA form available due to missing data flow analysis".to_string();
     }
-    
+
     // Convert to SSA form
     let ssa_program = SsaProgram::from_program_model(&model);
-    
+
     // Pretty-print the SSA form
     ssa_program.pretty_print()
 }

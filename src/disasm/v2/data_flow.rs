@@ -11,17 +11,6 @@ use crate::disasm::v2::{
 use super::control_flow::FunctionCall;
 use super::instructions::Operand;
 
-/// Distinguishes the source of a definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum DefinitionKind {
-    /// Definition comes from a standard instruction write.
-    #[default]
-    InstructionWrite,
-    /// Definition represents a value returned by a function call.
-    FunctionReturn { function_addr: OperandKind },
-    // Could add others like InitialValue, Parameter, etc. later if needed
-}
-
 /// Represents a specific definition site for an Operand.
 /// A definition occurs when an instruction writes a value to a memory location
 /// represented by the Operand.
@@ -34,22 +23,14 @@ pub struct Definition {
     pub location: OperandKind,
     /// The ID of the block containing the defining instruction or the call.
     pub block_id: BlockId,
-    /// The kind of definition.
-    pub kind: DefinitionKind,
 }
 
 impl fmt::Display for Definition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let kind_str = match self.kind {
-            DefinitionKind::InstructionWrite => "".to_string(),
-            DefinitionKind::FunctionReturn { function_addr } => {
-                format!("(ret from func {})", function_addr)
-            }
-        };
         write!(
             f,
-            "Def({}{} in {} at i{})",
-            kind_str, self.location, self.block_id, self.instruction_id
+            "Def({} in {} at i{})",
+            self.location, self.block_id, self.instruction_id
         )
     }
 }

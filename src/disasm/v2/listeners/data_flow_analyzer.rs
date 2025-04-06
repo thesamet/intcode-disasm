@@ -4,12 +4,14 @@ use itertools::Itertools;
 use log::debug;
 
 use crate::disasm::v2::control_flow::FunctionCall;
+use crate::disasm::v2::data_flow::BlockDataFlow;
 use crate::disasm::v2::data_flow::CallSiteInfo;
+use crate::disasm::v2::events::DataFlowAnalysisComplete;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
-    data_flow::{BlockDataFlow, DataFlowResult, Definition, DefinitionKind},
-    events::{self, DataFlowAnalysisComplete, FunctionCfgBuilt, ModelEventListener},
+    data_flow::{DataFlowResult, Definition},
+    events::{self, FunctionCfgBuilt, ModelEventListener},
     model::{BlockId, FunctionId, ProgramModel},
 };
 
@@ -178,7 +180,6 @@ impl DataFlowAnalyzer {
                         instruction_id: *instruction_id,
                         location: *location,
                         block_id,
-                        kind: DefinitionKind::InstructionWrite,
                     });
                 }
                 // In we call a function at the end of the block, this block doesn't let [R+n]
@@ -460,43 +461,12 @@ mod tests {
     }
 
     // Helper to create a Definition for assertions
-    fn def(
-        instr_id_val: usize, // Use instruction offset as ID for simplicity in tests
-        location: OperandKind,
-        block_id_val: usize,
-        kind: DefinitionKind,
-    ) -> Definition {
+    fn def(instr_id: usize, location: OperandKind, block_id: usize) -> Definition {
         Definition {
-            instruction_id: InstructionId::from(instr_id_val),
+            instruction_id: InstructionId::from(instr_id),
             location,
-            block_id: BlockId::from(block_id_val),
-            kind,
+            block_id: BlockId::from(block_id),
         }
-    }
-    // Helper for InstructionWrite definitions
-    fn instr_def(instr_id: usize, location: OperandKind, block_id: usize) -> Definition {
-        def(
-            instr_id,
-            location,
-            block_id,
-            DefinitionKind::InstructionWrite,
-        )
-    }
-    // Helper for FunctionReturn definitions
-    fn ret_def(
-        call_instr_id: usize,   // ID of the 'goto @func' instruction
-        location: OperandKind,  // The [R+n] operand
-        call_block_id: usize,   // Block containing the call sequence
-        function_addr: Operand, // Operand representing the called function's address
-    ) -> Definition {
-        def(
-            call_instr_id,
-            location,
-            call_block_id,
-            DefinitionKind::FunctionReturn {
-                function_addr: function_addr.kind,
-            },
-        )
     }
 
     #[test]
@@ -546,8 +516,8 @@ mod tests {
         // Reaching Defs
         assert!(flow0.defs_in.is_empty(), "DefsIn @ B0");
         let expected_defs_out0: HashSet<_> = [
-            instr_def(2, mem_kind(100), 0), // Def A
-            instr_def(6, mem_kind(101), 0), // Def B
+            def(2, mem_kind(100), 0), // Def A
+            def(6, mem_kind(101), 0), // Def B
         ]
         .iter()
         .cloned()
@@ -609,7 +579,7 @@ mod tests {
         let block22_id = BlockId::from(22); // Return block
 
         let df_results = model.get_data_flow_result().unwrap();
-        let flow0 = df_results.block_results.get(&block0_id).unwrap();
+        let _flow0 = df_results.block_results.get(&block0_id).unwrap();
         let flow9 = df_results.block_results.get(&block9_id).unwrap();
         let flow16 = df_results.block_results.get(&block16_id).unwrap();
         let flow20 = df_results.block_results.get(&block20_id).unwrap();
@@ -617,9 +587,9 @@ mod tests {
 
         // --- Check Defs reaching merge block (Block 20) ---
         let expected_defs_in20: HashSet<_> = [
-            instr_def(2, mem_kind(100), 0),   // Def A from block 0
-            instr_def(9, mem_kind(101), 9),   // Def B from false path block 9
-            instr_def(16, mem_kind(101), 16), // Def C from true path block 16
+            def(2, mem_kind(100), 0),   // Def A from block 0
+            def(9, mem_kind(101), 9),   // Def B from false path block 9
+            def(16, mem_kind(101), 16), // Def C from true path block 16
         ]
         .iter()
         .cloned()
@@ -654,7 +624,7 @@ mod tests {
 
         // --- Check Defs reaching branches ---
         let expected_defs_in_branches: HashSet<_> =
-            [instr_def(2, mem_kind(100), 0)].iter().cloned().collect(); // Only Def A reaches
+            [def(2, mem_kind(100), 0)].iter().cloned().collect(); // Only Def A reaches
         assert_eq!(flow9.defs_in, expected_defs_in_branches, "DefsIn @ B9");
         assert_eq!(flow16.defs_in, expected_defs_in_branches, "DefsIn @ B16");
 
@@ -688,15 +658,15 @@ mod tests {
         let block15_id = BlockId::from(15); // Exit/Return block
 
         let df_results = model.get_data_flow_result().unwrap();
-        let flow0 = df_results.block_results.get(&block0_id).unwrap();
+        let _flow0 = df_results.block_results.get(&block0_id).unwrap();
         let flow6 = df_results.block_results.get(&block6_id).unwrap();
         let flow15 = df_results.block_results.get(&block15_id).unwrap();
 
         // --- Check Defs reaching loop header/body (Block 6) ---
         // Should receive Def A from block 0 AND Def C from loop back edge
         let expected_defs_in6: HashSet<_> = [
-            instr_def(2, mem_kind(100), 0), // Def A from block 0
-            instr_def(8, mem_kind(100), 6), // Def C from loop back edge (instr 8 in block 6)
+            def(2, mem_kind(100), 0), // Def A from block 0
+            def(8, mem_kind(100), 6), // Def C from loop back edge (instr 8 in block 6)
         ]
         .iter()
         .cloned()
@@ -726,8 +696,7 @@ mod tests {
         // --- Check Defs out of loop block (Block 6) ---
         // This is DefsIn(6) - KilledDefs(6) U GenDefs(6)
         // KilledDefs = {Def A, Def C}, GenDefs = {Def C} => DefsOut = {Def C}
-        let expected_defs_out6: HashSet<_> =
-            [instr_def(8, mem_kind(100), 6)].iter().cloned().collect();
+        let expected_defs_out6: HashSet<_> = [def(8, mem_kind(100), 6)].iter().cloned().collect();
         assert_eq!(flow6.defs_out, expected_defs_out6, "DefsOut @ B6");
 
         // --- Check Defs into exit block (Block 15) ---
@@ -785,14 +754,11 @@ mod tests {
         let callee_addr_op = imm_op(30); // Address of callee for FunctionReturn kind
         let expected_defs_in21: HashSet<_> = [
             // Def A: [100]=50 (@0, i2) - Reaches, assuming [100] is distinct from [R+1],[R+2]
-            instr_def(2, mem_kind(100), 0),
+            def(2, mem_kind(100), 0),
             // Def B: [R+1]=[100] (@0, i6) - Killed by call because [R+1] is read in B21
             // Def C: [R+2]=99 (@0, i10) - Killed by call because [R+2] is read in B21
             // Abstract return def for [R+1] from call at instr 18 in block 0
-            ret_def(18, rel_kind(1), 0, callee_addr_op), // RetDef D
-            // Abstract return def for [R+2] from call at instr 18 in block 0
-            ret_def(18, rel_kind(2), 0, callee_addr_op), // RetDef E
-            instr_def(14, rel_kind(0), 0),               // RetDef F
+            def(14, rel_kind(0), 0), // RetDef F
         ]
         .iter()
         .cloned()
@@ -838,8 +804,7 @@ mod tests {
         );
 
         // Defs Out should only contain Def B
-        let expected_defs_out0: HashSet<_> =
-            [instr_def(6, mem_kind(100), 0)].iter().cloned().collect(); // Only Def B
+        let expected_defs_out0: HashSet<_> = [def(6, mem_kind(100), 0)].iter().cloned().collect(); // Only Def B
         assert_eq!(flow0.defs_out, expected_defs_out0, "DefsOut @ B0");
 
         // Defs In for return block should only contain Def B
@@ -919,19 +884,14 @@ mod tests {
 
         // Check that all these blocks have function return values from func3
         for block_id in func3_call_blocks {
-            let has_func3_return = df_results
-                .block_results
-                .get(&block_id)
-                .map(|flow| {
-                    flow.defs_in.iter().any(|def| {
-                        matches!(def.kind, DefinitionKind::FunctionReturn { function_addr }
-                             if function_addr == imm_kind(124))
-                    })
-                })
-                .unwrap_or(false);
-
             assert!(
-                has_func3_return,
+                df_results
+                    .block_results
+                    .get(&block_id)
+                    .unwrap()
+                    .function_returns_in
+                    .iter()
+                    .any(|fc| fc.function_addr.kind.get_immediate() == Some(124)),
                 "Block {} should have function return definition from func3",
                 block_id
             );
