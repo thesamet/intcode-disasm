@@ -3,13 +3,10 @@ use std::collections::HashMap;
 use super::{
     control_flow::Block,
     data_flow::DataFlowResult,
-    dispatching::{EventPublisher, EventCollector},
-    events::{self, Event, ImageAddedEvent, ImageScannerComplete},
+    dispatching::{EventCollector, EventPublisher},
+    events::{Event, ImageAddedEvent, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::{
-        image_scanner::ImageScannerResult,
-        ssa_converter::SsaConverter,
-    },
+    listeners::{image_scanner::ImageScannerResult, ssa_converter::SsaConverter},
 };
 
 define_id_type!(FunctionId);
@@ -23,7 +20,7 @@ pub struct ProgramModel {
 
     functions: HashMap<FunctionId, Function>,
     blocks: HashMap<BlockId, Block>,
-    
+
     /// Reference to the SSA converter
     pub ssa_converter: Option<SsaConverter>,
 }
@@ -76,20 +73,13 @@ impl ProgramModel {
     pub fn get_data_flow_result_mut(&mut self) -> Option<&mut DataFlowResult> {
         self.data_flow_result.as_mut()
     }
-    
+
     /// Sets the SSA converter
-    pub fn set_ssa_converter(&mut self, converter: SsaConverter) {
-        self.ssa_converter = Some(converter);
-    }
 
     pub fn add_function(&mut self, function: Function) {
         self.functions.insert(function.function_id, function);
     }
 
-    pub fn has_function(&self, function_id: FunctionId) -> bool {
-        self.functions.contains_key(&function_id)
-    }
-    
     pub fn get_function(&self, function_id: FunctionId) -> &Function {
         self.functions.get(&function_id).unwrap()
     }
@@ -97,7 +87,7 @@ impl ProgramModel {
     pub fn get_function_mut(&mut self, function_id: FunctionId) -> &mut Function {
         self.functions.get_mut(&function_id).unwrap()
     }
-    
+
     pub fn functions(&self) -> &HashMap<FunctionId, Function> {
         &self.functions
     }
@@ -120,9 +110,6 @@ impl ProgramModel {
 }
 
 define_id_type!(BlockId);
-
-#[derive(Debug, Clone)]
-pub struct Condition {}
 
 define_id_type!(ParameterId);
 #[derive(Debug, Clone)]

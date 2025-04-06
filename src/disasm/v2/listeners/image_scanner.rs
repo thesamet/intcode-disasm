@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::disasm::v2::{
     events::{self, ImageAddedEvent, ModelEventListener},
-    instructions::{Instruction, InstructionId, Opcode, Operand, ParseError},
+    instructions::{Instruction, Opcode, Operand, ParseError},
     model::ProgramModel,
     Span,
 };
@@ -12,6 +12,7 @@ use crate::disasm::v2::{
 #[derive(Debug, Clone)]
 pub struct ImageScannerResult {
     pub recognized_functions: Vec<RecognizedFunction>,
+    #[allow(dead_code)]
     pub data_segments: Vec<Span>,
 }
 
@@ -63,7 +64,7 @@ impl ModelEventListener for ImageScanner {
                 i += 1;
                 continue;
             };
-            let Ok(mut f) = scan_from(image, i, stack_size) else {
+            let Ok(f) = scan_from(image, i, stack_size) else {
                 data_offsets.push(i);
                 i += 1;
                 continue;
@@ -85,7 +86,7 @@ impl ModelEventListener for ImageScanner {
             .collect_vec();
         let result = ImageScannerResult {
             recognized_functions,
-            data_segments,
+            data_segments: data_segments,
         };
         model.set_image_scanner_result(result, sender);
     }

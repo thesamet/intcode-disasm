@@ -5,7 +5,7 @@ use log::debug;
 use crate::disasm::v2::control_flow::FunctionCall;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
-    control_flow::{NextKind, PredecessorKind},
+    control_flow::NextKind,
     data_flow::{BlockDataFlow, DataFlowResult, Definition, DefinitionKind},
     events::{self, DataFlowAnalysisComplete, FunctionCfgBuilt, ModelEventListener},
     model::{BlockId, FunctionId, ProgramModel},
@@ -763,7 +763,7 @@ mod tests {
         let block25_id = BlockId::from(25); // main actual return sequence
 
         let df_results = model.get_data_flow_result().unwrap();
-        let flow0 = df_results.block_results.get(&block0_id).unwrap();
+        let _flow0 = df_results.block_results.get(&block0_id).unwrap();
         let flow21 = df_results.block_results.get(&block21_id).unwrap();
         let flow25 = df_results.block_results.get(&block25_id).unwrap();
 

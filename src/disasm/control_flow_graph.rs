@@ -265,7 +265,7 @@ impl<ArgType: ArgBase + From<OpArg> + Copy + Debug> Block<ArgType> {
         Ok(block)
     }
 
-    fn next_unconditional(&self) -> Option<BlockId> {
+    fn _next_unconditional(&self) -> Option<BlockId> {
         match &self.next {
             NextKind::Follows(block_id) => Some(*block_id),
             NextKind::Goto(arg) if arg.is_value() => Some(BlockId(arg.value().unwrap() as usize)),
@@ -273,7 +273,7 @@ impl<ArgType: ArgBase + From<OpArg> + Copy + Debug> Block<ArgType> {
         }
     }
 
-    pub fn function_call_address(&self) -> Option<usize> {
+    pub fn _function_call_address(&self) -> Option<usize> {
         match &self.next {
             NextKind::FunctionCall(
                 FunctionCall {
@@ -464,7 +464,7 @@ where
                 data.push(start);
             }
         }
-        let data_segments = data
+        let _data_segments = data
             .iter()
             .map(|o| Span::new(*o, *o + 1))
             .coalesce(|x, y| {

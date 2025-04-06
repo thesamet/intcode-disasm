@@ -95,6 +95,7 @@ pub struct SsaBlock {
 #[derive(Debug, Clone)]
 pub struct SsaFunction {
     /// Original function ID
+    #[allow(dead_code)]
     pub original_id: FunctionId,
     /// Blocks in SSA form
     pub blocks: HashMap<BlockId, SsaBlock>,

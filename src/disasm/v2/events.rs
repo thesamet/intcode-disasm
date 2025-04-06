@@ -1,7 +1,6 @@
 use super::model::{BlockId, FunctionId, ProgramModel};
 use super::dispatching::event_types_enum;
 
-/// Define all event types for the system
 event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub struct ImageAddedEvent { }

@@ -3,6 +3,7 @@ macro_rules! define_id_type {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $id_type(usize);
 
+        #[allow(unused)]
         impl $id_type {
             pub fn new(id: usize) -> Self {
                 Self(id)
@@ -10,10 +11,6 @@ macro_rules! define_id_type {
 
             pub fn index(&self) -> usize {
                 self.0
-            }
-
-            pub fn unassigned() -> Self {
-                Self(usize::MAX)
             }
         }
 
@@ -34,6 +31,7 @@ macro_rules! define_id_type {
             }
         }
 
+        /*
         paste::paste! {
             mod [<counter_ $id_type:snake>] {
                 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -50,9 +48,10 @@ macro_rules! define_id_type {
                 }
             }
         }
+        */
 
         impl $id_type {
-            /// Generate a fresh ID automatically
+            /*
             pub fn fresh() -> Self {
                 let id = paste::paste! { [<counter_ $id_type:snake>]::next() };
                 Self(id)
@@ -62,6 +61,7 @@ macro_rules! define_id_type {
             pub fn reset_counter() {
                 paste::paste! { [<counter_ $id_type:snake>]::reset() };
             }
+            */
         }
     };
 }

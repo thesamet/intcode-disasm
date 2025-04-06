@@ -66,8 +66,8 @@ pub struct GraphDataFlow<ArgType> {
 }
 
 struct CreateStack {
-    stack_size: usize,
-    instruction_addr: usize,
+    _stack_size: usize,
+    _instruction_addr: usize,
 }
 
 fn get_definitions<ArgType>(
@@ -78,11 +78,7 @@ where
     ArgType: ArgBase + Eq + std::hash::Hash + Clone + Copy + From<OpArg> + std::fmt::Debug,
 {
     let mut hm = HashMap::new();
-    if let Some(CreateStack {
-        stack_size,
-        instruction_addr,
-    }) = create_stack
-    {
+    if let Some(CreateStack { .. }) = create_stack {
         /*
                 for r in 0..stack_size {
                     let arg = OpArg {
@@ -216,8 +212,8 @@ where
             let create_stack =
                 if block.id() == control_flow.start.as_block_id() && block.span.start != 0 {
                     Some(CreateStack {
-                        stack_size: control_flow.stack_size,
-                        instruction_addr: block.span.start,
+                        _stack_size: control_flow.stack_size,
+                        _instruction_addr: block.span.start,
                     })
                 } else {
                     None

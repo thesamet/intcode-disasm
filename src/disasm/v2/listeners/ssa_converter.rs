@@ -1,8 +1,8 @@
-use log::{debug, info, warn};
+use log::{info, warn};
 
 use crate::disasm::v2::{
     dispatching::{EventCollector, EventListener},
-    events::{DataFlowAnalysisComplete, Event, SsaConversionComplete},
+    events::{Event, SsaConversionComplete},
     model::ProgramModel,
     ssa_form::SsaProgram,
 };

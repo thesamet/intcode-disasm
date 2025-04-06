@@ -8,7 +8,7 @@ use crate::disasm::v2::{
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaProgram, SsaVar},
 };
 
-use super::{instructions::InstructionId, ssa_form::SsaInstruction};
+use super::ssa_form::SsaInstruction;
 
 /// Unique identifier for a type variable
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -39,6 +39,7 @@ pub enum Type {
     FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
 
     /// String type
+    #[allow(unused)]
     String,
 
     /// Type variable (used during inference)
@@ -160,6 +161,7 @@ pub struct TypeInference {
     type_vars: HashMap<SsaVar, Type>,
 
     /// Debug markers for variables
+    #[allow(unused)]
     debug_markers: HashMap<char, SsaVar>,
 
     /// Next available type variable ID
@@ -250,7 +252,7 @@ impl TypeInference {
     }
 
     /// Generate constraints for a phi function
-    fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, block_id: BlockId) {
+    fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, _block_id: BlockId) {
         let result_type = self.type_for_var(&phi.result);
         let result_instr_id = 5556;
 
@@ -270,7 +272,7 @@ impl TypeInference {
     fn generate_constraints_for_instruction(
         &mut self,
         instruction: &SsaInstruction,
-        block_id: BlockId,
+        _block_id: BlockId,
     ) {
         let instr_id = instruction.id.index();
 
@@ -736,7 +738,7 @@ impl TypeInference {
 mod tests {
     use super::*;
     use crate::disasm::parser;
-    use crate::disasm::v2::instructions::{InstructionId, Operand};
+    use crate::disasm::v2::instructions::Operand;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
@@ -767,7 +769,6 @@ mod tests {
 
             // Setup the SSA converter and make it accessible to the model
             let ssa_converter = SsaConverter::new();
-            model.set_ssa_converter(ssa_converter.clone());
 
             // Create all listeners
             let image_scanner = ImageScanner::new();
@@ -778,7 +779,7 @@ mod tests {
             publisher.add_listener(Box::new(image_scanner));
             publisher.add_listener(Box::new(control_flow_builder));
             publisher.add_listener(Box::new(data_flow_analyzer));
-            publisher.add_listener(Box::new(ssa_converter.clone()));
+            publisher.add_listener(Box::new(ssa_converter));
 
             // Run the pipeline
             model.load_image(&binary, &mut publisher);
@@ -795,7 +796,7 @@ mod tests {
 
             // Process debug markers from the assembly
             let markers = Self::extract_markers(&binary);
-            let mut manual_markers = HashMap::new();
+            let manual_markers = HashMap::new();
 
             // Mark variables with debug characters
             if let Some(ref ssa_program) = ssa_program {
@@ -905,7 +906,7 @@ mod tests {
 
         /// Create a manual test context without using assembly
         fn new_manual() -> Self {
-            let mut type_inference = TypeInference::new();
+            let type_inference = TypeInference::new();
             let manual_markers = HashMap::new();
 
             Self {

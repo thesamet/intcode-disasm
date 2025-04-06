@@ -1,16 +1,7 @@
-use crate::disasm::parser;
 use crate::disasm::v2::{
-    dispatching::EventPublisher,
-    events::Event,
-    instructions::{InstructionId, OperandKind},
-    listeners::{
-        control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        image_scanner::ImageScanner, ssa_converter::SsaConverter,
-        type_inference_analyzer::TypeInferenceAnalyzer,
-    },
-    model::ProgramModel,
+    instructions::OperandKind,
     ssa_form::SsaVar,
-    type_inference::{ConstraintReason, Type, TypeInference, TypeVarId},
+    type_inference::{ConstraintReason, Type, TypeInference},
 };
 
 #[cfg(test)]
@@ -35,7 +26,7 @@ mod tests {
         }
     }
 
-    fn relative_memory_operand(offset: i128) -> Operand {
+    fn _relative_memory_operand(offset: i128) -> Operand {
         Operand {
             kind: OperandKind::RelativeMemory(offset),
             offset: 0,
@@ -43,7 +34,7 @@ mod tests {
         }
     }
 
-    fn immediate_operand(value: i128) -> Operand {
+    fn _immediate_operand(value: i128) -> Operand {
         Operand {
             kind: OperandKind::Immediate(value),
             offset: 0,

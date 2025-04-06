@@ -179,7 +179,7 @@ impl Opcode {
         }
     }
 
-    fn as_i128(&self) -> i128 {
+    fn _as_i128(&self) -> i128 {
         match self {
             Opcode::Add => 1,
             Opcode::Mul => 2,
