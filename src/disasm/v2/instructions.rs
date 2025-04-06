@@ -237,14 +237,6 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
         self.operands[index].kind().get_immediate()
     }
 
-    pub fn memory_arg(&self, index: usize) -> Option<i128> {
-        self.operands[index].kind().get_memory()
-    }
-
-    pub fn relative_memory_arg(&self, index: usize) -> Option<i128> {
-        self.operands[index].kind().get_relative_memory()
-    }
-
     pub fn is_jump(&self) -> bool {
         match self.opcode {
             Opcode::JumpIfTrue | Opcode::JumpIfFalse => true,

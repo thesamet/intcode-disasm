@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 
+use itertools::Itertools;
 use log::debug;
 
 use crate::disasm::v2::control_flow::FunctionCall;
+use crate::disasm::v2::data_flow::CallSiteInfo;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -238,7 +240,7 @@ impl DataFlowAnalyzer {
             changed = false;
             // Iterate backwards - often converges faster for backward analyses like liveness
             for &block_id in block_ids.iter().rev() {
-                let new_live_out = Self::calculate_live_out(model, block_id, block_ids, df_result);
+                let new_live_out = Self::calculate_live_out(model, block_id, df_result);
 
                 // Update block's OUT set if changed
                 let block_flow = df_result.block_results.get_mut(&block_id).unwrap();
@@ -274,40 +276,22 @@ impl DataFlowAnalyzer {
     fn calculate_live_out(
         model: &ProgramModel,
         block_id: BlockId,
-        function_block_ids: &[BlockId], // IDs of blocks within the current function
-        df_result: &DataFlowResult,     // Read-only access for successor IN sets
+        df_result: &DataFlowResult, // Read-only access for successor IN sets
     ) -> HashSet<OperandKind> {
         let block = model.get_block(block_id);
         let mut new_live_out = HashSet::new();
 
         let add_live_in_from_successor = |succ_id: BlockId, live_out: &mut HashSet<OperandKind>| {
-            // Ensure successor is within the same function
-            if function_block_ids.contains(&succ_id) {
-                if let Some(succ_flow) = df_result.block_results.get(&succ_id) {
-                    live_out.extend(&succ_flow.live_in);
-                } else {
-                    // This might happen if analysis hasn't reached the successor yet
-                    // in the initial iterations. It will be empty initially.
-                    debug!(
-                        "Successor {} of {} not yet analyzed for liveness, assuming empty live_in",
-                        succ_id, block_id
-                    );
-                }
-            } else {
-                debug!(
-                    "Successor {} of {} is outside the current function, ignoring for liveness",
-                    succ_id, block_id
-                );
-            }
+            live_out.extend(&df_result.block_results.get(&succ_id).unwrap().live_in)
         };
 
         match &block.next {
             NextKind::Follows(succ_id) => {
                 add_live_in_from_successor(*succ_id, &mut new_live_out);
             }
-            NextKind::Goto(target_addr) => {
+            NextKind::Goto(target_block_id) => {
                 // Only consider immediate jumps for intra-procedural analysis
-                add_live_in_from_successor(*target_addr, &mut new_live_out);
+                add_live_in_from_successor(*target_block_id, &mut new_live_out);
             }
             NextKind::Condition(cond) => {
                 add_live_in_from_successor(cond.target_block, &mut new_live_out);
@@ -345,31 +329,53 @@ impl ModelEventListener for DataFlowAnalyzer {
         // Note: We'll modify the global result directly later, but this structure helps organize.
         let mut df_result_for_function = DataFlowResult::new();
         // Initialize block entries for this function
-        for &block_id in &model.get_function(event.function_id).blocks {
+        let function = model.get_function(event.function_id);
+        for block_id in &function.blocks {
             df_result_for_function
                 .block_results
-                .insert(block_id, BlockDataFlow::new());
+                .insert(*block_id, BlockDataFlow::new());
+            if let NextKind::FunctionCall(ref fc) = model.get_block(*block_id).next {
+                df_result_for_function
+                    .block_results
+                    .get_mut(block_id)
+                    .unwrap()
+                    .call_site_info = Some(CallSiteInfo::new(fc.function_addr.kind));
+            }
         }
 
         // Perform analysis directly on the global result structure within the model
         DataFlowAnalyzer::analyze_function(model, event.function_id, &mut df_result_for_function);
 
-        // Get or create the global result container in the model
-        if model.get_data_flow_result().is_none() {
-            model.set_data_flow_result(DataFlowResult::new());
-        }
         // If there is use of undefined [R+n] values, we check it comes from a function, and
         // that function is unique.
-        for br in df_result_for_function.block_results.values() {
-            if br
+        for block_id in &function.blocks {
+            let br = df_result_for_function.block_results.get(&block_id).unwrap();
+            let return_usage_in_block = br
                 .use_before_def
                 .iter()
-                .any(|k| k.is_positive_relative_memory())
-            {
+                .filter_map(|k| k.get_relative_memory())
+                .filter(|&n| n > 0)
+                .map(|n| n as usize)
+                .collect_vec();
+            if !return_usage_in_block.is_empty() {
                 assert_eq!(br.function_returns_in.len(), 1);
+                let calling_block = br.function_returns_in.iter().next().unwrap().calling_block;
+                let calling_block = df_result_for_function
+                    .block_results
+                    .get_mut(&calling_block)
+                    .unwrap();
+                calling_block
+                    .call_site_info
+                    .as_mut()
+                    .unwrap()
+                    .return_values_accessed
+                    .extend(return_usage_in_block);
             }
         }
 
+        if model.get_data_flow_result().is_none() {
+            model.set_data_flow_result(DataFlowResult::new());
+        }
         let global_results = model.get_data_flow_result_mut().unwrap(); // Now safe to unwrap
         global_results
             .block_results

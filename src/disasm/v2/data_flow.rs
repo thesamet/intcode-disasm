@@ -95,6 +95,29 @@ pub struct BlockDataFlow {
     // The value is not affected if this block calls a function - it is added to the function's return block
     // function_returns_in
     pub function_returns_out: HashSet<FunctionCall<Operand>>,
+
+    // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
+    pub call_site_info: Option<CallSiteInfo>,
+}
+
+/// Contains flow data about call sites.
+#[derive(Debug, Clone)]
+pub struct CallSiteInfo {
+    // The function being called. May be indirect.
+    pub function_addr: OperandKind,
+
+    // The set of return values accessed the positive N from each [R+n] read by any subsequent
+    // block that has access to the returned values.
+    pub return_values_accessed: HashSet<usize>,
+}
+
+impl CallSiteInfo {
+    pub fn new(function_addr: OperandKind) -> Self {
+        CallSiteInfo {
+            function_addr,
+            return_values_accessed: HashSet::new(),
+        }
+    }
 }
 
 impl BlockDataFlow {

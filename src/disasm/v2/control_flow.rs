@@ -114,6 +114,7 @@ where
     // The operand representing the function address (can be immediate or indirect)
     pub function_addr: T,
     pub return_block: BlockId, // The block execution resumes at after the call
+
     // The state of all variables at call site (empty for now, filled by SSA conversion)
     pub call_site_state: Vec<(OperandKind, T)>,
 }
@@ -155,21 +156,6 @@ pub struct Condition<T> {
 }
 
 impl<T> Condition<T> {
-    pub fn new(
-        from_block: BlockId,
-        condition_operand: T,
-        jump_if_true: bool,
-        target_block: BlockId,
-        follows_block: BlockId,
-    ) -> Self {
-        Self {
-            from_block,
-            condition_operand,
-            jump_if_true,
-            target_block,
-            follows_block,
-        }
-    }
     pub fn map<F, S>(&self, map: &mut F) -> Condition<S>
     where
         F: FnMut(T) -> S,
@@ -206,23 +192,4 @@ pub struct Block {
     // CFG Information (added by ControlFlowGraphBuilder)
     pub next: NextKind<Operand>,
     pub predecessors: Vec<PredecessorKind<Operand>>,
-}
-
-impl Block {
-    pub fn new(
-        id: BlockId,
-        containing_function_id: FunctionId,
-        span: Span,
-        instructions: Vec<Instruction>,
-        next: NextKind<Operand>,
-    ) -> Self {
-        Self {
-            id,
-            containing_function_id,
-            span,
-            instructions,
-            next,
-            predecessors: Vec::new(),
-        }
-    }
 }

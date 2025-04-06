@@ -301,12 +301,11 @@ fn determine_next_kind(
         let Some(_) = last_instr.goto_address() else {
             panic!("Expected goto address");
         };
-        NextKind::FunctionCall(FunctionCall {
-            calling_block: block_id,
-            function_addr: call.target,
-            return_block: BlockId::from(call.return_address),
-            call_site_state: vec![],
-        })
+        NextKind::FunctionCall(FunctionCall::new(
+            block_id,
+            call.target,
+            BlockId::from(call.return_address),
+        ))
     } else if let Some(target_addr) = last_instr.immediate_goto() {
         NextKind::Goto(BlockId::from(target_addr as usize))
     } else if let Some(_) = last_instr.goto_address() {
