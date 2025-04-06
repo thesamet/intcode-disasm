@@ -5,8 +5,6 @@ pkgs.mkShell {
   buildInputs = with pkgs; [
     rustup
     pkg-config
-    openssl
-    aoc-cli
     nodejs
   ];
 }
