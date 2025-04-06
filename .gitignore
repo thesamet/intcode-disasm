@@ -20,3 +20,6 @@ target/
 .zed
 
 **/CLAUDE.local.md
+
+node_modules
+examples/
