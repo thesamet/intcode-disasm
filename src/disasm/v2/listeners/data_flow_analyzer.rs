@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use log::debug;
 
@@ -19,81 +19,27 @@ impl DataFlowAnalyzer {
     }
 
     /// Performs the main data flow analysis passes for a given function.
-    fn analyze_function(
-        &self,
-        model: &ProgramModel,
-        func_id: FunctionId,
-        df_result: &mut DataFlowResult,
-    ) {
+    fn analyze_function(model: &ProgramModel, func_id: FunctionId, df_result: &mut DataFlowResult) {
         let func = model.get_function(func_id);
         let block_ids = &func.blocks;
 
-        // Pre-computation: Identify potential return operands
-        let potential_return_kinds = Self::find_potential_return_kinds(model, func_id);
+        // Pass 1: Initialize gen, use_before_def and function_returns_in  For each block
+        Self::initialize_gen_use_func_in(model, block_ids, df_result);
 
-        // Pass 1: Initialize GEN and USE_BEFORE_DEF for each block
-        self.initialize_gen_use(model, block_ids, df_result);
+        // Pass 2: compute function_returns_out and function_returns_in for all blocks (forward analysis)
+        Self::run_function_returns_analysis(model, block_ids, df_result);
 
-        // Pass 2: Reaching Definitions (Forward Analysis)
-        self.run_reaching_definitions_analysis(
-            model,
-            block_ids,
-            df_result,
-            &potential_return_kinds,
-        );
+        // Pass 3: Reaching Definitions (Forward Analysis)
+        Self::run_reaching_definitions_analysis(model, block_ids, df_result);
 
-        // Pass 3: Liveness Analysis (Backward Analysis)
-        self.run_liveness_analysis(model, block_ids, df_result);
+        // Pass 4: Liveness Analysis (Backward Analysis)
+        Self::run_liveness_analysis(model, block_ids, df_result);
 
         debug!("Data Flow Analysis passes complete for {}", func_id);
     }
 
-    fn find_potential_return_kinds(
-        model: &ProgramModel,
-        func_id: FunctionId,
-    ) -> HashMap<BlockId, HashSet<OperandKind>> {
-        // Implementation as provided previously... unchanged.
-        let mut return_kinds: HashMap<BlockId, HashSet<OperandKind>> = HashMap::new();
-        let func = model.get_function(func_id);
-
-        for &block_id in &func.blocks {
-            let block = model.get_block(block_id);
-            let mut block_return_kinds = HashSet::new();
-            // Check if this block is entered via a function call return
-            let is_return_target = block
-                .predecessors
-                .iter()
-                .any(|p| matches!(p, PredecessorKind::FunctionCallReturns(_)));
-
-            if is_return_target {
-                // Look for reads of [R+n] within this block
-                for instr in &block.instructions {
-                    for read_op in instr.reads() {
-                        // Check if it's a relative memory access with positive offset
-                        if let Some(offset) = read_op.kind.get_relative_memory() {
-                            if offset > 0 {
-                                println!(
-                                    "Found potential return operand: {} in block {} at {}",
-                                    read_op.kind, block.span, instr.id
-                                );
-                                block_return_kinds.insert(read_op.kind);
-                            }
-                        }
-                    }
-                }
-            }
-            return_kinds.insert(block_id, block_return_kinds);
-        }
-        debug!(
-            "Potential return kinds for {:?}: {:?}",
-            func_id, return_kinds
-        );
-        return_kinds
-    }
-
-    /// Pass 1: Initializes GEN and USE_BEFORE_DEF sets for all blocks in the function.
-    fn initialize_gen_use(
-        &self,
+    /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
+    fn initialize_gen_use_func_in(
         model: &ProgramModel,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
@@ -139,27 +85,76 @@ impl DataFlowAnalyzer {
         }
     }
 
-    /// Pass 2: Computes Reaching Definitions iteratively.
-    fn run_reaching_definitions_analysis(
-        &self,
+    // Pass 2: calculate function returns
+    fn run_function_returns_analysis(
         model: &ProgramModel,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
-        potential_return_kinds: &HashMap<BlockId, HashSet<OperandKind>>,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
             for &block_id in block_ids {
-                let new_defs_in = self.calculate_defs_in(
-                    model,
-                    block_id,
-                    block_ids,
-                    df_result,
-                    potential_return_kinds.get(&block_id).unwrap(),
-                );
+                let new_func_in = Self::calculate_function_returns_in(model, block_id, df_result);
+                // Update block's IN set if changed
+                let block_flow = df_result.block_results.get_mut(&block_id).unwrap(); // Must exist
+                if new_func_in != block_flow.function_returns_in {
+                    debug!(
+                        "Block {:?}: FunctionReturnsIn changed to {:?}",
+                        block_id, new_func_in
+                    );
+                    block_flow.function_returns_in = new_func_in.clone();
+                    changed = true;
+                }
+                if !block_flow.writes_above_r && block_flow.function_returns_out != new_func_in {
+                    block_flow.function_returns_out = new_func_in;
+                    changed = true;
+                }
+            }
+        }
+    }
 
-                let new_func_in = self.calculate_function_returns_in(model, block_id, df_result);
+    fn calculate_function_returns_in(
+        model: &ProgramModel,
+        block_id: BlockId,
+        df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
+    ) -> HashSet<FunctionCall<Operand>> {
+        let block_flow = df_result.block_results.get(&block_id).unwrap();
+        let mut new_func_in = block_flow.function_returns_in.clone();
+        // If this block is a return from a function call, we do not change new_func_in, as
+        // defintions from further away will be overridden by the immediate one.
+        if !model
+            .get_block(block_id)
+            .predecessors
+            .iter()
+            .any(|p| p.get_function_call_returns().is_some())
+        {
+            for pred in model.get_block(block_id).predecessors.iter() {
+                // Update block's IN set if changed
+                let pred_block_id = pred.source_block_id();
+                let pred_function_returns_out = df_result
+                    .block_results
+                    .get(&pred_block_id)
+                    .unwrap()
+                    .function_returns_out
+                    .clone();
+                new_func_in.extend(pred_function_returns_out);
+            }
+        }
+        new_func_in
+    }
+
+    /// Pass 3: Computes Reaching Definitions iteratively.
+    fn run_reaching_definitions_analysis(
+        model: &ProgramModel,
+        block_ids: &[BlockId],
+        df_result: &mut DataFlowResult,
+    ) {
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &block_id in block_ids {
+                let new_defs_in = Self::calculate_defs_in(model, block_id, block_ids, df_result);
 
                 // Update block's IN set if changed
                 // Use get_mut for direct modification
@@ -184,136 +179,28 @@ impl DataFlowAnalyzer {
                         kind: DefinitionKind::InstructionWrite,
                     });
                 }
+                // In we call a function at the end of the block, this block doesn't let [R+n]
+                // defintions flow forward.
+                if matches!(model.get_block(block_id).next, NextKind::FunctionCall(_)) {
+                    current_defs_out.retain(|d| !d.location.is_positive_relative_memory());
+                }
 
                 // Update block's OUT set if changed
                 if current_defs_out != block_flow.defs_out {
                     debug!("Block {:?}: DefsOut changed", block_id);
                     block_flow.defs_out = current_defs_out;
-                    // Change automatically handled by the outer loop condition
-                }
-
-                if new_func_in != block_flow.function_returns_in {
                     changed = true;
-                    block_flow.function_returns_in = new_func_in.clone();
-                    assert!(new_func_in.len() <= 1);
-                    if !block_flow.writes_above_r {
-                        block_flow.function_returns_out = new_func_in;
-                    }
                 }
             }
         }
-    }
-
-    /// Determines if an operand is used in a block or any of its successors without
-    /// being redefined first and without crossing a function call boundary.
-    fn is_used_in_execution_paths(
-        &self,
-        model: &ProgramModel,
-        block_id: BlockId,
-        operand: &OperandKind,
-        function_block_ids: &[BlockId],
-        df_result: &DataFlowResult,
-        visited: &mut HashSet<BlockId>,
-    ) -> bool {
-        // Avoid infinite recursion in case of loops
-        if !visited.insert(block_id) {
-            return false;
-        }
-
-        // Check if directly used in this block
-        if let Some(block_flow) = df_result.block_results.get(&block_id) {
-            // If it's in the USE_BEFORE_DEF set, it's used before any redefinition
-            if block_flow.use_before_def.contains(operand) {
-                return true;
-            }
-
-            // If it's redefined in this block, the search stops here
-            if block_flow.gen.contains_key(operand) {
-                return false;
-            }
-        }
-
-        // Check successors (if not redefined and not a function call)
-        let block = model.get_block(block_id);
-        match &block.next {
-            NextKind::Follows(next_id) => {
-                if function_block_ids.contains(next_id) {
-                    return self.is_used_in_execution_paths(
-                        model,
-                        *next_id,
-                        operand,
-                        function_block_ids,
-                        df_result,
-                        visited,
-                    );
-                }
-            }
-            NextKind::Goto(target_id) => {
-                // For immediate goto targets (not function calls), continue search
-                if function_block_ids.contains(&target_id) {
-                    return self.is_used_in_execution_paths(
-                        model,
-                        *target_id,
-                        operand,
-                        function_block_ids,
-                        df_result,
-                        visited,
-                    );
-                }
-                // Indirect jumps (like goto [r]) terminate the search path since we can't determine target statically
-            }
-            NextKind::Condition(cond) => {
-                // Check both branches
-                let target_result = if function_block_ids.contains(&cond.target_block) {
-                    self.is_used_in_execution_paths(
-                        model,
-                        cond.target_block,
-                        operand,
-                        function_block_ids,
-                        df_result,
-                        visited,
-                    )
-                } else {
-                    false
-                };
-
-                let follows_result = if function_block_ids.contains(&cond.follows_block) {
-                    self.is_used_in_execution_paths(
-                        model,
-                        cond.follows_block,
-                        operand,
-                        function_block_ids,
-                        df_result,
-                        visited,
-                    )
-                } else {
-                    false
-                };
-
-                if target_result || follows_result {
-                    return true;
-                }
-            }
-            NextKind::FunctionCall(_) => {
-                // Stop tracking here - any use after a function call should be
-                // attributed to that function call, not to a previous one
-                return false;
-            }
-            // Return or Halt terminates the search - we don't track across function returns
-            _ => {}
-        }
-
-        false
     }
 
     /// Calculates the Defs-In set for a single block based on its predecessors.
     fn calculate_defs_in(
-        &self,
         model: &ProgramModel,
         block_id: BlockId,
         function_block_ids: &[BlockId], // IDs of blocks within the current function
         df_result: &DataFlowResult,     // Read-only access for predecessor OUT sets
-        potential_return_kinds: &HashSet<OperandKind>,
     ) -> HashSet<Definition> {
         let block = model.get_block(block_id);
         let mut new_defs_in = HashSet::new();
@@ -334,85 +221,14 @@ impl DataFlowAnalyzer {
                 .get(&pred_block_id)
                 .expect("Predecessor block data flow info should exist");
 
-            match pred_kind {
-                /*
-                PredecessorKind::FunctionCallReturns(call) => {
-                    // Definitions from predecessor that are not potential return values
-                    let mut defs_from_caller = pred_flow.defs_out.clone();
-                    defs_from_caller.retain(|def| !potential_return_kinds.contains(&def.location));
-                    new_defs_in.extend(defs_from_caller);
-
-                    // Only add return definitions for operands that will be used
-                    let call_instruction_id = model
-                        .get_block(call.calling_block)
-                        .instructions
-                        .last()
-                        .expect("Calling block cannot be empty")
-                        .id;
-
-                    // For each potential return operand, check if it's actually used
-                    for ret_kind in potential_return_kinds {
-                        // Check if this return operand is used in the current block or its successors
-                        let mut visited = HashSet::new();
-                        if self.is_used_in_execution_paths(
-                            model,
-                            block_id,
-                            ret_kind,
-                            function_block_ids,
-                            df_result,
-                            &mut visited,
-                        ) {
-                            // Only add return definition if it's actually used
-                            new_defs_in.insert(Definition {
-                                instruction_id: call_instruction_id,
-                                location: *ret_kind,
-                                block_id: call.calling_block,
-                                kind: DefinitionKind::FunctionReturn {
-                                    function_addr: call.function_addr.kind,
-                                },
-                            });
-                        }
-                    }
-                }
-                */
-                _ => {
-                    // Standard handling for non-function-return predecessors
-                    new_defs_in.extend(&pred_flow.defs_out);
-                }
-            }
+            new_defs_in.extend(&pred_flow.defs_out);
         }
 
-        if block_id == BlockId::from(1993) {
-            println!("{}: new_defs_in: {:?}", block_id, new_defs_in);
-        }
         new_defs_in
     }
 
-    fn calculate_function_returns_in(
-        &self,
-        model: &ProgramModel,
-        block_id: BlockId,
-        df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
-    ) -> HashSet<FunctionCall<Operand>> {
-        let block_flow = df_result.block_results.get(&block_id).unwrap();
-        let mut new_func_in = block_flow.function_returns_in.clone();
-        for pred in model.get_block(block_id).predecessors.iter() {
-            // Update block's IN set if changed
-            let pred_block_id = pred.source_block_id();
-            let function_returns_out = df_result
-                .block_results
-                .get(&pred_block_id)
-                .unwrap()
-                .function_returns_out
-                .clone();
-            new_func_in.extend(function_returns_out);
-        }
-        new_func_in
-    }
-
-    /// Pass 3: Computes Liveness iteratively.
+    /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
-        &self,
         model: &ProgramModel,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
@@ -422,7 +238,7 @@ impl DataFlowAnalyzer {
             changed = false;
             // Iterate backwards - often converges faster for backward analyses like liveness
             for &block_id in block_ids.iter().rev() {
-                let new_live_out = self.calculate_live_out(model, block_id, block_ids, df_result);
+                let new_live_out = Self::calculate_live_out(model, block_id, block_ids, df_result);
 
                 // Update block's OUT set if changed
                 let block_flow = df_result.block_results.get_mut(&block_id).unwrap();
@@ -448,7 +264,7 @@ impl DataFlowAnalyzer {
                         block_id, current_live_in
                     );
                     block_flow.live_in = current_live_in;
-                    // Change automatically handled by the outer loop condition
+                    changed = true;
                 }
             }
         }
@@ -456,7 +272,6 @@ impl DataFlowAnalyzer {
 
     /// Calculates the Live-Out set for a single block based on its successors' Live-In sets.
     fn calculate_live_out(
-        &self,
         model: &ProgramModel,
         block_id: BlockId,
         function_block_ids: &[BlockId], // IDs of blocks within the current function
@@ -537,14 +352,25 @@ impl ModelEventListener for DataFlowAnalyzer {
         }
 
         // Perform analysis directly on the global result structure within the model
-        self.analyze_function(model, event.function_id, &mut df_result_for_function);
+        DataFlowAnalyzer::analyze_function(model, event.function_id, &mut df_result_for_function);
 
         // Get or create the global result container in the model
         if model.get_data_flow_result().is_none() {
             model.set_data_flow_result(DataFlowResult::new());
         }
+        // If there is use of undefined [R+n] values, we check it comes from a function, and
+        // that function is unique.
+        for br in df_result_for_function.block_results.values() {
+            if br
+                .use_before_def
+                .iter()
+                .any(|k| k.is_positive_relative_memory())
+            {
+                assert_eq!(br.function_returns_in.len(), 1);
+            }
+        }
+
         let global_results = model.get_data_flow_result_mut().unwrap(); // Now safe to unwrap
-                                                                        // Ensure all block entries for this function exist in the global map
         global_results
             .block_results
             .extend(df_result_for_function.block_results);

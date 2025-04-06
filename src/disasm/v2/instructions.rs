@@ -75,6 +75,14 @@ impl OperandKind {
         }
     }
 
+    pub fn is_positive_relative_memory(&self) -> bool {
+        matches!(self, OperandKind::RelativeMemory(n) if *n > 0)
+    }
+
+    pub fn is_negative_relative_memory(&self) -> bool {
+        matches!(self, OperandKind::RelativeMemory(n) if *n < 0)
+    }
+
     pub fn get_deref(&self) -> Option<usize> {
         match self {
             OperandKind::Deref(offset) => Some(*offset),
