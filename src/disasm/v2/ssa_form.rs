@@ -95,7 +95,6 @@ pub struct SsaBlock {
 #[derive(Debug, Clone)]
 pub struct SsaFunction {
     /// Original function ID
-    #[allow(dead_code)]
     pub original_id: FunctionId,
     /// Blocks in SSA form
     pub blocks: HashMap<BlockId, SsaBlock>,
@@ -104,6 +103,7 @@ pub struct SsaFunction {
     /// Dominance frontier for each block
     pub dominance_frontiers: HashMap<BlockId, HashSet<BlockId>>,
     /// Immediate dominator for each block
+    pub immediate_dominators: HashMap<BlockId, BlockId>,
 }
 
 /// Represents the entire program in SSA form
@@ -1032,6 +1032,9 @@ mod tests {
             instruction_id: InstructionId::from(10),
             location: operand.kind,
             block_id: BlockId::from(5),
+            kind: DefinitionKind::FunctionReturn {
+                function_addr: OperandKind::Immediate(100),
+            },
         };
 
         let var = SsaVar::from_function_return(operand, 2, def.clone());
