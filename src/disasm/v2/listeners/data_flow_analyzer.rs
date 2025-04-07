@@ -871,73 +871,81 @@ mod tests {
 
         // Test blocks after function calls contain the expected return definitions
         // The function call at offset 50 to func3 (addr 124) generates return definitions
-        // that propagate to multiple blocks
-        let func3_call_blocks = [
+        // that propagate to specific blocks
+
+        // Blocks that SHOULD have function returns from func3 (addr 124)
+        let func3_returns_blocks = [
+            BlockId::from(30),
             BlockId::from(53), // Direct return target
             BlockId::from(56), // Reachable through control flow
-            BlockId::from(67),
             BlockId::from(70),
-            BlockId::from(30),
             BlockId::from(81),
-            BlockId::from(92),
         ];
 
-        // Check that all these blocks have function return values from func3
-        for block_id in func3_call_blocks {
-            assert!(
-                df_results
-                    .block_results
-                    .get(&block_id)
-                    .unwrap()
-                    .function_returns_in
-                    .iter()
-                    .any(|fc| fc.function_addr.kind.get_immediate() == Some(124)),
-                "Block {} should have function return definition from func3",
-                block_id
-            );
-        }
+        assert_eq!(
+            df_results
+                .block_results
+                .iter()
+                .filter(|(_, br)| {
+                    br.function_returns_in
+                        .iter()
+                        .any(|fc| fc.function_addr.kind.get_immediate() == Some(124))
+                })
+                .map(|(id, _)| *id)
+                .sorted()
+                .collect_vec(),
+            func3_returns_blocks,
+            "Blocks that should have function returns from func3 do have them",
+        );
+
         // Test there are no return values from calls that haven't happened yet
         let cont_block = BlockId::from(26);
         let cont_flow = df_results.block_results.get(&cont_block).unwrap();
 
         // Block 26 (cont:) should not have any function return definitions from func2
         let func2_addr = imm_kind(115);
-        let cont_block_func2_returns: Vec<_> = cont_flow
-            .defs_in
+
+        // Check that cont_flow.function_returns_in doesn't contain a function call to func2
+        let cont_block_func2_returns = cont_flow
+            .function_returns_in
             .iter()
-            .filter(|d| {
-                matches!(d.kind, DefinitionKind::FunctionReturn { function_addr } if function_addr == func2_addr)
-            })
-            .collect();
+            .any(|fc| fc.function_addr.kind == func2_addr);
 
         assert!(
-            cont_block_func2_returns.is_empty(),
+            !cont_block_func2_returns,
             "Block 26 should not have function return definitions from func2"
         );
 
         // Block 53 should have definition for [R+1] from func3 specifically
         let block53 = BlockId::from(53);
         let block53_flow = df_results.block_results.get(&block53).unwrap();
-        let func3_return_defs: Vec<_> = block53_flow
-            .defs_in
-            .iter()
-            .filter(|d| {
-                matches!(d.kind, DefinitionKind::FunctionReturn { function_addr }
-                         if function_addr == imm_kind(124))
-            })
-            .collect();
 
-        // Verify we have at least one definition
+        // Check for function return from func3 (address 124)
+        let func3_returns = block53_flow
+            .function_returns_in
+            .iter()
+            .filter(|fc| fc.function_addr.kind == imm_kind(124))
+            .collect::<Vec<_>>();
+
+        // Verify we have at least one function return from func3
         assert!(
-            !func3_return_defs.is_empty(),
+            !func3_returns.is_empty(),
             "Block 53 should have at least one return definition from func3"
         );
 
-        // Verify we have a definition for [R+1]
-        let func3_r_plus_1_def = func3_return_defs.iter().any(|d| d.location == rel_kind(1));
+        // Verify block53 has [R+1] in use_before_def, indicating it's reading a return value
         assert!(
-            func3_r_plus_1_def,
-            "Block 53 should have a return definition for [R+1] from func3"
+            block53_flow.use_before_def.contains(&rel_kind(1)),
+            "Block 53 should have [R+1] in use_before_def as a return value from func3"
+        );
+
+        // Verify the calling block has 1 ([R+1]) in its call_site_info.return_values_accessed
+        let calling_block = func3_returns[0].calling_block;
+        let calling_block_flow = df_results.block_results.get(&calling_block).unwrap();
+
+        assert!(
+            calling_block_flow.call_site_info.as_ref().unwrap().return_values_accessed.contains(&1),
+            "The calling block for func3 should have 1 ([R+1]) in its call_site_info.return_values_accessed"
         );
     }
 }
