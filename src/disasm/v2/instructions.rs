@@ -135,16 +135,16 @@ pub struct Operand {
 }
 
 pub trait HasOperand {
-    fn operand(&self) -> &Operand;
+    fn operand(&self) -> Operand;
 
-    fn kind(&self) -> &OperandKind {
-        &self.operand().kind
+    fn kind(&self) -> OperandKind {
+        self.operand().kind
     }
 }
 
 impl HasOperand for Operand {
-    fn operand(&self) -> &Operand {
-        self
+    fn operand(&self) -> Operand {
+        *self
     }
 }
 
@@ -361,7 +361,13 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
         let operands: Vec<Operand> = (0..operand_count)
             .map(|i| -> Result<Operand, ParseError> {
                 let kind = match input[offset] / 10_i128.pow(i as u32 + 2) % 10 {
-                    0 => Ok(OperandKind::Memory(input[offset + i + 1])),
+                    0 => {
+                        if input[offset + i + 1] == 0 {
+                            Ok(OperandKind::Deref(offset + i + 1))
+                        } else {
+                            Ok(OperandKind::Memory(input[offset + i + 1]))
+                        }
+                    }
                     1 => Ok(OperandKind::Immediate(input[offset + i + 1])),
                     2 => Ok(OperandKind::RelativeMemory(input[offset + i + 1])),
                     m => Err(ParseError::InvalidMode(m)),

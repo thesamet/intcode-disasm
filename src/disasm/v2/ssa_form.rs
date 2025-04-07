@@ -720,19 +720,26 @@ pub mod conversion {
     }
 
     fn get_or_create_ssa_var(
-        current_versions: &HashMap<OperandKind, SsaVar>,
+        current_versions: &mut HashMap<OperandKind, SsaVar>,
         op: Operand,
     ) -> SsaVar {
         if let Some(op_kind) = op.kind.as_variable() {
             if let Some(ssa_var) = current_versions.get(&op_kind) {
-                ssa_var.clone()
+                // Create a new SsaVar with the same version but preserve the debug marker from op
+                let mut new_operand = ssa_var.operand;
+                if let Some(debug_marker) = op.debug_marker {
+                    new_operand.debug_marker = Some(debug_marker);
+                }
+                new_operand.debug_marker = op.debug_marker;
+
+                SsaVar {
+                    operand: new_operand,
+                    version: ssa_var.version,
+                    source: ssa_var.source,
+                }
             } else {
                 // Create a new version if not found
-                SsaVar {
-                    operand: op,
-                    version: 0,
-                    source: SsaVarSource::Regular,
-                }
+                create_next_version(current_versions, op)
             }
         } else {
             // Non-variable operand
@@ -747,7 +754,7 @@ pub mod conversion {
     /// Create an SSA representation of a NextKind
     fn create_ssa_next_kind(
         original: &NextKind<Operand>,
-        current_versions: &HashMap<OperandKind, SsaVar>,
+        current_versions: &mut HashMap<OperandKind, SsaVar>,
     ) -> NextKind<SsaVar> {
         original.map(&mut |op| get_or_create_ssa_var(current_versions, op))
     }
@@ -828,7 +835,6 @@ pub mod conversion {
                     &mut |c, op| get_or_create_ssa_var(c, *op),
                     &mut |c, op| create_next_version(c, *op),
                 );
-                println!("{} -> {:?}", instr, ssa_instr);
 
                 block_instructions.push(ssa_instr);
             }
@@ -991,6 +997,105 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
 
+    // Define SSA macros for the V2 version with debug marker support
+    macro_rules! ssa_main_rel {
+        ($offset:expr, $version:expr) => {
+            SsaVar {
+                operand: Operand {
+                    kind: OperandKind::RelativeMemory($offset),
+                    offset: 0,
+                    debug_marker: None,
+                },
+                version: $version,
+                source: SsaVarSource::Regular,
+            }
+        };
+    }
+
+    macro_rules! ssa_main_mem {
+        ($addr:expr, $version:expr) => {
+            SsaVar {
+                operand: Operand {
+                    kind: OperandKind::Memory($addr as i128),
+                    offset: 0,
+                    debug_marker: None,
+                },
+                version: $version,
+                source: SsaVarSource::Regular,
+            }
+        };
+    }
+
+    macro_rules! ssa_main_deref {
+        ($addr:expr, $deref_version:expr) => {
+            SsaVar {
+                operand: Operand {
+                    kind: OperandKind::Deref($addr),
+                    offset: 0,
+                    debug_marker: None,
+                },
+                version: 0,
+                source: SsaVarSource::Regular,
+            }
+        };
+    }
+
+    macro_rules! assert_marker_at_main {
+        ($ctx:expr, $marker:expr, $expected:expr) => {{
+            // Find an SSA variable with the given debug marker
+            let mut found = false;
+
+            // Look through all blocks and instructions for the marker
+            for (_, block) in &$ctx.main_function.blocks {
+                for instr in &block.instructions {
+                    for operand in &instr.operands {
+                        if let Some(debug_marker) = operand.operand.debug_marker {
+                            if debug_marker == $marker {
+                                assert_eq!(
+                                    $expected.operand.kind, operand.operand.kind,
+                                    "For marker '{}': Expected kind: {:?}, Actual kind: {:?}",
+                                    $marker, $expected.operand.kind, operand.operand.kind
+                                );
+                                assert_eq!(
+                                    $expected.version, operand.version,
+                                    "For marker '{}': Expected version: {}, Actual version: {}",
+                                    $marker, $expected.version, operand.version
+                                );
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !found {
+                panic!("Marker '{}' not found in main function", $marker);
+            }
+        }};
+    }
+
+    struct TestContext {
+        main_function: SsaFunction,
+    }
+
+    impl TestContext {
+        fn new(assembly: &str) -> Self {
+            let model = setup_analyzed_model(assembly);
+
+            let ssa_program = SsaProgram::from_program_model(&model);
+
+            // Extract the main function (always at ID 0)
+            let func_id = FunctionId::from(0);
+            let main_function = ssa_program
+                .functions
+                .get(&func_id)
+                .expect("Main function not found in SSA program")
+                .clone();
+
+            TestContext { main_function }
+        }
+    }
+
     fn memory_operand(offset: usize) -> Operand {
         Operand {
             kind: OperandKind::Memory(offset as i128),
@@ -1010,6 +1115,14 @@ mod tests {
     fn immediate_operand(value: i128) -> Operand {
         Operand {
             kind: OperandKind::Immediate(value),
+            offset: 0,
+            debug_marker: None,
+        }
+    }
+
+    fn deref_operand(offset: usize) -> Operand {
+        Operand {
+            kind: OperandKind::Deref(offset),
             offset: 0,
             debug_marker: None,
         }
@@ -1314,8 +1427,8 @@ mod tests {
         // NOTE: With the removal of DefinitionKind::FunctionReturn, we now rely on
         // the BlockDataFlow.function_returns_in set to track function returns, rather than
         // setting SsaVarSource::FunctionReturn for every variable reading from function return.
-        
-        // Simply check that the conversion runs without errors. In the future, we may want to 
+
+        // Simply check that the conversion runs without errors. In the future, we may want to
         // enhance this test to verify other aspects of the conversion.
         assert!(
             output_instr.operands[0].version > 0,
@@ -1374,5 +1487,56 @@ mod tests {
             .expect("Should have found the addition instruction");
 
         assert!(add_instr.operands[0].version < add_instr.operands[2].version);
+    }
+
+    #[test]
+    fn test_basic_versioning() {
+        let ctx = TestContext::new(
+            r#"
+                R += 5
+                [R+3] = 0
+                [R+4] = 1
+                'b [R+2] = 'a [R+3] + [R+4]
+                'c [R+2] = [R+3] + [R+4]
+                halt
+            "#,
+        );
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(3, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(2, 1));
+        assert_marker_at_main!(ctx, 'c', ssa_main_rel!(2, 2));
+    }
+
+    #[test]
+    fn test_deref_versioning() {
+        let ctx = TestContext::new(
+            r#"
+                R += 5
+                ptr = 500
+                [R+2] = 1000
+                [R+3] = 1001
+                'a ptr = ptr + [R+2]
+                'b ptr = ptr + [R+3]
+                'd [R+1] = 'c *ptr
+                halt
+                "#,
+        );
+        assert_marker_at_main!(ctx, 'a', ssa_main_mem!(23, 2));
+        assert_marker_at_main!(ctx, 'b', ssa_main_mem!(23, 3));
+        assert_marker_at_main!(ctx, 'c', ssa_main_deref!(23, 3));
+        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 0))
+    }
+
+    #[test]
+    fn test_incr_write_after_read() {
+        let ctx = TestContext::new(
+            r#"
+                R += 5
+                output('a [R-1])
+                'b [R-1] = 17
+                halt
+                "#,
+        );
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(-1, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(-1, 2));
     }
 }
