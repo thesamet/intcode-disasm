@@ -9,8 +9,6 @@ use crate::disasm::v2::{
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::instructions::HasOperand;
-
 /// Source information for an SSA variable
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SsaVarSource {
@@ -35,9 +33,14 @@ pub struct SsaVar {
     pub source: SsaVarSource,
 }
 
-impl HasOperand for SsaVar {
-    fn operand(&self) -> &Operand {
-        &self.operand
+impl From<SsaVar> for Operand {
+    fn from(v: SsaVar) -> Self {
+        v.operand
+    }
+}
+impl From<&SsaVar> for Operand {
+    fn from(v: &SsaVar) -> Self {
+        v.operand
     }
 }
 
@@ -579,7 +582,7 @@ pub mod conversion {
             let mut def_blocks = HashSet::new();
             for &block_id in &function.blocks {
                 if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                    if block_flow.gen.contains_key(&var.operand().kind) {
+                    if block_flow.gen.contains_key(&var.kind) {
                         def_blocks.insert(block_id);
                     }
                 }
@@ -612,7 +615,7 @@ pub mod conversion {
                             // If this block also defines the variable, add it to the worklist
                             if let Some(block_flow) = data_flow.block_results.get(&df_block) {
                                 if !def_blocks.contains(&df_block)
-                                    && block_flow.gen.contains_key(&var.operand().kind)
+                                    && block_flow.gen.contains_key(&var.kind)
                                 {
                                     def_blocks.insert(df_block);
                                     worklist.push_back(df_block);
@@ -944,7 +947,7 @@ pub mod conversion {
                     // Add the current version of each phi's variable as input from this predecessor
                     for (i, phi) in phis.iter().enumerate() {
                         let var = phi.result.operand;
-                        if let Some(current_var) = current_versions.get(var.kind()) {
+                        if let Some(current_var) = current_versions.get(&var.kind) {
                             ssa_block.phi_functions[i]
                                 .inputs
                                 .insert(pred_id, current_var.clone());
@@ -1227,7 +1230,8 @@ mod tests {
         for instr in &entry_block.instructions {
             // Check operands for SSA vars with memory location 100
             for operand in &instr.operands {
-                if operand.operand.kind() == &OperandKind::Memory(100) {
+                let op: Operand = operand.into();
+                if &OperandKind::Memory(100) == &op.kind {
                     versions_found.insert(operand.version);
                 }
             }
@@ -1343,7 +1347,7 @@ mod tests {
 
         // Verify that the operand is [100]
         assert_eq!(
-            *output_operand.operand.kind(),
+            output_operand.operand.kind,
             OperandKind::Memory(100),
             "Output should use [100]"
         );
@@ -1480,8 +1484,8 @@ mod tests {
             .find(|instr| {
                 instr.opcode == Opcode::Add &&
                 instr.operands.len() == 3 &&
-                instr.operands[0].operand.kind().get_relative_memory() == Some(-4) && // Read operand is R-4
-                instr.operands[2].operand.kind().get_relative_memory() == Some(-4)
+                instr.operands[0].operand.kind.get_relative_memory() == Some(-4) && // Read operand is R-4
+                instr.operands[2].operand.kind.get_relative_memory() == Some(-4)
                 // Write operand is R-4
             })
             .expect("Should have found the addition instruction");

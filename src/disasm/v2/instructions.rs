@@ -134,20 +134,6 @@ pub struct Operand {
     pub debug_marker: Option<char>,
 }
 
-pub trait HasOperand {
-    fn operand(&self) -> Operand;
-
-    fn kind(&self) -> OperandKind {
-        self.operand().kind
-    }
-}
-
-impl HasOperand for Operand {
-    fn operand(&self) -> Operand {
-        *self
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Opcode {
     Add,
@@ -232,9 +218,9 @@ pub struct Assignment<T> {
     pub source: T,
 }
 
-impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
+impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
     pub fn immediate_arg(&self, index: usize) -> Option<i128> {
-        self.operands[index].kind().get_immediate()
+        self.operands[index].into().kind.get_immediate()
     }
 
     pub fn is_jump(&self) -> bool {
@@ -266,7 +252,7 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
 
     pub fn immediate_goto(&self) -> Option<usize> {
         self.goto_address()
-            .and_then(|a| a.kind().get_immediate().map(|a| a as usize))
+            .and_then(|a| a.into().kind.get_immediate().map(|a| a as usize))
     }
 
     pub fn is_conditional_jump(&self) -> bool {
@@ -304,12 +290,12 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
     pub fn as_assignment(&self) -> Option<Assignment<T>> {
         match self.opcode {
             Opcode::Add => {
-                if let Some(0) = self.operands[0].kind().get_immediate() {
+                if let Some(0) = self.operands[0].into().kind.get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[1],
                     })
-                } else if let Some(0) = self.operands[1].kind().get_immediate() {
+                } else if let Some(0) = self.operands[1].into().kind.get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[0],
@@ -319,12 +305,12 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
                 }
             }
             Opcode::Mul => {
-                if let Some(1) = self.operands[0].kind().get_immediate() {
+                if let Some(1) = self.operands[0].into().kind.get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[1],
                     })
-                } else if let Some(1) = self.operands[1].kind().get_immediate() {
+                } else if let Some(1) = self.operands[1].into().kind.get_immediate() {
                     Some(Assignment {
                         target: self.operands[2],
                         source: self.operands[0],
@@ -506,7 +492,7 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
             .into_iter()
             .filter(|op| {
                 matches!(
-                    op.kind(),
+                    (**op).into().kind,
                     OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
                 )
             })
@@ -535,7 +521,7 @@ impl<T: HasOperand + Copy + Clone> GenericInstruction<T> {
         // and Deref (requires pointer analysis to know the target).
         target_operand.filter(|op| {
             matches!(
-                op.kind(),
+                (**op).into().kind,
                 OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
             )
         })
