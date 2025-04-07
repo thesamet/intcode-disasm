@@ -9,18 +9,17 @@ use crate::disasm::v2::{
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-/// Source information for an SSA variable
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum SsaVarSource {
-    /// Regular variable definition
-    Regular,
-
-    /// Variable defined by a function return
-    FunctionReturn {
-        /// The definition from data flow analysis
-        def: Definition,
+/*
+enum SsaVarKind {
+    Memory(i128),
+    Immediate(i128),
+    RelativeMemory(i128),
+    Deref {
+        address: i128,
+        address_version: usize,
     },
 }
+*/
 
 /// Represents an SSA variable
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -29,8 +28,6 @@ pub struct SsaVar {
     pub operand: Operand,
     /// Version number of this SSA variable
     pub version: usize,
-    /// Source information for this variable
-    pub source: SsaVarSource,
 }
 
 impl From<SsaVar> for Operand {
@@ -47,20 +44,7 @@ impl From<&SsaVar> for Operand {
 impl SsaVar {
     /// Create a new SSA variable with Regular source
     pub fn new(operand: Operand, version: usize) -> Self {
-        Self {
-            operand,
-            version,
-            source: SsaVarSource::Regular,
-        }
-    }
-
-    /// Create a new SSA variable from a function return
-    pub fn from_function_return(operand: Operand, version: usize, def: Definition) -> Self {
-        Self {
-            operand,
-            version,
-            source: SsaVarSource::FunctionReturn { def },
-        }
+        Self { operand, version }
     }
 }
 
@@ -716,7 +700,6 @@ pub mod conversion {
         let new_version = SsaVar {
             operand: var,
             version,
-            source: SsaVarSource::Regular,
         };
         current_versions.insert(var.kind, new_version);
         new_version
@@ -726,31 +709,27 @@ pub mod conversion {
         current_versions: &mut HashMap<OperandKind, SsaVar>,
         op: Operand,
     ) -> SsaVar {
-        if let Some(op_kind) = op.kind.as_variable() {
-            if let Some(ssa_var) = current_versions.get(&op_kind) {
-                // Create a new SsaVar with the same version but preserve the debug marker from op
-                let mut new_operand = ssa_var.operand;
-                if let Some(debug_marker) = op.debug_marker {
-                    new_operand.debug_marker = Some(debug_marker);
-                }
-                new_operand.debug_marker = op.debug_marker;
-
-                SsaVar {
-                    operand: new_operand,
-                    version: ssa_var.version,
-                    source: ssa_var.source,
-                }
-            } else {
-                // Create a new version if not found
-                create_next_version(current_versions, op)
-            }
-        } else {
-            // Non-variable operand
-            SsaVar {
+        let Some(op_kind) = op.kind.as_variable() else {
+            return SsaVar {
                 operand: op,
                 version: 0,
-                source: SsaVarSource::Regular,
+            };
+        };
+        if let Some(ssa_var) = current_versions.get(&op_kind) {
+            // Create a new SsaVar with the same version but preserve the debug marker from op
+            let mut new_operand = ssa_var.operand;
+            if let Some(debug_marker) = op.debug_marker {
+                new_operand.debug_marker = Some(debug_marker);
             }
+            new_operand.debug_marker = op.debug_marker;
+
+            SsaVar {
+                operand: new_operand,
+                version: ssa_var.version,
+            }
+        } else {
+            // Create a new version if not found
+            create_next_version(current_versions, op)
         }
     }
 
@@ -1010,7 +989,6 @@ mod tests {
                     debug_marker: None,
                 },
                 version: $version,
-                source: SsaVarSource::Regular,
             }
         };
     }
@@ -1024,7 +1002,6 @@ mod tests {
                     debug_marker: None,
                 },
                 version: $version,
-                source: SsaVarSource::Regular,
             }
         };
     }
@@ -1037,8 +1014,7 @@ mod tests {
                     offset: 0,
                     debug_marker: None,
                 },
-                version: 0,
-                source: SsaVarSource::Regular,
+                version: $deref_version,
             }
         };
     }
@@ -1138,31 +1114,6 @@ mod tests {
 
         assert_eq!(var.operand, operand);
         assert_eq!(var.version, 1);
-        assert!(matches!(var.source, SsaVarSource::Regular));
-    }
-
-    #[test]
-    fn test_ssa_var_from_function_return() {
-        let operand = relative_memory_operand(1);
-        let def = Definition {
-            instruction_id: InstructionId::from(10),
-            location: operand.kind,
-            block_id: BlockId::from(5),
-        };
-
-        let var = SsaVar::from_function_return(operand, 2, def.clone());
-
-        assert_eq!(var.operand, operand);
-        assert_eq!(var.version, 2);
-
-        match var.source {
-            SsaVarSource::FunctionReturn {
-                def: ref return_def,
-            } => {
-                assert_eq!(*return_def, def);
-            }
-            _ => panic!("Expected FunctionReturn source"),
-        }
     }
 
     // Helper to prepare a model with control flow and data flow analyses done
@@ -1526,8 +1477,8 @@ mod tests {
         );
         assert_marker_at_main!(ctx, 'a', ssa_main_mem!(23, 2));
         assert_marker_at_main!(ctx, 'b', ssa_main_mem!(23, 3));
-        assert_marker_at_main!(ctx, 'c', ssa_main_deref!(23, 3));
-        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 0))
+        assert_marker_at_main!(ctx, 'c', ssa_main_deref!(23, 1));
+        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 1))
     }
 
     #[test]
