@@ -6,7 +6,10 @@ use super::{
     dispatching::{EventCollector, EventPublisher},
     events::{Event, ImageAddedEvent, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::{image_scanner::ImageScannerResult, ssa_converter::SsaConverter},
+    listeners::{
+        image_scanner::ImageScannerResult, ssa_converter::SsaResult,
+        type_inference_analyzer::TypeInferenceResult,
+    },
 };
 
 define_id_type!(FunctionId);
@@ -21,8 +24,9 @@ pub struct ProgramModel {
     functions: HashMap<FunctionId, Function>,
     blocks: HashMap<BlockId, Block>,
 
-    /// Reference to the SSA converter
-    pub ssa_converter: Option<SsaConverter>,
+    ssa_result: Option<SsaResult>,
+
+    type_inference_result: Option<TypeInferenceResult>,
 }
 
 impl ProgramModel {
@@ -33,7 +37,8 @@ impl ProgramModel {
             functions: HashMap::new(),
             blocks: HashMap::new(),
             data_flow_result: None,
-            ssa_converter: None,
+            ssa_result: None,
+            type_inference_result: None,
         }
     }
 
@@ -74,8 +79,6 @@ impl ProgramModel {
         self.data_flow_result.as_mut()
     }
 
-    /// Sets the SSA converter
-
     pub fn add_function(&mut self, function: Function) {
         self.functions.insert(function.function_id, function);
     }
@@ -106,6 +109,22 @@ impl ProgramModel {
 
     pub fn get_block_mut(&mut self, block_id: BlockId) -> &mut Block {
         self.blocks.get_mut(&block_id).unwrap()
+    }
+
+    pub fn set_ssa_result(&mut self, result: SsaResult) {
+        self.ssa_result = Some(result);
+    }
+
+    pub fn get_ssa_result(&self) -> Option<&SsaResult> {
+        self.ssa_result.as_ref()
+    }
+
+    pub fn set_type_inference_result(&mut self, result: TypeInferenceResult) {
+        self.type_inference_result = Some(result);
+    }
+
+    pub fn get_type_inference_result(&self) -> Option<&TypeInferenceResult> {
+        self.type_inference_result.as_ref()
     }
 }
 

@@ -27,14 +27,10 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> String {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
 
-    // Initialize all the required listeners
     publisher.add_listener(Box::new(ImageScanner::new()));
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
-
-    // Add the SSA converter
-    let ssa_converter = SsaConverter::new();
-    publisher.add_listener(Box::new(ssa_converter.clone()));
+    publisher.add_listener(Box::new(SsaConverter::new()));
 
     // Process the image
     model.load_image(&image, &mut publisher);

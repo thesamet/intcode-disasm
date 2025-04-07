@@ -1,7 +1,7 @@
 use crate::disasm::v2::{
     instructions::OperandKind,
+    listeners::type_inference_analyzer::{ConstraintReason, Type, TypeInferenceAnalyzer},
     ssa_form::SsaVar,
-    type_inference::{ConstraintReason, Type, TypeInference},
 };
 
 #[cfg(test)]
@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn test_type_inference_basics() {
         // Create a manual type inference engine
-        let mut type_inference = TypeInference::new();
+        let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create some SSA variables to infer types for
         let int_var = SsaVar::new(memory_operand(100), 1);
@@ -86,9 +86,9 @@ mod tests {
         let substitution = type_inference.unify().expect("Unification should succeed");
 
         // Verify types
-        let int_result = TypeInference::substitute(int_type, &substitution);
-        let bool_result = TypeInference::substitute(bool_type, &substitution);
-        let char_result = TypeInference::substitute(char_type, &substitution);
+        let int_result = TypeInferenceAnalyzer::substitute(int_type, &substitution);
+        let bool_result = TypeInferenceAnalyzer::substitute(bool_type, &substitution);
+        let char_result = TypeInferenceAnalyzer::substitute(char_type, &substitution);
 
         assert_eq!(int_result, Type::Int, "Variable should be an integer");
         assert_eq!(bool_result, Type::Bool, "Variable should be a boolean");
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn test_function_pointer_types() {
         // Create a manual type inference engine
-        let mut type_inference = TypeInference::new();
+        let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create an SSA variable for a function pointer
         let func_ptr_var = SsaVar::new(memory_operand(200), 1);
@@ -121,7 +121,7 @@ mod tests {
         let substitution = type_inference.unify().expect("Unification should succeed");
 
         // Verify type
-        let result = TypeInference::substitute(func_ptr_type, &substitution);
+        let result = TypeInferenceAnalyzer::substitute(func_ptr_type, &substitution);
 
         assert!(
             matches!(result, Type::FunctionPointer { .. }),
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn test_pointer_types() {
         // Create a manual type inference engine
-        let mut type_inference = TypeInference::new();
+        let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create variables for testing pointer relationships
         let int_var = SsaVar::new(memory_operand(100), 1);
@@ -176,9 +176,9 @@ mod tests {
         let substitution = type_inference.unify().expect("Unification should succeed");
 
         // Verify types
-        let int_result = TypeInference::substitute(int_type, &substitution);
-        let ptr_result = TypeInference::substitute(ptr_type, &substitution);
-        let deref_result = TypeInference::substitute(deref_type, &substitution);
+        let int_result = TypeInferenceAnalyzer::substitute(int_type, &substitution);
+        let ptr_result = TypeInferenceAnalyzer::substitute(ptr_type, &substitution);
+        let deref_result = TypeInferenceAnalyzer::substitute(deref_type, &substitution);
 
         assert_eq!(int_result, Type::Int, "int_var should be an integer");
         assert_eq!(
