@@ -6,10 +6,8 @@ use super::{
     dispatching::{EventCollector, EventPublisher},
     events::{Event, ImageAddedEvent, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::{
-        image_scanner::ImageScannerResult, ssa_converter::SsaResult,
-        type_inference_analyzer::TypeInferenceResult,
-    },
+    listeners::{image_scanner::ImageScannerResult, type_inference_analyzer::TypeInferenceResult},
+    ssa_form::SsaResult,
 };
 
 define_id_type!(FunctionId);

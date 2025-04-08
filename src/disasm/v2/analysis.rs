@@ -1,5 +1,5 @@
 use crate::disasm::v2::{
-    listeners::image_scanner::ImageScanner, model::ProgramModel, ssa_form::SsaProgram,
+    listeners::image_scanner::ImageScanner, model::ProgramModel, ssa_form::SsaResult,
 };
 
 use super::{
@@ -42,10 +42,10 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> String {
     }
 
     // Convert to SSA form
-    let ssa_program = SsaProgram::from_program_model(&model);
+    let ssa_result = SsaResult::from_program_model(&model);
 
     // Pretty-print the SSA form
-    ssa_program.pretty_print()
+    ssa_result.pretty_print()
 }
 
 #[cfg(test)]

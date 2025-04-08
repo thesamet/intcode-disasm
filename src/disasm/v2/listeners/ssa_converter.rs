@@ -4,16 +4,11 @@ use crate::disasm::v2::{
     dispatching::{EventCollector, EventListener},
     events::{Event, SsaConversionComplete},
     model::ProgramModel,
-    ssa_form::SsaProgram,
+    ssa_form::SsaResult,
 };
 
 /// Listener that converts the program to SSA form
 pub struct SsaConverter {}
-
-#[derive(Debug, Clone)]
-pub struct SsaResult {
-    pub ssa_program: SsaProgram,
-}
 
 impl SsaConverter {
     /// Create a new SSA converter
@@ -29,51 +24,15 @@ impl EventListener<Event, ProgramModel> for SsaConverter {
         event: Event,
         collector: &mut EventCollector<Event>,
     ) {
-        info!("SsaConverter received event: {:?}", event);
-
         match event {
             // Wait for data flow analysis to complete for all functions
             Event::DataFlowAnalysisComplete(_) => {
-                // Check if all functions have been analyzed
-                let functions = model.functions().keys().count();
-                info!("Function count: {}", functions);
-
-                let ready_for_ssa = model
-                    .get_data_flow_result()
-                    .map(|dfa| {
-                        let has_results = dfa.block_results.len() > 0;
-                        info!(
-                            "Data flow analysis has {} block results",
-                            dfa.block_results.len()
-                        );
-                        has_results
-                    })
-                    .unwrap_or_else(|| {
-                        warn!("No data flow analysis results available");
-                        false
-                    });
-
-                if ready_for_ssa && functions > 0 {
-                    info!("Converting program to SSA form");
-
-                    // Convert the program to SSA form
-                    let ssa_program = SsaProgram::from_program_model(model);
-                    model.set_ssa_result(SsaResult { ssa_program });
-
-                    // Notify that SSA conversion is complete
-                    info!("SSA conversion complete");
-                    collector.publish(SsaConversionComplete { completed: true });
-                } else {
-                    warn!(
-                        "Not ready for SSA conversion: ready_for_ssa={}, functions={}",
-                        ready_for_ssa, functions
-                    );
-                }
+                let ssa_result = SsaResult::from_program_model(model);
+                model.set_ssa_result(ssa_result);
+                info!("SSA conversion complete");
+                collector.publish(SsaConversionComplete { completed: true });
             }
-            _ => {
-                // Ignore other events
-                info!("Ignoring unhandled event");
-            }
+            _ => {}
         }
     }
 }

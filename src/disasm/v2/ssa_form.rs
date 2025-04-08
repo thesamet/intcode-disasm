@@ -93,22 +93,36 @@ pub struct SsaFunction {
     pub immediate_dominators: HashMap<BlockId, BlockId>,
 }
 
-/// Represents the entire program in SSA form
-#[derive(Debug, Clone, Default)]
-pub struct SsaProgram {
-    /// Functions in SSA form
+impl SsaFunction {
+    // Helper to find an SSA variable with a specific debug marker
+    pub fn find_ssa_var_by_marker(&self, marker: char) -> Option<SsaVar> {
+        for (_, block) in &self.blocks {
+            for instr in &block.instructions {
+                for operand in &instr.operands {
+                    if let Some(debug_marker) = operand.operand.debug_marker {
+                        if debug_marker == marker {
+                            return Some(operand.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SsaResult {
     pub functions: HashMap<FunctionId, SsaFunction>,
 }
 
-impl SsaProgram {
-    /// Create a new empty SSA program
+impl SsaResult {
     pub fn new() -> Self {
         Self {
             functions: HashMap::new(),
         }
     }
 
-    /// Convert a standard program model to SSA form
     pub fn from_program_model(model: &ProgramModel) -> Self {
         // Make sure we have data flow information
         if model.get_data_flow_result().is_none() {
@@ -116,7 +130,7 @@ impl SsaProgram {
         }
 
         let data_flow = model.get_data_flow_result().unwrap();
-        let mut ssa_program = Self::new();
+        let mut ssa_result = Self::new();
 
         // Process each function in the model
         for (&function_id, function) in model.functions() {
@@ -161,11 +175,12 @@ impl SsaProgram {
             // 6. Prune unnecessary phi functions
             conversion::prune_phi_functions(&mut ssa_function);
 
-            ssa_program.functions.insert(function_id, ssa_function);
+            ssa_result.functions.insert(function_id, ssa_function);
         }
 
-        ssa_program
+        ssa_result
     }
+    /// Convert a standard program model to SSA form
 
     /// Pretty-print the SSA program
     pub fn pretty_print(&self) -> String {
@@ -237,6 +252,14 @@ impl SsaProgram {
         }
 
         printer.result()
+    }
+
+    pub fn find_ssa_var_by_marker(&self, marker: char) -> SsaVar {
+        self.functions
+            .values()
+            .flat_map(|func| func.find_ssa_var_by_marker(marker))
+            .next()
+            .unwrap_or_else(|| panic!("Marker '{}' not found in SSA program", marker))
     }
 }
 
@@ -968,7 +991,6 @@ pub mod conversion {
 mod tests {
     use super::*;
     use crate::disasm::parser;
-    use crate::disasm::v2::instructions::InstructionId;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
@@ -1022,34 +1044,19 @@ mod tests {
     macro_rules! assert_marker_at_main {
         ($ctx:expr, $marker:expr, $expected:expr) => {{
             // Find an SSA variable with the given debug marker
-            let mut found = false;
+            let found_var = $ctx.main_function.find_ssa_var_by_marker($marker)
+                .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
-            // Look through all blocks and instructions for the marker
-            for (_, block) in &$ctx.main_function.blocks {
-                for instr in &block.instructions {
-                    for operand in &instr.operands {
-                        if let Some(debug_marker) = operand.operand.debug_marker {
-                            if debug_marker == $marker {
-                                assert_eq!(
-                                    $expected.operand.kind, operand.operand.kind,
-                                    "For marker '{}': Expected kind: {:?}, Actual kind: {:?}",
-                                    $marker, $expected.operand.kind, operand.operand.kind
-                                );
-                                assert_eq!(
-                                    $expected.version, operand.version,
-                                    "For marker '{}': Expected version: {}, Actual version: {}",
-                                    $marker, $expected.version, operand.version
-                                );
-                                found = true;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !found {
-                panic!("Marker '{}' not found in main function", $marker);
-            }
+            assert_eq!(
+                $expected.operand.kind, found_var.operand.kind,
+                "For marker '{}': Expected kind: {:?}, Actual kind: {:?}",
+                $marker, $expected.operand.kind, found_var.operand.kind
+            );
+            assert_eq!(
+                $expected.version, found_var.version,
+                "For marker '{}': Expected version: {}, Actual version: {}",
+                $marker, $expected.version, found_var.version
+            );
         }};
     }
 
@@ -1061,11 +1068,11 @@ mod tests {
         fn new(assembly: &str) -> Self {
             let model = setup_analyzed_model(assembly);
 
-            let ssa_program = SsaProgram::from_program_model(&model);
+            let ssa_result = SsaResult::from_program_model(&model);
 
             // Extract the main function (always at ID 0)
             let func_id = FunctionId::from(0);
-            let main_function = ssa_program
+            let main_function = ssa_result
                 .functions
                 .get(&func_id)
                 .expect("Main function not found in SSA program")
@@ -1152,13 +1159,13 @@ mod tests {
         );
 
         // Convert to SSA form
-        let ssa_program = SsaProgram::from_program_model(&model);
+        let ssa_result = SsaResult::from_program_model(&model);
 
         // Expect a single function (at offset 0)
-        assert_eq!(ssa_program.functions.len(), 1);
+        assert_eq!(ssa_result.functions.len(), 1);
 
         let func_id = FunctionId::from(0);
-        let ssa_function = ssa_program.functions.get(&func_id).unwrap();
+        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
         // Expect the function to have blocks
         assert!(!ssa_function.blocks.is_empty());
@@ -1224,10 +1231,10 @@ mod tests {
         );
 
         // Convert to SSA form
-        let ssa_program = SsaProgram::from_program_model(&model);
+        let ssa_result = SsaResult::from_program_model(&model);
 
         // Print block information to debug
-        for (func_id, function) in &ssa_program.functions {
+        for (func_id, function) in &ssa_result.functions {
             println!("Function: {}", func_id);
             println!(
                 "  Blocks: {}",
@@ -1262,7 +1269,7 @@ mod tests {
 
         // Get the merge block
         let func_id = FunctionId::from(0);
-        let ssa_function = ssa_program.functions.get(&func_id).unwrap();
+        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
         // Find the block with the output instruction (the merge block)
         let mut merge_block_id = None;
@@ -1345,10 +1352,10 @@ mod tests {
         );
 
         // Convert to SSA form
-        let ssa_program = SsaProgram::from_program_model(&model);
+        let ssa_result = SsaResult::from_program_model(&model);
 
         // Print block information to debug
-        for (func_id, function) in &ssa_program.functions {
+        for (func_id, function) in &ssa_result.functions {
             println!("Function: {}", func_id);
             for (block_id, _) in &function.blocks {
                 println!("  Block: {}", block_id);
@@ -1357,7 +1364,7 @@ mod tests {
 
         // Get the return block (where function return value is used)
         let func_id = FunctionId::from(0);
-        let ssa_function = ssa_program.functions.get(&func_id).unwrap();
+        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
         // Find the return block by searching for one that contains output instruction
         let mut found_return_block = None;
@@ -1415,14 +1422,14 @@ mod tests {
         );
 
         // Convert to SSA form
-        let ssa_program = SsaProgram::from_program_model(&model);
+        let ssa_result = SsaResult::from_program_model(&model);
 
         // Print the SSA program for debugging
-        println!("SSA Program:\n{}", ssa_program.pretty_print());
+        println!("SSA Program:\n{}", ssa_result.pretty_print());
 
         // Get the function
         let func_id = FunctionId::from(0);
-        let ssa_function = ssa_program.functions.get(&func_id).unwrap();
+        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
         // Get the block
         let block_id = BlockId::from(0);

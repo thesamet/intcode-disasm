@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use log::{debug, info};
 use std::{collections::HashMap, fmt};
 
@@ -7,7 +8,7 @@ use crate::disasm::v2::{
     events::{Event, TypeInferenceComplete},
     instructions::{Opcode, OperandKind},
     model::{BlockId, ProgramModel},
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaProgram, SsaVar},
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar},
 };
 
 /// Unique identifier for a type variable
@@ -170,7 +171,17 @@ pub struct TypeInferenceAnalyzer {
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
-    pub inferred_types: HashMap<TypeVarId, Type>,
+    inferred_types: HashMap<TypeVarId, Type>,
+    type_vars: HashMap<SsaVar, Type>,
+}
+
+impl TypeInferenceResult {
+    pub fn get_type_for_var(&self, var: &SsaVar) -> Option<&Type> {
+        if let Some(Type::TypeVar(id)) = self.type_vars.get(var).cloned() {
+            return self.inferred_types.get(&id);
+        }
+        None
+    }
 }
 
 impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
@@ -184,14 +195,11 @@ impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
             // Start type inference after SSA conversion is complete
             Event::SsaConversionComplete(_) => {
                 info!("Starting type inference analysis");
-                let Some(ssa_program) = model
-                    .get_ssa_result()
-                    .map(|ssa_result| &ssa_result.ssa_program)
-                else {
+                let Some(ssa_result) = model.get_ssa_result() else {
                     panic!("SSA program not available");
                 };
 
-                self.generate_constraints_for_program(ssa_program);
+                self.generate_constraints_for_program(ssa_result);
 
                 // Solve the constraints through unification
                 match self.unify() {
@@ -199,6 +207,7 @@ impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
                         log::info!("Type inference completed successfully");
                         model.set_type_inference_result(TypeInferenceResult {
                             inferred_types: substitution,
+                            type_vars: self.type_vars.clone(),
                         });
 
                         // Signal that type inference is complete
@@ -236,46 +245,33 @@ impl TypeInferenceAnalyzer {
 
     /// Get the type for an SSA variable
     pub fn type_for_var(&mut self, var: &SsaVar) -> Type {
-        if let Some(typ) = self.type_vars.get(var).cloned() {
-            return typ;
+        if let Some(typ) = self.type_vars.get(var) {
+            return typ.clone();
         }
 
-        let typ = self.fresh_type_var();
-        self.type_vars.insert(var.clone(), typ.clone());
-
-        // Special handling for dereferenced variables
+        let typ = self.fresh_type_var().clone();
         if let OperandKind::Deref(addr) = var.operand.kind {
             // First, collect all candidate variables (to avoid borrowing issues)
-            let candidates: Vec<_> = self
+            let memory_var = self
                 .type_vars
                 .keys()
-                .filter_map(|other_var| {
-                    if let OperandKind::Memory(base_addr) = other_var.operand.kind {
-                        if base_addr as usize == addr {
-                            Some(other_var.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+                .filter(|other_var| other_var.operand.kind.get_memory() == Some(addr as i128))
+                .max_by_key(|other_var| other_var.version)
+                .cloned();
 
             // Now process the candidates with no borrow conflicts
-            if let Some(other_var) = candidates.first() {
+            if let Some(memory_var) = memory_var {
                 // If we find it, add a deref constraint
-                let pointer_type = self.type_for_var(other_var);
+                let pointer_type = self.type_for_var(&memory_var).clone();
                 let instr_id = 5555;
                 self.add_constraint(
-                    pointer_type,
+                    pointer_type.clone(),
                     Type::Pointer(Box::new(typ.clone())),
                     instr_id,
                     ConstraintReason::Deref,
                 );
             }
         }
-
         typ
     }
 
@@ -546,9 +542,9 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Generate constraints for the entire program
-    pub fn generate_constraints_for_program(&mut self, program: &SsaProgram) {
+    pub fn generate_constraints_for_program(&mut self, result: &SsaResult) {
         // Process each function in the program
-        for (_, function) in &program.functions {
+        for (_, function) in &result.functions {
             self.generate_constraints_for_function(function);
         }
     }
@@ -803,10 +799,7 @@ mod tests {
 
     /// TestContext for type inference tests
     struct TestContext {
-        type_inference: TypeInferenceAnalyzer,
-        ssa_program: SsaProgram,
-        markers: HashMap<char, OperandKind>,
-        manual_markers: HashMap<char, SsaVar>, // Tracks manually marked variables
+        model: ProgramModel,
     }
 
     fn init() {
@@ -831,28 +824,24 @@ mod tests {
             let image_scanner = ImageScanner::new();
             let control_flow_builder = ControlFlowGraphBuilder::new();
             let data_flow_analyzer = DataFlowAnalyzer::new();
+            // Create type inference engine
+            let type_inference = TypeInferenceAnalyzer::new();
 
             // Register listeners
             publisher.add_listener(Box::new(image_scanner));
             publisher.add_listener(Box::new(control_flow_builder));
             publisher.add_listener(Box::new(data_flow_analyzer));
             publisher.add_listener(Box::new(ssa_converter));
+            publisher.add_listener(Box::new(type_inference));
 
             // Run the pipeline
             model.load_image(&binary, &mut publisher);
             publisher.process_events(&mut model);
 
-            // Get the SSA program
-            let ssa_program = &model.get_ssa_result().unwrap().ssa_program;
-
-            // Create type inference engine
-            let mut type_inference = TypeInferenceAnalyzer::new();
-
+            /*
             // Process debug markers from the assembly
-            let markers = Self::extract_markers(&binary);
             let manual_markers = HashMap::new();
 
-            /*
             // Mark variables with debug characters
                 // Process each function in the SSA program
                 for (_, function) in &ssa_program.functions {
@@ -880,107 +869,44 @@ mod tests {
                     }
             */
 
-            Self {
-                type_inference,
-                ssa_program: ssa_program.clone(),
-                markers,
-                manual_markers,
-            }
+            Self { model }
         }
-
-        /// Extract markers from the binary
-        fn extract_markers(binary: &[i128]) -> HashMap<char, OperandKind> {
-            let mut markers = HashMap::new();
-
-            // Process each instruction in the binary
-            let mut i = 0;
-            while i < binary.len() {
-                // Find debug markers in the binary
-                if i + 2 < binary.len() {
-                    let instruction = binary[i];
-
-                    // Look for debug markers in the instruction's debug info
-                    // In our assembly format, debug markers might be stored in a special format
-                    // For simplicity, we'll look for special negative values as indicators
-                    if instruction < 0 {
-                        // Try to extract marker character from negative value
-                        let marker_value = (-instruction) as u8;
-                        if marker_value >= 32 && marker_value <= 126 {
-                            // Printable ASCII
-                            let marker = marker_value as char;
-
-                            // Next value should be an address/operand
-                            let operand_value = binary[i + 1];
-
-                            // Create an appropriate OperandKind
-                            let operand_kind = if operand_value < 0 {
-                                // Negative value might indicate a special operand type
-                                OperandKind::RelativeMemory(operand_value.abs())
-                            } else {
-                                // Positive value is likely a memory address
-                                OperandKind::Memory(operand_value)
-                            };
-
-                            markers.insert(marker, operand_kind);
-                        }
-                    }
-                }
-
-                i += 1;
-            }
-
-            markers
-        }
-
-        /// Run unification and return the result
-        fn unify(&mut self) -> Result<HashMap<TypeVarId, Type>, String> {
-            self.type_inference.unify()
-        }
-
         /// Assert that a marker has the expected type
         fn assert_marker_type(&mut self, marker: char, expected_type: Type) {
-            if let Some(subst) = self.unify().ok() {
-                let marker_type = self.type_inference.get_marker_type(marker, &subst);
+            let ssa_var = self
+                .model
+                .get_ssa_result()
+                .unwrap()
+                .find_ssa_var_by_marker(marker);
 
-                assert!(marker_type.is_some(), "Marker {} not found", marker);
-                let actual_type = marker_type.unwrap();
+            let actual_type = self
+                .model
+                .get_type_inference_result()
+                .unwrap()
+                .get_type_for_var(&ssa_var)
+                .expect("No type found for SSA variable");
 
-                assert_eq!(
-                    actual_type, expected_type,
-                    "Marker {} has incorrect type: expected {:?}, actual {:?}",
-                    marker, expected_type, actual_type
-                );
-            } else {
-                panic!("Unification failed");
-            }
+            assert_eq!(
+                *actual_type, expected_type,
+                "Marker {} has incorrect type: expected {:?}, actual {:?}",
+                marker, expected_type, actual_type
+            );
         }
 
         fn assert_type(&mut self, addr: usize, expected: Type) {
-            let Type::TypeVar(type_var) = self
-                .type_inference
+            let ti = self.model.get_type_inference_result().unwrap();
+            let ssa_var = ti
                 .type_vars
-                .iter()
-                .filter(|(k, _)| k.operand.kind.get_memory() == Some(addr as i128))
-                .max_by_key(|(k, _)| k.version)
-                .expect("No type variable found for address")
-                .1
-            else {
-                panic!("No type variable found for address {}", addr);
-            };
-            let type_var = *type_var;
-            let result = self.unify().unwrap();
-            let actual = result.get(&type_var).unwrap();
+                .keys()
+                .filter(|k| k.operand.kind.get_memory() == Some(addr as i128))
+                .max_by_key(|k| k.version)
+                .expect("No type variable found for address");
+            let actual = ti.get_type_for_var(&ssa_var).unwrap();
             assert_eq!(
                 *actual, expected,
                 "Expected type {:?} but got {:?} for memory address {}",
                 expected, actual, addr
             );
-        }
-
-        /// Manually mark a variable with a character
-        fn mark_var(&mut self, var: SsaVar, marker: char) {
-            self.type_inference.mark_var(var.clone(), marker);
-            self.manual_markers.insert(marker, var);
         }
     }
 
