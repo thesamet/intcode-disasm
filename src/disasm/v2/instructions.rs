@@ -4,14 +4,7 @@ use thiserror::Error;
 
 use super::{id_types::define_id_type, Span};
 
-/// Debug information for an instruction
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct DebugInfo {
-    /// Optional marker character for this instruction
-    pub marker: Option<char>,
-    /// Optional source line information
-    pub source_line: Option<usize>,
-}
+// Debug information is now stored in the operands themselves via debug_marker
 
 define_id_type!(InstructionId);
 
@@ -158,8 +151,6 @@ pub struct GenericInstruction<T> {
     pub span: Span,
     /// The instruction kind with its operands
     pub kind: InstructionKind<T>,
-    /// Optional debug information
-    pub debug_info: Option<DebugInfo>,
 }
 
 pub type Instruction = GenericInstruction<Operand>;
@@ -415,17 +406,7 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
             })
             .collect::<Result<_, _>>()?;
 
-        // Check if any operands have debug markers
-        let debug_markers: Vec<_> = operands.iter().filter_map(|op| op.debug_marker).collect();
-        let debug_info = if !debug_markers.is_empty() {
-            Some(DebugInfo {
-                marker: debug_markers.first().cloned(),
-                source_line: None,
-            })
-        } else {
-            None
-        };
-
+        //
         // Create the instruction kind based on the opcode
         let kind = match opcode {
             Opcode::Add => InstructionKind::Add(operands[0], operands[1], operands[2]),
@@ -444,7 +425,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
             id: InstructionId::from(offset),
             span: Span::new(offset, offset + operand_count + 1),
             kind: simplify_instruction(kind),
-            debug_info,
         };
 
         Ok(instruction)
@@ -538,7 +518,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
             id: self.id,
             span: self.span,
             kind,
-            debug_info: self.debug_info,
         }
     }
 
@@ -604,7 +583,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
                     id: InstructionId::from(i),
                     span: Span::new(i, i + 1),
                     kind: InstructionKind::Data(vec![prog[i]]),
-                    debug_info: None,
                 };
                 instructions.push((i, data_instruction));
                 i += 1;
@@ -642,7 +620,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
                         id: instruction.id,
                         span: instruction.span,
                         kind: convert_instruction_kind(instruction.kind),
-                        debug_info: instruction.debug_info,
                     };
 
                     instructions.push((i, converted_instruction));
@@ -655,7 +632,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
                         id: InstructionId::from(i),
                         span: Span::new(i, i + 1),
                         kind: InstructionKind::Data(vec![prog[i]]),
-                        debug_info: None,
                     };
                     instructions.push((i, data_instruction));
                     i += 1;
@@ -801,7 +777,6 @@ where
                             id: inst1.id,
                             span: Span::new(addr1, end_addr),
                             kind: InstructionKind::Data(prog[addr1..end_addr].to_vec()),
-                            debug_info: inst1.debug_info,
                         },
                     ))
                 }
