@@ -6,7 +6,7 @@ use crate::disasm::v2::{
     control_flow::NextKind,
     dispatching::{EventCollector, EventListener},
     events::{Event, TypeInferenceComplete},
-    instructions::{Opcode, OperandKind},
+    instructions::{InstructionKind, OperandKind},
     model::{BlockId, ProgramModel},
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar},
 };
@@ -322,12 +322,8 @@ impl TypeInferenceAnalyzer {
     ) {
         let instr_id = instruction.id.index();
 
-        match instruction.opcode {
-            Opcode::Add | Opcode::Mul => {
-                let src1 = &instruction.operands[0];
-                let src2 = &instruction.operands[1];
-                let dst = &instruction.operands[2];
-
+        match &instruction.kind {
+            InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
                 if let Some(assignment) = instruction.as_assignment() {
                     // It's an assignment (e.g., dst = src + 0 or dst = src * 1)
                     let dst_type = self.type_for_var(&assignment.target);
@@ -346,10 +342,9 @@ impl TypeInferenceAnalyzer {
                     let src1_type = self.type_for_var(src1);
                     let src2_type = self.type_for_var(src2);
                     let dst_type = self.type_for_var(dst);
-                    let reason = if instruction.opcode == Opcode::Add {
-                        ConstraintReason::AddImpliesInt
-                    } else {
-                        ConstraintReason::MulImpliesInt
+                    let reason = match instruction.kind {
+                        InstructionKind::Add(_, _, _) => ConstraintReason::AddImpliesInt,
+                        _ => ConstraintReason::MulImpliesInt
                     };
 
                     self.add_constraint(dst_type, Type::Int, instr_id, reason);
@@ -358,8 +353,7 @@ impl TypeInferenceAnalyzer {
                 }
             }
 
-            Opcode::Input => {
-                let dst = &instruction.operands[0];
+            InstructionKind::Input(dst) => {
                 let dst_type = self.type_for_var(dst);
                 self.add_constraint(
                     dst_type,
@@ -369,8 +363,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            Opcode::Output => {
-                let src = &instruction.operands[0];
+            InstructionKind::Output(src) => {
                 let src_type = self.type_for_var(src);
                 self.add_constraint(
                     src_type,
@@ -380,11 +373,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            Opcode::LessThan => {
-                let src1 = &instruction.operands[0];
-                let src2 = &instruction.operands[1];
-                let dst = &instruction.operands[2];
-
+            InstructionKind::LessThan(src1, src2, dst) => {
                 let src1_type = self.type_for_var(src1);
                 let src2_type = self.type_for_var(src2);
                 let dst_type = self.type_for_var(dst);
@@ -409,11 +398,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            Opcode::Equals => {
-                let src1 = &instruction.operands[0];
-                let src2 = &instruction.operands[1];
-                let dst = &instruction.operands[2];
-
+            InstructionKind::Equals(src1, src2, dst) => {
                 let src1_type = self.type_for_var(src1);
                 let src2_type = self.type_for_var(src2);
                 let dst_type = self.type_for_var(dst);
@@ -432,8 +417,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            Opcode::JumpIfTrue | Opcode::JumpIfFalse => {
-                let cond = &instruction.operands[0];
+            InstructionKind::JumpIfTrue(cond, _) | InstructionKind::JumpIfFalse(cond, _) => {
                 let cond_type = self.type_for_var(cond);
                 self.add_constraint(
                     cond_type,
@@ -443,25 +427,41 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            // Opcodes that don't directly imply types on their operands here
-            Opcode::AdjustRelativeBase | Opcode::Halt => {
+            // Instruction kinds that don't directly imply types on their operands
+            InstructionKind::AdjustRelativeBase(_) | InstructionKind::Halt => {
                 // AdjustRelativeBase's operand type is constrained if it's used elsewhere.
                 // Halt has no operands.
+            }
+            
+            // Synthetic instructions
+            InstructionKind::Goto(_) => {
+                // No specific type constraints for goto
+            }
+            
+            InstructionKind::Assign(target, source) => {
+                let target_type = self.type_for_var(target);
+                let source_type = self.type_for_var(source);
+                self.add_constraint(
+                    target_type,
+                    source_type,
+                    instr_id,
+                    ConstraintReason::Assignment,
+                );
+            }
+            
+            InstructionKind::Data(_) => {
+                // Data instructions don't have type constraints
             }
         }
 
         // --- Separate Handling for Dereference ---
         // This logic is moved out of `type_for_var` and handled here.
         // We look for the pattern `[dest] = 0 + *ptr_addr` which represents dereference.
-        if instruction.opcode == Opcode::Add {
-            let maybe_zero_op = &instruction.operands[0];
-            let maybe_deref_op = &instruction.operands[1]; // Operand representing the deref value
-            let dest_op = &instruction.operands[2];
-
+        if let InstructionKind::Add(src1, src2, dst) = &instruction.kind {
             // Check for the pattern `dest = 0 + Deref(addr)`
-            if matches!(maybe_zero_op.operand.kind, OperandKind::Immediate(0)) {
-                if let OperandKind::Deref(addr) = maybe_deref_op.operand.kind {
-                    let dest_type = self.type_for_var(dest_op);
+            if matches!(src1.operand.kind, OperandKind::Immediate(0)) {
+                if let OperandKind::Deref(addr) = src2.operand.kind {
+                    let dest_type = self.type_for_var(dst);
 
                     // Find the SsaVar for the memory location holding the pointer address.
                     // Search within the type variables already created by the analyzer.

@@ -3,7 +3,7 @@ use crate::disasm::v2::instructions::GenericInstruction;
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::{DataFlowResult, Definition},
-    instructions::{Opcode, Operand, OperandKind},
+    instructions::{InstructionKind, Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
 };
 use std::collections::{HashMap, HashSet};
@@ -98,10 +98,26 @@ impl SsaFunction {
     pub fn find_ssa_var_by_marker(&self, marker: char) -> Option<SsaVar> {
         for (_, block) in &self.blocks {
             for instr in &block.instructions {
-                for operand in &instr.operands {
+                // Extract all operands from the instruction kind
+                let operands = match &instr.kind {
+                    InstructionKind::Add(a, b, c) => vec![a, b, c],
+                    InstructionKind::Mul(a, b, c) => vec![a, b, c],
+                    InstructionKind::Input(a) => vec![a],
+                    InstructionKind::Output(a) => vec![a],
+                    InstructionKind::JumpIfTrue(a, b) => vec![a, b],
+                    InstructionKind::JumpIfFalse(a, b) => vec![a, b],
+                    InstructionKind::LessThan(a, b, c) => vec![a, b, c],
+                    InstructionKind::Equals(a, b, c) => vec![a, b, c],
+                    InstructionKind::AdjustRelativeBase(a) => vec![a],
+                    InstructionKind::Goto(a) => vec![a],
+                    InstructionKind::Assign(a, b) => vec![a, b],
+                    InstructionKind::Data(_) | InstructionKind::Halt => vec![],
+                };
+                
+                for operand in operands {
                     if let Some(debug_marker) = operand.operand.debug_marker {
                         if debug_marker == marker {
-                            return Some(operand.clone());
+                            return Some(*operand);
                         }
                     }
                 }
@@ -265,131 +281,89 @@ impl SsaResult {
 
 /// Helper function to format an SSA instruction
 fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
-    let opcode = &instr.opcode;
-    let operands: Vec<String> = instr.operands.iter().map(|op| op.to_string()).collect();
-
-    match opcode {
+    match &instr.kind {
         // Format based on the Intcode opcodes from the machine_arch.md documentation
-        Opcode::Add => {
-            if operands.len() == 3 {
-                // Check if this is an assignment (add with 0)
-                if operands[0] == "0_0" {
-                    format!("{} = {}", operands[2], operands[1])
-                } else if operands[1] == "0_0" {
-                    format!("{} = {}", operands[2], operands[0])
-                } else {
-                    format!("{} = {} + {}", operands[2], operands[0], operands[1])
-                }
+        InstructionKind::Add(src1, src2, dst) => {
+            // Check if this is an assignment (add with 0)
+            if matches!(src1.operand.kind, OperandKind::Immediate(0)) {
+                format!("{} = {}", dst, src2)
+            } else if matches!(src2.operand.kind, OperandKind::Immediate(0)) {
+                format!("{} = {}", dst, src1)
             } else {
-                format!("add {}", operands.join(", "))
+                format!("{} = {} + {}", dst, src1, src2)
             }
         }
 
-        Opcode::Mul => {
-            if operands.len() == 3 {
-                // Check if this is an assignment (multiply with 1)
-                if operands[0] == "1_0" {
-                    format!("{} = {}", operands[2], operands[1])
-                } else if operands[1] == "1_0" {
-                    format!("{} = {}", operands[2], operands[0])
-                } else {
-                    format!("{} = {} * {}", operands[2], operands[0], operands[1])
-                }
+        InstructionKind::Mul(src1, src2, dst) => {
+            // Check if this is an assignment (multiply with 1)
+            if matches!(src1.operand.kind, OperandKind::Immediate(1)) {
+                format!("{} = {}", dst, src2)
+            } else if matches!(src2.operand.kind, OperandKind::Immediate(1)) {
+                format!("{} = {}", dst, src1)
             } else {
-                format!("mul {}", operands.join(", "))
+                format!("{} = {} * {}", dst, src1, src2)
             }
         }
 
-        Opcode::Input => {
-            if !operands.is_empty() {
-                format!("{} = input", operands[0])
+        InstructionKind::Input(dst) => {
+            format!("{} = input", dst)
+        }
+
+        InstructionKind::Output(src) => {
+            format!("output {}", src)
+        }
+
+        InstructionKind::JumpIfTrue(cond, target) => {
+            // Extract operand value to detect unconditional jumps
+            if matches!(cond.operand.kind, OperandKind::Immediate(1)) {
+                format!("goto {}", target)
             } else {
-                "input".to_string()
+                format!("if {} goto {}", cond, target)
             }
         }
 
-        Opcode::Output => {
-            if !operands.is_empty() {
-                format!("output {}", operands[0])
+        InstructionKind::JumpIfFalse(cond, target) => {
+            // Extract operand value to detect unconditional jumps
+            if matches!(cond.operand.kind, OperandKind::Immediate(0)) {
+                format!("goto {}", target)
             } else {
-                "output".to_string()
+                format!("if not {} goto {}", cond, target)
             }
         }
 
-        Opcode::JumpIfTrue => {
-            if operands.len() >= 2 {
-                // Extract operand value to detect unconditional jumps
-                let is_unconditional = match &instr.operands[0].operand.kind {
-                    OperandKind::Immediate(1) => true,
-                    _ => false,
-                };
-
-                if is_unconditional {
-                    format!("goto {}", operands[1])
-                } else {
-                    format!("if {} goto {}", operands[0], operands[1])
-                }
-            } else {
-                format!("jump_if_true {}", operands.join(", "))
-            }
+        InstructionKind::LessThan(src1, src2, dst) => {
+            format!("{} = ({} < {})", dst, src1, src2)
         }
 
-        Opcode::JumpIfFalse => {
-            if operands.len() >= 2 {
-                // Extract operand value to detect unconditional jumps
-                let is_unconditional = match &instr.operands[0].operand.kind {
-                    OperandKind::Immediate(0) => true,
-                    _ => false,
-                };
-
-                if is_unconditional {
-                    format!("goto {}", operands[1])
-                } else {
-                    format!("if not {} goto {}", operands[0], operands[1])
-                }
-            } else {
-                format!("jump_if_false {}", operands.join(", "))
-            }
+        InstructionKind::Equals(src1, src2, dst) => {
+            format!("{} = ({} == {})", dst, src1, src2)
         }
 
-        Opcode::LessThan => {
-            if operands.len() == 3 {
-                format!("{} = ({} < {})", operands[2], operands[0], operands[1])
-            } else {
-                format!("less_than {}", operands.join(", "))
-            }
-        }
-
-        Opcode::Equals => {
-            if operands.len() == 3 {
-                format!("{} = ({} == {})", operands[2], operands[0], operands[1])
-            } else {
-                format!("equals {}", operands.join(", "))
-            }
-        }
-
-        Opcode::AdjustRelativeBase => {
-            if !operands.is_empty() {
-                // Extract the operand value to format R+= or R-=
-                match &instr.operands[0].operand.kind {
-                    OperandKind::Immediate(val) => {
-                        if *val > 0 {
-                            format!("R += {}", val)
-                        } else if *val < 0 {
-                            format!("R -= {}", -val)
-                        } else {
-                            // If val is 0, just show R += 0
-                            format!("R += 0")
-                        }
+        InstructionKind::AdjustRelativeBase(val) => {
+            // Extract the operand value to format R+= or R-=
+            match val.operand.kind {
+                OperandKind::Immediate(val) => {
+                    if val > 0 {
+                        format!("R += {}", val)
+                    } else if val < 0 {
+                        format!("R -= {}", -val)
+                    } else {
+                        // If val is 0, just show R += 0
+                        format!("R += 0")
                     }
-                    _ => format!("R += {}", operands[0]),
                 }
-            } else {
-                "adjust_relative_base".to_string()
+                _ => format!("R += {}", val),
             }
         }
 
-        Opcode::Halt => "halt".to_string(),
+        InstructionKind::Halt => "halt".to_string(),
+        
+        // Synthetic instructions
+        InstructionKind::Goto(target) => format!("goto {}", target),
+        
+        InstructionKind::Assign(dst, src) => format!("{} = {}", dst, src),
+        
+        InstructionKind::Data(values) => format!("DATA {}", values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")),
     }
 }
 
@@ -693,11 +667,12 @@ pub mod conversion {
 
             // Update instructions
             for instr in &mut block.instructions {
-                for operand in &mut instr.operands {
-                    if let Some(replacement) = replacements.get(operand) {
-                        *operand = replacement.clone();
-                    }
-                }
+                // Use map_rw to update all operands in the instruction
+                *instr = instr.map_rw(
+                    &mut (),
+                    &mut |_, var| replacements.get(var).cloned().unwrap_or_else(|| *var),
+                    &mut |_, var| replacements.get(var).cloned().unwrap_or_else(|| *var),
+                );
             }
 
             block.next = block
@@ -1187,9 +1162,9 @@ mod tests {
         let mut versions_found = HashSet::new();
         for instr in &entry_block.instructions {
             // Check operands for SSA vars with memory location 100
-            for operand in &instr.operands {
+            for operand in instr.operands() {
                 let op: Operand = operand.into();
-                if &OperandKind::Memory(100) == &op.kind {
+                if let OperandKind::Memory(100) = op.kind {
                     versions_found.insert(operand.version);
                 }
             }
@@ -1277,7 +1252,7 @@ mod tests {
             if block
                 .instructions
                 .iter()
-                .any(|instr| instr.opcode == Opcode::Output)
+                .any(|instr| matches!(instr.kind, InstructionKind::Output(_)))
             {
                 merge_block_id = Some(*block_id);
                 break;
@@ -1298,10 +1273,14 @@ mod tests {
         let output_instr = merge_block
             .instructions
             .iter()
-            .find(|instr| instr.opcode == Opcode::Output)
+            .find(|instr| matches!(instr.kind, InstructionKind::Output(_)))
             .expect("Should have an output instruction");
 
-        let output_operand = &output_instr.operands[0];
+        let output_operand = if let InstructionKind::Output(operand) = &output_instr.kind {
+            operand
+        } else {
+            panic!("Expected Output instruction");
+        };
 
         // Verify that the operand is [100]
         assert_eq!(
@@ -1371,7 +1350,7 @@ mod tests {
         for (block_id, block) in &ssa_function.blocks {
             if !block.instructions.is_empty() {
                 let first_instr = &block.instructions[0];
-                if first_instr.opcode == Opcode::Output {
+                if matches!(first_instr.kind, InstructionKind::Output(_)) {
                     println!("Found block with output: {}", block_id);
                     found_return_block = Some(block);
                     break;
@@ -1392,10 +1371,12 @@ mod tests {
 
         // Simply check that the conversion runs without errors. In the future, we may want to
         // enhance this test to verify other aspects of the conversion.
-        assert!(
-            output_instr.operands[0].version > 0,
-            "Output variable should have a valid version number"
-        );
+        if let InstructionKind::Output(operand) = &output_instr.kind {
+            assert!(
+                operand.version > 0,
+                "Output variable should have a valid version number"
+            );
+        }
 
         // In this test we're specifically interested in seeing if operands are tracked
         // across function calls. We may not be properly implementing the function return
@@ -1440,15 +1421,20 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                instr.opcode == Opcode::Add &&
-                instr.operands.len() == 3 &&
-                instr.operands[0].operand.kind.get_relative_memory() == Some(-4) && // Read operand is R-4
-                instr.operands[2].operand.kind.get_relative_memory() == Some(-4)
+                let has_matching_operands = if let InstructionKind::Add(src1, _, dst) = &instr.kind {
+                    src1.operand.kind.get_relative_memory() == Some(-4) && // Read operand is R-4
+                    dst.operand.kind.get_relative_memory() == Some(-4)
+                } else {
+                    false
+                };
+                has_matching_operands
                 // Write operand is R-4
             })
             .expect("Should have found the addition instruction");
 
-        assert!(add_instr.operands[0].version < add_instr.operands[2].version);
+        if let InstructionKind::Add(src1, _, dst) = &add_instr.kind {
+            assert!(src1.version < dst.version);
+        }
     }
 
     #[test]

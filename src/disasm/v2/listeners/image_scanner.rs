@@ -96,7 +96,7 @@ fn recognize_function_start(image: &[i128], offset: usize) -> Option<i128> {
     let Ok(instruction) = Instruction::parse(image, offset) else {
         return None;
     };
-    if instruction.opcode != Opcode::AdjustRelativeBase {
+    if instruction.opcode() != Opcode::AdjustRelativeBase {
         return None;
     }
     instruction.relative_base_adjustment().filter(|r| *r > 0)
@@ -108,7 +108,7 @@ fn recognize_return(
     stack_size: i128,
 ) -> Result<(Instruction, Instruction), ParseError> {
     let adj_r = Instruction::parse(image, offset)?;
-    if adj_r.opcode != Opcode::AdjustRelativeBase {
+    if adj_r.opcode() != Opcode::AdjustRelativeBase {
         return Err(ParseError::NoMatch);
     }
     let Some(negated_stack_size) = adj_r.relative_base_adjustment() else {
@@ -120,10 +120,10 @@ fn recognize_return(
     let offset = offset + 2;
     let goto = Instruction::parse(image, offset)?;
     let Some(goto_address) = goto.goto_address() else {
-        return Err(ParseError::UnexpectedOpAfterAdjustment(goto));
+        return Err(ParseError::UnexpectedOpAfterAdjustment);
     };
     if goto_address.kind.get_relative_memory() != Some(0) {
-        return Err(ParseError::UnexpectedOpAfterAdjustment(goto));
+        return Err(ParseError::UnexpectedOpAfterAdjustment);
     }
     Ok((adj_r, goto))
 }

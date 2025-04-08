@@ -63,9 +63,10 @@ impl DataFlowAnalyzer {
                 }
                 // Calculate GEN for this instruction
                 if let Some(write_operand) = instr.writes() {
+                    println!("write: {:#?} at instr {:#?}", write_operand, instr);
                     block_flow
                         .gen
-                        .insert(write_operand.kind, (instr.id, *write_operand));
+                        .insert(write_operand.kind, (instr.id, write_operand));
                     defined_in_block.insert(write_operand.kind);
                     if let Some(n) = write_operand.kind.get_relative_memory() {
                         if n > 0 {
@@ -500,7 +501,9 @@ mod tests {
 
         // --- Block 0 ---
         // GEN/USE
-        assert_eq!(flow0.gen.len(), 2);
+        println!("{:#?}", model.get_block(block0_id));
+        println!("{:#?}", flow0);
+        assert_eq!(flow0.gen.len(), 2, "GEN length should be 2");
         assert_eq!(
             flow0.gen[&mem_kind(100)].0,
             InstructionId::from(2),
@@ -794,14 +797,10 @@ mod tests {
         let flow12 = df_results.block_results.get(&block12_id).unwrap();
 
         // GEN should only contain the *last* write
-        assert_eq!(
-            flow0.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
-            [(mem_kind(100), InstructionId::from(6))] // Only Def B
-                .iter()
-                .cloned()
-                .collect_vec(),
-            "GEN @ B0"
-        );
+        let gen_items: Vec<_> = flow0.gen.iter().map(|(k, (i, _))| (*k, *i)).collect();
+        assert_eq!(gen_items.len(), 1);
+        assert_eq!(gen_items[0].0, mem_kind(100));
+        assert_eq!(gen_items[0].1, InstructionId::from(6)); // Only Def B
 
         // Defs Out should only contain Def B
         let expected_defs_out0: HashSet<_> = [def(6, mem_kind(100), 0)].iter().cloned().collect(); // Only Def B

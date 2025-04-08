@@ -311,7 +311,7 @@ fn determine_next_kind(
     } else if let Some(_) = last_instr.goto_address() {
         panic!("Unexpected non-immediate goto");
     } else if let Some(target_addr) = last_instr.conditional_jump_immediate_address() {
-        let jump_if_true = last_instr.opcode == crate::disasm::v2::instructions::Opcode::JumpIfTrue;
+        let jump_if_true = last_instr.opcode() == crate::disasm::v2::instructions::Opcode::JumpIfTrue;
         let condition_operand = last_instr.conditional_jump_condition().unwrap();
         NextKind::Condition(Condition {
             from_block: block_id,
