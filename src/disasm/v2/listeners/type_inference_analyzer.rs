@@ -1191,6 +1191,7 @@ f1:
             r#"
             R += 1000
             output [1001]
+            halt
         "#,
         );
         ctx.assert_type(1001, Type::Char);
