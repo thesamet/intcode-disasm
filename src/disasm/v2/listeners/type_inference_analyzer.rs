@@ -272,6 +272,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
         }
+        self.type_vars.insert(*var, typ.clone());
         typ
     }
 
@@ -895,12 +896,14 @@ mod tests {
 
         fn assert_type(&mut self, addr: usize, expected: Type) {
             let ti = self.model.get_type_inference_result().unwrap();
+            println!("ti: {:?}", ti);
+
             let ssa_var = ti
                 .type_vars
                 .keys()
                 .filter(|k| k.operand.kind.get_memory() == Some(addr as i128))
                 .max_by_key(|k| k.version)
-                .expect("No type variable found for address");
+                .unwrap_or_else(|| panic!("No type variable found address {}", addr));
             let actual = ti.get_type_for_var(&ssa_var).unwrap();
             assert_eq!(
                 *actual, expected,
