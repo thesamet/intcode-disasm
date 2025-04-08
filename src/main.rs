@@ -1,8 +1,8 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
+use disasm::low_ir::FatInstruction;
 use disasm::v2::analysis::{run_analysis, run_analysis_ssa};
-use disasm::{control_flow_graph, low_ir::FatInstruction, mid_ir};
 
 use disasm::parser::SerializableInstruction;
 use itertools::Itertools;
@@ -18,8 +18,6 @@ struct Cli {
 enum Command {
     Compile { source: String },
     Disassemble { input: String },
-    Intermediate { input: String },
-    Cfg { input: String },
     Pipeline { input: String },
     Ssa { input: String },
 }
@@ -30,9 +28,7 @@ fn main() {
 
     match cli.command {
         Command::Compile { source } => compile(source),
-        Command::Intermediate { input } => intermediate(input),
         Command::Disassemble { input } => disassemble(input),
-        Command::Cfg { input } => cfg(input),
         Command::Pipeline { input } => pipeline(input),
         Command::Ssa { input } => ssa(input),
     }
@@ -59,26 +55,6 @@ fn disassemble(input: String) {
     for (addr, i) in inst.iter() {
         println!("{:8}  {}", addr, i);
     }
-}
-
-fn intermediate(input: String) {
-    let prog = std::fs::read_to_string(input)
-        .unwrap()
-        .trim()
-        .split(',')
-        .map(|x| x.parse().unwrap())
-        .collect::<Vec<i128>>();
-    mid_ir::to_mid_ir(&prog);
-}
-
-fn cfg(input: String) {
-    let prog = std::fs::read_to_string(input)
-        .unwrap()
-        .trim()
-        .split(',')
-        .map(|x| x.parse().unwrap())
-        .collect::<Vec<i128>>();
-    control_flow_graph::drive(&prog);
 }
 
 fn pipeline(input: String) {
