@@ -124,6 +124,7 @@ pub enum ConstraintReason {
 
     /// Indirect function calls imply function pointer type
     IndirectFunctionCall,
+    ImmediateIsInt,
 }
 
 /// Represents a constraint between two types
@@ -321,148 +322,187 @@ impl TypeInferenceAnalyzer {
     ) {
         let instr_id = instruction.id.index();
 
-        // Infer types based on the instruction
-        // We'll add type constraints based on the opcode
-        if instruction.operands.len() >= 3
-            && (instruction.opcode == Opcode::Add || instruction.opcode == Opcode::Mul)
-        {
-            // Addition or multiplication: dst = src1 + src2
-            let src1 = &instruction.operands[0];
-            let src2 = &instruction.operands[1];
-            let dst = &instruction.operands[2];
+        match instruction.opcode {
+            Opcode::Add | Opcode::Mul => {
+                let src1 = &instruction.operands[0];
+                let src2 = &instruction.operands[1];
+                let dst = &instruction.operands[2];
 
-            let src1_type = self.type_for_var(src1);
-            let src2_type = self.type_for_var(src2);
-            let dst_type = self.type_for_var(dst);
+                if let Some(assignment) = instruction.as_assignment() {
+                    // It's an assignment (e.g., dst = src + 0 or dst = src * 1)
+                    let dst_type = self.type_for_var(&assignment.target);
+                    let src_type = self.type_for_var(&assignment.source);
+                    if assignment.source.operand.kind.get_immediate().is_some() {
+                        self.add_constraint(
+                            src_type.clone(),
+                            Type::Int,
+                            instr_id,
+                            ConstraintReason::ImmediateIsInt,
+                        );
+                    }
+                    self.add_constraint(dst_type, src_type, instr_id, ConstraintReason::Assignment);
+                } else {
+                    // It's a real addition/multiplication
+                    let src1_type = self.type_for_var(src1);
+                    let src2_type = self.type_for_var(src2);
+                    let dst_type = self.type_for_var(dst);
+                    let reason = if instruction.opcode == Opcode::Add {
+                        ConstraintReason::AddImpliesInt
+                    } else {
+                        ConstraintReason::MulImpliesInt
+                    };
 
-            self.add_constraint(
-                dst_type,
-                Type::Int,
-                instr_id,
-                ConstraintReason::AddImpliesInt,
-            );
-            self.add_constraint(
-                src1_type,
-                Type::Int,
-                instr_id,
-                ConstraintReason::AddImpliesInt,
-            );
-            self.add_constraint(
-                src2_type,
-                Type::Int,
-                instr_id,
-                ConstraintReason::AddImpliesInt,
-            );
-        } else if instruction.operands.len() >= 1 && instruction.opcode == Opcode::Input {
-            // Input: dst = input()
-            let dst = &instruction.operands[0];
-            let dst_type = self.type_for_var(dst);
+                    self.add_constraint(dst_type, Type::Int, instr_id, reason);
+                    self.add_constraint(src1_type, Type::Int, instr_id, reason);
+                    self.add_constraint(src2_type, Type::Int, instr_id, reason);
+                }
+            }
 
-            self.add_constraint(
-                dst_type,
-                Type::Char,
-                instr_id,
-                ConstraintReason::InputImpliesChar,
-            );
-        } else if instruction.operands.len() >= 1 && instruction.opcode == Opcode::Output {
-            // Output: output(src)
-            let src = &instruction.operands[0];
-            let src_type = self.type_for_var(src);
+            Opcode::Input => {
+                let dst = &instruction.operands[0];
+                let dst_type = self.type_for_var(dst);
+                self.add_constraint(
+                    dst_type,
+                    Type::Char,
+                    instr_id,
+                    ConstraintReason::InputImpliesChar,
+                );
+            }
 
-            self.add_constraint(
-                src_type,
-                Type::Char,
-                instr_id,
-                ConstraintReason::OutputImpliesChar,
-            );
-        } else if instruction.operands.len() >= 3 && instruction.opcode == Opcode::LessThan {
-            // Less than: dst = src1 < src2
-            let src1 = &instruction.operands[0];
-            let src2 = &instruction.operands[1];
-            let dst = &instruction.operands[2];
+            Opcode::Output => {
+                let src = &instruction.operands[0];
+                let src_type = self.type_for_var(src);
+                self.add_constraint(
+                    src_type,
+                    Type::Char,
+                    instr_id,
+                    ConstraintReason::OutputImpliesChar,
+                );
+            }
 
-            let src1_type = self.type_for_var(src1);
-            let src2_type = self.type_for_var(src2);
-            let dst_type = self.type_for_var(dst);
+            Opcode::LessThan => {
+                let src1 = &instruction.operands[0];
+                let src2 = &instruction.operands[1];
+                let dst = &instruction.operands[2];
 
-            self.add_constraint(
-                dst_type,
-                Type::Bool,
-                instr_id,
-                ConstraintReason::CompareDstImpliesBool,
-            );
-            self.add_constraint(
-                src1_type,
-                Type::Int,
-                instr_id,
-                ConstraintReason::CompareSrcImpliesInt,
-            );
-            self.add_constraint(
-                src2_type,
-                Type::Int,
-                instr_id,
-                ConstraintReason::CompareSrcImpliesInt,
-            );
-        } else if instruction.operands.len() >= 3 && instruction.opcode == Opcode::Equals {
-            // Equals: dst = src1 == src2
-            let src1 = &instruction.operands[0];
-            let src2 = &instruction.operands[1];
-            let dst = &instruction.operands[2];
+                let src1_type = self.type_for_var(src1);
+                let src2_type = self.type_for_var(src2);
+                let dst_type = self.type_for_var(dst);
 
-            let src1_type = self.type_for_var(src1);
-            let src2_type = self.type_for_var(src2);
-            let dst_type = self.type_for_var(dst);
+                self.add_constraint(
+                    dst_type,
+                    Type::Bool,
+                    instr_id,
+                    ConstraintReason::CompareDstImpliesBool,
+                );
+                self.add_constraint(
+                    src1_type,
+                    Type::Int,
+                    instr_id,
+                    ConstraintReason::CompareSrcImpliesInt,
+                );
+                self.add_constraint(
+                    src2_type,
+                    Type::Int,
+                    instr_id,
+                    ConstraintReason::CompareSrcImpliesInt,
+                );
+            }
 
-            self.add_constraint(
-                dst_type,
-                Type::Bool,
-                instr_id,
-                ConstraintReason::CompareDstImpliesBool,
-            );
-            self.add_constraint(
-                src1_type,
-                src2_type,
-                instr_id,
-                ConstraintReason::CompareSrcSameType,
-            );
-        } else if instruction.operands.len() >= 2
-            && (instruction.opcode == Opcode::JumpIfTrue
-                || instruction.opcode == Opcode::JumpIfFalse)
-        {
-            // Jump conditions: JumpIf(cond, ...)
-            let cond = &instruction.operands[0];
-            let cond_type = self.type_for_var(cond);
+            Opcode::Equals => {
+                let src1 = &instruction.operands[0];
+                let src2 = &instruction.operands[1];
+                let dst = &instruction.operands[2];
 
-            self.add_constraint(
-                cond_type,
-                Type::Bool,
-                instr_id,
-                ConstraintReason::JumpConditionImpliesBool,
-            );
+                let src1_type = self.type_for_var(src1);
+                let src2_type = self.type_for_var(src2);
+                let dst_type = self.type_for_var(dst);
+
+                self.add_constraint(
+                    dst_type,
+                    Type::Bool,
+                    instr_id,
+                    ConstraintReason::CompareDstImpliesBool,
+                );
+                self.add_constraint(
+                    src1_type,
+                    src2_type,
+                    instr_id,
+                    ConstraintReason::CompareSrcSameType,
+                );
+            }
+
+            Opcode::JumpIfTrue | Opcode::JumpIfFalse => {
+                let cond = &instruction.operands[0];
+                let cond_type = self.type_for_var(cond);
+                self.add_constraint(
+                    cond_type,
+                    Type::Bool,
+                    instr_id,
+                    ConstraintReason::JumpConditionImpliesBool,
+                );
+            }
+
+            // Opcodes that don't directly imply types on their operands here
+            Opcode::AdjustRelativeBase | Opcode::Halt => {
+                // AdjustRelativeBase's operand type is constrained if it's used elsewhere.
+                // Halt has no operands.
+            }
         }
 
-        // Check if any operands come from function returns and add appropriate constraints
-        /*
-        for def in &instr.operands_from_function_returns {  // check source in operand.
-            // We need to connect the return value type with its use
-            for operand in &instruction.operands {
-                if operand.operand == def.location {
-                    // This operand comes from a function return
-                    // Add appropriate constraints based on the function's return type
-                    // (This is simplified - in a real implementation we'd look at the function's signature)
-                    let operand_type = self.type_for_var(operand);
+        // --- Separate Handling for Dereference ---
+        // This logic is moved out of `type_for_var` and handled here.
+        // We look for the pattern `[dest] = 0 + *ptr_addr` which represents dereference.
+        if instruction.opcode == Opcode::Add {
+            let maybe_zero_op = &instruction.operands[0];
+            let maybe_deref_op = &instruction.operands[1]; // Operand representing the deref value
+            let dest_op = &instruction.operands[2];
 
-                    // For now, we don't have specific function return type info
-                    // We could add more sophisticated handling here in the future
+            // Check for the pattern `dest = 0 + Deref(addr)`
+            if matches!(maybe_zero_op.operand.kind, OperandKind::Immediate(0)) {
+                if let OperandKind::Deref(addr) = maybe_deref_op.operand.kind {
+                    let dest_type = self.type_for_var(dest_op);
 
-                    // Mark that this is a function return binding
-                    debug!("Operand {:?} comes from function return {:?}", operand, def);
+                    // Find the SsaVar for the memory location holding the pointer address.
+                    // Search within the type variables already created by the analyzer.
+                    let maybe_ptr_mem_var = self
+                        .type_vars
+                        .keys()
+                        .filter(|k| k.operand.kind.get_memory() == Some(addr as i128))
+                        .max_by_key(|k| k.version)
+                        .cloned(); // Clone needed as we might insert below
+
+                    if let Some(ptr_mem_var) = maybe_ptr_mem_var {
+                        // Found the variable holding the pointer address
+                        let ptr_addr_type = self.type_for_var(&ptr_mem_var); // Get or create its type
+                        self.add_constraint(
+                            ptr_addr_type,                      // Type of Memory(addr)
+                            Type::Pointer(Box::new(dest_type)), // Must be Pointer to dest type
+                            instr_id,
+                            ConstraintReason::Deref,
+                        );
+                    } else {
+                        // Memory(addr) hasn't been encountered yet.
+                        // This might happen if the address itself is never directly used/defined
+                        // in a way that creates a type var before the deref.
+                        // Create a fresh type variable for the pointer source and add the constraint.
+                        // This is less precise but captures the pointer relationship.
+                        log::warn!(
+                            "Deref constraint at {}: Memory var for address {} not found yet. Creating fresh type.",
+                            instr_id, addr
+                        );
+                        let ptr_addr_type = self.fresh_type_var(); // Placeholder type
+                        self.add_constraint(
+                            ptr_addr_type,
+                            Type::Pointer(Box::new(dest_type)),
+                            instr_id,
+                            ConstraintReason::Deref,
+                        );
+                    }
                 }
             }
         }
-        */
     }
-
     /// Generate constraints for control flow transitions
     fn generate_constraints_for_next(&mut self, next: &NextKind<SsaVar>, block_id: BlockId) {
         let block_id_value = block_id.index();
