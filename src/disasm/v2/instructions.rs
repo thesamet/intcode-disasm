@@ -141,18 +141,6 @@ pub enum InstructionKind<T> {
     Goto(T),
     Assign(T, T),
 }
-
-/// A generic instruction that can use different operand types
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct GenericInstruction<T> {
-    /// The instruction ID
-    pub id: InstructionId,
-    /// The span of the instruction in the image
-    pub span: Span,
-    /// The instruction kind with its operands
-    pub kind: InstructionKind<T>,
-}
-
 // *** Define the macro here, often placed before the impl block ***
 macro_rules! generate_operand_match {
     // $kind_expr will be &self.kind or &mut self.kind
@@ -197,8 +185,8 @@ macro_rules! generate_operand_match {
             },
              // Synthetic: Assign(target, source) derives from Add(0, source, target) or Mul(1, source, target)
             InstructionKind::Assign(target, source) => match $index {
-                 // index 0 is constant 0/1 (not stored), index 1 is source, index 2 is target
-                1 => Some(source), // source operand
+                 // index 0 is source, index 1 is constant 0/1 (not stored), index 2 is target
+                0 => Some(source), // source operand
                 2 => Some(target), // target operand (destination)
                 _ => None,
             },
@@ -206,6 +194,32 @@ macro_rules! generate_operand_match {
             InstructionKind::Halt | InstructionKind::Data(_) => None,
         }
     };
+}
+
+impl<T> InstructionKind<T> {
+    /// Gets an immutable reference to the operand at the given *positional index*.
+    /// Use `read_positions` and `write_positions` to understand context.
+    pub fn operand_at(&self, index: usize) -> Option<&T> {
+        // Use the macro, passing an immutable reference to self.kind
+        generate_operand_match!(&self, index)
+    }
+
+    /// Gets a mutable reference to the operand at the given *positional index*.
+    /// Use `read_positions` and `write_positions` to understand context.
+    pub fn operand_at_mut(&mut self, index: usize) -> Option<&mut T> {
+        // Use the macro, passing a mutable reference to self.kind
+        generate_operand_match!(self, index)
+    }
+}
+/// A generic instruction that can use different operand types
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct GenericInstruction<T> {
+    /// The instruction ID
+    pub id: InstructionId,
+    /// The span of the instruction in the image
+    pub span: Span,
+    /// The instruction kind with its operands
+    pub kind: InstructionKind<T>,
 }
 
 pub type Instruction = GenericInstruction<Operand>;
@@ -578,7 +592,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         read_positions
             .iter()
             .filter_map(|&pos| {
-                let Some(op) = self.operand_at(pos).clone() else {
+                let Some(op) = self.kind.operand_at(pos).clone() else {
                     return None;
                 };
 
@@ -602,100 +616,11 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         if write_positions.is_empty() {
             return None;
         };
-        let Some(op) = self.operand_at(write_positions[0]) else {
+        let Some(op) = self.kind.operand_at(write_positions[0]) else {
             panic!("No operand at write position {}", write_positions[0]);
         };
 
         Some(op.clone())
-    }
-
-    /// Gets an immutable reference to the operand at the given *positional index*.
-    /// Use `read_positions` and `write_positions` to understand context.
-    pub fn operand_at(&self, index: usize) -> Option<&T> {
-        // Use the macro, passing an immutable reference to self.kind
-        generate_operand_match!(&self.kind, index)
-    }
-
-    /// Gets a mutable reference to the operand at the given *positional index*.
-    /// Use `read_positions` and `write_positions` to understand context.
-    pub fn operand_at_mut(&mut self, index: usize) -> Option<&mut T> {
-        // Use the macro, passing a mutable reference to self.kind
-        generate_operand_match!(&mut self.kind, index)
-    }
-
-    pub fn parse_program(prog: &[i128]) -> Vec<(usize, Self)>
-    where
-        T: From<Operand> + Copy,
-    {
-        let mut instructions = Vec::new();
-        let mut i = 0;
-        let mut in_data = false;
-
-        while i < prog.len() {
-            if in_data {
-                // If we're in a data section, add as Data
-                let data_instruction = GenericInstruction {
-                    id: InstructionId::from(i),
-                    span: Span::new(i, i + 1),
-                    kind: InstructionKind::Data(vec![prog[i]]),
-                };
-                instructions.push((i, data_instruction));
-                i += 1;
-                continue;
-            }
-
-            match Self::parse(prog, i) {
-                Ok(instruction) => {
-                    let size = match &instruction.kind {
-                        InstructionKind::Add(_, _, _)
-                        | InstructionKind::Mul(_, _, _)
-                        | InstructionKind::LessThan(_, _, _)
-                        | InstructionKind::Equals(_, _, _) => 4,
-                        InstructionKind::JumpIfTrue(_, _) | InstructionKind::JumpIfFalse(_, _) => 3,
-                        InstructionKind::Input(_)
-                        | InstructionKind::Output(_)
-                        | InstructionKind::AdjustRelativeBase(_) => 2,
-                        InstructionKind::Halt => 1,
-                        InstructionKind::Data(values) => values.len(),
-                        InstructionKind::Goto(_) => 3,
-                        InstructionKind::Assign(_, _) => 4,
-                    };
-
-                    // Check if we're entering a data section
-                    if let InstructionKind::AdjustRelativeBase(op) = &instruction.kind {
-                        if let OperandKind::Immediate(t) = op.kind {
-                            if t > 0 {
-                                in_data = false;
-                            }
-                        }
-                    }
-
-                    // Convert to the target type
-                    let converted_instruction = GenericInstruction {
-                        id: instruction.id,
-                        span: instruction.span,
-                        kind: convert_instruction_kind(instruction.kind),
-                    };
-
-                    instructions.push((i, converted_instruction));
-                    i += size;
-                }
-                Err(_) => {
-                    // If parsing fails, consider it as data
-                    in_data = true;
-                    let data_instruction = GenericInstruction {
-                        id: InstructionId::from(i),
-                        span: Span::new(i, i + 1),
-                        kind: InstructionKind::Data(vec![prog[i]]),
-                    };
-                    instructions.push((i, data_instruction));
-                    i += 1;
-                }
-            }
-        }
-
-        // Coalesce adjacent data instructions
-        coalesce_data_instructions(instructions, prog)
     }
 }
 
@@ -740,101 +665,6 @@ pub fn simplify_instruction<T: Into<Operand> + Clone>(
         }
         _ => kind,
     }
-}
-
-// Helper function to convert instruction kind from one operand type to another
-fn convert_instruction_kind<T, U>(kind: InstructionKind<T>) -> InstructionKind<U>
-where
-    T: Into<Operand>,
-    U: From<Operand>,
-{
-    match kind {
-        InstructionKind::Add(a, b, c) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            let c_op: Operand = c.into();
-            InstructionKind::Add(U::from(a_op), U::from(b_op), U::from(c_op))
-        }
-        InstructionKind::Mul(a, b, c) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            let c_op: Operand = c.into();
-            InstructionKind::Mul(U::from(a_op), U::from(b_op), U::from(c_op))
-        }
-        InstructionKind::Input(a) => {
-            let a_op: Operand = a.into();
-            InstructionKind::Input(U::from(a_op))
-        }
-        InstructionKind::Output(a) => {
-            let a_op: Operand = a.into();
-            InstructionKind::Output(U::from(a_op))
-        }
-        InstructionKind::JumpIfTrue(a, b) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            InstructionKind::JumpIfTrue(U::from(a_op), U::from(b_op))
-        }
-        InstructionKind::JumpIfFalse(a, b) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            InstructionKind::JumpIfFalse(U::from(a_op), U::from(b_op))
-        }
-        InstructionKind::LessThan(a, b, c) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            let c_op: Operand = c.into();
-            InstructionKind::LessThan(U::from(a_op), U::from(b_op), U::from(c_op))
-        }
-        InstructionKind::Equals(a, b, c) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            let c_op: Operand = c.into();
-            InstructionKind::Equals(U::from(a_op), U::from(b_op), U::from(c_op))
-        }
-        InstructionKind::AdjustRelativeBase(a) => {
-            let a_op: Operand = a.into();
-            InstructionKind::AdjustRelativeBase(U::from(a_op))
-        }
-        InstructionKind::Halt => InstructionKind::Halt,
-        InstructionKind::Data(values) => InstructionKind::Data(values),
-        InstructionKind::Goto(a) => {
-            let a_op: Operand = a.into();
-            InstructionKind::Goto(U::from(a_op))
-        }
-        InstructionKind::Assign(a, b) => {
-            let a_op: Operand = a.into();
-            let b_op: Operand = b.into();
-            InstructionKind::Assign(U::from(a_op), U::from(b_op))
-        }
-    }
-}
-
-// Helper function to coalesce adjacent data instructions
-fn coalesce_data_instructions<T>(
-    instructions: Vec<(usize, GenericInstruction<T>)>,
-    prog: &[i128],
-) -> Vec<(usize, GenericInstruction<T>)> {
-    instructions
-        .into_iter()
-        .coalesce(|(addr1, inst1), (addr2, inst2)| {
-            // Only coalesce adjacent data instructions
-            match (&inst1.kind, &inst2.kind) {
-                (InstructionKind::Data(_), InstructionKind::Data(_)) if addr1 + 1 == addr2 => {
-                    // Create a new data instruction that spans both
-                    let end_addr = addr2 + 1;
-                    Ok((
-                        addr1,
-                        GenericInstruction {
-                            id: inst1.id,
-                            span: Span::new(addr1, end_addr),
-                            kind: InstructionKind::Data(prog[addr1..end_addr].to_vec()),
-                        },
-                    ))
-                }
-                _ => Err(((addr1, inst1), (addr2, inst2))),
-            }
-        })
-        .collect()
 }
 
 impl<T: fmt::Display> fmt::Display for GenericInstruction<T> {

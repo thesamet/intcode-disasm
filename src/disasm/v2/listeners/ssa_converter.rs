@@ -1,4 +1,4 @@
-use log::{info, warn};
+use log::info;
 
 use crate::disasm::v2::{
     dispatching::{EventCollector, EventListener},

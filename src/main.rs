@@ -1,13 +1,7 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
-use disasm::v2::{
-    analysis::{self, run_analysis, run_analysis_ssa},
-    dispatching::EventPublisher,
-    events::Event,
-    listeners::image_scanner::ImageScanner,
-    model::ProgramModel,
-};
+use disasm::v2::analysis::{self, run_analysis, run_analysis_ssa};
 use itertools::Itertools;
 
 #[derive(Parser)]

@@ -98,6 +98,7 @@ pub struct SsaFunction {
 
 impl SsaFunction {
     // Helper to find an SSA variable with a specific debug marker
+    #[cfg(test)]
     pub fn find_ssa_var_by_marker(&self, marker: char) -> Option<SsaVar> {
         for (_, block) in &self.blocks {
             for instr in &block.instructions {
@@ -273,6 +274,7 @@ impl SsaResult {
         printer.result()
     }
 
+    #[cfg(test)]
     pub fn find_ssa_var_by_marker(&self, marker: char) -> SsaVar {
         self.functions
             .values()

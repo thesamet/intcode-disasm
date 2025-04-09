@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_while1},
-    character::complete::{char, digit1, multispace0, multispace1, satisfy, space0, space1},
+    character::complete::{char, digit1, multispace1, satisfy, space0, space1},
     combinator::{eof, map, map_res, opt, recognize, value},
     multi::{many0, many1, separated_list1},
     sequence::{delimited, pair, preceded, terminated},
@@ -43,24 +43,6 @@ impl From<UnresolvedArgument> for Operand {
             UnresolvedArgument::Resolved { op, .. } => op,
             _ => panic!("UnresolvedArgument must be resolved before conversion to Operand"),
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Arg {
-    Mem(i128),
-    Value(i128),
-    RelativeMem(i128),
-    Deref(usize),
-}
-
-// Helper to map temporary Arg to v2::OperandKind
-fn map_arg_to_operand_kind(arg: Arg) -> OperandKind {
-    match arg {
-        Arg::Mem(addr) => OperandKind::Memory(addr),
-        Arg::Value(val) => OperandKind::Immediate(val),
-        Arg::RelativeMem(offset) => OperandKind::RelativeMemory(offset),
-        Arg::Deref(offset) => OperandKind::Deref(offset),
     }
 }
 
@@ -124,21 +106,21 @@ fn parse_memory(input: &str, debug_marker: DebugMarker) -> IResult<&str, Unresol
 }
 
 // Parses into temporary Arg enum first
-fn parse_immediate(input: &str) -> IResult<&str, Arg> {
-    map(parse_i128, Arg::Value).parse(input)
+fn parse_immediate(input: &str) -> IResult<&str, OperandKind> {
+    map(parse_i128, OperandKind::Immediate).parse(input)
 }
 
 // Parses into temporary Arg enum first
-fn parse_relative_mem(input: &str) -> IResult<&str, Arg> {
+fn parse_relative_mem(input: &str) -> IResult<&str, OperandKind> {
     alt((
         map(
             delimited(tag("[R+"), parse_i128, char(']')),
-            Arg::RelativeMem,
+            OperandKind::RelativeMemory,
         ),
         map(delimited(tag("[R-"), parse_i128, char(']')), |val| {
-            Arg::RelativeMem(-val)
+            OperandKind::RelativeMemory(-val)
         }),
-        value(Arg::RelativeMem(0), tag("[R]")),
+        value(OperandKind::RelativeMemory(0), tag("[R]")),
     ))
     .parse(input)
 }
@@ -164,11 +146,11 @@ fn parse_argument(input: &str) -> IResult<&str, UnresolvedArgument> {
             opt(debug_marker),
             alt((parse_relative_mem, parse_immediate)),
         )
-        .map(|(debug_marker, arg)| {
+        .map(|(debug_marker, kind)| {
             // Resolve Arg -> OperandKind here, offset still unknown (0 placeholder)
             UnresolvedArgument::Resolved {
                 op: Operand {
-                    kind: map_arg_to_operand_kind(arg),
+                    kind,
                     offset: 0, // Placeholder, will be filled in later
                     debug_marker,
                 },
@@ -494,43 +476,14 @@ pub fn parse_program(
         // that will be modified by the pointer assignment.
         if !matches!(instruction, InstructionKind::Data(_)) {
             for i in 0..=2 {
-                // Need to inspect args based on kind for pointer defs
-                let arg_opt = match (instruction, i) {
-                    (InstructionKind::Add(a, _, _), 0) => Some(a),
-                    (InstructionKind::Add(_, b, _), 1) => Some(b),
-                    (InstructionKind::Add(_, _, c), 2) => Some(c),
-                    (InstructionKind::Mul(a, _, _), 0) => Some(a),
-                    (InstructionKind::Mul(_, b, _), 1) => Some(b),
-                    (InstructionKind::Mul(_, _, c), 2) => Some(c),
-                    (InstructionKind::Input(a), 0) => Some(a),
-                    (InstructionKind::Output(a), 0) => Some(a),
-                    (InstructionKind::JumpIfTrue(a, _), 0) => Some(a),
-                    (InstructionKind::JumpIfTrue(_, b), 1) => Some(b),
-                    (InstructionKind::JumpIfFalse(a, _), 0) => Some(a),
-                    (InstructionKind::JumpIfFalse(_, b), 1) => Some(b),
-                    (InstructionKind::LessThan(a, _, _), 0) => Some(a),
-                    (InstructionKind::LessThan(_, b, _), 1) => Some(b),
-                    (InstructionKind::LessThan(_, _, c), 2) => Some(c),
-                    (InstructionKind::Equals(a, _, _), 0) => Some(a),
-                    (InstructionKind::Equals(_, b, _), 1) => Some(b),
-                    (InstructionKind::Equals(_, _, c), 2) => Some(c),
-                    (InstructionKind::AdjustRelativeBase(a), 0) => Some(a),
-                    // Synthetic instructions: Need careful indexing based on underlying operation
-                    (InstructionKind::Goto(a), 0) => Some(a), // Underlying target is index 1
-                    (InstructionKind::Assign(a, _), 0) => Some(a), // Underlying target is index 2
-                    (InstructionKind::Assign(_, b), 1) => Some(b), // Underlying source is index 0
-                    _ => None,
-                };
-
-                if let Some(UnresolvedArgument::PointerDeref { name, .. }) = arg_opt {
-                    // Adjust index for synthetic instructions if needed for correct offset
-                    let actual_arg_index = match (instruction, i) {
-                        (InstructionKind::Goto(_), 0) => 1,
-                        (InstructionKind::Assign(_, _), 0) => 2,
-                        (InstructionKind::Assign(_, _), 1) => 0,
-                        _ => i,
-                    };
-                    pointers.insert(name.clone(), current_offset + actual_arg_index + 1);
+                if let Some(UnresolvedArgument::PointerDeref { name, .. }) =
+                    instruction.operand_at(i)
+                {
+                    println!(
+                        "current_offset: {}, instruction: {:?} i={} name={}",
+                        current_offset, instruction, i, name
+                    );
+                    pointers.insert(name.clone(), current_offset + i + 1);
                 }
             }
         }
@@ -538,6 +491,7 @@ pub fn parse_program(
         current_offset += instruction_kind_size(instruction);
     }
 
+    println!("Pointers: {:?}", pointers);
     // Second pass: resolve labels/pointers and create final instructions
     let resolved_instructions = intermediate_instructions
         .into_iter()
@@ -573,7 +527,7 @@ pub fn parse_program(
                 },
             )?;
             for i in 0..=2 {
-                let mut op = instruction.operand_at_mut(i);
+                let mut op = instruction.kind.operand_at_mut(i);
                 println!("op at offset {}: {:?}", offset + i + 1, op);
                 if let Some(ref mut op) = op {
                     op.offset = offset + i + 1;
@@ -656,7 +610,6 @@ pub fn compile(code: &str) -> Vec<i128> {
                 };
                 // Order for underlying Add: source, zero, target
                 args_to_serialize = vec![*source, zero_operand, *target];
-                // base_opcode is already 1 via instruction.opcode()
             }
         }
 

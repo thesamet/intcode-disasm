@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use log::{debug, info};
 use std::{collections::HashMap, fmt};
 
@@ -344,7 +343,7 @@ impl TypeInferenceAnalyzer {
                     let dst_type = self.type_for_var(dst);
                     let reason = match instruction.kind {
                         InstructionKind::Add(_, _, _) => ConstraintReason::AddImpliesInt,
-                        _ => ConstraintReason::MulImpliesInt
+                        _ => ConstraintReason::MulImpliesInt,
                     };
 
                     self.add_constraint(dst_type, Type::Int, instr_id, reason);
@@ -432,12 +431,12 @@ impl TypeInferenceAnalyzer {
                 // AdjustRelativeBase's operand type is constrained if it's used elsewhere.
                 // Halt has no operands.
             }
-            
+
             // Synthetic instructions
             InstructionKind::Goto(_) => {
                 // No specific type constraints for goto
             }
-            
+
             InstructionKind::Assign(target, source) => {
                 let target_type = self.type_for_var(target);
                 let source_type = self.type_for_var(source);
@@ -448,7 +447,7 @@ impl TypeInferenceAnalyzer {
                     ConstraintReason::Assignment,
                 );
             }
-            
+
             InstructionKind::Data(_) => {
                 // Data instructions don't have type constraints
             }
