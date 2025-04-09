@@ -7,7 +7,7 @@ use super::{
     events::Event,
     listeners::{
         control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        ssa_converter::SsaConverter,
+        image_scanner::ImageScannerResult, ssa_converter::SsaConverter,
     },
 };
 
@@ -20,6 +20,15 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
+}
+
+pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {
+    let mut model = ProgramModel::new();
+    let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+    publisher.add_listener(Box::new(ImageScanner::new()));
+    model.load_image(&image, &mut publisher);
+    publisher.process_events(&mut model);
+    model.get_image_scanner_result().clone()
 }
 
 /// Run the analysis pipeline and print the program in SSA form

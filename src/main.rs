@@ -1,8 +1,13 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
-use disasm::low_ir::FatInstruction;
-use disasm::v2::analysis::{run_analysis, run_analysis_ssa};
+use disasm::v2::{
+    analysis::{self, run_analysis, run_analysis_ssa},
+    dispatching::EventPublisher,
+    events::Event,
+    listeners::image_scanner::ImageScanner,
+    model::ProgramModel,
+};
 use itertools::Itertools;
 
 #[derive(Parser)]
@@ -45,9 +50,13 @@ fn disassemble(input: String) {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
-    let inst = FatInstruction::parse_program(&prog);
-    for (addr, i) in inst.iter() {
-        println!("{:8}  {}", addr, i);
+    let scanner_result = analysis::disassemble(prog);
+    for func in scanner_result.recognized_functions {
+        println!("function {}", func.span.start);
+        for inst in func.instructions {
+            println!("{:8}  {}", inst.span.start, inst);
+        }
+        println!("");
     }
 }
 

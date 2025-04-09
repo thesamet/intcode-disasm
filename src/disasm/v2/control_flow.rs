@@ -1,8 +1,8 @@
 use super::{
     instructions::{Instruction, Operand, OperandKind},
     model::{BlockId, FunctionId},
+    Span,
 };
-use crate::disasm::low_ir::Span; // Assuming Span might be useful later
 
 // Describes how control flow leaves a block
 #[derive(Debug, Clone, PartialEq, Eq)]
