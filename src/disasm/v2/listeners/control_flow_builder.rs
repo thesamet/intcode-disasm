@@ -307,7 +307,10 @@ fn determine_next_kind(
     } else if let Some(target_addr) = last_instr.immediate_goto() {
         NextKind::Goto(BlockId::from(target_addr as usize))
     } else if let Some(_) = last_instr.goto_address() {
-        panic!("Unexpected non-immediate goto");
+        panic!(
+            "Unexpected non-immediate goto at {}: {}",
+            last_instr.span.start, last_instr
+        );
     } else if let Some(target_addr) = last_instr.conditional_jump_immediate_address() {
         let jump_if_true =
             last_instr.opcode() == crate::disasm::v2::instructions::Opcode::JumpIfTrue;

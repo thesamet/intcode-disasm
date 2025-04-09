@@ -63,7 +63,6 @@ impl DataFlowAnalyzer {
                 }
                 // Calculate GEN for this instruction
                 if let Some(write_operand) = instr.writes() {
-                    println!("write: {:#?} at instr {:#?}", write_operand, instr);
                     block_flow
                         .gen
                         .insert(write_operand.kind, (instr.id, write_operand));
@@ -501,8 +500,6 @@ mod tests {
 
         // --- Block 0 ---
         // GEN/USE
-        println!("{:#?}", model.get_block(block0_id));
-        println!("{:#?}", flow0);
         assert_eq!(flow0.gen.len(), 2, "GEN length should be 2");
         assert_eq!(
             flow0.gen[&mem_kind(100)].0,

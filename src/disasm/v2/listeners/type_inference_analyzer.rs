@@ -322,34 +322,33 @@ impl TypeInferenceAnalyzer {
         let instr_id = instruction.id.index();
 
         match &instruction.kind {
-            InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
-                if let Some(assignment) = instruction.as_assignment() {
-                    // It's an assignment (e.g., dst = src + 0 or dst = src * 1)
-                    let dst_type = self.type_for_var(&assignment.target);
-                    let src_type = self.type_for_var(&assignment.source);
-                    if assignment.source.operand.kind.get_immediate().is_some() {
-                        self.add_constraint(
-                            src_type.clone(),
-                            Type::Int,
-                            instr_id,
-                            ConstraintReason::ImmediateIsInt,
-                        );
-                    }
-                    self.add_constraint(dst_type, src_type, instr_id, ConstraintReason::Assignment);
-                } else {
-                    // It's a real addition/multiplication
-                    let src1_type = self.type_for_var(src1);
-                    let src2_type = self.type_for_var(src2);
-                    let dst_type = self.type_for_var(dst);
-                    let reason = match instruction.kind {
-                        InstructionKind::Add(_, _, _) => ConstraintReason::AddImpliesInt,
-                        _ => ConstraintReason::MulImpliesInt,
-                    };
-
-                    self.add_constraint(dst_type, Type::Int, instr_id, reason);
-                    self.add_constraint(src1_type, Type::Int, instr_id, reason);
-                    self.add_constraint(src2_type, Type::Int, instr_id, reason);
+            InstructionKind::Assign(target, source) => {
+                // It's an assignment (e.g., dst = src + 0 or dst = src * 1)
+                let dst_type = self.type_for_var(target);
+                let src_type = self.type_for_var(source);
+                if source.operand.kind.get_immediate().is_some() {
+                    self.add_constraint(
+                        src_type.clone(),
+                        Type::Int,
+                        instr_id,
+                        ConstraintReason::ImmediateIsInt,
+                    );
                 }
+                self.add_constraint(dst_type, src_type, instr_id, ConstraintReason::Assignment);
+            }
+            InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
+                // It's a real addition/multiplication
+                let src1_type = self.type_for_var(src1);
+                let src2_type = self.type_for_var(src2);
+                let dst_type = self.type_for_var(dst);
+                let reason = match instruction.kind {
+                    InstructionKind::Add(_, _, _) => ConstraintReason::AddImpliesInt,
+                    _ => ConstraintReason::MulImpliesInt,
+                };
+
+                self.add_constraint(dst_type, Type::Int, instr_id, reason);
+                self.add_constraint(src1_type, Type::Int, instr_id, reason);
+                self.add_constraint(src2_type, Type::Int, instr_id, reason);
             }
 
             InstructionKind::Input(dst) => {
@@ -435,17 +434,6 @@ impl TypeInferenceAnalyzer {
             // Synthetic instructions
             InstructionKind::Goto(_) => {
                 // No specific type constraints for goto
-            }
-
-            InstructionKind::Assign(target, source) => {
-                let target_type = self.type_for_var(target);
-                let source_type = self.type_for_var(source);
-                self.add_constraint(
-                    target_type,
-                    source_type,
-                    instr_id,
-                    ConstraintReason::Assignment,
-                );
             }
 
             InstructionKind::Data(_) => {
@@ -591,7 +579,6 @@ impl TypeInferenceAnalyzer {
 
     /// Substitute type variables according to the substitution map
     pub fn substitute(t: Type, subst: &HashMap<TypeVarId, Type>) -> Type {
-        println!("Subsititute: {}", t);
         match t {
             Type::Int => Type::Int,
             Type::Bool => Type::Bool,
@@ -822,6 +809,29 @@ impl TypeInferenceAnalyzer {
     }
 }
 
+macro_rules! assert_marker_type {
+    ($ctx:expr, $marker:expr, $expected_type:expr) => {
+        let ssa_var = $ctx
+            .model
+            .get_ssa_result()
+            .unwrap()
+            .find_ssa_var_by_marker($marker);
+
+        let actual_type = $ctx
+            .model
+            .get_type_inference_result()
+            .unwrap()
+            .get_type_for_var(&ssa_var)
+            .expect("No type found for SSA variable");
+
+        assert_eq!(
+            *actual_type, $expected_type,
+            "Marker {} has incorrect type: expected {:?}, actual {:?}",
+            $marker, $expected_type, actual_type
+        );
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -910,27 +920,6 @@ mod tests {
             */
 
             Self { model }
-        }
-        /// Assert that a marker has the expected type
-        fn assert_marker_type(&mut self, marker: char, expected_type: Type) {
-            let ssa_var = self
-                .model
-                .get_ssa_result()
-                .unwrap()
-                .find_ssa_var_by_marker(marker);
-
-            let actual_type = self
-                .model
-                .get_type_inference_result()
-                .unwrap()
-                .get_type_for_var(&ssa_var)
-                .expect("No type found for SSA variable");
-
-            assert_eq!(
-                *actual_type, expected_type,
-                "Marker {} has incorrect type: expected {:?}, actual {:?}",
-                marker, expected_type, actual_type
-            );
         }
 
         fn assert_type(&mut self, addr: usize, expected: Type) {
@@ -1206,8 +1195,8 @@ f1:
         "#,
         );
         ctx.assert_type(1, Type::Int);
-        ctx.assert_marker_type('a', Type::Int);
-        ctx.assert_marker_type('b', Type::Bool);
+        assert_marker_type!(ctx, 'a', Type::Int);
+        assert_marker_type!(ctx, 'b', Type::Bool);
     }
 
     #[test]
@@ -1260,7 +1249,7 @@ f1:
 
     #[test]
     fn test_function_addr_with_debug() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
                     R += 1000
                     'a [R+2] = [R-2]
@@ -1272,20 +1261,21 @@ f1:
                     halt
                 "#,
         );
-        ctx.assert_marker_type(
+        assert_marker_type!(
+            ctx,
             'a',
             Type::FunctionPointer {
                 args: vec![],
                 returns: vec![],
-            },
+            }
         );
-        ctx.assert_marker_type('b', Type::Int);
-        ctx.assert_marker_type('c', Type::Int);
+        assert_marker_type!(ctx, 'b', Type::Int);
+        assert_marker_type!(ctx, 'c', Type::Int);
     }
 
     #[test]
     fn test_link_function_params_to_argument_types() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
                 R += 1000
                 output('d [R-3])
@@ -1301,14 +1291,14 @@ f1:
                 goto [R]
             "#,
         );
-        ctx.assert_marker_type('d', Type::Char);
-        ctx.assert_marker_type('b', Type::Char);
-        ctx.assert_marker_type('a', Type::Char);
+        assert_marker_type!(ctx, 'd', Type::Char);
+        assert_marker_type!(ctx, 'b', Type::Char);
+        assert_marker_type!(ctx, 'a', Type::Char);
     }
 
     #[test]
     fn test_link_function_params_to_argument_types_multi() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
                 R += 1000
                 'a [R+1] = 65
@@ -1332,26 +1322,27 @@ f1:
                 [R-2] = *ptr
                 if [R-2] goto @done
     done:
-                R -= 4
+                R -= 10
                 goto [R]
             "#,
         );
-        ctx.assert_marker_type('a', Type::Char);
-        ctx.assert_marker_type('b', Type::Bool);
-        ctx.assert_marker_type(
+        assert_marker_type!(ctx, 'a', Type::Char);
+        assert_marker_type!(ctx, 'b', Type::Bool);
+        assert_marker_type!(
+            ctx,
             'c',
             Type::FunctionPointer {
                 args: vec![],
                 returns: vec![],
-            },
+            }
         );
-        ctx.assert_marker_type('d', Type::Pointer(Box::new(Type::Bool)));
+        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
     }
 
     #[test]
     #[ignore]
     fn test_link_function_return_type_single() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
                 R += 1000
                 'a [R-3] = @add
@@ -1372,10 +1363,10 @@ f1:
             "#,
         );
 
-        ctx.assert_marker_type('b', Type::Int);
-        ctx.assert_marker_type('c', Type::Int);
-        ctx.assert_marker_type('d', Type::Char);
-        ctx.assert_marker_type('e', Type::Bool);
-        ctx.assert_marker_type('f', Type::Bool);
+        assert_marker_type!(ctx, 'b', Type::Int);
+        assert_marker_type!(ctx, 'c', Type::Int);
+        assert_marker_type!(ctx, 'd', Type::Char);
+        assert_marker_type!(ctx, 'e', Type::Bool);
+        assert_marker_type!(ctx, 'f', Type::Bool);
     }
 }

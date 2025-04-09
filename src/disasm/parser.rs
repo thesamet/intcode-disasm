@@ -479,10 +479,6 @@ pub fn parse_program(
                 if let Some(UnresolvedArgument::PointerDeref { name, .. }) =
                     instruction.operand_at(i)
                 {
-                    println!(
-                        "current_offset: {}, instruction: {:?} i={} name={}",
-                        current_offset, instruction, i, name
-                    );
                     pointers.insert(name.clone(), current_offset + i + 1);
                 }
             }
@@ -491,7 +487,6 @@ pub fn parse_program(
         current_offset += instruction_kind_size(instruction);
     }
 
-    println!("Pointers: {:?}", pointers);
     // Second pass: resolve labels/pointers and create final instructions
     let resolved_instructions = intermediate_instructions
         .into_iter()
@@ -528,7 +523,6 @@ pub fn parse_program(
             )?;
             for i in 0..=2 {
                 let mut op = instruction.kind.operand_at_mut(i);
-                println!("op at offset {}: {:?}", offset + i + 1, op);
                 if let Some(ref mut op) = op {
                     op.offset = offset + i + 1;
                 }
