@@ -58,10 +58,10 @@ pub struct BlockDataFlow {
     /// Value: The `InstructionId` of the defining instruction.
     pub gen: HashMap<OperandKind, (InstructionId, Operand)>,
 
-    /// **Used Before Defined (USE):** The set of memory locations that are read (used) within this block *before*
-    /// they are written to (defined) within the same block. These operands require a valid definition
-    /// to be present in `defs_in`.
-    pub use_before_def: HashSet<OperandKind>,
+    /// **Used Before Defined (USE):** Maps memory locations (`OperandKind`) read within this block *before*
+    /// they are possibly written to (defined) within the same block, to the ID of the *first* instruction
+    /// performing such a read.
+    pub use_before_def: HashMap<OperandKind, InstructionId>,
 
     // Instructions in this block that write to [R+n] and thus invalidate all incoming function return values.
     pub writes_above_r: bool,
@@ -87,16 +87,16 @@ pub struct CallSiteInfo {
     // The function being called. May be indirect.
     pub function_addr: OperandKind,
 
-    // The set of return values accessed the positive N from each [R+n] read by any subsequent
-    // block that has access to the returned values.
-    pub return_values_accessed: HashSet<usize>,
+    // The set of positive offsets `n` identifying return value locations `[R+n]`
+    // that are read by subsequent blocks having access to the function's return state.
+    pub return_values_accessed: HashMap<i128, InstructionId>,
 }
 
 impl CallSiteInfo {
     pub fn new(function_addr: OperandKind) -> Self {
         CallSiteInfo {
             function_addr,
-            return_values_accessed: HashSet::new(),
+            return_values_accessed: HashMap::new(),
         }
     }
 }

@@ -7,8 +7,10 @@ use super::{
     events::Event,
     listeners::{
         control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        image_scanner::ImageScannerResult, ssa_converter::SsaConverter,
+        function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
+        ssa_converter::SsaConverter,
     },
+    pretty_print::pretty_print_ssa,
 };
 
 /// Run the analysis pipeline and print data flow information
@@ -40,6 +42,7 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> String {
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
+    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
 
     // Process the image
     model.load_image(&image, &mut publisher);
@@ -50,11 +53,8 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> String {
         return "No SSA form available due to missing data flow analysis".to_string();
     }
 
-    // Convert to SSA form
-    let ssa_result = SsaResult::from_program_model(&model);
-
     // Pretty-print the SSA form
-    ssa_result.pretty_print()
+    pretty_print_ssa(&model)
 }
 
 #[cfg(test)]

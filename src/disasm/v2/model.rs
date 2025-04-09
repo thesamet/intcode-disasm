@@ -6,7 +6,10 @@ use super::{
     dispatching::{EventCollector, EventPublisher},
     events::{Event, ImageAddedEvent, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::{image_scanner::ImageScannerResult, type_inference_analyzer::TypeInferenceResult},
+    listeners::{
+        function_call_analyzer::FunctionCallAnalysis, image_scanner::ImageScannerResult,
+        type_inference_analyzer::TypeInferenceResult,
+    },
     ssa_form::SsaResult,
 };
 
@@ -25,6 +28,8 @@ pub struct ProgramModel {
     ssa_result: Option<SsaResult>,
 
     type_inference_result: Option<TypeInferenceResult>,
+
+    function_call_analysis: Option<FunctionCallAnalysis>,
 }
 
 impl ProgramModel {
@@ -37,6 +42,7 @@ impl ProgramModel {
             data_flow_result: None,
             ssa_result: None,
             type_inference_result: None,
+            function_call_analysis: None,
         }
     }
 
@@ -85,6 +91,10 @@ impl ProgramModel {
         self.functions.get(&function_id).unwrap()
     }
 
+    pub fn get_functions(&self) -> &HashMap<FunctionId, Function> {
+        &self.functions
+    }
+
     pub fn get_function_mut(&mut self, function_id: FunctionId) -> &mut Function {
         self.functions.get_mut(&function_id).unwrap()
     }
@@ -123,6 +133,14 @@ impl ProgramModel {
 
     pub fn get_type_inference_result(&self) -> Option<&TypeInferenceResult> {
         self.type_inference_result.as_ref()
+    }
+
+    pub fn set_function_call_analysis(&mut self, analysis_result: FunctionCallAnalysis) {
+        self.function_call_analysis = Some(analysis_result);
+    }
+
+    pub fn get_function_call_analysis(&self) -> Option<&FunctionCallAnalysis> {
+        self.function_call_analysis.as_ref()
     }
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use itertools::Itertools;
@@ -7,6 +8,7 @@ use crate::disasm::v2::control_flow::FunctionCall;
 use crate::disasm::v2::data_flow::BlockDataFlow;
 use crate::disasm::v2::data_flow::CallSiteInfo;
 use crate::disasm::v2::events::DataFlowAnalysisComplete;
+use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -58,7 +60,9 @@ impl DataFlowAnalyzer {
                 // Calculate USE for this instruction
                 for read_operand in instr.reads() {
                     if !defined_in_block.contains(&read_operand.kind) {
-                        block_flow.use_before_def.insert(read_operand.kind);
+                        block_flow
+                            .use_before_def
+                            .insert(read_operand.kind, instr.id);
                     }
                 }
                 // Calculate GEN for this instruction
@@ -258,7 +262,7 @@ impl DataFlowAnalyzer {
                 let defined_kinds: HashSet<OperandKind> = block_flow.gen.keys().cloned().collect();
                 let mut current_live_in = block_flow.live_out.clone();
                 current_live_in.retain(|kind| !defined_kinds.contains(kind));
-                current_live_in.extend(block_flow.use_before_def.iter().cloned());
+                current_live_in.extend(block_flow.use_before_def.keys().cloned());
 
                 // Update block's IN set if changed
                 if current_live_in != block_flow.live_in {
@@ -354,9 +358,8 @@ impl ModelEventListener for DataFlowAnalyzer {
             let return_usage_in_block = br
                 .use_before_def
                 .iter()
-                .filter_map(|k| k.get_relative_memory())
-                .filter(|&n| n > 0)
-                .map(|n| n as usize)
+                .filter_map(|(k, v)| k.get_relative_memory().map(|n| (n, *v)))
+                .filter(|&(n, _)| n > 0)
                 .collect_vec();
             if !return_usage_in_block.is_empty() {
                 assert_eq!(br.function_returns_in.len(), 1);
@@ -532,8 +535,8 @@ mod tests {
         // GEN/USE
         assert!(flow12.gen.is_empty(), "GEN @ B12");
         assert_eq!(
-            flow12.use_before_def,
-            [rel_kind(0)].iter().cloned().collect(),
+            flow12.use_before_def.keys().cloned().collect_vec(),
+            [rel_kind(0)].iter().cloned().collect_vec(),
             "USE @ B12"
         );
 
@@ -598,8 +601,8 @@ mod tests {
 
         // --- Check USE in merge block (Block 20) ---
         assert_eq!(
-            flow20.use_before_def,
-            [mem_kind(101)].iter().cloned().collect(),
+            flow20.use_before_def.keys().cloned().collect_vec(),
+            [mem_kind(101)].iter().cloned().collect_vec(),
             "USE @ B20"
         );
         assert!(flow20.gen.is_empty(), "GEN @ B20"); // Output doesn't generate defs
@@ -677,8 +680,8 @@ mod tests {
         // output reads [100], addition reads [100], if reads [100]
         // All happen before the write at instr 8 within the block from the perspective of DefsIn.
         assert_eq!(
-            flow6.use_before_def,
-            [mem_kind(100)].iter().cloned().collect(),
+            flow6.use_before_def.keys().cloned().collect_vec(),
+            [mem_kind(100)].iter().cloned().collect_vec(),
             "USE @ B6"
         );
 
@@ -745,8 +748,8 @@ mod tests {
         // --- Check USE in return block (Block 21) ---
         // This determines potential_returns for the call from block 0
         assert_eq!(
-            flow21.use_before_def,
-            [rel_kind(1), rel_kind(2)].iter().cloned().collect(),
+            flow21.use_before_def.keys().cloned().collect_vec(),
+            [rel_kind(1), rel_kind(2)].iter().cloned().collect_vec(),
             "USE @ B21"
         );
 
@@ -931,7 +934,7 @@ mod tests {
 
         // Verify block53 has [R+1] in use_before_def, indicating it's reading a return value
         assert!(
-            block53_flow.use_before_def.contains(&rel_kind(1)),
+            block53_flow.use_before_def.contains_key(&rel_kind(1)),
             "Block 53 should have [R+1] in use_before_def as a return value from func3"
         );
 
@@ -940,7 +943,7 @@ mod tests {
         let calling_block_flow = df_results.block_results.get(&calling_block).unwrap();
 
         assert!(
-            calling_block_flow.call_site_info.as_ref().unwrap().return_values_accessed.contains(&1),
+            calling_block_flow.call_site_info.as_ref().unwrap().return_values_accessed.contains_key(&1),
             "The calling block for func3 should have 1 ([R+1]) in its call_site_info.return_values_accessed"
         );
     }

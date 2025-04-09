@@ -1,11 +1,8 @@
-use crate::disasm::{
-    code_printer::{CodePrinter, CodeWriter as _},
-    v2::{
-        control_flow::NextKind,
-        data_flow::{DataFlowResult, Definition},
-        instructions::{InstructionKind, Operand, OperandKind},
-        model::{BlockId, FunctionId, ProgramModel},
-    },
+use crate::disasm::v2::{
+    control_flow::NextKind,
+    data_flow::DataFlowResult,
+    instructions::{Operand, OperandKind},
+    model::{BlockId, FunctionId, ProgramModel},
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -53,7 +50,11 @@ impl SsaVar {
 
 impl fmt::Display for SsaVar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}_{}", self.operand.kind, self.version)
+        if self.operand.kind.is_variable() {
+            write!(f, "{}_{}", self.operand.kind, self.version)
+        } else {
+            write!(f, "{}", self.operand.kind)
+        }
     }
 }
 
@@ -77,6 +78,8 @@ pub struct SsaBlock {
     pub phi_functions: Vec<PhiFunction>,
     /// Instructions in SSA form
     pub instructions: Vec<SsaInstruction>,
+    /// End state: the state of all variables at the end of this block
+    pub end_state: HashMap<OperandKind, SsaVar>,
     /// Control flow information using SSA variables
     pub next: NextKind<SsaVar>,
 }
@@ -88,8 +91,6 @@ pub struct SsaFunction {
     pub original_id: FunctionId,
     /// Blocks in SSA form
     pub blocks: HashMap<BlockId, SsaBlock>,
-    /// SSA variable to definition mapping
-    pub var_defs: HashMap<SsaVar, Definition>,
     /// Dominance frontier for each block
     pub dominance_frontiers: HashMap<BlockId, HashSet<BlockId>>,
     /// Immediate dominator for each block
@@ -100,6 +101,8 @@ impl SsaFunction {
     // Helper to find an SSA variable with a specific debug marker
     #[cfg(test)]
     pub fn find_ssa_var_by_marker(&self, marker: char) -> Option<SsaVar> {
+        use super::instructions::InstructionKind;
+
         for (_, block) in &self.blocks {
             for instr in &block.instructions {
                 // Extract all operands from the instruction kind
@@ -175,7 +178,7 @@ impl SsaResult {
             );
 
             // 4. Rename variables
-            let (ssa_blocks, var_defs) = conversion::rename_variables(
+            let ssa_blocks = conversion::rename_variables(
                 model,
                 function_id,
                 &phi_placements,
@@ -187,7 +190,6 @@ impl SsaResult {
             let mut ssa_function = SsaFunction {
                 original_id: function_id,
                 blocks: ssa_blocks,
-                var_defs,
                 dominance_frontiers,
                 immediate_dominators,
             };
@@ -200,79 +202,6 @@ impl SsaResult {
 
         ssa_result
     }
-    /// Convert a standard program model to SSA form
-
-    /// Pretty-print the SSA program
-    pub fn pretty_print(&self) -> String {
-        let mut printer = CodePrinter::new();
-
-        // Sort functions by address
-        let mut function_ids: Vec<&FunctionId> = self.functions.keys().collect();
-        function_ids.sort_by_key(|id| id.index());
-
-        for &function_id in &function_ids {
-            let function = &self.functions[function_id];
-
-            // Print function header
-            printer.line(&format!("Function @{}:", function_id));
-
-            // Sort blocks by address
-            let mut block_ids: Vec<&BlockId> = function.blocks.keys().collect();
-            block_ids.sort_by_key(|id| id.index());
-
-            // Process each block
-            for &block_id in &block_ids {
-                let block = &function.blocks[block_id];
-
-                // Print block header with a separator
-                printer.line(&format!("Block {}: ", block_id.index()));
-
-                // Print phi functions at the beginning of the block
-                let mut indented = printer.indented();
-
-                if !block.phi_functions.is_empty() {
-                    indented.line("# Phi functions:");
-                    for phi in &block.phi_functions {
-                        let mut sources = Vec::new();
-                        for (&pred_id, var) in &phi.inputs {
-                            sources.push(format!("{}: {}", pred_id, var));
-                        }
-
-                        let sources_str = if sources.is_empty() {
-                            "<empty>".to_string()
-                        } else {
-                            sources.join(", ")
-                        };
-
-                        indented.line(&format!("{} = φ({})", phi.result, sources_str));
-                    }
-                    indented.line(""); // Extra space after phi functions
-                }
-
-                // Print instructions
-                if !block.instructions.is_empty() {
-                    indented.line("# Instructions:");
-                    for instr in &block.instructions {
-                        let instruction_str = format!(
-                            "{:<8}  {}",
-                            format!("{}", instr.id.index()),
-                            format_ssa_instruction(&instr)
-                        );
-                        indented.line(&instruction_str);
-                    }
-                    indented.line(""); // Extra space after instructions
-                }
-
-                // Blank line between blocks
-                printer.line("");
-            }
-
-            // Extra blank line between functions
-            printer.line("");
-        }
-
-        printer.result()
-    }
 
     #[cfg(test)]
     pub fn find_ssa_var_by_marker(&self, marker: char) -> SsaVar {
@@ -281,101 +210,6 @@ impl SsaResult {
             .flat_map(|func| func.find_ssa_var_by_marker(marker))
             .next()
             .unwrap_or_else(|| panic!("Marker '{}' not found in SSA program", marker))
-    }
-}
-
-/// Helper function to format an SSA instruction
-fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
-    match &instr.kind {
-        // Format based on the Intcode opcodes from the machine_arch.md documentation
-        InstructionKind::Add(src1, src2, dst) => {
-            // Check if this is an assignment (add with 0)
-            if matches!(src1.operand.kind, OperandKind::Immediate(0)) {
-                format!("{} = {}", dst, src2)
-            } else if matches!(src2.operand.kind, OperandKind::Immediate(0)) {
-                format!("{} = {}", dst, src1)
-            } else {
-                format!("{} = {} + {}", dst, src1, src2)
-            }
-        }
-
-        InstructionKind::Mul(src1, src2, dst) => {
-            // Check if this is an assignment (multiply with 1)
-            if matches!(src1.operand.kind, OperandKind::Immediate(1)) {
-                format!("{} = {}", dst, src2)
-            } else if matches!(src2.operand.kind, OperandKind::Immediate(1)) {
-                format!("{} = {}", dst, src1)
-            } else {
-                format!("{} = {} * {}", dst, src1, src2)
-            }
-        }
-
-        InstructionKind::Input(dst) => {
-            format!("{} = input", dst)
-        }
-
-        InstructionKind::Output(src) => {
-            format!("output {}", src)
-        }
-
-        InstructionKind::JumpIfTrue(cond, target) => {
-            // Extract operand value to detect unconditional jumps
-            if matches!(cond.operand.kind, OperandKind::Immediate(1)) {
-                format!("goto {}", target)
-            } else {
-                format!("if {} goto {}", cond, target)
-            }
-        }
-
-        InstructionKind::JumpIfFalse(cond, target) => {
-            // Extract operand value to detect unconditional jumps
-            if matches!(cond.operand.kind, OperandKind::Immediate(0)) {
-                format!("goto {}", target)
-            } else {
-                format!("if not {} goto {}", cond, target)
-            }
-        }
-
-        InstructionKind::LessThan(src1, src2, dst) => {
-            format!("{} = ({} < {})", dst, src1, src2)
-        }
-
-        InstructionKind::Equals(src1, src2, dst) => {
-            format!("{} = ({} == {})", dst, src1, src2)
-        }
-
-        InstructionKind::AdjustRelativeBase(val) => {
-            // Extract the operand value to format R+= or R-=
-            match val.operand.kind {
-                OperandKind::Immediate(val) => {
-                    if val > 0 {
-                        format!("R += {}", val)
-                    } else if val < 0 {
-                        format!("R -= {}", -val)
-                    } else {
-                        // If val is 0, just show R += 0
-                        format!("R += 0")
-                    }
-                }
-                _ => format!("R += {}", val),
-            }
-        }
-
-        InstructionKind::Halt => "halt".to_string(),
-
-        // Synthetic instructions
-        InstructionKind::Goto(target) => format!("goto {}", target),
-
-        InstructionKind::Assign(dst, src) => format!("{} = {}", dst, src),
-
-        InstructionKind::Data(values) => format!(
-            "DATA {}",
-            values
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
     }
 }
 
@@ -534,7 +368,7 @@ pub mod conversion {
         model: &ProgramModel,
         function_id: FunctionId,
         data_flow: &DataFlowResult,
-    ) -> HashSet<Operand> {
+    ) -> HashSet<OperandKind> {
         let function = model.get_function(function_id);
         let mut result = HashSet::new();
 
@@ -543,7 +377,7 @@ pub mod conversion {
             if let Some(block_flow) = data_flow.block_results.get(&block_id) {
                 // Add all variables that are defined (written to) in this block
                 for (_, op) in block_flow.gen.values() {
-                    result.insert(*op);
+                    result.insert(op.kind);
                 }
             }
         }
@@ -560,7 +394,6 @@ pub mod conversion {
     ) -> HashMap<BlockId, Vec<PhiFunction>> {
         let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
 
-        // Initialize empty phi placement lists for all blocks
         let function = model.get_function(function_id);
         for &block_id in &function.blocks {
             phi_placements.insert(block_id, Vec::new());
@@ -575,7 +408,7 @@ pub mod conversion {
             let mut def_blocks = HashSet::new();
             for &block_id in &function.blocks {
                 if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                    if block_flow.gen.contains_key(&var.kind) {
+                    if block_flow.gen.contains_key(&var) {
                         def_blocks.insert(block_id);
                     }
                 }
@@ -595,7 +428,11 @@ pub mod conversion {
                             // Create a dummy phi function (will be properly initialized later)
                             let phi = PhiFunction {
                                 result: SsaVar::new(
-                                    var,
+                                    Operand {
+                                        kind: var,
+                                        offset: 0,
+                                        debug_marker: None,
+                                    },
                                     0, // Temporary version number, will be updated during renaming
                                 ),
                                 inputs: HashMap::new(), // Will be filled during renaming
@@ -608,7 +445,7 @@ pub mod conversion {
                             // If this block also defines the variable, add it to the worklist
                             if let Some(block_flow) = data_flow.block_results.get(&df_block) {
                                 if !def_blocks.contains(&df_block)
-                                    && block_flow.gen.contains_key(&var.kind)
+                                    && block_flow.gen.contains_key(&var)
                                 {
                                     def_blocks.insert(df_block);
                                     worklist.push_back(df_block);
@@ -629,13 +466,14 @@ pub mod conversion {
     /// 1. Removes phi functions with no inputs
     /// 2. Replaces phi functions with a single input with that input
     pub fn prune_phi_functions(function: &mut SsaFunction) {
-        let mut replacements: HashMap<SsaVar, SsaVar> = HashMap::new();
+        let mut replacements: HashMap<(OperandKind, usize), SsaVar> = HashMap::new();
 
         // First pass: identify phi functions to prune
         for (block_id, block) in &mut function.blocks {
             let mut phi_to_keep = Vec::new();
 
             for phi in &block.phi_functions {
+                println!("{} Phi function: {:#?}", block_id, phi);
                 match phi.inputs.len() {
                     0 => {
                         // Case 1: Phi with no inputs can be removed
@@ -653,7 +491,8 @@ pub mod conversion {
                             "Replacing phi with single input: {} -> {} in block {}",
                             phi.result, single_input, block_id
                         );
-                        replacements.insert(phi.result.clone(), single_input);
+                        replacements
+                            .insert((phi.result.operand.kind, phi.result.version), single_input);
                     }
                     _ => {
                         // Keep phis with multiple inputs
@@ -666,39 +505,30 @@ pub mod conversion {
             block.phi_functions = phi_to_keep;
         }
 
+        let mut replace = |r: &mut HashMap<(OperandKind, usize), SsaVar>, var: &SsaVar| {
+            let mut new = var.clone();
+            if let Some(replacement) = r.get(&(var.operand.kind, var.version)) {
+                new.version = replacement.version;
+            }
+            new
+        };
+
         // Second pass: apply replacements to all SSA vars that use pruned phi results
         for (_, block) in &mut function.blocks {
             // Update phi inputs
             for phi in &mut block.phi_functions {
-                for (_, input) in &mut phi.inputs {
-                    if let Some(replacement) = replacements.get(input) {
-                        *input = replacement.clone();
-                    }
+                for (_, ref mut input) in &mut phi.inputs {
+                    **input = replace(&mut replacements, &input.clone());
                 }
             }
 
             // Update instructions
             for instr in &mut block.instructions {
                 // Use map_rw to update all operands in the instruction
-                *instr = instr.map_rw(
-                    &mut replacements,
-                    &mut |r: &mut HashMap<SsaVar, SsaVar>, var| {
-                        r.get(var).cloned().unwrap_or_else(|| *var)
-                    },
-                    &mut |r: &mut HashMap<SsaVar, SsaVar>, var| {
-                        r.get(var).cloned().unwrap_or_else(|| *var)
-                    },
-                );
+                *instr = instr.map_rw(&mut replacements, &mut replace.clone(), &mut replace);
             }
 
-            block.next = block
-                .next
-                .map(&mut |var| replacements.get(&var).cloned().unwrap_or(var));
-        }
-
-        // Update var_defs map by removing entries for pruned phis
-        for var in replacements.keys() {
-            function.var_defs.remove(var);
+            block.next = block.next.map(&mut |v| replace(&mut replacements, &v));
         }
     }
 
@@ -711,6 +541,10 @@ pub mod conversion {
             .map(|v| v.version)
             .unwrap_or(0)
             + 1;
+        println!(
+            "Creating new version for {}: {} at {}",
+            var, version, var.offset
+        );
         let new_version = SsaVar {
             operand: var,
             version,
@@ -730,20 +564,19 @@ pub mod conversion {
             };
         };
         if let Some(ssa_var) = current_versions.get(&op_kind) {
-            // Create a new SsaVar with the same version but preserve the debug marker from op
-            let mut new_operand = ssa_var.operand;
-            if let Some(debug_marker) = op.debug_marker {
-                new_operand.debug_marker = Some(debug_marker);
-            }
-            new_operand.debug_marker = op.debug_marker;
+            // Create a new SsaVar with the same version.
 
             SsaVar {
-                operand: new_operand,
+                operand: op,
                 version: ssa_var.version,
             }
         } else {
             // Create a new version if not found
-            create_next_version(current_versions, op)
+            // create_next_version(current_versions, op)
+            return SsaVar {
+                operand: op,
+                version: 0,
+            };
         }
     }
 
@@ -762,12 +595,11 @@ pub mod conversion {
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
         immediate_dominators: &HashMap<BlockId, BlockId>,
         data_flow: &DataFlowResult,
-    ) -> (HashMap<BlockId, SsaBlock>, HashMap<SsaVar, Definition>) {
+    ) -> HashMap<BlockId, SsaBlock> {
         let function = model.get_function(function_id);
 
         // Result: SSA blocks and variable definitions
         let mut ssa_blocks: HashMap<BlockId, SsaBlock> = HashMap::new();
-        let mut var_defs: HashMap<SsaVar, Definition> = HashMap::new();
 
         // Track the current version of each variable
         let mut current_versions: HashMap<OperandKind, SsaVar> = HashMap::new();
@@ -798,7 +630,6 @@ pub mod conversion {
             data_flow: &DataFlowResult,
             current_versions: &mut HashMap<OperandKind, SsaVar>,
             ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
-            var_defs: &mut HashMap<SsaVar, Definition>,
         ) {
             // 1. Process phi functions, assign new versions to their results
             let mut block_phi_functions = Vec::new();
@@ -895,6 +726,7 @@ pub mod conversion {
                 original_id: block_id,
                 phi_functions: block_phi_functions,
                 instructions: block_instructions,
+                end_state: current_versions.clone(),
                 next: ssa_next,
             };
 
@@ -916,7 +748,6 @@ pub mod conversion {
                         data_flow,
                         &mut child_versions,
                         ssa_blocks,
-                        var_defs,
                     );
                 }
             }
@@ -950,20 +781,8 @@ pub mod conversion {
             }
         }
 
-        // Start processing from the entry block
-        let entry_block_id = function.blocks.first().cloned().unwrap_or_else(|| {
-            // Fallback to first block in immediate_dominators if function.blocks is empty
-            immediate_dominators
-                .keys()
-                .next()
-                .cloned()
-                .unwrap_or_else(|| {
-                    panic!("Function has no blocks");
-                })
-        });
-
         process_block(
-            entry_block_id,
+            function.entry_block,
             model,
             function_id,
             &dom_tree,
@@ -971,10 +790,9 @@ pub mod conversion {
             data_flow,
             &mut current_versions,
             &mut ssa_blocks,
-            &mut var_defs,
         );
 
-        (ssa_blocks, var_defs)
+        ssa_blocks
     }
 }
 
@@ -982,6 +800,9 @@ pub mod conversion {
 mod tests {
     use super::*;
     use crate::disasm::parser;
+    use crate::disasm::v2::instructions::InstructionKind;
+    use crate::disasm::v2::listeners::ssa_converter::SsaConverter;
+    use crate::disasm::v2::pretty_print::pretty_print_ssa;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
@@ -1055,23 +876,28 @@ mod tests {
 
     struct TestContext {
         main_function: SsaFunction,
+        model: ProgramModel,
     }
 
     impl TestContext {
         fn new(assembly: &str) -> Self {
+            let _ = env_logger::builder().is_test(true).try_init();
             let model = setup_analyzed_model(assembly);
-
-            let ssa_result = SsaResult::from_program_model(&model);
 
             // Extract the main function (always at ID 0)
             let func_id = FunctionId::from(0);
-            let main_function = ssa_result
+            let main_function = model
+                .get_ssa_result()
+                .unwrap()
                 .functions
                 .get(&func_id)
                 .expect("Main function not found in SSA program")
                 .clone();
 
-            TestContext { main_function }
+            TestContext {
+                main_function,
+                model,
+            }
         }
     }
 
@@ -1126,6 +952,7 @@ mod tests {
         publisher.add_listener(Box::new(ImageScanner::new()));
         publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
         publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+        publisher.add_listener(Box::new(SsaConverter::new()));
 
         // Run the pipeline
         model.load_image(&binary, &mut publisher);
@@ -1398,14 +1225,14 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form
-        let ssa_result = SsaResult::from_program_model(&model);
-
         // Print the SSA program for debugging
-        println!("SSA Program:\n{}", ssa_result.pretty_print());
+        println!("SSA Program:\n{}", pretty_print_ssa(&model));
 
         // Get the function
         let func_id = FunctionId::from(0);
+        // Convert to SSA form
+        let ssa_result = SsaResult::from_program_model(&model);
+
         let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
         // Get the block
@@ -1467,7 +1294,7 @@ mod tests {
         );
         assert_marker_at_main!(ctx, 'a', ssa_main_mem!(23, 2));
         assert_marker_at_main!(ctx, 'b', ssa_main_mem!(23, 3));
-        assert_marker_at_main!(ctx, 'c', ssa_main_deref!(23, 1));
+        assert_marker_at_main!(ctx, 'c', ssa_main_deref!(23, 0));
         assert_marker_at_main!(ctx, 'd', ssa_main_rel!(1, 1))
     }
 
@@ -1481,6 +1308,37 @@ mod tests {
                 halt
                 "#,
         );
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(-1, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(-1, 1));
+    }
+
+    #[test]
+    fn test_function_calls_and_loop() {
+        let ctx = TestContext::new(
+            r#"
+              R += 6
+              ptr = [R-5]
+              [R-2] = *ptr
+              [R-3] = 0
+              [R-5] = [R-5] + 1
+        loop:
+              [R-1] = [R-3] == [R-2]
+              if [R-1] goto @exit
+              ptr2 = [R-5] + [R-3]
+              [R+1] = *ptr2
+              [R+2] = [R-3]
+              [R+3] = [R-2]
+              [R] = @ret
+              goto [R-4]
+        ret:
+              [R-3] = [R-3] + 1
+              goto @loop
+        exit:
+              R += -6
+              goto [R]
+                "#,
+        );
+        println!("SSA Program:\n{}", pretty_print_ssa(&ctx.model));
         assert_marker_at_main!(ctx, 'a', ssa_main_rel!(-1, 1));
         assert_marker_at_main!(ctx, 'b', ssa_main_rel!(-1, 2));
     }

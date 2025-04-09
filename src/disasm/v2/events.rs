@@ -1,5 +1,5 @@
-use super::model::{BlockId, FunctionId, ProgramModel};
 use super::dispatching::event_types_enum;
+use super::model::{BlockId, FunctionId, ProgramModel};
 
 event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -24,13 +24,16 @@ event_types_enum! {Event, ProgramModel,
     pub struct DataFlowAnalysisComplete {
         pub function_id: FunctionId,
     }
-    
+
     /// Signals that SSA conversion has completed
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct SsaConversionComplete {
         pub completed: bool,
     }
-    
+
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    pub struct FunctionCallAnalysisComplete {}
+
     /// Signals that type inference has completed
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct TypeInferenceComplete {

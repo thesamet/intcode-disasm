@@ -1,5 +1,5 @@
 use super::{
-    instructions::{Instruction, Operand, OperandKind},
+    instructions::{Instruction, Operand},
     model::{BlockId, FunctionId},
     Span,
 };
@@ -114,9 +114,6 @@ where
     // The operand representing the function address (can be immediate or indirect)
     pub function_addr: T,
     pub return_block: BlockId, // The block execution resumes at after the call
-
-    // The state of all variables at call site (empty for now, filled by SSA conversion)
-    pub call_site_state: Vec<(OperandKind, T)>,
 }
 
 impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
@@ -125,7 +122,6 @@ impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
             calling_block,
             function_addr,
             return_block,
-            call_site_state: vec![],
         }
     }
     pub fn map<F, S>(&self, map: &mut F) -> FunctionCall<S>
@@ -137,11 +133,6 @@ impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
             calling_block: self.calling_block,
             function_addr: map(self.function_addr),
             return_block: self.return_block,
-            call_site_state: self
-                .call_site_state
-                .iter()
-                .map(|(k, v)| (k.clone(), map(*v)))
-                .collect(),
         }
     }
 }
