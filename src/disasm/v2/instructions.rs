@@ -153,6 +153,61 @@ pub struct GenericInstruction<T> {
     pub kind: InstructionKind<T>,
 }
 
+// *** Define the macro here, often placed before the impl block ***
+macro_rules! generate_operand_match {
+    // $kind_expr will be &self.kind or &mut self.kind
+    // $index will be the index variable
+    ($kind_expr:expr, $index:ident) => {
+        // The type of reference (&T or &mut T) returned by Some(...)
+        // depends on how $kind_expr was borrowed *before* calling the macro.
+        match $kind_expr {
+            // 3-operand instructions (arg1, arg2, destination)
+            InstructionKind::Add(a, b, c) |
+            InstructionKind::Mul(a, b, c) |
+            InstructionKind::LessThan(a, b, c) |
+            InstructionKind::Equals(a, b, c) => match $index {
+                0 => Some(a), // arg1
+                1 => Some(b), // arg2
+                2 => Some(c), // destination
+                _ => None,
+            },
+            // 1-operand instructions (destination)
+            InstructionKind::Input(a) => match $index {
+                0 => Some(a), // destination
+                _ => None,
+            },
+            // 1-operand instructions (source/value)
+            InstructionKind::Output(a) |
+            InstructionKind::AdjustRelativeBase(a) => match $index {
+                0 => Some(a), // source/value
+                _ => None,
+            },
+            // 2-operand instructions (condition, target)
+            InstructionKind::JumpIfTrue(a, b) |
+            InstructionKind::JumpIfFalse(a, b) => match $index {
+                0 => Some(a), // condition
+                1 => Some(b), // target
+                _ => None,
+            },
+            // Synthetic: Goto(target) derives from JumpIfTrue(1, target)
+            InstructionKind::Goto(target) => match $index {
+                // index 0 would be the constant 1 (not stored), index 1 is target
+                1 => Some(target),
+                _ => None,
+            },
+             // Synthetic: Assign(target, source) derives from Add(0, source, target) or Mul(1, source, target)
+            InstructionKind::Assign(target, source) => match $index {
+                 // index 0 is constant 0/1 (not stored), index 1 is source, index 2 is target
+                1 => Some(source), // source operand
+                2 => Some(target), // target operand (destination)
+                _ => None,
+            },
+            // No positional operands for Halt or Data
+            InstructionKind::Halt | InstructionKind::Data(_) => None,
+        }
+    };
+}
+
 pub type Instruction = GenericInstruction<Operand>;
 
 // Legacy enum for backward compatibility, to be phased out
@@ -171,7 +226,7 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    fn from_i128(value: i128) -> Result<Opcode, ParseError> {
+    pub fn from_i128(value: i128) -> Result<Opcode, ParseError> {
         match value {
             1 => Ok(Opcode::Add),
             2 => Ok(Opcode::Mul),
@@ -187,7 +242,7 @@ impl Opcode {
         }
     }
 
-    fn as_i128(&self) -> i128 {
+    pub fn as_i128(&self) -> i128 {
         match self {
             Opcode::Add => 1,
             Opcode::Mul => 2,
@@ -230,7 +285,7 @@ pub struct Assignment<T> {
     pub source: T,
 }
 
-impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
+impl<T: Into<Operand> + Clone> GenericInstruction<T> {
     pub fn opcode(&self) -> Opcode {
         match &self.kind {
             InstructionKind::Add(_, _, _) => Opcode::Add,
@@ -249,38 +304,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
         }
     }
 
-    pub fn operands(&self) -> Vec<T> {
-        match &self.kind {
-            InstructionKind::Add(a, b, c) => vec![*a, *b, *c],
-            InstructionKind::Mul(a, b, c) => vec![*a, *b, *c],
-            InstructionKind::Input(a) => vec![*a],
-            InstructionKind::Output(a) => vec![*a],
-            InstructionKind::JumpIfTrue(a, b) => vec![*a, *b],
-            InstructionKind::JumpIfFalse(a, b) => vec![*a, *b],
-            InstructionKind::LessThan(a, b, c) => vec![*a, *b, *c],
-            InstructionKind::Equals(a, b, c) => vec![*a, *b, *c],
-            InstructionKind::AdjustRelativeBase(a) => vec![*a],
-            InstructionKind::Halt => vec![],
-            InstructionKind::Data(_) => vec![],
-            InstructionKind::Goto(target) => {
-                vec![*target]
-            }
-            InstructionKind::Assign(target, source) => {
-                // Create a synthetic operation: target = source + 0
-                vec![*target, *source]
-            }
-        }
-    }
-
-    pub fn immediate_arg(&self, index: usize) -> Option<i128> {
-        let operands = self.operands();
-        if index < operands.len() {
-            operands[index].into().kind.get_immediate()
-        } else {
-            None
-        }
-    }
-
     pub fn is_jump(&self) -> bool {
         matches!(
             self.kind,
@@ -292,7 +315,7 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
 
     pub fn goto_address(&self) -> Option<T> {
         match &self.kind {
-            InstructionKind::Goto(target) => Some(*target),
+            InstructionKind::Goto(target) => Some(target.clone()),
             _ => None,
         }
     }
@@ -320,7 +343,7 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
     pub fn conditional_jump_address(&self) -> Option<T> {
         match &self.kind {
             InstructionKind::JumpIfTrue(_, target) | InstructionKind::JumpIfFalse(_, target) => {
-                Some(*target)
+                Some(target.clone())
             }
             _ => None,
         }
@@ -329,7 +352,7 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
     pub fn conditional_jump_condition(&self) -> Option<T> {
         match &self.kind {
             InstructionKind::JumpIfTrue(cond, _) | InstructionKind::JumpIfFalse(cond, _) => {
-                Some(*cond)
+                Some(cond.clone())
             }
             _ => None,
         }
@@ -342,7 +365,7 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
 
     pub fn relative_base_adjustment(&self) -> Option<i128> {
         match &self.kind {
-            InstructionKind::AdjustRelativeBase(op) => (*op).into().kind.get_immediate(),
+            InstructionKind::AdjustRelativeBase(op) => op.clone().into().kind.get_immediate(),
             _ => None,
         }
     }
@@ -350,8 +373,8 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
     pub fn as_assignment(&self) -> Option<Assignment<T>> {
         match &self.kind {
             InstructionKind::Assign(target, source) => Some(Assignment {
-                target: *target,
-                source: *source,
+                target: target.clone(),
+                source: source.clone(),
             }),
             _ => None,
         }
@@ -406,7 +429,6 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
             })
             .collect::<Result<_, _>>()?;
 
-        //
         // Create the instruction kind based on the opcode
         let kind = match opcode {
             Opcode::Add => InstructionKind::Add(operands[0], operands[1], operands[2]),
@@ -441,8 +463,8 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
             InstructionKind::JumpIfTrue(_, _) | InstructionKind::JumpIfFalse(_, _) => vec![0, 1],
             InstructionKind::Halt => vec![],
             InstructionKind::Data(_) => vec![],
-            InstructionKind::Goto(_) => vec![0],
-            InstructionKind::Assign(_, _) => vec![1],
+            InstructionKind::Goto(_) => vec![0, 1],
+            InstructionKind::Assign(_, _) => vec![0, 1],
         }
     }
 
@@ -460,10 +482,73 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
             | InstructionKind::Halt
             | InstructionKind::Data(_)
             | InstructionKind::Goto(_) => vec![],
-            InstructionKind::Assign(_, _) => vec![0],
+            InstructionKind::Assign(_, _) => vec![2],
         }
     }
 
+    /// Maps operands based on read/write context, propagating the first error encountered.
+    pub fn map_rw_result<C, R, W, S, E>(
+        &self,
+        context: &mut C,
+        map_read: &mut R,
+        map_write: &mut W,
+    ) -> Result<GenericInstruction<S>, E>
+    where
+        R: FnMut(&mut C, &T) -> Result<S, E>,
+        W: FnMut(&mut C, &T) -> Result<S, E>,
+    {
+        let kind_result = match &self.kind {
+            InstructionKind::Add(a, b, c) => Ok(InstructionKind::Add(
+                map_read(context, a)?,
+                map_read(context, b)?,
+                map_write(context, c)?,
+            )),
+            InstructionKind::Mul(a, b, c) => Ok(InstructionKind::Mul(
+                map_read(context, a)?,
+                map_read(context, b)?,
+                map_write(context, c)?,
+            )),
+            InstructionKind::Input(a) => Ok(InstructionKind::Input(map_write(context, a)?)),
+            InstructionKind::Output(a) => Ok(InstructionKind::Output(map_read(context, a)?)),
+            InstructionKind::JumpIfTrue(a, b) => Ok(InstructionKind::JumpIfTrue(
+                map_read(context, a)?,
+                map_read(context, b)?,
+            )),
+            InstructionKind::JumpIfFalse(a, b) => Ok(InstructionKind::JumpIfFalse(
+                map_read(context, a)?,
+                map_read(context, b)?,
+            )),
+            InstructionKind::LessThan(a, b, c) => Ok(InstructionKind::LessThan(
+                map_read(context, a)?,
+                map_read(context, b)?,
+                map_write(context, c)?,
+            )),
+            InstructionKind::Equals(a, b, c) => Ok(InstructionKind::Equals(
+                map_read(context, a)?,
+                map_read(context, b)?,
+                map_write(context, c)?,
+            )),
+            InstructionKind::AdjustRelativeBase(a) => {
+                Ok(InstructionKind::AdjustRelativeBase(map_read(context, a)?))
+            }
+            InstructionKind::Halt => Ok(InstructionKind::Halt),
+            InstructionKind::Data(values) => Ok(InstructionKind::Data(values.clone())),
+            InstructionKind::Goto(a) => Ok(InstructionKind::Goto(map_read(context, a)?)),
+            InstructionKind::Assign(a, b) => Ok(InstructionKind::Assign(
+                map_write(context, a)?,
+                map_read(context, b)?,
+            )),
+        };
+
+        kind_result.map(|kind| GenericInstruction {
+            id: self.id,
+            span: self.span,
+            kind,
+        })
+    }
+
+    /// Maps operands based on read/write context using infallible closures.
+    /// Panics if the closures panic.
     pub fn map_rw<C, R, W, S>(
         &self,
         context: &mut C,
@@ -474,72 +559,35 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
         R: FnMut(&mut C, &T) -> S,
         W: FnMut(&mut C, &T) -> S,
     {
-        let kind = match &self.kind {
-            InstructionKind::Add(a, b, c) => InstructionKind::Add(
-                map_read(context, a),
-                map_read(context, b),
-                map_write(context, c),
-            ),
-            InstructionKind::Mul(a, b, c) => InstructionKind::Mul(
-                map_read(context, a),
-                map_read(context, b),
-                map_write(context, c),
-            ),
-            InstructionKind::Input(a) => InstructionKind::Input(map_write(context, a)),
-            InstructionKind::Output(a) => InstructionKind::Output(map_read(context, a)),
-            InstructionKind::JumpIfTrue(a, b) => {
-                InstructionKind::JumpIfTrue(map_read(context, a), map_read(context, b))
-            }
-            InstructionKind::JumpIfFalse(a, b) => {
-                InstructionKind::JumpIfFalse(map_read(context, a), map_read(context, b))
-            }
-            InstructionKind::LessThan(a, b, c) => InstructionKind::LessThan(
-                map_read(context, a),
-                map_read(context, b),
-                map_write(context, c),
-            ),
-            InstructionKind::Equals(a, b, c) => InstructionKind::Equals(
-                map_read(context, a),
-                map_read(context, b),
-                map_write(context, c),
-            ),
-            InstructionKind::AdjustRelativeBase(a) => {
-                InstructionKind::AdjustRelativeBase(map_read(context, a))
-            }
-            InstructionKind::Halt => InstructionKind::Halt,
-            InstructionKind::Data(values) => InstructionKind::Data(values.clone()),
-            InstructionKind::Goto(a) => InstructionKind::Goto(map_read(context, a)),
-            InstructionKind::Assign(a, b) => {
-                InstructionKind::Assign(map_write(context, a), map_read(context, b))
-            }
+        // Wrap the infallible closures to return Result<_, Infallible>
+        let mut map_read_res = |ctx: &mut C, arg: &T| -> Result<S, core::convert::Infallible> {
+            Ok(map_read(ctx, arg))
+        };
+        let mut map_write_res = |ctx: &mut C, arg: &T| -> Result<S, core::convert::Infallible> {
+            Ok(map_write(ctx, arg))
         };
 
-        GenericInstruction {
-            id: self.id,
-            span: self.span,
-            kind,
-        }
+        // Call map_rw_result and unwrap (safe because error type is Infallible)
+        self.map_rw_result(context, &mut map_read_res, &mut map_write_res)
+            .unwrap()
     }
-
     /// Returns a list of operands that are read by this instruction
     pub fn reads(&self) -> Vec<T> {
-        let operands = self.operands();
         let read_positions = self.read_positions();
 
         read_positions
             .iter()
             .filter_map(|&pos| {
-                if pos < operands.len() {
-                    let op = operands[pos];
-                    // Only include memory locations, not immediate values
-                    if matches!(
-                        op.into().kind,
-                        OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
-                    ) {
-                        Some(op)
-                    } else {
-                        None
-                    }
+                let Some(op) = self.operand_at(pos).clone() else {
+                    return None;
+                };
+
+                // Only include memory locations, not immediate values
+                if matches!(
+                    op.clone().into().kind,
+                    OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
+                ) {
+                    Some(op.clone())
                 } else {
                     None
                 }
@@ -549,23 +597,30 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
 
     /// Returns the operand that is written to by this instruction, if any
     pub fn writes(&self) -> Option<T> {
-        let operands = self.operands();
         let write_positions = self.write_positions();
 
-        if !write_positions.is_empty() && write_positions[0] < operands.len() {
-            let op = operands[write_positions[0]];
-            // Only include memory locations
-            if matches!(
-                op.into().kind,
-                OperandKind::Memory(_) | OperandKind::RelativeMemory(_) | OperandKind::Deref(_)
-            ) {
-                Some(op)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        if write_positions.is_empty() {
+            return None;
+        };
+        let Some(op) = self.operand_at(write_positions[0]) else {
+            panic!("No operand at write position {}", write_positions[0]);
+        };
+
+        Some(op.clone())
+    }
+
+    /// Gets an immutable reference to the operand at the given *positional index*.
+    /// Use `read_positions` and `write_positions` to understand context.
+    pub fn operand_at(&self, index: usize) -> Option<&T> {
+        // Use the macro, passing an immutable reference to self.kind
+        generate_operand_match!(&self.kind, index)
+    }
+
+    /// Gets a mutable reference to the operand at the given *positional index*.
+    /// Use `read_positions` and `write_positions` to understand context.
+    pub fn operand_at_mut(&mut self, index: usize) -> Option<&mut T> {
+        // Use the macro, passing a mutable reference to self.kind
+        generate_operand_match!(&mut self.kind, index)
     }
 
     pub fn parse_program(prog: &[i128]) -> Vec<(usize, Self)>
@@ -645,11 +700,10 @@ impl<T: Into<Operand> + Copy + Clone> GenericInstruction<T> {
 }
 
 // Helper function to simplify certain instruction patterns
-fn simplify_instruction<T: Into<Operand>>(kind: InstructionKind<T>) -> InstructionKind<T>
-where
-    T: Copy,
-{
-    match kind {
+pub fn simplify_instruction<T: Into<Operand> + Clone>(
+    kind: InstructionKind<T>,
+) -> InstructionKind<T> {
+    match kind.clone() {
         InstructionKind::JumpIfTrue(cond, target) => {
             if let OperandKind::Immediate(val) = cond.into().kind {
                 if val != 0 {
@@ -667,7 +721,7 @@ where
             kind
         }
         InstructionKind::Add(a, b, target) => {
-            if let OperandKind::Immediate(0) = a.into().kind {
+            if let OperandKind::Immediate(0) = a.clone().into().kind {
                 return InstructionKind::Assign(target, b);
             }
             if let OperandKind::Immediate(0) = b.into().kind {
@@ -676,7 +730,7 @@ where
             kind
         }
         InstructionKind::Mul(a, b, target) => {
-            if let OperandKind::Immediate(1) = a.into().kind {
+            if let OperandKind::Immediate(1) = a.clone().into().kind {
                 return InstructionKind::Assign(target, b);
             }
             if let OperandKind::Immediate(1) = b.into().kind {
@@ -691,8 +745,8 @@ where
 // Helper function to convert instruction kind from one operand type to another
 fn convert_instruction_kind<T, U>(kind: InstructionKind<T>) -> InstructionKind<U>
 where
-    T: Into<Operand> + Copy,
-    U: From<Operand> + Copy,
+    T: Into<Operand>,
+    U: From<Operand>,
 {
     match kind {
         InstructionKind::Add(a, b, c) => {
@@ -759,10 +813,7 @@ where
 fn coalesce_data_instructions<T>(
     instructions: Vec<(usize, GenericInstruction<T>)>,
     prog: &[i128],
-) -> Vec<(usize, GenericInstruction<T>)>
-where
-    T: Copy,
-{
+) -> Vec<(usize, GenericInstruction<T>)> {
     instructions
         .into_iter()
         .coalesce(|(addr1, inst1), (addr2, inst2)| {

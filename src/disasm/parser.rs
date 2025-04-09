@@ -1,141 +1,91 @@
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_while1},
-    character::complete::{self, char, digit1, multispace0, space0, space1},
+    character::complete::{char, digit1, multispace0, multispace1, satisfy, space0, space1},
     combinator::{eof, map, map_res, opt, recognize, value},
-    multi::{many1, separated_list0, separated_list1},
+    multi::{many0, many1, separated_list1},
     sequence::{delimited, pair, preceded, terminated},
     IResult, Parser,
 };
 use std::collections::HashMap;
 
-use super::low_ir::{Arg, ArgBase, GenericInstruction, PositionalArg};
+use super::v2::instructions::{
+    simplify_instruction, GenericInstruction, Instruction, InstructionId, InstructionKind, Operand,
+    OperandKind,
+};
+use super::v2::Span;
 
 type DebugMarker = Option<char>;
 
+// Intermediate types used during parsing before full resolution
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum UnresolvedArgument {
-    Label(String, DebugMarker),
-    Pointer(String, DebugMarker),
-    PointerDeref(String, DebugMarker),
-    Resolved(SourceArgument),
+    Label {
+        name: String,
+        debug_marker: DebugMarker,
+    },
+    Pointer {
+        name: String,
+        debug_marker: DebugMarker,
+    },
+    PointerDeref {
+        name: String,
+        debug_marker: DebugMarker,
+    },
+    Resolved {
+        op: Operand,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceArgument {
-    pub arg: Arg,
-    pub debug_marker: DebugMarker,
-}
-
-impl SourceArgument {
-    pub fn new(arg: Arg, debug_marker: DebugMarker) -> Self {
-        SourceArgument { arg, debug_marker }
-    }
-}
-
-impl SerializableArgument for SourceArgument {
-    fn mode(&self) -> i128 {
-        self.arg.mode()
-    }
-
-    fn serialize(&self, out: &mut Vec<i128>) {
-        self.arg.serialize(out);
-    }
-}
-
-pub trait SerializableArgument {
-    fn mode(&self) -> i128;
-    fn serialize(&self, out: &mut Vec<i128>);
-}
-
-impl SerializableArgument for Arg {
-    fn mode(&self) -> i128 {
-        match &self {
-            Arg::Mem(_) | Arg::Deref(_) => 0,
-            Arg::Value(_) => 1,
-            Arg::RelativeMem(_) => 2,
-        }
-    }
-
-    fn serialize(&self, out: &mut Vec<i128>) {
-        let v = match self {
-            Arg::Mem(addr) => *addr as i128,
-            Arg::Value(val) => *val,
-            Arg::RelativeMem(addr) => *addr as i128,
-            Arg::Deref(addr) => *addr as i128,
-        };
-        out.push(v);
-    }
-}
-
-impl ArgBase for SourceArgument {
-    fn value(&self) -> Option<i128> {
-        self.arg.value()
-    }
-
-    fn relative_mem(&self) -> Option<i128> {
-        self.arg.relative_mem()
-    }
-
-    fn as_arg(&self) -> Arg {
-        self.arg
-    }
-}
-
-pub trait SerializableInstruction<ArgType> {
-    fn serialize(&self, out: &mut Vec<i128>);
-}
-
-impl SerializableInstruction<SourceArgument> for GenericInstruction<SourceArgument> {
-    fn serialize(&self, out: &mut Vec<i128>) {
-        let opcode = match self {
-            GenericInstruction::Add(_, _, _) | GenericInstruction::Assign(..) => 1,
-            GenericInstruction::Mul(_, _, _) => 2,
-            GenericInstruction::Input(_) => 3,
-            GenericInstruction::Output(_) => 4,
-            GenericInstruction::JumpIf(_, true, _) | GenericInstruction::Goto(_) => 5,
-            GenericInstruction::JumpIf(_, false, _) => 6,
-            GenericInstruction::LessThan(_, _, _) => 7,
-            GenericInstruction::Equals(_, _, _) => 8,
-            GenericInstruction::AdjustRelativeBase(_) => 9,
-            GenericInstruction::Halt => 99,
-            GenericInstruction::Data(v) => {
-                out.extend(v);
-                return;
-            }
-            GenericInstruction::Phi(_, _) => unreachable!(),
-        } as i128;
-        let mode = (0..=2)
-            .map(|i| {
-                self.arg_at(i)
-                    .map(|a| {
-                        let (mode, debug_marker) = match a {
-                            PositionalArg::Arg(arg) => {
-                                let debug_marker = arg
-                                    .debug_marker
-                                    .map(|c| (c as i128) << (8 * i))
-                                    .unwrap_or_default()
-                                    * 100000;
-                                (arg.mode(), debug_marker)
-                            }
-                            PositionalArg::Immediate(_) => (1, 0),
-                        };
-                        mode * 10i128.pow((i as u32) + 2) + debug_marker
-                    })
-                    .unwrap_or_default()
-            })
-            .sum::<i128>();
-        out.push(opcode + mode);
-        for i in 0..3 {
-            match self.arg_at(i) {
-                Some(PositionalArg::Arg(a)) => a.serialize(out),
-                Some(PositionalArg::Immediate(v)) => out.push(v as i128),
-                None => {}
-            };
+impl From<UnresolvedArgument> for Operand {
+    fn from(arg: UnresolvedArgument) -> Self {
+        match arg {
+            UnresolvedArgument::Resolved { op, .. } => op,
+            _ => panic!("UnresolvedArgument must be resolved before conversion to Operand"),
         }
     }
 }
 
-type Instruction = GenericInstruction<UnresolvedArgument>;
+#[derive(Debug, Clone, Copy)]
+enum Arg {
+    Mem(i128),
+    Value(i128),
+    RelativeMem(i128),
+    Deref(usize),
+}
+
+// Helper to map temporary Arg to v2::OperandKind
+fn map_arg_to_operand_kind(arg: Arg) -> OperandKind {
+    match arg {
+        Arg::Mem(addr) => OperandKind::Memory(addr),
+        Arg::Value(val) => OperandKind::Immediate(val),
+        Arg::RelativeMem(offset) => OperandKind::RelativeMemory(offset),
+        Arg::Deref(offset) => OperandKind::Deref(offset),
+    }
+}
+
+// Helper to get the expected size of an instruction kind for offset calculation
+// Note: Relies on the structure before simplification (e.g., Assign is size 4 because it becomes Add)
+fn instruction_kind_size<T>(kind: &InstructionKind<T>) -> usize {
+    match kind {
+        InstructionKind::Add(..)
+        | InstructionKind::Mul(..)
+        | InstructionKind::LessThan(..)
+        | InstructionKind::Equals(..)
+        | InstructionKind::Assign(..) => 4,
+
+        InstructionKind::JumpIfTrue(..)
+        | InstructionKind::JumpIfFalse(..)
+        | InstructionKind::Goto(..) => 3,
+
+        InstructionKind::Input(_)
+        | InstructionKind::Output(_)
+        | InstructionKind::AdjustRelativeBase(_) => 2,
+
+        InstructionKind::Halt => 1,
+        InstructionKind::Data(v) => v.len(),
+    }
+}
 
 // Parse a signed i128
 fn parse_i128(input: &str) -> IResult<&str, i128> {
@@ -152,19 +102,33 @@ fn identifier(input: &str) -> IResult<&str, &str> {
 fn parse_memory(input: &str, debug_marker: DebugMarker) -> IResult<&str, UnresolvedArgument> {
     alt((
         map(delimited(char('['), parse_i128, char(']')), |a| {
-            UnresolvedArgument::Resolved(SourceArgument::new(Arg::Mem(a), debug_marker))
+            // Temporarily create OperandKind, offset is unknown here (placeholder 0)
+            UnresolvedArgument::Resolved {
+                op: Operand {
+                    kind: OperandKind::Memory(a),
+                    offset: 0,
+                    debug_marker,
+                },
+            }
         }),
-        (tag("*"), identifier)
-            .map(|(_, ident)| UnresolvedArgument::PointerDeref(ident.to_string(), debug_marker)),
-        identifier.map(|ident| UnresolvedArgument::Pointer(ident.to_string(), debug_marker)),
+        (tag("*"), identifier).map(|(_, ident)| UnresolvedArgument::PointerDeref {
+            name: ident.to_string(),
+            debug_marker,
+        }),
+        identifier.map(|ident| UnresolvedArgument::Pointer {
+            name: ident.to_string(),
+            debug_marker,
+        }),
     ))
     .parse(input)
 }
 
+// Parses into temporary Arg enum first
 fn parse_immediate(input: &str) -> IResult<&str, Arg> {
     map(parse_i128, Arg::Value).parse(input)
 }
 
+// Parses into temporary Arg enum first
 fn parse_relative_mem(input: &str) -> IResult<&str, Arg> {
     alt((
         map(
@@ -181,12 +145,15 @@ fn parse_relative_mem(input: &str) -> IResult<&str, Arg> {
 
 fn parse_label_ref(input: &str, debug_marker: DebugMarker) -> IResult<&str, UnresolvedArgument> {
     map(preceded(char('@'), identifier), |s: &str| {
-        UnresolvedArgument::Label(s.to_string(), debug_marker)
+        UnresolvedArgument::Label {
+            name: s.to_string(),
+            debug_marker,
+        }
     })
     .parse(input)
 }
 fn debug_marker(input: &str) -> IResult<&str, char> {
-    (tag("'"), complete::satisfy(|c| c.is_alphabetic()), space0)
+    (tag("'"), satisfy(|c| c.is_alphabetic()), space0)
         .map(|(_, c, _)| c)
         .parse(input)
 }
@@ -198,7 +165,14 @@ fn parse_argument(input: &str) -> IResult<&str, UnresolvedArgument> {
             alt((parse_relative_mem, parse_immediate)),
         )
         .map(|(debug_marker, arg)| {
-            UnresolvedArgument::Resolved(SourceArgument::new(arg, debug_marker))
+            // Resolve Arg -> OperandKind here, offset still unknown (0 placeholder)
+            UnresolvedArgument::Resolved {
+                op: Operand {
+                    kind: map_arg_to_operand_kind(arg),
+                    offset: 0, // Placeholder, will be filled in later
+                    debug_marker,
+                },
+            }
         }),
         opt(debug_marker)
             .flat_map(|debug_marker| move |input| parse_label_ref(input, debug_marker)),
@@ -207,8 +181,8 @@ fn parse_argument(input: &str) -> IResult<&str, UnresolvedArgument> {
     .parse(input)
 }
 
-// Parse instructions
-fn parse_add(input: &str) -> IResult<&str, Instruction> {
+// Parse instructions returning InstructionKind<UnresolvedArgument>
+fn parse_add(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -221,12 +195,12 @@ fn parse_add(input: &str) -> IResult<&str, Instruction> {
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| Instruction::Add(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| InstructionKind::Add(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_mul(input: &str) -> IResult<&str, Instruction> {
+fn parse_mul(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -239,40 +213,40 @@ fn parse_mul(input: &str) -> IResult<&str, Instruction> {
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| Instruction::Mul(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| InstructionKind::Mul(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_assign(input: &str) -> IResult<&str, Instruction> {
+fn parse_assign(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (parse_argument, space0, char('='), space0, parse_argument),
-        |(c, _, _, _, a)| Instruction::Assign(c, a),
+        |(c, _, _, _, a)| InstructionKind::Assign(c, a),
     )
     .parse(input)
 }
 
-fn parse_input(input: &str) -> IResult<&str, Instruction> {
+fn parse_input(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map((tag("INPUT"), space1, parse_argument), |(_, _, a)| {
-        Instruction::Input(a)
+        InstructionKind::Input(a)
     })
     .parse(input)
 }
 
-fn parse_output(input: &str) -> IResult<&str, Instruction> {
+fn parse_output(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     alt((
         map((tag("output"), space1, parse_argument), |(_, _, a)| {
-            Instruction::Output(a)
+            InstructionKind::Output(a)
         }),
         map(
             delimited(tag("output("), parse_argument, char(')')),
-            Instruction::Output,
+            InstructionKind::Output,
         ),
     ))
     .parse(input)
 }
 
-fn parse_if_goto(input: &str) -> IResult<&str, Instruction> {
+fn parse_if_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (
             tag("if"),
@@ -283,12 +257,12 @@ fn parse_if_goto(input: &str) -> IResult<&str, Instruction> {
             space1,
             parse_argument,
         ),
-        |(_, _, a, _, _, _, b)| Instruction::JumpIf(a, true, b),
+        |(_, _, a, _, _, _, b)| InstructionKind::JumpIfTrue(a, b),
     )
     .parse(input)
 }
 
-fn parse_if_not_goto(input: &str) -> IResult<&str, Instruction> {
+fn parse_if_not_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (
             tag("if"),
@@ -300,19 +274,19 @@ fn parse_if_not_goto(input: &str) -> IResult<&str, Instruction> {
             space1,
             parse_argument,
         ),
-        |(_, _, _, a, _, _, _, b)| Instruction::JumpIf(a, false, b),
+        |(_, _, _, a, _, _, _, b)| InstructionKind::JumpIfFalse(a, b),
     )
     .parse(input)
 }
 
-fn parse_goto(input: &str) -> IResult<&str, Instruction> {
+fn parse_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(preceded(pair(tag("goto"), space1), parse_argument), |a| {
-        Instruction::Goto(a)
+        InstructionKind::Goto(a)
     })
     .parse(input)
 }
 
-fn parse_less_than(input: &str) -> IResult<&str, Instruction> {
+fn parse_less_than(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -325,12 +299,12 @@ fn parse_less_than(input: &str) -> IResult<&str, Instruction> {
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| Instruction::LessThan(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| InstructionKind::LessThan(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_equals(input: &str) -> IResult<&str, Instruction> {
+fn parse_equals(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -343,29 +317,33 @@ fn parse_equals(input: &str) -> IResult<&str, Instruction> {
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| Instruction::Equals(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| InstructionKind::Equals(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_adjust_r(input: &str) -> IResult<&str, Instruction> {
+fn parse_adjust_r(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     alt((
         map(
             (tag("R"), space0, tag("+="), space0, parse_argument),
-            |(_, _, _, _, a)| Instruction::AdjustRelativeBase(a),
+            |(_, _, _, _, a)| InstructionKind::AdjustRelativeBase(a),
         ),
         map(
             (tag("R"), space0, tag("-="), space0, parse_argument),
             |(_, _, _, _, a)| {
                 // Need to negate the argument for subtract
                 match a {
-                    UnresolvedArgument::Resolved(SourceArgument {
-                        arg: Arg::Value(val),
+                    UnresolvedArgument::Resolved{op: Operand {
+                        kind: OperandKind::Immediate(val),
+                        offset: _, // Offset doesn't matter for this transformation
                         debug_marker,
-                    }) => Instruction::AdjustRelativeBase(UnresolvedArgument::Resolved(
-                        SourceArgument::new(Arg::Value(-val), debug_marker),
-                    )),
-                    _ => panic!("Invalid argument for adjust register instruction"),
+                    } } => InstructionKind::AdjustRelativeBase(UnresolvedArgument::Resolved{op:
+                         // Create a resolved Operand directly
+                        Operand { kind: OperandKind::Immediate(-val), offset: 0, debug_marker }
+                    }),
+                    // Handle Label case if R -= @label is valid (likely not)
+                    // Handle Pointer/PointerDeref if R -= ptr/ *ptr is valid (likely not)
+                    _ => panic!("Invalid argument for R -= adjust register instruction: Must be immediate value"),
                 }
             },
         ),
@@ -373,8 +351,8 @@ fn parse_adjust_r(input: &str) -> IResult<&str, Instruction> {
     .parse(input)
 }
 
-fn parse_halt(input: &str) -> IResult<&str, Instruction> {
-    map(tag("halt"), |_| Instruction::Halt).parse(input)
+fn parse_halt(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+    map(tag("halt"), |_| InstructionKind::Halt).parse(input)
 }
 
 fn parse_data_values(input: &str) -> IResult<&str, Vec<i128>> {
@@ -386,27 +364,28 @@ fn parse_data_values(input: &str) -> IResult<&str, Vec<i128>> {
     .parse(input)
 }
 
-fn parse_data(input: &str) -> IResult<&str, Instruction> {
+fn parse_data(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     map(
         preceded(pair(tag("DATA"), space1), parse_data_values),
-        Instruction::Data,
+        InstructionKind::Data,
     )
     .parse(input)
 }
 
-fn parse_instruction(input: &str) -> IResult<&str, Instruction> {
+fn parse_instruction(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
     alt((
+        // Order matters: Match longer/more specific patterns first
         parse_add,
         parse_mul,
-        parse_input,
-        parse_output,
-        parse_if_goto,
-        parse_if_not_goto,
-        parse_goto,
         parse_less_than,
         parse_equals,
+        parse_assign, // Assign uses '=', must come after LT/EQ/ADD/MUL
+        parse_input,
+        parse_output,
+        parse_if_goto, // Needs to come before goto
+        parse_if_not_goto,
+        parse_goto,
         parse_adjust_r,
-        parse_assign,
         parse_halt,
         parse_data,
     ))
@@ -418,105 +397,306 @@ fn parse_label_def(input: &str) -> IResult<&str, String> {
     map(terminated(identifier, char(':')), String::from).parse(input)
 }
 
-fn comment(input: &str) -> IResult<&str, ()> {
-    value(
-        (), // Output is thrown away.
-        pair(tag(";"), is_not("\n\r")),
-    )
-    .parse(input)
+// Define a parser that consumes whitespace (including newlines) or a full comment line.
+fn ws_or_comment(input: &str) -> IResult<&str, ()> {
+    let comment = value((), pair(tag(";"), is_not("\r\n")));
+    /*
+    use nom::multi::many0;
+    // Define a comment parser that includes the trailing newline or EOF
+    //    value((), many0(alt((value((), space0), comment)))).parse(input)
+    comment.parse(input)
+    */
+    value((), many0(alt((value((), multispace1), comment)))).parse(input)
 }
 
 // Parse a line: optional label + optional instruction
-fn parse_line(input: &str) -> IResult<&str, (Option<String>, Instruction)> {
-    let (input, _) = multispace0(input)?;
-    let (input, _) = separated_list0(char('\n'), comment).parse(input)?;
-    let (input, _) = multispace0(input)?;
+fn parse_line(input: &str) -> IResult<&str, (Option<String>, InstructionKind<UnresolvedArgument>)> {
+    // Consume leading whitespace and any number of comment lines
+    let (input, _) = ws_or_comment(input)?;
     let (input, label) = opt(parse_label_def).parse(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = separated_list0(char('\n'), comment).parse(input)?;
-    let (input, _) = multispace0(input)?;
+    // Consume whitespace/comments between label (if any) and instruction
+    let (input, _) = ws_or_comment(input)?;
     let (input, instruction) = parse_instruction.parse(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = separated_list0(char('\n'), comment).parse(input)?;
-    let (input, _) = multispace0(input)?;
+    // Trailing whitespace/comments will be handled by the next call to parse_line or eof check
 
     Ok((input, (label, instruction)))
 }
-//
+
+// This needs the instruction offset to calculate the operand offset.
+fn resolve_argument(
+    arg: &UnresolvedArgument,
+    label_offsets: &HashMap<String, usize>,
+    pointers: &HashMap<String, usize>,
+) -> Result<Operand, String> {
+    match arg {
+        UnresolvedArgument::Label { name, debug_marker } => {
+            if let Some(&target_addr) = label_offsets.get(name.as_str()) {
+                // Use get with &str
+                Ok(Operand {
+                    kind: OperandKind::Immediate(target_addr as i128),
+                    offset: 0,
+                    debug_marker: *debug_marker,
+                })
+            } else {
+                Err(format!("Undefined label: {}", name))
+            }
+        }
+        UnresolvedArgument::PointerDeref { debug_marker, .. } => {
+            // Resolve PointerDeref to Memory(0) as a placeholder for the value
+            // that will be written into this operand's memory location by the pointer assignment.
+            Ok(Operand {
+                kind: OperandKind::Memory(0), // Placeholder
+                offset: 0,
+                debug_marker: *debug_marker,
+            })
+        }
+        UnresolvedArgument::Pointer { name, debug_marker } => {
+            // Resolve Pointer to Memory(target_argument_address)
+            if let Some(&target_arg_addr) = pointers.get(name.as_str()) {
+                // Use get with &str
+                Ok(Operand {
+                    kind: OperandKind::Memory(target_arg_addr as i128),
+                    offset: 0,
+                    debug_marker: *debug_marker,
+                })
+            } else {
+                Err(format!("Undefined pointer: {}", name))
+            }
+        }
+        UnresolvedArgument::Resolved { op } => {
+            // Already resolved during parsing (e.g., immediate, direct mem/rel), just update offset
+            Ok(*op)
+        }
+    }
+}
+
 // Main parser function
 pub fn parse_program(
     input: &str,
-) -> Result<Vec<(usize, GenericInstruction<SourceArgument>)>, nom::Err<nom::error::Error<&str>>> {
+) -> Result<Vec<(usize, Instruction)>, nom::Err<nom::error::Error<&str>>> {
     let (input, lines) = many1(parse_line).parse(input)?;
+    let (input, _) = ws_or_comment(input)?;
     let (_, _) = eof.parse(input)?;
-    // First pass: collect labels and their offsets
+
     let mut label_offsets = HashMap::new();
     let mut pointers = HashMap::new();
     let mut current_offset = 0;
-    let mut instructions = Vec::new();
+    let mut intermediate_instructions: Vec<(usize, InstructionKind<UnresolvedArgument>)> =
+        Vec::new();
 
+    // First pass: Collect labels and pointer definitions
     for (label, instruction) in &lines {
         if let Some(label) = label {
             label_offsets.insert(label.clone(), current_offset);
         }
-        if !matches!(instruction, GenericInstruction::Data(_)) {
+
+        // Store pointer definitions: map name to the memory address *of the argument*
+        // that will be modified by the pointer assignment.
+        if !matches!(instruction, InstructionKind::Data(_)) {
             for i in 0..=2 {
-                match instruction.arg_at(i) {
-                    Some(PositionalArg::Arg(UnresolvedArgument::PointerDeref(name, _))) => {
-                        pointers.insert(name.clone(), current_offset + i + 1);
-                    }
-                    Some(_) | None => {}
+                // Need to inspect args based on kind for pointer defs
+                let arg_opt = match (instruction, i) {
+                    (InstructionKind::Add(a, _, _), 0) => Some(a),
+                    (InstructionKind::Add(_, b, _), 1) => Some(b),
+                    (InstructionKind::Add(_, _, c), 2) => Some(c),
+                    (InstructionKind::Mul(a, _, _), 0) => Some(a),
+                    (InstructionKind::Mul(_, b, _), 1) => Some(b),
+                    (InstructionKind::Mul(_, _, c), 2) => Some(c),
+                    (InstructionKind::Input(a), 0) => Some(a),
+                    (InstructionKind::Output(a), 0) => Some(a),
+                    (InstructionKind::JumpIfTrue(a, _), 0) => Some(a),
+                    (InstructionKind::JumpIfTrue(_, b), 1) => Some(b),
+                    (InstructionKind::JumpIfFalse(a, _), 0) => Some(a),
+                    (InstructionKind::JumpIfFalse(_, b), 1) => Some(b),
+                    (InstructionKind::LessThan(a, _, _), 0) => Some(a),
+                    (InstructionKind::LessThan(_, b, _), 1) => Some(b),
+                    (InstructionKind::LessThan(_, _, c), 2) => Some(c),
+                    (InstructionKind::Equals(a, _, _), 0) => Some(a),
+                    (InstructionKind::Equals(_, b, _), 1) => Some(b),
+                    (InstructionKind::Equals(_, _, c), 2) => Some(c),
+                    (InstructionKind::AdjustRelativeBase(a), 0) => Some(a),
+                    // Synthetic instructions: Need careful indexing based on underlying operation
+                    (InstructionKind::Goto(a), 0) => Some(a), // Underlying target is index 1
+                    (InstructionKind::Assign(a, _), 0) => Some(a), // Underlying target is index 2
+                    (InstructionKind::Assign(_, b), 1) => Some(b), // Underlying source is index 0
+                    _ => None,
+                };
+
+                if let Some(UnresolvedArgument::PointerDeref { name, .. }) = arg_opt {
+                    // Adjust index for synthetic instructions if needed for correct offset
+                    let actual_arg_index = match (instruction, i) {
+                        (InstructionKind::Goto(_), 0) => 1,
+                        (InstructionKind::Assign(_, _), 0) => 2,
+                        (InstructionKind::Assign(_, _), 1) => 0,
+                        _ => i,
+                    };
+                    pointers.insert(name.clone(), current_offset + actual_arg_index + 1);
                 }
             }
         }
-
-        instructions.push((current_offset, instruction));
-        current_offset += instruction.size();
+        intermediate_instructions.push((current_offset, instruction.clone()));
+        current_offset += instruction_kind_size(instruction);
     }
 
-    // Second pass: resolve labels to offsets
-    let resolved_instructions = instructions
+    // Second pass: resolve labels/pointers and create final instructions
+    let resolved_instructions = intermediate_instructions
         .into_iter()
-        .map(|(offset, instr)| {
-            (instr.map_result(&mut (), |_, arg| match arg {
-                UnresolvedArgument::Label(label, debug_marker) => {
-                    if let Some(&target) = label_offsets.get(label) {
-                        Ok(SourceArgument::new(
-                            Arg::Value(target as i128),
-                            *debug_marker,
-                        ))
-                    } else {
-                        Err(format!("Undefined label: {}", label))
-                    }
+        .map(|(offset, instr_kind)| {
+            // Create a temporary GenericInstruction to use map_rw_result
+            // Span and ID are temporary here, will be set correctly on the final instruction
+            let temp_instr = GenericInstruction {
+                id: InstructionId::from(offset), // Use offset for temp ID
+                span: Span::new(offset, offset + instruction_kind_size(&instr_kind)), // Temp span
+                kind: instr_kind,
+            };
+
+            // Use map_rw_result for resolution
+            let mut instruction = temp_instr.map_rw_result(
+                &mut (&label_offsets, &pointers), // Context tuple
+                &mut |ctx, arg| {
+                    // map_read
+                    let (lbl_offs, ptrs) = ctx;
+                    // Determine logical arg index for read operands
+                    // This is complex because map_rw doesn't provide index easily.
+                    // We might need to resolve manually outside map_rw_result or enhance it.
+                    // For now, let's assume index calculation is possible or done manually below.
+                    // Placeholder: Assuming index 0 for simplicity here, needs proper logic.
+                    resolve_argument(arg, lbl_offs, ptrs)
+                    // Needs correct index
+                },
+                &mut |ctx, arg| {
+                    // map_write
+                    let (lbl_offs, ptrs) = ctx;
+                    // Placeholder: Assuming index based on instruction type for writes.
+                    resolve_argument(arg, lbl_offs, ptrs)
+                    // Needs correct index
+                },
+            )?;
+            for i in 0..=2 {
+                let mut op = instruction.operand_at_mut(i);
+                println!("op at offset {}: {:?}", offset + i + 1, op);
+                if let Some(ref mut op) = op {
+                    op.offset = offset + i + 1;
                 }
-                UnresolvedArgument::PointerDeref(_, debug_marker) => {
-                    Ok(SourceArgument::new(Arg::Mem(0), *debug_marker))
-                }
-                UnresolvedArgument::Pointer(name, debug_marker) => {
-                    if let Some(&target) = pointers.get(name) {
-                        Ok(SourceArgument::new(Arg::Mem(target as i128), *debug_marker))
-                    } else {
-                        Err(format!("Undefined pointer: {}", name))
-                    }
-                }
-                UnresolvedArgument::Resolved(arg) => Ok(arg.clone()),
-            }))
-            .map(|arg| (offset, arg))
+            }
+
+            instruction.kind = simplify_instruction(instruction.kind);
+
+            Ok((offset, instruction))
         })
-        .collect::<Result<Vec<(usize, GenericInstruction<SourceArgument>)>, String>>()
+        .collect::<Result<Vec<(usize, Instruction)>, String>>()
         .map_err(|_| {
-            nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            // Convert String error to nom::Err
+            nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            // Pass input string slice
         })?;
 
     Ok(resolved_instructions)
 }
 
-#[cfg(test)]
 pub fn compile(code: &str) -> Vec<i128> {
     let program = parse_program(code).unwrap();
     let mut out = vec![];
-    for inst in program {
-        inst.1.serialize(&mut out);
+    for (_, instruction) in program {
+        // --- Serialization Logic ---
+        let base_opcode = instruction.opcode().as_i128();
+        let mut args_to_serialize: Vec<Operand> = vec![];
+        let mut modes: Vec<i128> = vec![];
+
+        match &instruction.kind {
+            InstructionKind::Data(v) => {
+                out.extend(v);
+                continue; // Skip normal serialization
+            }
+            InstructionKind::Halt => { /* No args */ }
+            InstructionKind::Add(a, b, c) => {
+                args_to_serialize = vec![*a, *b, *c];
+            }
+            InstructionKind::Mul(a, b, c) => {
+                args_to_serialize = vec![*a, *b, *c];
+            }
+            InstructionKind::Input(a) => {
+                args_to_serialize = vec![*a];
+            }
+            InstructionKind::Output(a) => {
+                args_to_serialize = vec![*a];
+            }
+            InstructionKind::JumpIfTrue(a, b) => {
+                args_to_serialize = vec![*a, *b];
+            }
+            InstructionKind::JumpIfFalse(a, b) => {
+                args_to_serialize = vec![*a, *b];
+            }
+            InstructionKind::LessThan(a, b, c) => {
+                args_to_serialize = vec![*a, *b, *c];
+            }
+            InstructionKind::Equals(a, b, c) => {
+                args_to_serialize = vec![*a, *b, *c];
+            }
+            InstructionKind::AdjustRelativeBase(a) => {
+                args_to_serialize = vec![*a];
+            }
+            // Synthetic instructions serialized as underlying Intcode
+            InstructionKind::Goto(target) => {
+                // Need an immediate '1' operand first
+                let cond_operand = Operand {
+                    kind: OperandKind::Immediate(1),
+                    offset: 0,
+                    debug_marker: None,
+                }; // Offset doesn't matter for serialization value
+                args_to_serialize = vec![cond_operand, *target];
+                // base_opcode is already 5 via instruction.opcode()
+            }
+            InstructionKind::Assign(target, source) => {
+                // Need an immediate '0' operand
+                let zero_operand = Operand {
+                    kind: OperandKind::Immediate(0),
+                    offset: 0,
+                    debug_marker: None,
+                };
+                // Order for underlying Add: source, zero, target
+                args_to_serialize = vec![*source, zero_operand, *target];
+                // base_opcode is already 1 via instruction.opcode()
+            }
+        }
+
+        let mut mode_flags = 0i128;
+        let mut marker_flags = 0i128;
+
+        for (i, operand) in args_to_serialize.iter().enumerate() {
+            let mode = match operand.kind {
+                OperandKind::Memory(_) | OperandKind::Deref(_) => 0, // Treat Deref as Memory for mode
+                OperandKind::Immediate(_) => 1,
+                OperandKind::RelativeMemory(_) => 2,
+            };
+            modes.push(mode);
+            mode_flags += mode * 10i128.pow((i as u32) + 2);
+
+            if let Some(marker) = operand.debug_marker {
+                // Ensure marker value is within u8 range if necessary
+                let marker_val = marker as i128;
+                if marker_val > 0 && marker_val <= 255 {
+                    // Correct calculation: (marker value * 2^(8*i)) * 100000
+                    marker_flags += (marker_val << (8 * i)) * 100000;
+                }
+            }
+        }
+
+        out.push(base_opcode + mode_flags + marker_flags);
+
+        for operand in args_to_serialize {
+            let value = match operand.kind {
+                OperandKind::Memory(addr) => addr,
+                OperandKind::Immediate(val) => val,
+                OperandKind::RelativeMemory(offset) => offset,
+                // Deref(offset) refers to the *location* of the operand, not its value yet.
+                // When serializing an instruction like `[R+1] = *ptr`, the `*ptr` operand
+                // (which resolved to Memory(0)) should serialize as 0 initially.
+                // The preceding `ptr = address_of_arg` instruction handles the modification.
+                OperandKind::Deref(_) => 0,
+            };
+            out.push(value);
+        }
     }
     out
 }
@@ -526,103 +706,156 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
+    use crate::disasm::v2::instructions::{InstructionKind, OperandKind};
+    use pretty_assertions::assert_eq;
 
-    type Instruction = GenericInstruction<Arg>;
-
-    // Helper function to parse a single instruction
-    fn parse_single_instruction(input: &str) -> Instruction {
+    // Helper function to parse a single instruction kind for testing
+    fn parse_single_instruction_kind(input: &str) -> InstructionKind<OperandKind> {
         let v = parse_program(input).unwrap();
-        v[0].1.map(|arg| arg.arg.clone())
+        assert_eq!(v.len(), 1, "Expected single instruction for test");
+        // Map Operand -> OperandKind for comparison in tests
+        v[0].1
+            .map_rw(&mut (), &mut |_, op| op.kind, &mut |_, op| op.kind)
+            .kind
     }
 
-    // Helper to parse a complete program and return just the instructions
-    fn parse_test_program(input: &str) -> Vec<Instruction> {
+    // Helper to parse a complete program and return just the instruction kinds
+    fn parse_test_program_kinds(input: &str) -> Vec<InstructionKind<OperandKind>> {
         let program = parse_program(input).unwrap();
         program
             .into_iter()
-            .map(|(_, instr)| instr.map(|arg| arg.arg.clone()))
+            .map(|(_, instr)| instr.map_rw(&mut (), &mut |_, op| op.kind, &mut |_, op| op.kind))
+            .map(|i| i.kind)
             .collect_vec()
     }
 
     #[test]
     fn test_single_instructions() {
         // Test halt
-        assert_eq!(parse_single_instruction("halt"), Instruction::Halt);
+        assert_eq!(parse_single_instruction_kind("halt"), InstructionKind::Halt);
 
         // Test basic arithmetic with new syntax
         assert_eq!(
-            parse_single_instruction("[0] = 1 + 2"),
-            Instruction::Add(Arg::Value(1), Arg::Value(2), Arg::Mem(0))
+            parse_single_instruction_kind("[0] = 1 + 2"),
+            InstructionKind::Add(
+                OperandKind::Immediate(1),
+                OperandKind::Immediate(2),
+                OperandKind::Memory(0)
+            )
         );
 
         assert_eq!(
-            parse_single_instruction("[10] = [20] * 5"),
-            Instruction::Mul(Arg::Mem(20), Arg::Value(5), Arg::Mem(10))
+            parse_single_instruction_kind("[10] = [20] * 5"),
+            InstructionKind::Mul(
+                OperandKind::Memory(20),
+                OperandKind::Immediate(5),
+                OperandKind::Memory(10)
+            )
+        );
+
+        // Test assignment simplification
+        assert_eq!(
+            parse_single_instruction_kind("[10] = [20] + 0"),
+            InstructionKind::Assign(OperandKind::Memory(10), OperandKind::Memory(20)) // simplify applied
+        );
+        assert_eq!(
+            parse_single_instruction_kind("[10] = 1 * [20]"),
+            InstructionKind::Assign(OperandKind::Memory(10), OperandKind::Memory(20)) // simplify applied
         );
 
         // Test INPUT/output
         assert_eq!(
-            parse_single_instruction("INPUT [0]"),
-            Instruction::Input(Arg::Mem(0))
+            parse_single_instruction_kind("INPUT [0]"),
+            InstructionKind::Input(OperandKind::Memory(0))
         );
 
         assert_eq!(
-            parse_single_instruction("output 42"),
-            Instruction::Output(Arg::Value(42))
+            parse_single_instruction_kind("output 42"),
+            InstructionKind::Output(OperandKind::Immediate(42))
         );
 
         // Test the alternative output syntax
         assert_eq!(
-            parse_single_instruction("output(100)"),
-            Instruction::Output(Arg::Value(100))
+            parse_single_instruction_kind("output(100)"),
+            InstructionKind::Output(OperandKind::Immediate(100))
         );
 
         // Test conditional jumps
         assert_eq!(
-            parse_single_instruction("if [0] goto 100"),
-            Instruction::JumpIf(Arg::Mem(0), true, Arg::Value(100))
+            parse_single_instruction_kind("if [0] goto 100"),
+            InstructionKind::JumpIfTrue(OperandKind::Memory(0), OperandKind::Immediate(100))
         );
 
         assert_eq!(
-            parse_single_instruction("if ![5] goto 200"),
-            Instruction::JumpIf(Arg::Mem(5), false, Arg::Value(200))
+            parse_single_instruction_kind("if ![5] goto 200"),
+            InstructionKind::JumpIfFalse(OperandKind::Memory(5), OperandKind::Immediate(200))
+        );
+
+        // Test jump simplification
+        assert_eq!(
+            parse_single_instruction_kind("if 1 goto 100"), // Non-zero constant
+            InstructionKind::Goto(OperandKind::Immediate(100))  // simplify applied
+        );
+        assert_eq!(
+            parse_single_instruction_kind("if 0 goto 100"), // Zero constant -> no jump
+            InstructionKind::JumpIfTrue(OperandKind::Immediate(0), OperandKind::Immediate(100)) // Expected: Not simplified
+        );
+        assert_eq!(
+            parse_single_instruction_kind("if !0 goto 100"), // Not zero constant
+            InstructionKind::Goto(OperandKind::Immediate(100))  // simplify applied
+        );
+        assert_eq!(
+            parse_single_instruction_kind("if !1 goto 100"), // Not non-zero constant -> no jump
+            InstructionKind::JumpIfFalse(OperandKind::Immediate(1), OperandKind::Immediate(100)) // Expected: Not simplified
         );
 
         // Test comparison operations
         assert_eq!(
-            parse_single_instruction("[0] = [1] < [2]"),
-            Instruction::LessThan(Arg::Mem(1), Arg::Mem(2), Arg::Mem(0))
+            parse_single_instruction_kind("[0] = [1] < [2]"),
+            InstructionKind::LessThan(
+                OperandKind::Memory(1),
+                OperandKind::Memory(2),
+                OperandKind::Memory(0)
+            )
         );
 
         assert_eq!(
-            parse_single_instruction("[0] = [1] == [2]"),
-            Instruction::Equals(Arg::Mem(1), Arg::Mem(2), Arg::Mem(0))
+            parse_single_instruction_kind("[0] = [1] == [2]"),
+            InstructionKind::Equals(
+                OperandKind::Memory(1),
+                OperandKind::Memory(2),
+                OperandKind::Memory(0)
+            )
         );
 
         assert_eq!(
-            parse_single_instruction("[R-1] = [R-3] == [R-2]"),
-            Instruction::Equals(
-                Arg::RelativeMem(-3),
-                Arg::RelativeMem(-2),
-                Arg::RelativeMem(-1)
+            parse_single_instruction_kind("[R-1] = [R-3] == [R-2]"),
+            InstructionKind::Equals(
+                OperandKind::RelativeMemory(-3),
+                OperandKind::RelativeMemory(-2),
+                OperandKind::RelativeMemory(-1)
             )
         );
 
         // Test R adjustment
         assert_eq!(
-            parse_single_instruction("R += 10"),
-            Instruction::AdjustRelativeBase(Arg::Value(10))
+            parse_single_instruction_kind("R += 10"),
+            InstructionKind::AdjustRelativeBase(OperandKind::Immediate(10))
         );
 
         assert_eq!(
-            parse_single_instruction("R -= 5"),
-            Instruction::AdjustRelativeBase(Arg::Value(-5))
+            parse_single_instruction_kind("R -= 5"),
+            InstructionKind::AdjustRelativeBase(OperandKind::Immediate(-5)) // Check negation
         );
 
         // Test relative memory addressing
         assert_eq!(
-            parse_single_instruction("[0] = [R+5] + [R-3]"),
-            Instruction::Add(Arg::RelativeMem(5), Arg::RelativeMem(-3), Arg::Mem(0))
+            parse_single_instruction_kind("[0] = [R+5] + [R-3]"),
+            InstructionKind::Add(
+                OperandKind::RelativeMemory(5),
+                OperandKind::RelativeMemory(-3),
+                OperandKind::Memory(0)
+            )
         );
     }
 
@@ -637,158 +870,170 @@ mod tests {
         ";
 
         let expected = vec![
-            Instruction::Input(Arg::Mem(0)),
-            Instruction::Input(Arg::Mem(1)),
-            Instruction::Add(Arg::Mem(0), Arg::Mem(1), Arg::Mem(2)),
-            Instruction::Output(Arg::Mem(2)),
-            Instruction::Halt,
+            InstructionKind::Input(OperandKind::Memory(0)),
+            InstructionKind::Input(OperandKind::Memory(1)),
+            InstructionKind::Add(
+                OperandKind::Memory(0),
+                OperandKind::Memory(1),
+                OperandKind::Memory(2),
+            ),
+            InstructionKind::Output(OperandKind::Memory(2)),
+            InstructionKind::Halt,
         ];
 
-        assert_eq!(parse_test_program(program), expected);
+        assert_eq!(parse_test_program_kinds(program), expected);
     }
 
     #[test]
     fn test_program_with_labels() {
         let program = "
-            INPUT [0]       ; Get a number
-            [1] = 1 + 0     ; Initialize counter
-            loop:           ; Loop start
-                [2] = [1] * [0]  ; Multiply
-                output [2]  ; Output the result
-                [1] = [1] + 1    ; Increment counter
-                [3] = [1] < 5    ; Check if counter < 5
-                if [3] goto @loop  ; Loop if true
-            halt
+            INPUT [0]       ; Get a number          ; 0
+            [1] = 1 + 0     ; Initialize counter    ; 2 -> Assign
+            loop:           ;                       ; 6
+                [2] = [1] * [0]  ; Multiply         ; 6
+                output [2]  ; Output the result     ; 10
+                [1] = [1] + 1    ; Increment counter; 12
+                [3] = [1] < 5    ; Check if counter < 5 ; 16
+                if [3] goto @loop  ; Loop if true   ; 20
+            halt            ;                       ; 23
         ";
 
-        let instructions = parse_test_program(program);
+        let instructions = parse_test_program_kinds(program);
 
-        // The offsets will be calculated by the parser
-        // We'll check a few key instructions:
-        assert_eq!(instructions[0], Instruction::Input(Arg::Mem(0)));
+        // Offsets: INPUT=2, Assign=4, Mul=4, Output=2, Add=4, Lt=4, If=3, Halt=1
+        // loop: starts at offset 6
 
-        // Check the multiplication
-        assert_eq!(
-            instructions[2],
-            Instruction::Mul(Arg::Mem(1), Arg::Mem(0), Arg::Mem(2))
-        );
+        let expected = vec![
+            InstructionKind::Input(OperandKind::Memory(0)), // 0
+            InstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(1)), // 2
+            InstructionKind::Mul(
+                OperandKind::Memory(1),
+                OperandKind::Memory(0),
+                OperandKind::Memory(2),
+            ), // 6 (loop)
+            InstructionKind::Output(OperandKind::Memory(2)), // 10
+            InstructionKind::Add(
+                OperandKind::Memory(1),
+                OperandKind::Immediate(1),
+                OperandKind::Memory(1),
+            ), // 12
+            InstructionKind::LessThan(
+                OperandKind::Memory(1),
+                OperandKind::Immediate(5),
+                OperandKind::Memory(3),
+            ), // 16
+            InstructionKind::JumpIfTrue(OperandKind::Memory(3), OperandKind::Immediate(6)), // 20 -> jumps to 6
+            InstructionKind::Halt,                                                          // 23
+        ];
 
-        // Check the loop jump - it should jump to offset 6
-        assert_eq!(
-            instructions[6],
-            Instruction::JumpIf(Arg::Mem(3), true, Arg::Value(6))
-        );
-
-        // Check the halt instruction
-        assert_eq!(instructions[7], Instruction::Halt);
+        assert_eq!(instructions, expected);
     }
 
     #[test]
     fn test_complex_program() {
         let program = "
             ; Initialize variables
-            [0] = 0 + 0    ; sum = 0
-            [1] = 1 + 0    ; i = 1
-            [10] = 10 + 0  ; limit = 10
+            [0] = 0 + 0    ; sum = 0                 ; 0 -> Assign
+            [1] = 1 + 0    ; i = 1                   ; 4 -> Assign
+            [10] = 10 + 0  ; limit = 10              ; 8 -> Assign
 
             ; Main loop to calculate sum of 1 to 10
-            loop:
+            loop:          ;                         ; 12
                 ; Check if i <= limit
-                [2] = [1] < [10]     ; i < limit?
-                [3] = [1] == [10]    ; i == limit?
-                [4] = [2] + [3]      ; result of i <= limit
+                [2] = [1] < [10]     ; i < limit?    ; 12
+                [3] = [1] == [10]    ; i == limit?   ; 16
+                [4] = [2] + [3]      ; result of i <= limit ; 20
 
                 ; If i > limit, exit loop
-                if ![4] goto @done
+                if ![4] goto @done ;                 ; 24
 
                 ; sum += i
-                [0] = [0] + [1]
+                [0] = [0] + [1]    ;                 ; 27
 
                 ; i++
-                [1] = [1] + 1
+                [1] = [1] + 1      ;                 ; 31
 
                 ; Continue loop
-                goto @loop
+                goto @loop         ;                 ; 35
 
-            done:
+            done:          ;                         ; 38
                 ; Output final sum
-                output [0]
-                halt
+                output [0]         ;                 ; 38
+                halt               ;                 ; 40
         ";
 
-        let instructions = parse_test_program(program);
+        let instructions = parse_test_program_kinds(program);
 
         // Verify the program length
         assert_eq!(instructions.len(), 12);
 
-        // Check key instructions
+        // Check key instructions (addresses calculated based on sizes)
+        let expected = vec![
+            InstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(0)), // 0
+            InstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(1)), // 4
+            InstructionKind::Assign(OperandKind::Memory(10), OperandKind::Immediate(10)), // 8
+            InstructionKind::LessThan(
+                OperandKind::Memory(1),
+                OperandKind::Memory(10),
+                OperandKind::Memory(2),
+            ), // 12 (loop)
+            InstructionKind::Equals(
+                OperandKind::Memory(1),
+                OperandKind::Memory(10),
+                OperandKind::Memory(3),
+            ), // 16
+            InstructionKind::Add(
+                OperandKind::Memory(2),
+                OperandKind::Memory(3),
+                OperandKind::Memory(4),
+            ), // 20
+            InstructionKind::JumpIfFalse(OperandKind::Memory(4), OperandKind::Immediate(38)), // 24 -> jumps to done (38)
+            InstructionKind::Add(
+                OperandKind::Memory(0),
+                OperandKind::Memory(1),
+                OperandKind::Memory(0),
+            ), // 27
+            InstructionKind::Add(
+                OperandKind::Memory(1),
+                OperandKind::Immediate(1),
+                OperandKind::Memory(1),
+            ), // 31
+            InstructionKind::Goto(OperandKind::Immediate(12)), // 35 -> jumps to loop (12)
+            InstructionKind::Output(OperandKind::Memory(0)),   // 38 (done)
+            InstructionKind::Halt,                             // 40
+        ];
 
-        // Initialize sum
-        assert_eq!(
-            instructions[0],
-            Instruction::Add(Arg::Value(0), Arg::Value(0), Arg::Mem(0))
-        );
-
-        // Check loop condition
-        assert_eq!(
-            instructions[3],
-            Instruction::LessThan(Arg::Mem(1), Arg::Mem(10), Arg::Mem(2))
-        );
-
-        // Check conditional jump
-        assert_eq!(
-            instructions[6],
-            Instruction::JumpIf(Arg::Mem(4), false, Arg::Value(38))
-        );
-
-        // Check final output and halt
-        assert_eq!(instructions[10], Instruction::Output(Arg::Mem(0)));
-        assert_eq!(instructions[11], Instruction::Halt);
+        assert_eq!(instructions, expected);
     }
 
     #[test]
     fn test_nested_labels() {
+        // Just checks parsing and length
         let program = "
-            ; A program with nested control structures
             [0] = 0 + 0    ; result = 0
             [1] = 1 + 0    ; i = 1
             [2] = 5 + 0    ; max = 5
-
             outer_loop:
                 [3] = [1] < [2]
                 if ![3] goto @done
-
                 [10] = 1 + 0    ; j = 1
-
                 inner_loop:
                     [11] = [10] < [1]
                     if ![11] goto @inner_done
-
-                    ; result += i * j
                     [20] = [1] * [10]
                     [0] = [0] + [20]
-
-                    ; j++
                     [10] = [10] + 1
                     goto @inner_loop
-
                 inner_done:
-                    ; i++
                     [1] = [1] + 1
                     goto @outer_loop
-
             done:
                 output [0]
                 halt
         ";
-
-        // For this test, we'll just check that it parses without errors
-        // and verify the total instruction count
-        let instructions = parse_test_program(program);
+        let instructions = parse_test_program_kinds(program);
         assert_eq!(instructions.len(), 16);
-
-        // Verify the final instruction is halt
-        assert_eq!(instructions.last().unwrap(), &Instruction::Halt);
+        assert_eq!(instructions.last().unwrap(), &InstructionKind::Halt);
     }
 
     #[test]
@@ -797,7 +1042,7 @@ mod tests {
             ; This program calculates 5 + 7
 
             ; Initialize values
-            [0] = 5 + 0    ; First value
+            [0] = 5 + 0    ; First value (Assign)
 
             ; Add second value
             [0] = [0] + 7  ; Add 7
@@ -810,140 +1055,197 @@ mod tests {
         ";
 
         let expected = vec![
-            Instruction::Add(Arg::Value(5), Arg::Value(0), Arg::Mem(0)),
-            Instruction::Add(Arg::Mem(0), Arg::Value(7), Arg::Mem(0)),
-            Instruction::Output(Arg::Mem(0)),
-            Instruction::Halt,
+            InstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(5)),
+            InstructionKind::Add(
+                OperandKind::Memory(0),
+                OperandKind::Immediate(7),
+                OperandKind::Memory(0),
+            ),
+            InstructionKind::Output(OperandKind::Memory(0)),
+            InstructionKind::Halt,
         ];
 
-        assert_eq!(parse_test_program(program), expected);
+        assert_eq!(parse_test_program_kinds(program), expected);
     }
     #[test]
     fn test_label_position_in_args() {
         let program = "
             ; Test using labels in different positions
-            start:
-                [0] = 1 + 0  ; 0
-                [1] = 2 + 0  ; 4
+            start:             ; 0
+                [0] = 1 + 0    ; 0 -> Assign
+                [1] = 2 + 0    ; 4 -> Assign
 
-                ; Label as first argument
-                if @loop goto @done   ; 8
+                ; Label as condition argument for jump
+                if @loop goto @done ; 8 -> If(@loop=11, @done=26)
 
-                loop:
-                ; Label as second argument for arithmatic
-                [2] = @loop + 10      ; 11
+            loop:              ; 11
+                ; Label as second argument for arithmetic
+                [2] = @loop + 10      ; 11 -> Add(Immediate(11), Immediate(10), Mem(2))
 
-                ; Label in third position
-                [3] = 5 < @done       ; 15
+                ; Label in comparison
+                [3] = 5 < @done       ; 15 -> Lt(Immediate(5), Immediate(26), Mem(3))
 
-                ; Label as third argument
-                [4] = 100 + 200      ; 19
-                goto @loop           ; 23
+                ; Label as target for goto
+                [4] = 100 + 200  ; 19 -> Add(...)
+                goto @loop       ; 23 -> Goto(@loop=11)
 
-            done:
-                output [0]           ; 26
-                halt                 ; 27
+            done:              ; 26
+                output [0]       ; 26
+                halt             ; 28
         ";
 
-        let ops = parse_test_program(program);
+        let ops = parse_test_program_kinds(program);
 
-        // The if @loop goto @done should use the address of @loop as first arg
-        // The [2] = @loop + 10 should use loop's address as first arg
-        assert_eq!(
-            ops[3],
-            Instruction::Add(Arg::Value(11), Arg::Value(10), Arg::Mem(2))
-        );
+        let expected = vec![
+            InstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(1)), // 0
+            InstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(2)), // 4
+            InstructionKind::Goto(OperandKind::Immediate(26)),                          // 8
+            InstructionKind::Add(
+                OperandKind::Immediate(11),
+                OperandKind::Immediate(10),
+                OperandKind::Memory(2),
+            ), // 11 (loop)
+            InstructionKind::LessThan(
+                OperandKind::Immediate(5),
+                OperandKind::Immediate(26),
+                OperandKind::Memory(3),
+            ), // 15
+            InstructionKind::Add(
+                OperandKind::Immediate(100),
+                OperandKind::Immediate(200),
+                OperandKind::Memory(4),
+            ), // 19
+            InstructionKind::Goto(OperandKind::Immediate(11)),                          // 23
+            InstructionKind::Output(OperandKind::Memory(0)),                            // 26 (done)
+            InstructionKind::Halt,                                                      // 28
+        ];
 
-        // The [3] = 5 < @done should use done's address as second arg
-        assert_eq!(
-            ops[4],
-            Instruction::LessThan(Arg::Value(5), Arg::Value(26), Arg::Mem(3))
-        );
+        assert_eq!(ops, expected);
     }
 
     #[test]
     fn test_debug_marker() {
         let program = "
-            'x [0] = 0 + 0    ; set debug marker 'x on first argument
-            [1] = 'y10 + 0    ; set debug marker 'y on second argument
-            [2] = 0 + 'z5     ; set debug marker 'z on third argument
-            'a ptr = 350      ; set debug marker 'a on pointer
-            [3] = 'b *ptr     ; read from pointer
+            'x [0] = 0 + 0    ; Assign: marker 'x on target (arg 2 of Add)
+            [1] = 'y 10 + 0   ; Assign: marker 'y on source (arg 0 of Add)
+            [2] = 0 + 'z 5    ; Add: marker 'z on arg 1
+            'a ptr = 350      ; Assign: marker 'a on target '[<addr>]' (arg 2 of Add)
+            [3] = 'b *ptr     ; Assign: marker 'b on source '*ptr' -> Mem(0) (arg 0 of Add)
         ";
 
         let instructions = parse_program(program).unwrap();
         let instructions = instructions.into_iter().map(|(_, inst)| inst).collect_vec();
 
-        // Check first instruction: 'x[0] = 0 + 0
-        if let GenericInstruction::Add(arg1, arg2, arg3) = &instructions[0] {
-            assert_eq!(arg1.debug_marker, None);
-            assert_eq!(arg2.debug_marker, None);
-            assert_eq!(arg3.debug_marker, Some('x'));
+        // Check first instruction: 'x [0] = 0 + 0 -> Assign([0], 0) -> Add(0, 0, [0])
+        if let InstructionKind::Assign(target, source) = &instructions[0].kind {
+            assert_eq!(source.debug_marker, None); // Source 0 (arg 0)
+            assert_eq!(target.debug_marker, Some('x')); // Target [0] (arg 2)
         } else {
-            panic!("Expected Add instruction");
+            panic!("Expected Assign instruction 0");
         }
 
-        // Check second instruction: [1] = 'y10 + 0
-        if let GenericInstruction::Add(arg1, arg2, arg3) = &instructions[1] {
-            assert_eq!(arg1.debug_marker, Some('y'));
-            assert_eq!(arg2.debug_marker, None);
-            assert_eq!(arg3.debug_marker, None);
+        // Check second instruction: [1] = 'y 10 + 0 -> Assign([1], 'y 10) -> Add('y 10, 0, [1])
+        if let InstructionKind::Assign(target, source) = &instructions[1].kind {
+            assert_eq!(source.debug_marker, Some('y')); // Source 'y 10 (arg 0)
+            assert_eq!(target.debug_marker, None); // Target [1] (arg 2)
         } else {
-            panic!("Expected Add instruction");
+            panic!("Expected Assign instruction 1");
         }
 
-        // Check third instruction: [2] = 0 + 'z5
-        if let GenericInstruction::Add(arg1, arg2, arg3) = &instructions[2] {
-            assert_eq!(arg1.debug_marker, None);
-            assert_eq!(arg2.debug_marker, Some('z'));
-            assert_eq!(arg3.debug_marker, None);
+        // Check third instruction: [2] = 0 + 'z 5
+        if let InstructionKind::Assign(arg0, arg1) = &instructions[2].kind {
+            assert_eq!(arg0.debug_marker, None);
+            assert_eq!(arg1.debug_marker, Some('z'));
         } else {
-            panic!("Expected Add instruction");
+            panic!("Expected Add instruction 2");
         }
 
-        if let GenericInstruction::Assign(arg1, arg2) = &instructions[3] {
-            assert_eq!(arg1.debug_marker, Some('a'));
-            assert_eq!(arg2.debug_marker, None);
+        // Next assign [3]=*ptr starts at 16. The *ptr operand is at 16+0+1=17 (using underlying Add indices).
+        // So 'a ptr = 350' -> Assign(Mem(13), Imm(350)) -> Target Mem(17) gets marker 'a'.
+        if let InstructionKind::Assign(target, source) = &instructions[3].kind {
+            assert!(
+                matches!(target.kind, OperandKind::Memory(17)),
+                "Expected target to be Mem(17), got {:?}",
+                target.kind
+            ); // Points to offset of *ptr arg
+            assert_eq!(target.debug_marker, Some('a')); // Marker 'a' is on the target operand
+            assert_eq!(source.debug_marker, None);
+            assert!(
+                matches!(source.kind, OperandKind::Immediate(350)),
+                "Expected source to be Imm(350)"
+            );
         } else {
-            panic!("Expected Assign instruction");
+            panic!("Expected Assign instruction 3");
         }
-        if let GenericInstruction::Assign(arg1, arg2) = &instructions[4] {
-            assert_eq!(arg1.debug_marker, None);
-            assert_eq!(arg2.debug_marker, Some('b'));
+
+        // Check fifth instruction: [3] = 'b *ptr -> Assign([3], 'b Mem(0)) -> Add('b Mem(0), 0, [3])
+        if let InstructionKind::Assign(target, source) = &instructions[4].kind {
+            assert_eq!(source.debug_marker, Some('b')); // Source '*ptr' (arg 0) has marker 'b'
+            assert!(
+                matches!(source.kind, OperandKind::Memory(0)),
+                "Expected source kind Mem(0)"
+            ); // *ptr resolves to Memory(0) placeholder
+            assert_eq!(target.debug_marker, None); // Target [3] (arg 2)
+            assert!(
+                matches!(target.kind, OperandKind::Memory(3)),
+                "Expected target kind Mem(3)"
+            );
         } else {
-            panic!("Expected Assign instruction");
+            panic!("Expected Assign instruction 4");
         }
+
+        // Check compiled markers
+        let compiled = compile(program);
+        // Inst 0: Assign [0] = 0 -> Add(Imm(0), Imm(0), Mem(0)) -> Opcode 1, modes 110 -> 1101. marker x on target (arg 2).
+        // marker_flags = ('x' << 16) * 100000 = (120 << 16) * 100000 = 7864320 * 100000 = 786432000000
+        assert_eq!(compiled[0], 786432001101); // 'x' on arg 2
+                                               // Inst 1: Assign [1] = 10 -> Add(Imm(10), Imm(0), Mem(1)) -> Opcode 1, modes 110 -> 1101. marker y on source (arg 0).
+                                               // marker_flags = ('y' << 0) * 100000 = 121 * 100000 = 12100000
+        assert_eq!(compiled[4], 12101101); // 'y' on arg 0
+                                           // Inst 2: Add(Imm(0), Imm(5), Mem(2)) -> Opcode 1, modes 110 -> 1101. marker z on arg 1.
+                                           // marker_flags = ('z' << 8) * 100000 = (122 << 8) * 100000 = 31232 * 100000 = 3123200000
+        assert_eq!(compiled[8], 12201101); // 'z' on arg 1
+                                           // Inst 3: Assign(Mem(17), Imm(350)) -> Add(Imm(350), Imm(0), Mem(13)) -> Opcode 1, modes 110 -> 1101. marker a on target (arg 2).
+                                           // marker_flags = ('a' << 16) * 100000 = (97 << 16) * 100000 = 6356992 * 100000 = 635699200000
+        assert_eq!(compiled[12], 635699201101); // 'a' on arg 2
+                                                // Inst 4: Assign(Mem(3), Mem(0)) -> Add(Mem(0), Imm(0), Mem(3)) -> Opcode 1, modes 010 -> 101. marker b on source (arg 0).
+                                                // marker_flags = ('b' << 0) * 100000 = 98 * 100000 = 9800000
+        assert_eq!(compiled[16], 9801001); // 'b' on arg 0
     }
     #[test]
     fn test_data_instruction() {
         let program = "DATA 10, 20, -30";
-        let expected = Instruction::Data(vec![10, 20, -30]);
-        assert_eq!(parse_single_instruction(program), expected);
+        let expected = InstructionKind::Data(vec![10, 20, -30]);
+        assert_eq!(parse_single_instruction_kind(program), expected);
     }
 
     #[test]
     fn test_program_with_data() {
         let program = "
             start:
-                [0] = 1 + 2
-                goto @data_section
-            halt ; Should not be reached
+                [0] = 1 + 2    ; Add: offset 0, size 4
+                goto @data_section ; Goto: offset 4, size 3 (@data=8)
+            halt ; Should not be reached ; Halt: offset 7, size 1
 
-            data_section:
-                DATA 100, 200, 300
-                output [0] ; Instruction after data
-                halt
+            data_section:      ; 8
+                DATA 100, 200, 300 ; Data: offset 8, size 3
+                output [0] ; Instruction after data ; Output: offset 11, size 2
+                halt       ; Halt: offset 13, size 1
         ";
 
-        let instructions = parse_test_program(program);
+        let instructions = parse_test_program_kinds(program);
 
         let expected = vec![
-            Instruction::Add(Arg::Value(1), Arg::Value(2), Arg::Mem(0)), // Offset 0
-            Instruction::Goto(Arg::Value(8)),                            // Offset 4
-            Instruction::Halt,                                           // Offset 7 (unreachable)
-            Instruction::Data(vec![100, 200, 300]),                      // Offset 8
-            Instruction::Output(Arg::Mem(0)),                            // Offset 11
-            Instruction::Halt,                                           // Offset 13
+            InstructionKind::Add(
+                OperandKind::Immediate(1),
+                OperandKind::Immediate(2),
+                OperandKind::Memory(0),
+            ), // Offset 0
+            InstructionKind::Goto(OperandKind::Immediate(8)), // Offset 4
+            InstructionKind::Halt,                            // Offset 7 (unreachable)
+            InstructionKind::Data(vec![100, 200, 300]),       // Offset 8
+            InstructionKind::Output(OperandKind::Memory(0)),  // Offset 11
+            InstructionKind::Halt,                            // Offset 13
         ];
 
         assert_eq!(instructions, expected);
@@ -973,5 +1275,26 @@ mod tests {
         let expected_binary = vec![5, 6, 7, 99];
         let actual_binary = compile(program);
         assert_eq!(actual_binary, expected_binary);
+    }
+
+    #[test]
+    fn test_consecutive_comments() {
+        let program = "
+            ; comment 1
+            ; comment 2
+            start:          ; label def
+                ; comment 3
+                ; comment 4
+                [0] = 1 + 2 ; instruction
+                ; comment 5
+                ; comment 6
+            halt
+            ; comment 7 at end
+            ; comment 8 at end
+        ";
+        let instructions = parse_test_program_kinds(program);
+        assert_eq!(instructions.len(), 2);
+        assert!(matches!(instructions[0], InstructionKind::Add(_, _, _)));
+        assert!(matches!(instructions[1], InstructionKind::Halt));
     }
 }

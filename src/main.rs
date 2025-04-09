@@ -3,8 +3,6 @@ mod disasm;
 use clap::{Parser, Subcommand};
 use disasm::low_ir::FatInstruction;
 use disasm::v2::analysis::{run_analysis, run_analysis_ssa};
-
-use disasm::parser::SerializableInstruction;
 use itertools::Itertools;
 
 #[derive(Parser)]
@@ -36,12 +34,8 @@ fn main() {
 
 fn compile(source: String) {
     let source = std::fs::read_to_string(source);
-    let program = disasm::parser::parse_program(&source.unwrap()).unwrap();
-    let mut out = vec![];
-    for inst in program {
-        inst.1.serialize(&mut out);
-    }
-    println!("{}", out.iter().map(|x| x.to_string()).join(","))
+    let out = disasm::parser::compile(&source.unwrap());
+    println!("{}", out.iter().join(","))
 }
 
 fn disassemble(input: String) {

@@ -301,5 +301,4 @@ The code has automatic simplification logic that converts certain patterns to mo
 
 # Some notes
 
-- Two comments are not allowed right after another, there must be a statement in between.
 - Debug markers bind to operators, not statements. So `'a output [R+1]` is invalid, but `output 'a [R+1]` is valid.

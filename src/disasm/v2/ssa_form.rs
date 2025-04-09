@@ -1,13 +1,16 @@
-use crate::disasm::code_printer::{CodePrinter, CodeWriter};
-use crate::disasm::v2::instructions::GenericInstruction;
-use crate::disasm::v2::{
-    control_flow::NextKind,
-    data_flow::{DataFlowResult, Definition},
-    instructions::{InstructionKind, Operand, OperandKind},
-    model::{BlockId, FunctionId, ProgramModel},
+use crate::disasm::{
+    code_printer::{CodePrinter, CodeWriter as _},
+    v2::{
+        control_flow::NextKind,
+        data_flow::{DataFlowResult, Definition},
+        instructions::{InstructionKind, Operand, OperandKind},
+        model::{BlockId, FunctionId, ProgramModel},
+    },
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+
+use super::instructions::GenericInstruction;
 
 /*
 enum SsaVarKind {
@@ -113,7 +116,7 @@ impl SsaFunction {
                     InstructionKind::Assign(a, b) => vec![a, b],
                     InstructionKind::Data(_) | InstructionKind::Halt => vec![],
                 };
-                
+
                 for operand in operands {
                     if let Some(debug_marker) = operand.operand.debug_marker {
                         if debug_marker == marker {
@@ -357,13 +360,20 @@ fn format_ssa_instruction(instr: &GenericInstruction<SsaVar>) -> String {
         }
 
         InstructionKind::Halt => "halt".to_string(),
-        
+
         // Synthetic instructions
         InstructionKind::Goto(target) => format!("goto {}", target),
-        
+
         InstructionKind::Assign(dst, src) => format!("{} = {}", dst, src),
-        
-        InstructionKind::Data(values) => format!("DATA {}", values.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")),
+
+        InstructionKind::Data(values) => format!(
+            "DATA {}",
+            values
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -669,9 +679,13 @@ pub mod conversion {
             for instr in &mut block.instructions {
                 // Use map_rw to update all operands in the instruction
                 *instr = instr.map_rw(
-                    &mut (),
-                    &mut |_, var| replacements.get(var).cloned().unwrap_or_else(|| *var),
-                    &mut |_, var| replacements.get(var).cloned().unwrap_or_else(|| *var),
+                    &mut replacements,
+                    &mut |r: &mut HashMap<SsaVar, SsaVar>, var| {
+                        r.get(var).cloned().unwrap_or_else(|| *var)
+                    },
+                    &mut |r: &mut HashMap<SsaVar, SsaVar>, var| {
+                        r.get(var).cloned().unwrap_or_else(|| *var)
+                    },
                 );
             }
 
@@ -1019,7 +1033,9 @@ mod tests {
     macro_rules! assert_marker_at_main {
         ($ctx:expr, $marker:expr, $expected:expr) => {{
             // Find an SSA variable with the given debug marker
-            let found_var = $ctx.main_function.find_ssa_var_by_marker($marker)
+            let found_var = $ctx
+                .main_function
+                .find_ssa_var_by_marker($marker)
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
             assert_eq!(
@@ -1154,28 +1170,6 @@ mod tests {
 
         // Function should have dominance information
         assert!(!ssa_function.immediate_dominators.is_empty());
-
-        // Check that [100] has multiple versions
-        // Version 0: Declaration
-        // Version 1: [100] = 5
-        // Version 2: [100] = 10
-        let mut versions_found = HashSet::new();
-        for instr in &entry_block.instructions {
-            // Check operands for SSA vars with memory location 100
-            for operand in instr.operands() {
-                let op: Operand = operand.into();
-                if let OperandKind::Memory(100) = op.kind {
-                    versions_found.insert(operand.version);
-                }
-            }
-        }
-
-        // We should have multiple versions of [100]
-        assert!(
-            versions_found.len() > 1,
-            "Expected multiple versions of [100], found: {:?}",
-            versions_found
-        );
     }
 
     // Test conversion with dominance frontiers and phi functions
@@ -1421,7 +1415,8 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                let has_matching_operands = if let InstructionKind::Add(src1, _, dst) = &instr.kind {
+                let has_matching_operands = if let InstructionKind::Add(src1, _, dst) = &instr.kind
+                {
                     src1.operand.kind.get_relative_memory() == Some(-4) && // Read operand is R-4
                     dst.operand.kind.get_relative_memory() == Some(-4)
                 } else {

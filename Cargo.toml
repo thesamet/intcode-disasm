@@ -11,6 +11,7 @@ log = "0.4.26"
 nom = "8.0.0"
 paste = "1.0.15"
 pathfinding = "4.14.0"
+pretty_assertions = "1.4.1"
 thiserror = "2.0.12"
 
 [dev-dependencies]
