@@ -109,7 +109,7 @@ impl fmt::Display for OperandKind {
 }
 
 // Operand is a value that is passed as a positional argument to an instruction.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct Operand {
     pub kind: OperandKind,
     pub offset: usize,

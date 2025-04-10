@@ -45,6 +45,18 @@ where
             NextKind::Unknown => NextKind::Unknown,
         }
     }
+
+    pub fn successors(&self) -> Vec<BlockId> {
+        match self {
+            NextKind::Follows(id) => vec![*id],
+            NextKind::Goto(block_id) => vec![*block_id],
+            NextKind::FunctionCall(call) => vec![call.return_block],
+            NextKind::Condition(cond) => vec![cond.target_block, cond.follows_block],
+            NextKind::Return => vec![],
+            NextKind::Halt => vec![],
+            NextKind::Unknown => vec![],
+        }
+    }
 }
 
 // Describes how control flow enters a block

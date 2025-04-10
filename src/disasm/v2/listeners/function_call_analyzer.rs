@@ -138,7 +138,7 @@ impl FunctionCallAnalyzer {
                 .unwrap();
             for live_kind in &entry_flow.live_in {
                 if let OperandKind::RelativeMemory(offset) = live_kind {
-                    if *offset > 0 {
+                    if *offset < 0 {
                         // Found a potential parameter offset `n`
                         // Now find the SsaVar with the lowest version for this kind in the function
                         if let Some(entry_var) = find_lowest_version_ssa_var(function, live_kind) {

@@ -1,5 +1,5 @@
-use itertools::Itertools;
 use colored::*;
+use itertools::Itertools;
 
 use super::{
     instructions::{GenericInstruction, InstructionKind},
@@ -14,23 +14,19 @@ fn format_ssa_var(var: &SsaVar) -> String {
             if offset == 0 {
                 "[R]".cyan().to_string()
             } else if offset > 0 {
-                format!("[R+{}]", offset).cyan().to_string()
+                format!("[R+{}]_{}", offset, var.version).cyan().to_string()
             } else {
-                format!("[R{}]", offset).cyan().to_string()
+                format!("[R{}]_{}", offset, var.version).blue().to_string()
             }
         }
         // Highlight memory accesses in yellow
         super::instructions::OperandKind::Memory(addr) => {
-            format!("[{}]", addr).yellow().to_string()
+            format!("[{}]_{}", addr, var.version).yellow().to_string()
         }
         // Highlight immediate values in green
-        super::instructions::OperandKind::Immediate(val) => {
-            format!("{}", val).green().to_string()
-        }
+        super::instructions::OperandKind::Immediate(val) => format!("{}", val).green().to_string(),
         // Highlight dereferences in magenta
-        super::instructions::OperandKind::Deref(addr) => {
-            format!("*{}", addr).magenta().to_string()
-        }
+        super::instructions::OperandKind::Deref(addr) => format!("*{}", addr).magenta().to_string(),
     }
 }
 
@@ -38,13 +34,10 @@ fn format_phi_function(phi: &PhiFunction) -> String {
     let inputs = phi
         .inputs
         .iter()
+        .sorted()
         .map(|(block_id, var)| format!("{}: {}", block_id, format_ssa_var(var)))
         .join(", ");
-    format!(
-        "{} = φ({})",
-        format_ssa_var(&phi.result),
-        inputs
-    )
+    format!("{} = φ({})", format_ssa_var(&phi.result), inputs)
 }
 
 fn format_instruction(instr: &GenericInstruction<SsaVar>) -> String {
@@ -106,17 +99,16 @@ fn format_instruction(instr: &GenericInstruction<SsaVar>) -> String {
         }
         InstructionKind::Halt => "halt".red().to_string(),
         InstructionKind::Data(values) => {
-            format!("DATA {}", values.iter().map(|v| v.to_string().green()).join(", "))
+            format!(
+                "DATA {}",
+                values.iter().map(|v| v.to_string().green()).join(", ")
+            )
         }
         InstructionKind::Goto(target) => {
             format!("goto {}", format_ssa_var(target))
         }
         InstructionKind::Assign(target, source) => {
-            format!(
-                "{} = {}",
-                format_ssa_var(target),
-                format_ssa_var(source)
-            )
+            format!("{} = {}", format_ssa_var(target), format_ssa_var(source))
         }
     }
 }
@@ -150,23 +142,80 @@ fn format_function(function: &SsaFunction) -> String {
     blocks.iter().map(|b| format_block(b)).join("\n\n")
 }
 
-pub fn pretty_print_ssa(model: &ProgramModel) -> String {
+pub fn format_call_info(model: &ProgramModel, function: &SsaFunction) -> String {
+    let ca = model
+        .get_function_call_analysis()
+        .and_then(|m| m.callee_info.get(&function.original_id));
+
+    if let Some(ca) = ca {
+        let args = ca
+            .return_writes
+            .values()
+            .sorted()
+            .map(format_ssa_var)
+            .collect_vec();
+        let return_values = if args.len() <= 1 {
+            format!("{}", args.join(", "))
+        } else {
+            format!("({})", args.join(", "))
+        };
+        format!(
+            "({}) -> {}",
+            ca.parameter_entry_vars
+                .values()
+                .sorted()
+                .map(format_ssa_var)
+                .join(", "),
+            return_values
+        )
+    } else {
+        String::new()
+    }
+}
+
+pub fn format_callers_comment(model: &ProgramModel, function: &SsaFunction) -> String {
+    let callers = model
+        .get_function_call_analysis()
+        .map(|m| {
+            m.call_site_info
+                .iter()
+                .filter(|(_, cs)| cs.target_function_id == Some(function.original_id))
+                .collect_vec()
+        })
+        .unwrap_or_default();
+
+    let mut out = vec![];
+    for (block_id, csi) in &callers {
+        out.push(format!(
+            "// at {}: {} -> {}\n",
+            block_id,
+            csi.argument_writes.values().sorted().join(", "),
+            csi.return_reads.values().sorted().join(", ")
+        ));
+    }
+
+    out.join("")
+}
+
+pub fn pretty_print_ssa(model: &ProgramModel) {
     let ssa = model.get_ssa_result().expect("No SSA result available");
 
     let mut functions: Vec<_> = ssa.functions.values().collect();
     functions.sort_by_key(|f| f.original_id);
 
-    functions
+    let s = functions
         .iter()
-        .map(|f| {
+        .map(|f| -> String {
             format!(
-                "function_{} {{\n{}\n}}",
+                "{}fn {}{} {{\n{}\n}}",
+                format_callers_comment(model, f),
                 f.original_id,
+                format_call_info(model, f),
                 format_function(f)
                     .lines()
                     .map(|l| format!("    {}", l))
                     .join("\n")
             )
         })
-        .join("\n\n")
+        .join("\n\n");
 }

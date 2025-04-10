@@ -1,6 +1,4 @@
-use crate::disasm::v2::{
-    listeners::image_scanner::ImageScanner, model::ProgramModel,
-};
+use crate::disasm::v2::{listeners::image_scanner::ImageScanner, model::ProgramModel};
 
 use super::{
     dispatching::EventPublisher,
@@ -34,7 +32,7 @@ pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {
 }
 
 /// Run the analysis pipeline and print the program in SSA form
-pub fn run_analysis_ssa(image: Vec<i128>) -> String {
+pub fn run_analysis_ssa(image: Vec<i128>) {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
 
@@ -50,11 +48,11 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> String {
 
     // Check if data flow analysis was completed
     if model.get_data_flow_result().is_none() {
-        return "No SSA form available due to missing data flow analysis".to_string();
+        println!("No SSA form available due to missing data flow analysis");
     }
 
     // Pretty-print the SSA form
-    pretty_print_ssa(&model)
+    pretty_print_ssa(&model);
 }
 
 #[cfg(test)]

@@ -71,6 +71,5 @@ fn ssa(input: String) {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
-    let ssa_output = run_analysis_ssa(prog);
-    println!("{}", ssa_output);
+    run_analysis_ssa(prog);
 }
