@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use log::debug;
 
 use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},

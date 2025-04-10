@@ -1,5 +1,5 @@
 use crate::disasm::v2::{
-    listeners::image_scanner::ImageScanner, model::ProgramModel, ssa_form::SsaResult,
+    listeners::image_scanner::ImageScanner, model::ProgramModel,
 };
 
 use super::{

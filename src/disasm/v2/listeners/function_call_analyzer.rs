@@ -6,8 +6,8 @@ use crate::disasm::v2::{
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{SsaFunction, SsaResult, SsaVar},
 };
-use log::{debug, trace, warn};
-use std::collections::{HashMap, HashSet};
+use log::{debug, trace};
+use std::collections::HashMap;
 
 /// Top-level result container for function call analysis.
 #[derive(Debug, Clone, Default)]

@@ -1,10 +1,9 @@
-use crate::disasm::code_printer::{self, CodePrinter};
 use itertools::Itertools;
 use colored::*;
 
 use super::{
-    instructions::{GenericInstruction, InstructionKind, OperandKind},
-    model::{BlockId, ProgramModel},
+    instructions::{GenericInstruction, InstructionKind},
+    model::ProgramModel,
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaVar},
 };
 
