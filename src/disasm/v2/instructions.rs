@@ -602,7 +602,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
                 // Only include memory locations, not immediate values
                 if matches!(
                     op.clone().into().kind,
-                    OperandKind::Memory(_) | OperandKind::RelativeMemory(_)
+                    OperandKind::Memory(_) | OperandKind::RelativeMemory(_) | OperandKind::Deref(_)
                 ) {
                     Some(op.clone())
                 } else {

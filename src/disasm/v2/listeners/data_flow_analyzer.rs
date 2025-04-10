@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 use itertools::Itertools;
@@ -8,7 +7,6 @@ use crate::disasm::v2::control_flow::FunctionCall;
 use crate::disasm::v2::data_flow::BlockDataFlow;
 use crate::disasm::v2::data_flow::CallSiteInfo;
 use crate::disasm::v2::events::DataFlowAnalysisComplete;
-use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -748,7 +746,7 @@ mod tests {
         // --- Check USE in return block (Block 21) ---
         // This determines potential_returns for the call from block 0
         assert_eq!(
-            flow21.use_before_def.keys().cloned().collect_vec(),
+            flow21.use_before_def.keys().cloned().sorted().collect_vec(),
             [rel_kind(1), rel_kind(2)].iter().cloned().collect_vec(),
             "USE @ B21"
         );

@@ -1,13 +1,15 @@
+use itertools::Itertools;
+use log::debug;
+
 use crate::disasm::v2::{
-    control_flow::NextKind,
-    data_flow::DataFlowResult,
+    control_flow::{NextKind, PredecessorKind},
     instructions::{Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::instructions::GenericInstruction;
+use super::instructions::{GenericInstruction, InstructionId};
 
 /*
 enum SsaVarKind {
@@ -91,37 +93,16 @@ pub struct SsaFunction {
     pub original_id: FunctionId,
     /// Blocks in SSA form
     pub blocks: HashMap<BlockId, SsaBlock>,
-    /// Dominance frontier for each block
-    pub dominance_frontiers: HashMap<BlockId, HashSet<BlockId>>,
-    /// Immediate dominator for each block
-    pub immediate_dominators: HashMap<BlockId, BlockId>,
 }
 
 impl SsaFunction {
     // Helper to find an SSA variable with a specific debug marker
     #[cfg(test)]
     pub fn find_ssa_var_by_marker(&self, marker: char) -> Option<SsaVar> {
-        use super::instructions::InstructionKind;
-
         for (_, block) in &self.blocks {
             for instr in &block.instructions {
                 // Extract all operands from the instruction kind
-                let operands = match &instr.kind {
-                    InstructionKind::Add(a, b, c) => vec![a, b, c],
-                    InstructionKind::Mul(a, b, c) => vec![a, b, c],
-                    InstructionKind::Input(a) => vec![a],
-                    InstructionKind::Output(a) => vec![a],
-                    InstructionKind::JumpIfTrue(a, b) => vec![a, b],
-                    InstructionKind::JumpIfFalse(a, b) => vec![a, b],
-                    InstructionKind::LessThan(a, b, c) => vec![a, b, c],
-                    InstructionKind::Equals(a, b, c) => vec![a, b, c],
-                    InstructionKind::AdjustRelativeBase(a) => vec![a],
-                    InstructionKind::Goto(a) => vec![a],
-                    InstructionKind::Assign(a, b) => vec![a, b],
-                    InstructionKind::Data(_) | InstructionKind::Halt => vec![],
-                };
-
-                for operand in operands {
+                for operand in instr.reads().iter().chain(instr.writes().iter()) {
                     if let Some(debug_marker) = operand.operand.debug_marker {
                         if debug_marker == marker {
                             return Some(*operand);
@@ -147,57 +128,18 @@ impl SsaResult {
     }
 
     pub fn from_program_model(model: &ProgramModel) -> Self {
-        // Make sure we have data flow information
-        if model.get_data_flow_result().is_none() {
-            panic!("Data flow analysis must be performed before converting to SSA form");
-        }
+        assert!(model.get_data_flow_result().is_some());
 
-        let data_flow = model.get_data_flow_result().unwrap();
         let mut ssa_result = Self::new();
+        let mut converter = SSAConversionState::new(model);
 
         // Process each function in the model
-        for (&function_id, function) in model.functions() {
-            // Skip any function with no blocks
-            if function.blocks.is_empty() {
-                continue;
-            }
-
-            // 1. Compute dominance information
-            let immediate_dominators = conversion::compute_dominators(model, function_id);
-
-            // 2. Compute dominance frontiers
-            let dominance_frontiers =
-                conversion::compute_dominance_frontiers(model, function_id, &immediate_dominators);
-
-            // 3. Place phi functions
-            let phi_placements = conversion::place_phi_functions(
-                model,
-                function_id,
-                &dominance_frontiers,
-                data_flow,
-            );
-
-            // 4. Rename variables
-            let ssa_blocks = conversion::rename_variables(
-                model,
-                function_id,
-                &phi_placements,
-                &immediate_dominators,
-                data_flow,
-            );
-
-            // 5. Create SSA function representation
-            let mut ssa_function = SsaFunction {
+        for (&function_id, _) in model.functions() {
+            let ssa_func = SsaFunction {
                 original_id: function_id,
-                blocks: ssa_blocks,
-                dominance_frontiers,
-                immediate_dominators,
+                blocks: converter.convert_function(function_id),
             };
-
-            // 6. Prune unnecessary phi functions
-            conversion::prune_phi_functions(&mut ssa_function);
-
-            ssa_result.functions.insert(function_id, ssa_function);
+            ssa_result.functions.insert(function_id, ssa_func);
         }
 
         ssa_result
@@ -213,323 +155,13 @@ impl SsaResult {
     }
 }
 
-/// Helper functions for SSA conversion
-pub mod conversion {
-    use super::*;
-    use log::debug;
-    use std::collections::VecDeque;
+struct SSAConversionState<'a> {
+    model: &'a ProgramModel,
+}
 
-    /// Compute immediate dominators for a function using the iterative algorithm
-    pub fn compute_dominators(
-        model: &ProgramModel,
-        function_id: FunctionId,
-    ) -> HashMap<BlockId, BlockId> {
-        let function = model.get_function(function_id);
-        if function.blocks.is_empty() {
-            return HashMap::new();
-        }
-
-        // Get the entry block (first in the list)
-        let entry_block_id = function.blocks[0];
-
-        // Create a map of predecessors for each block
-        let mut predecessors: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
-        for &block_id in &function.blocks {
-            let block = model.get_block(block_id);
-            for pred in &block.predecessors {
-                let pred_id = pred.source_block_id();
-                // Only include predecessors that are part of this function
-                if function.blocks.contains(&pred_id) {
-                    predecessors.entry(block_id).or_default().push(pred_id);
-                }
-            }
-        }
-
-        // Initialize the immediate dominators map
-        let mut idom: HashMap<BlockId, BlockId> = HashMap::new();
-
-        // Entry block is its own dominator
-        idom.insert(entry_block_id, entry_block_id);
-
-        // Iteratively update immediate dominators until no changes
-        let mut changed = true;
-        while changed {
-            changed = false;
-
-            // Process all blocks except the entry
-            for &block_id in function.blocks.iter().filter(|&&id| id != entry_block_id) {
-                let block_preds = match predecessors.get(&block_id) {
-                    Some(preds) if !preds.is_empty() => preds,
-                    _ => continue, // Skip blocks with no predecessors
-                };
-
-                // Find a processed predecessor to start with
-                let mut new_idom = None;
-                for &pred_id in block_preds {
-                    if idom.contains_key(&pred_id) {
-                        new_idom = Some(pred_id);
-                        break;
-                    }
-                }
-
-                // Skip if no processed predecessor found
-                let mut new_idom = match new_idom {
-                    Some(id) => id,
-                    None => continue,
-                };
-
-                // Intersect with other predecessors to find closest common dominator
-                for &pred_id in block_preds {
-                    if pred_id == new_idom {
-                        continue;
-                    }
-
-                    if idom.contains_key(&pred_id) {
-                        new_idom = intersect_dominators(&idom, new_idom, pred_id);
-                    }
-                }
-
-                // Update if changed
-                if !idom.contains_key(&block_id) || idom[&block_id] != new_idom {
-                    idom.insert(block_id, new_idom);
-                    changed = true;
-                }
-            }
-        }
-
-        idom
-    }
-
-    /// Helper function to find the nearest common dominator
-    fn intersect_dominators(
-        idom: &HashMap<BlockId, BlockId>,
-        mut b1: BlockId,
-        mut b2: BlockId,
-    ) -> BlockId {
-        while b1 != b2 {
-            // Ensure we can compare by converting to usize
-            let b1_val = b1.index();
-            let b2_val = b2.index();
-
-            if b1_val > b2_val {
-                b1 = idom[&b1];
-            } else {
-                b2 = idom[&b2];
-            }
-        }
-
-        b1
-    }
-
-    /// Compute dominance frontiers from immediate dominators
-    pub fn compute_dominance_frontiers(
-        model: &ProgramModel,
-        function_id: FunctionId,
-        immediate_dominators: &HashMap<BlockId, BlockId>,
-    ) -> HashMap<BlockId, HashSet<BlockId>> {
-        let function = model.get_function(function_id);
-        let mut frontiers: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
-
-        // Initialize empty frontiers for each block
-        for &block_id in &function.blocks {
-            frontiers.insert(block_id, HashSet::new());
-        }
-
-        // For each block with multiple predecessors
-        for &block_id in &function.blocks {
-            let block = model.get_block(block_id);
-            if block.predecessors.len() >= 2 {
-                for pred in &block.predecessors {
-                    let pred_id = pred.source_block_id();
-
-                    // Skip if predecessor not in this function
-                    if !function.blocks.contains(&pred_id) {
-                        continue;
-                    }
-
-                    // Walk up the dominator tree until we reach immediate dominator of block
-                    let mut runner = pred_id;
-                    while runner != immediate_dominators[&block_id] {
-                        // Add block to runner's dominance frontier
-                        frontiers.entry(runner).or_default().insert(block_id);
-
-                        // Move up the dominator tree
-                        runner = immediate_dominators[&runner];
-                    }
-                }
-            }
-        }
-
-        frontiers
-    }
-
-    /// Identify variables that need phi functions
-    fn collect_variables_needing_phis(
-        model: &ProgramModel,
-        function_id: FunctionId,
-        data_flow: &DataFlowResult,
-    ) -> HashSet<OperandKind> {
-        let function = model.get_function(function_id);
-        let mut result = HashSet::new();
-
-        // Find all variables that are written to in any block
-        for &block_id in &function.blocks {
-            if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                // Add all variables that are defined (written to) in this block
-                for (_, op) in block_flow.gen.values() {
-                    result.insert(op.kind);
-                }
-            }
-        }
-
-        result
-    }
-
-    /// Place phi functions based on dominance frontiers
-    pub fn place_phi_functions(
-        model: &ProgramModel,
-        function_id: FunctionId,
-        dominance_frontiers: &HashMap<BlockId, HashSet<BlockId>>,
-        data_flow: &DataFlowResult,
-    ) -> HashMap<BlockId, Vec<PhiFunction>> {
-        let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
-
-        let function = model.get_function(function_id);
-        for &block_id in &function.blocks {
-            phi_placements.insert(block_id, Vec::new());
-        }
-
-        // Find all variables that need phi functions
-        let variables = collect_variables_needing_phis(model, function_id, data_flow);
-
-        // For each variable, place phi functions where needed
-        for var in variables {
-            // Track blocks where this variable is defined
-            let mut def_blocks = HashSet::new();
-            for &block_id in &function.blocks {
-                if let Some(block_flow) = data_flow.block_results.get(&block_id) {
-                    if block_flow.gen.contains_key(&var) {
-                        def_blocks.insert(block_id);
-                    }
-                }
-            }
-
-            // Track where we've already placed phi functions for this variable
-            let mut phi_placed = HashSet::new();
-
-            // Worklist algorithm to place phi functions
-            let mut worklist: VecDeque<BlockId> = def_blocks.iter().cloned().collect();
-            while let Some(block_id) = worklist.pop_front() {
-                // Get dominance frontier for this block
-                if let Some(frontier) = dominance_frontiers.get(&block_id) {
-                    for &df_block in frontier {
-                        // If we haven't placed a phi function for this variable in this block
-                        if !phi_placed.contains(&df_block) {
-                            // Create a dummy phi function (will be properly initialized later)
-                            let phi = PhiFunction {
-                                result: SsaVar::new(
-                                    Operand {
-                                        kind: var,
-                                        offset: 0,
-                                        debug_marker: None,
-                                    },
-                                    0, // Temporary version number, will be updated during renaming
-                                ),
-                                inputs: HashMap::new(), // Will be filled during renaming
-                            };
-
-                            // Add the phi function to this block
-                            phi_placements.get_mut(&df_block).unwrap().push(phi);
-                            phi_placed.insert(df_block);
-
-                            // If this block also defines the variable, add it to the worklist
-                            if let Some(block_flow) = data_flow.block_results.get(&df_block) {
-                                if !def_blocks.contains(&df_block)
-                                    && block_flow.gen.contains_key(&var)
-                                {
-                                    def_blocks.insert(df_block);
-                                    worklist.push_back(df_block);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        phi_placements
-    }
-
-    /// Prune unnecessary phi functions from an SSA function
-    ///
-    /// This function:
-    /// 1. Removes phi functions with no inputs
-    /// 2. Replaces phi functions with a single input with that input
-    pub fn prune_phi_functions(function: &mut SsaFunction) {
-        let mut replacements: HashMap<(OperandKind, usize), SsaVar> = HashMap::new();
-
-        // First pass: identify phi functions to prune
-        for (block_id, block) in &mut function.blocks {
-            let mut phi_to_keep = Vec::new();
-
-            for phi in &block.phi_functions {
-                println!("{} Phi function: {:#?}", block_id, phi);
-                match phi.inputs.len() {
-                    0 => {
-                        // Case 1: Phi with no inputs can be removed
-                        // We'll need to handle all uses of this phi's result
-                        debug!(
-                            "Pruning phi with no inputs: {} in block {}",
-                            phi.result, block_id
-                        );
-                        // Phi functions with no inputs are removed without replacement
-                    }
-                    1 => {
-                        // Case 2: Phi with a single input can be replaced by that input
-                        let single_input = phi.inputs.values().next().unwrap().clone();
-                        debug!(
-                            "Replacing phi with single input: {} -> {} in block {}",
-                            phi.result, single_input, block_id
-                        );
-                        replacements
-                            .insert((phi.result.operand.kind, phi.result.version), single_input);
-                    }
-                    _ => {
-                        // Keep phis with multiple inputs
-                        phi_to_keep.push(phi.clone());
-                    }
-                }
-            }
-
-            // Update the block to only keep necessary phi functions
-            block.phi_functions = phi_to_keep;
-        }
-
-        let mut replace = |r: &mut HashMap<(OperandKind, usize), SsaVar>, var: &SsaVar| {
-            let mut new = var.clone();
-            if let Some(replacement) = r.get(&(var.operand.kind, var.version)) {
-                new.version = replacement.version;
-            }
-            new
-        };
-
-        // Second pass: apply replacements to all SSA vars that use pruned phi results
-        for (_, block) in &mut function.blocks {
-            // Update phi inputs
-            for phi in &mut block.phi_functions {
-                for (_, ref mut input) in &mut phi.inputs {
-                    **input = replace(&mut replacements, &input.clone());
-                }
-            }
-
-            // Update instructions
-            for instr in &mut block.instructions {
-                // Use map_rw to update all operands in the instruction
-                *instr = instr.map_rw(&mut replacements, &mut replace.clone(), &mut replace);
-            }
-
-            block.next = block.next.map(&mut |v| replace(&mut replacements, &v));
-        }
+impl<'a> SSAConversionState<'a> {
+    fn new(model: &'a ProgramModel) -> Self {
+        Self { model }
     }
 
     fn create_next_version(
@@ -541,10 +173,6 @@ pub mod conversion {
             .map(|v| v.version)
             .unwrap_or(0)
             + 1;
-        println!(
-            "Creating new version for {}: {} at {}",
-            var, version, var.offset
-        );
         let new_version = SsaVar {
             operand: var,
             version,
@@ -553,246 +181,386 @@ pub mod conversion {
         new_version
     }
 
-    fn get_or_create_ssa_var(
-        current_versions: &mut HashMap<OperandKind, SsaVar>,
+    fn get_current_version_for(
+        current_versions: &HashMap<OperandKind, SsaVar>,
         op: Operand,
     ) -> SsaVar {
-        let Some(op_kind) = op.kind.as_variable() else {
-            return SsaVar {
-                operand: op,
-                version: 0,
-            };
-        };
-        if let Some(ssa_var) = current_versions.get(&op_kind) {
-            // Create a new SsaVar with the same version.
-
-            SsaVar {
-                operand: op,
-                version: ssa_var.version,
+        if let Some(op_kind) = op.kind.as_variable() {
+            if let Some(ssa_var) = current_versions.get(&op_kind) {
+                return SsaVar {
+                    operand: op,
+                    version: ssa_var.version,
+                };
             }
-        } else {
-            // Create a new version if not found
-            // create_next_version(current_versions, op)
-            return SsaVar {
-                operand: op,
-                version: 0,
-            };
         }
+        let v = SsaVar {
+            operand: op,
+            version: 0,
+        };
+        v
     }
 
-    /// Create an SSA representation of a NextKind
     fn create_ssa_next_kind(
+        current_versions: &HashMap<OperandKind, SsaVar>,
         original: &NextKind<Operand>,
-        current_versions: &mut HashMap<OperandKind, SsaVar>,
     ) -> NextKind<SsaVar> {
-        original.map(&mut |op| get_or_create_ssa_var(current_versions, op))
+        original.map(&mut |op| Self::get_current_version_for(current_versions, op))
     }
 
-    /// Rename variables by traversing the dominance tree
-    pub fn rename_variables(
-        model: &ProgramModel,
-        function_id: FunctionId,
-        phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-        immediate_dominators: &HashMap<BlockId, BlockId>,
-        data_flow: &DataFlowResult,
-    ) -> HashMap<BlockId, SsaBlock> {
-        let function = model.get_function(function_id);
+    fn convert_function(&mut self, function_id: FunctionId) -> HashMap<BlockId, SsaBlock> {
+        // Step 1: Place phi functions where needed
+        let phi_placements = self.place_phi_functions(function_id);
 
-        // Result: SSA blocks and variable definitions
+        // Step 2: Perform variable renaming starting from the entry point
+        let function = self.model.get_function(function_id);
+
+        // Initialize the result map for SSA blocks
         let mut ssa_blocks: HashMap<BlockId, SsaBlock> = HashMap::new();
 
-        // Track the current version of each variable
-        let mut current_versions: HashMap<OperandKind, SsaVar> = HashMap::new();
+        // Initialize a map to track visited blocks (to handle loops)
+        let mut visited_blocks: HashSet<BlockId> = HashSet::new();
 
-        // Build the dominator tree for traversal
-        let mut dom_tree: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
-        for &block_id in &function.blocks {
-            dom_tree.insert(block_id, Vec::new());
+        // Create a clone of the current versions map for the initial state
+        let initial_versions = HashMap::new();
+
+        // Start renaming from the entry block
+        self.rename_block(
+            function.entry_block,
+            function_id,
+            &mut ssa_blocks,
+            &phi_placements,
+            &mut visited_blocks,
+            initial_versions,
+        );
+
+        // Return the map of converted blocks
+        ssa_blocks
+    }
+
+    fn rename_block(
+        &mut self,
+        block_id: BlockId,
+        function_id: FunctionId,
+        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
+        phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
+        visited_blocks: &mut HashSet<BlockId>,
+        mut current_versions: HashMap<OperandKind, SsaVar>,
+    ) {
+        if !visited_blocks.insert(block_id) {
+            return;
         }
 
-        // Fill the dominator tree (except for entry node)
-        for &block_id in &function.blocks {
-            if let Some(&idom) = immediate_dominators.get(&block_id) {
-                if idom != block_id {
-                    // Skip entry block self-reference
-                    dom_tree.entry(idom).or_default().push(block_id);
+        let original_block = self.model.get_block(block_id);
+
+        // Step 1: Process phi functions in this block, create new versions
+        let mut block_phi_functions = Vec::new();
+        if let Some(phis) = phi_placements.get(&block_id) {
+            for phi in phis {
+                let phi_result =
+                    Self::create_next_version(&mut current_versions, phi.result.operand);
+
+                // Create a new phi function with the correct result version
+                let mut new_phi = PhiFunction {
+                    result: phi_result,
+                    inputs: HashMap::new(), // Will be filled with correct input versions below
+                };
+
+                // For each predecessor of this block, find the appropriate version
+                // to use as input to this phi function
+                for pred in &original_block.predecessors {
+                    let pred_id = pred.source_block_id();
+
+                    // Skip if this predecessor isn't from the current function
+                    // ass
+                    if !self
+                        .model
+                        .get_function(function_id)
+                        .blocks
+                        .contains(&pred_id)
+                    {
+                        continue;
+                    }
+
+                    // If this predecessor has already been processed and exists in ssa_blocks
+                    if let Some(pred_block) = ssa_blocks.get(&pred_id) {
+                        // Use the version from the end state of the predecessor block
+                        if let Some(&pred_var) = pred_block.end_state.get(&phi_result.operand.kind)
+                        {
+                            new_phi.inputs.insert(pred_id, pred_var);
+                        }
+                    }
+                    // Otherwise, we'll come back to this phi input later
                 }
+
+                block_phi_functions.push(new_phi);
             }
         }
 
-        // Helper function to recursively process a block and its children in the dominator tree
-        fn process_block(
-            block_id: BlockId,
-            model: &ProgramModel,
-            function_id: FunctionId,
-            dom_tree: &HashMap<BlockId, Vec<BlockId>>,
-            phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-            data_flow: &DataFlowResult,
-            current_versions: &mut HashMap<OperandKind, SsaVar>,
-            ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
-        ) {
-            // 1. Process phi functions, assign new versions to their results
-            let mut block_phi_functions = Vec::new();
-            if let Some(phis) = phi_placements.get(&block_id) {
-                for phi in phis {
-                    let var = phi.result.operand;
-                    let phi_result = create_next_version(current_versions, var);
-
-                    // Update the current version of this variable
-                    current_versions.insert(var.kind, phi_result.clone());
-
-                    // Create a new phi function with empty inputs (will be filled later)
-                    let new_phi = PhiFunction {
-                        result: phi_result,
-                        inputs: HashMap::new(),
-                    };
-
-                    block_phi_functions.push(new_phi);
-                }
-            }
-
-            // 2. Process instructions in the block
-            let mut block_instructions = Vec::new();
-            let original_block = model.get_block(block_id);
-
-            for instr in &original_block.instructions {
-                // Create SSA instruction
-                let ssa_instr = instr.map_rw(
-                    current_versions,
-                    &mut |c, op| get_or_create_ssa_var(c, *op),
-                    &mut |c, op| create_next_version(c, *op),
-                );
-
-                block_instructions.push(ssa_instr);
-            }
-
-            // 3. Create SSA version of the terminator
-            let ssa_next = create_ssa_next_kind(&original_block.next, current_versions);
-
-            // 4. Fill phi inputs in successor blocks
-            match &original_block.next {
-                NextKind::Follows(succ_id) => {
-                    fill_phi_inputs(
-                        *succ_id,
-                        block_id,
-                        current_versions,
-                        phi_placements,
-                        ssa_blocks,
-                    );
-                }
-                NextKind::Goto(target_id) => {
-                    fill_phi_inputs(
-                        *target_id,
-                        block_id,
-                        current_versions,
-                        phi_placements,
-                        ssa_blocks,
-                    );
-                }
-                NextKind::Condition(cond) => {
-                    // Fill phi inputs for both the target and follows blocks
-                    fill_phi_inputs(
-                        cond.target_block,
-                        block_id,
-                        current_versions,
-                        phi_placements,
-                        ssa_blocks,
-                    );
-                    fill_phi_inputs(
-                        cond.follows_block,
-                        block_id,
-                        current_versions,
-                        phi_placements,
-                        ssa_blocks,
-                    );
-                }
-                NextKind::FunctionCall(call) => {
-                    // Fill phi inputs for the return block
-                    fill_phi_inputs(
-                        call.return_block,
-                        block_id,
-                        current_versions,
-                        phi_placements,
-                        ssa_blocks,
-                    );
-                }
-                NextKind::Return | NextKind::Halt | NextKind::Unknown => {
-                    // No successors to fill
-                }
-            }
-
-            // 5. Create the SSA block
-            let ssa_block = SsaBlock {
-                original_id: block_id,
-                phi_functions: block_phi_functions,
-                instructions: block_instructions,
-                end_state: current_versions.clone(),
-                next: ssa_next,
+        // Step 2: Process instructions, creating new versions for write operations
+        let mut block_instructions = Vec::new();
+        for instr in &original_block.instructions {
+            // Map read operands to their current versions
+            let mut map_read = &mut |current_versions: &mut HashMap<OperandKind, SsaVar>,
+                                     operand: &Operand| {
+                Self::get_current_version_for(current_versions, *operand)
             };
 
-            // 6. Add the SSA block to the result
-            ssa_blocks.insert(block_id, ssa_block);
+            // Map write operands, creating new versions
+            let mut map_write = &mut |current_versions: &mut HashMap<OperandKind, SsaVar>,
+                                      operand: &Operand| {
+                Self::create_next_version(current_versions, *operand)
+            };
 
-            // 7. Process children in dominator tree
-            if let Some(children) = dom_tree.get(&block_id) {
-                for &child_id in children {
-                    // Create a copy of current_versions for each child
-                    let mut child_versions = current_versions.clone();
-
-                    process_block(
-                        child_id,
-                        model,
-                        function_id,
-                        dom_tree,
-                        phi_placements,
-                        data_flow,
-                        &mut child_versions,
-                        ssa_blocks,
-                    );
-                }
-            }
+            // Create the SSA instruction using read/write context
+            let ssa_instr = instr.map_rw(&mut current_versions, &mut map_read, &mut map_write);
+            block_instructions.push(ssa_instr);
         }
 
-        // Helper to fill phi inputs in successor blocks
-        fn fill_phi_inputs(
-            succ_id: BlockId,
-            pred_id: BlockId,
-            current_versions: &HashMap<OperandKind, SsaVar>,
-            phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-            ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
-        ) {
-            if let Some(phis) = phi_placements.get(&succ_id) {
-                if phis.is_empty() {
-                    return;
-                }
+        // Step 3: Create SSA version of the terminator (next)
+        let ssa_next = Self::create_ssa_next_kind(&mut current_versions, &original_block.next);
 
-                // If this successor block has already been processed
-                if let Some(ssa_block) = ssa_blocks.get_mut(&succ_id) {
-                    // Add the current version of each phi's variable as input from this predecessor
-                    for (i, phi) in phis.iter().enumerate() {
-                        let var = phi.result.operand;
-                        if let Some(current_var) = current_versions.get(&var.kind) {
-                            ssa_block.phi_functions[i]
-                                .inputs
-                                .insert(pred_id, current_var.clone());
+        // Step 4: Create and register the SSA block
+        let ssa_block = SsaBlock {
+            original_id: block_id,
+            phi_functions: block_phi_functions,
+            instructions: block_instructions,
+            end_state: current_versions.clone(), // Store the final variable versions
+            next: ssa_next,
+        };
+
+        ssa_blocks.insert(block_id, ssa_block);
+
+        // Step 5: Process successors
+        match &original_block.next {
+            NextKind::Follows(succ_id) => {
+                self.rename_block(
+                    *succ_id,
+                    function_id,
+                    ssa_blocks,
+                    phi_placements,
+                    visited_blocks,
+                    current_versions.clone(),
+                );
+
+                // Now that the successor is processed (or if it was already processed),
+                // update any phi inputs in the successor that come from this block
+                self.update_phi_inputs_in_successor(
+                    *succ_id,
+                    block_id,
+                    ssa_blocks,
+                    &current_versions,
+                );
+            }
+            NextKind::Goto(target_id) => {
+                self.rename_block(
+                    *target_id,
+                    function_id,
+                    ssa_blocks,
+                    phi_placements,
+                    visited_blocks,
+                    current_versions.clone(),
+                );
+
+                self.update_phi_inputs_in_successor(
+                    *target_id,
+                    block_id,
+                    ssa_blocks,
+                    &current_versions,
+                );
+            }
+            NextKind::Condition(cond) => {
+                // Process target block
+                self.rename_block(
+                    cond.target_block,
+                    function_id,
+                    ssa_blocks,
+                    phi_placements,
+                    visited_blocks,
+                    current_versions.clone(),
+                );
+
+                self.update_phi_inputs_in_successor(
+                    cond.target_block,
+                    block_id,
+                    ssa_blocks,
+                    &current_versions,
+                );
+
+                // Process follows block
+                self.rename_block(
+                    cond.follows_block,
+                    function_id,
+                    ssa_blocks,
+                    phi_placements,
+                    visited_blocks,
+                    current_versions.clone(),
+                );
+
+                self.update_phi_inputs_in_successor(
+                    cond.follows_block,
+                    block_id,
+                    ssa_blocks,
+                    &current_versions,
+                );
+            }
+            NextKind::FunctionCall(call) => {
+                // Process return block
+                self.rename_block(
+                    call.return_block,
+                    function_id,
+                    ssa_blocks,
+                    phi_placements,
+                    visited_blocks,
+                    current_versions.clone(),
+                );
+
+                self.update_phi_inputs_in_successor(
+                    call.return_block,
+                    block_id,
+                    ssa_blocks,
+                    &current_versions,
+                );
+            }
+            NextKind::Return | NextKind::Halt | NextKind::Unknown => {
+                // No successors to process
+            }
+        }
+    }
+
+    // Helper function to update phi inputs in a successor block after it has been processed
+    fn update_phi_inputs_in_successor(
+        &self,
+        succ_id: BlockId,
+        pred_id: BlockId,
+        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
+        current_versions: &HashMap<OperandKind, SsaVar>,
+    ) {
+        let succ_block = ssa_blocks.get_mut(&succ_id).unwrap();
+        for phi in &mut succ_block.phi_functions {
+            let var_kind = phi.result.operand.kind;
+
+            // If the variable has a current version in the predecessor,
+            // add it as an input to this phi
+            if let Some(&pred_var) = current_versions.get(&var_kind) {
+                phi.inputs.insert(pred_id, pred_var);
+            }
+        }
+    }
+
+    fn place_phi_functions(
+        &mut self,
+        function_id: FunctionId,
+    ) -> HashMap<BlockId, Vec<PhiFunction>> {
+        let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
+        let function = self.model.get_function(function_id);
+
+        // Initialize empty phi function vectors for all blocks
+        for &block_id in &function.blocks {
+            phi_placements.insert(block_id, Vec::new());
+        }
+
+        // Get data flow result
+        let data_flow = self.model.get_data_flow_result().unwrap();
+
+        // For each block with multiple predecessors, check which variables need phi functions
+        for &block_id in &function.blocks {
+            println!("Processing block {}", block_id);
+            let block = self.model.get_block(block_id);
+
+            // Only blocks with multiple predecessors need phi functions
+            if block.predecessors.len() <= 1
+                && !block
+                    .predecessors
+                    .iter()
+                    .any(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
+            {
+                continue;
+            }
+
+            // Get the data flow result for this block
+            let block_flow = data_flow.block_results.get(&block_id).unwrap();
+
+            // Find all variable definitions reaching this block from any predecessor
+            let mut all_incoming_defs: HashMap<OperandKind, HashSet<InstructionId>> =
+                HashMap::new();
+
+            // Collect definitions from predecessors
+            if block.predecessors.len() > 1 {
+                for pred in &block.predecessors {
+                    let pred_id = pred.source_block_id();
+
+                    assert!(function.blocks.contains(&pred_id));
+
+                    // Get the predecessor's defs_out from data flow
+                    if let Some(pred_flow) = data_flow.block_results.get(&pred_id) {
+                        for def in &pred_flow.defs_out {
+                            all_incoming_defs
+                                .entry(def.location)
+                                .or_insert_with(HashSet::new)
+                                .insert(def.instruction_id);
                         }
                     }
                 }
             }
+
+            let return_values_accessed = if let Some(PredecessorKind::FunctionCallReturns(fc)) =
+                block
+                    .predecessors
+                    .iter()
+                    .find(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
+            {
+                data_flow
+                    .block_results
+                    .get(&fc.calling_block)
+                    .unwrap()
+                    .call_site_info
+                    .as_ref()
+                    .unwrap()
+                    .return_values_accessed
+                    .keys()
+                    .cloned()
+                    .map(OperandKind::relative_memory)
+                    .collect_vec()
+            } else {
+                vec![]
+            };
+            println!(
+                "block_id: {}, all_incoming_defs: {:?}",
+                block_id, all_incoming_defs
+            );
+
+            let vars = all_incoming_defs
+                .iter()
+                .filter(|(var_kind, defs)| defs.len() > 1 && block_flow.live_in.contains(var_kind))
+                .map(|(var_kind, _)| var_kind)
+                .chain(return_values_accessed.iter());
+            // For each variable with multiple different definitions reaching this block,
+            // add a phi function
+            for var_kind in vars {
+                // Skip constants and special values
+                if !var_kind.is_variable() {
+                    continue;
+                }
+
+                // Create a dummy phi function (will be properly initialized during renaming)
+                let phi = PhiFunction {
+                    result: SsaVar::new(
+                        Operand {
+                            kind: *var_kind,
+                            offset: 0,
+                            debug_marker: None,
+                        },
+                        0, // Temporary version, will be updated during renaming
+                    ),
+                    inputs: HashMap::new(), // Will be filled during renaming
+                };
+
+                // Add the phi function to this block
+                phi_placements.get_mut(&block_id).unwrap().push(phi);
+            }
         }
 
-        process_block(
-            function.entry_block,
-            model,
-            function_id,
-            &dom_tree,
-            phi_placements,
-            data_flow,
-            &mut current_versions,
-            &mut ssa_blocks,
-        );
-
-        ssa_blocks
+        phi_placements
     }
 }
 
@@ -996,9 +764,6 @@ mod tests {
 
         // The entry block should have instructions
         assert!(!entry_block.instructions.is_empty());
-
-        // Function should have dominance information
-        assert!(!ssa_function.immediate_dominators.is_empty());
     }
 
     // Test conversion with dominance frontiers and phi functions
@@ -1043,11 +808,6 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
-
-            // Print dominance frontiers
-            for (block_id, frontier) in &function.dominance_frontiers {
-                println!("  Dominance frontier for {}: {:?}", block_id, frontier);
-            }
 
             // Examine phi functions in each block
             for (block_id, block) in &function.blocks {
@@ -1292,6 +1052,7 @@ mod tests {
                 halt
                 "#,
         );
+        println!("SSA Program:\n{}", pretty_print_ssa(&ctx.model));
         assert_marker_at_main!(ctx, 'a', ssa_main_mem!(23, 2));
         assert_marker_at_main!(ctx, 'b', ssa_main_mem!(23, 3));
         assert_marker_at_main!(ctx, 'c', ssa_main_deref!(23, 0));
@@ -1316,30 +1077,48 @@ mod tests {
     fn test_function_calls_and_loop() {
         let ctx = TestContext::new(
             r#"
-              R += 6
-              ptr = [R-5]
-              [R-2] = *ptr
-              [R-3] = 0
-              [R-5] = [R-5] + 1
-        loop:
-              [R-1] = [R-3] == [R-2]
+              R += 6                          ; Setup frame
+              ptr = [R-5]                     ; ptr = [R-5]_0
+'a            [R-2] = *ptr                    ; [R-2]_1 = *ptr
+'b            [R-3] = 0                       ; [R-3]_1 = 0
+'c            [R-5] = [R-5] + 1               ; [R-5]_1 = [R-5]_0 + 1
+        loop:                                 ; Loop header block (needs phis for R-3, R-5)
+              ; [R-3]_2 = φ(bl0: [R-3]_1, bl48: [R-3]_3)
+              [R-1] = 'd [R-3] == 'e [R-2]
               if [R-1] goto @exit
-              ptr2 = [R-5] + [R-3]
-              [R+1] = *ptr2
-              [R+2] = [R-3]
-              [R+3] = [R-2]
-              [R] = @ret
-              goto [R-4]
-        ret:
-              [R-3] = [R-3] + 1
-              goto @loop
-        exit:
-              R += -6
-              goto [R]
+              ptr2 = 'f [R-5] + 'g [R-3]      ; ptr2 = [R-5]_phi + [R-3]_phi
+              [R+1] = *ptr2                   ; Argument 1 (return value slot)
+              [R+2] = 'h [R-3]                ; Argument 2
+              [R+3] = 'i [R-2]                ; Argument 3
+              [R] = @ret                      ; Set return address
+              goto [R-4]                      ; Call function
+        ret:                                  ; Return block from call
+              ; [R+1]_2 = φ(bl25: call_return)
+              output 'j [R+1]                 ; Use return value
+'l            [R-3] = 'k [R-3] + 1            ; [R-3]_3 = [R-3]_2 + 1
+              goto @loop                      ; Jump back
+        exit:                                 ; Exit block
+              R += -6                         ; Teardown frame
+              goto [R]                        ; Return
                 "#,
         );
         println!("SSA Program:\n{}", pretty_print_ssa(&ctx.model));
-        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(-1, 1));
-        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(-1, 2));
+
+        // Initial assignments before loop
+        assert_marker_at_main!(ctx, 'a', ssa_main_rel!(-2, 1)); // [R-2]_1 = *ptr
+        assert_marker_at_main!(ctx, 'b', ssa_main_rel!(-3, 1)); // [R-3]_1 = 0
+        assert_marker_at_main!(ctx, 'c', ssa_main_rel!(-5, 1)); // [R-5]_1 = [R-5]_0 + 1
+                                                                // Inside loop header
+        assert_marker_at_main!(ctx, 'd', ssa_main_rel!(-3, 2)); // Read [R-3] in condition (phi result [R-3]_2)
+        assert_marker_at_main!(ctx, 'e', ssa_main_rel!(-2, 1)); // Read [R-2] in condition (initial value [R-2]_1, no phi)
+        assert_marker_at_main!(ctx, 'f', ssa_main_rel!(-5, 1)); // Read [R-5] for ptr2 (value before loop [R-5]_1, no phi needed/pruned)
+        assert_marker_at_main!(ctx, 'g', ssa_main_rel!(-3, 2)); // Read [R-3] for ptr2 (phi result [R-3]_2)
+        assert_marker_at_main!(ctx, 'h', ssa_main_rel!(-3, 2)); // Read [R-3] for arg [R+2] (phi result [R-3]_2)
+        assert_marker_at_main!(ctx, 'i', ssa_main_rel!(-2, 1)); // Read [R-2] for arg [R+3] (initial value [R-2]_1, no phi)
+                                                                // After function call return
+        assert_marker_at_main!(ctx, 'j', ssa_main_rel!(1, 2)); // Read [R+1] after call return (phi result [R+1]_2)
+                                                               // Inside loop body (after call)
+        assert_marker_at_main!(ctx, 'k', ssa_main_rel!(-3, 2)); // Read [R-3] before increment (reads phi result [R-3]_2)
+        assert_marker_at_main!(ctx, 'l', ssa_main_rel!(-3, 3)); // Write [R-3] after increment (new version [R-3]_3 for loop feedback)
     }
 }
