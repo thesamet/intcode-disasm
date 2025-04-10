@@ -464,7 +464,6 @@ impl<'a> SSAConversionState<'a> {
 
         // For each block with multiple predecessors, check which variables need phi functions
         for &block_id in &function.blocks {
-            println!("Processing block {}", block_id);
             let block = self.model.get_block(block_id);
 
             // Only blocks with multiple predecessors need phi functions
@@ -524,11 +523,6 @@ impl<'a> SSAConversionState<'a> {
             } else {
                 vec![]
             };
-            println!(
-                "block_id: {}, all_incoming_defs: {:?}",
-                block_id, all_incoming_defs
-            );
-
             let vars = all_incoming_defs
                 .iter()
                 .filter(|(var_kind, defs)| defs.len() > 1 && block_flow.live_in.contains(var_kind))
