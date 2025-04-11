@@ -23,12 +23,50 @@ enum SsaVarKind {
 */
 
 /// Represents an SSA variable
-#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone)]
 pub struct SsaVar {
     /// Original operand this variable represents
     pub operand: Operand,
     /// Version number of this SSA variable
     pub version: usize,
+    /// Function ID this variable belongs to
+    pub function_id: FunctionId,
+}
+
+impl PartialEq for SsaVar {
+    fn eq(&self, other: &Self) -> bool {
+        self.operand.kind == other.operand.kind && 
+        self.version == other.version && 
+        self.function_id == other.function_id
+    }
+}
+
+impl Eq for SsaVar {}
+
+impl std::hash::Hash for SsaVar {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.operand.kind.hash(state);
+        self.version.hash(state);
+        self.function_id.hash(state);
+    }
+}
+
+impl PartialOrd for SsaVar {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SsaVar {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.operand.kind.cmp(&other.operand.kind) {
+            std::cmp::Ordering::Equal => match self.version.cmp(&other.version) {
+                std::cmp::Ordering::Equal => self.function_id.cmp(&other.function_id),
+                ord => ord,
+            },
+            ord => ord,
+        }
+    }
 }
 
 impl From<SsaVar> for Operand {
@@ -44,8 +82,8 @@ impl From<&SsaVar> for Operand {
 
 impl SsaVar {
     /// Create a new SSA variable with Regular source
-    pub fn new(operand: Operand, version: usize) -> Self {
-        Self { operand, version }
+    pub fn new(operand: Operand, version: usize, function_id: FunctionId) -> Self {
+        Self { operand, version, function_id }
     }
 }
 
@@ -168,6 +206,7 @@ impl<'a> SSAConversionState<'a> {
     fn create_next_version(
         current_versions: &mut HashMap<OperandKind, SsaVar>,
         var: Operand,
+        function_id: FunctionId,
     ) -> SsaVar {
         let version = current_versions
             .get(&var.kind)
@@ -177,6 +216,7 @@ impl<'a> SSAConversionState<'a> {
         let new_version = SsaVar {
             operand: var,
             version,
+            function_id,
         };
         current_versions.insert(var.kind, new_version);
         new_version
@@ -185,18 +225,21 @@ impl<'a> SSAConversionState<'a> {
     fn get_current_version_for(
         current_versions: &HashMap<OperandKind, SsaVar>,
         op: Operand,
+        function_id: FunctionId,
     ) -> SsaVar {
         if let Some(op_kind) = op.kind.as_variable() {
             if let Some(ssa_var) = current_versions.get(&op_kind) {
                 return SsaVar {
                     operand: op,
                     version: ssa_var.version,
+                    function_id,
                 };
             }
         }
         let v = SsaVar {
             operand: op,
             version: 0,
+            function_id,
         };
         v
     }
@@ -204,8 +247,9 @@ impl<'a> SSAConversionState<'a> {
     fn create_ssa_next_kind(
         current_versions: &HashMap<OperandKind, SsaVar>,
         original: &NextKind<Operand>,
+        function_id: FunctionId,
     ) -> NextKind<SsaVar> {
-        original.map(&mut |op| Self::get_current_version_for(current_versions, op))
+        original.map(&mut |op| Self::get_current_version_for(current_versions, op, function_id))
     }
 
     fn convert_function(&mut self, function_id: FunctionId) -> HashMap<BlockId, SsaBlock> {
@@ -231,6 +275,7 @@ impl<'a> SSAConversionState<'a> {
             &phi_placements,
             &mut visited_blocks,
             &mut initial_versions,
+            function_id,
         );
 
         self.compute_start_end_states(&self.model, &mut ssa_blocks);
@@ -261,6 +306,7 @@ impl<'a> SSAConversionState<'a> {
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
         visited_blocks: &mut HashSet<BlockId>,
         current_versions: &mut HashMap<OperandKind, SsaVar>,
+        function_id: FunctionId,
     ) {
         if !visited_blocks.insert(block_id) {
             return;
@@ -273,7 +319,7 @@ impl<'a> SSAConversionState<'a> {
         let mut block_phi_functions = Vec::new();
         if let Some(phis) = phi_placements.get(&block_id) {
             for phi in phis {
-                let phi_result = Self::create_next_version(current_versions, phi.result.operand);
+                let phi_result = Self::create_next_version(current_versions, phi.result.operand, phi.result.function_id);
 
                 // Create a new phi function with the correct result version
                 let new_phi = PhiFunction {
@@ -291,13 +337,13 @@ impl<'a> SSAConversionState<'a> {
             // Map read operands to their current versions
             let map_read = &mut |current_versions: &mut HashMap<OperandKind, SsaVar>,
                                  operand: &Operand| {
-                Self::get_current_version_for(current_versions, *operand)
+                Self::get_current_version_for(current_versions, *operand, function_id)
             };
 
             // Map write operands, creating new versions
             let map_write = &mut |current_versions: &mut HashMap<OperandKind, SsaVar>,
                                   operand: &Operand| {
-                let next_version = Self::create_next_version(current_versions, *operand);
+                let next_version = Self::create_next_version(current_versions, *operand, function_id);
                 if operand.kind.is_variable() {
                     initial_end_state.insert(operand.kind, next_version);
                 }
@@ -310,7 +356,7 @@ impl<'a> SSAConversionState<'a> {
         }
 
         // Step 3: Create SSA version of the terminator (next)
-        let ssa_next = Self::create_ssa_next_kind(current_versions, &original_block.next);
+        let ssa_next = Self::create_ssa_next_kind(current_versions, &original_block.next, function_id);
 
         // Step 4: Create and register the SSA block
         let ssa_block = SsaBlock {
@@ -330,6 +376,7 @@ impl<'a> SSAConversionState<'a> {
                 phi_placements,
                 visited_blocks,
                 current_versions,
+                function_id,
             );
         }
     }
@@ -438,6 +485,7 @@ impl<'a> SSAConversionState<'a> {
                             debug_marker: None,
                         },
                         0, // Temporary version, will be updated during renaming
+                        function_id, // Function ID that this phi belongs to
                     ),
                     inputs: HashMap::new(), // Will be filled at a later stage.
                 };
@@ -517,6 +565,7 @@ mod tests {
                     debug_marker: None,
                 },
                 version: $version,
+                function_id: FunctionId::from(0),
             }
         };
     }
@@ -530,6 +579,7 @@ mod tests {
                     debug_marker: None,
                 },
                 version: $version,
+                function_id: FunctionId::from(0),
             }
         };
     }
@@ -543,6 +593,7 @@ mod tests {
                     debug_marker: None,
                 },
                 version: $deref_version,
+                function_id: FunctionId::from(0),
             }
         };
     }
@@ -602,6 +653,10 @@ mod tests {
             debug_marker: None,
         }
     }
+    
+    fn ssavar_from_memory(offset: usize, version: usize, function_id: FunctionId) -> SsaVar {
+        SsaVar::new(memory_operand(offset), version, function_id)
+    }
 
     fn relative_memory_operand(offset: i128) -> Operand {
         Operand {
@@ -630,10 +685,12 @@ mod tests {
     #[test]
     fn test_ssa_var_creation() {
         let operand = memory_operand(100);
-        let var = SsaVar::new(operand, 1);
+        let function_id = FunctionId::from(0);
+        let var = SsaVar::new(operand, 1, function_id);
 
         assert_eq!(var.operand, operand);
         assert_eq!(var.version, 1);
+        assert_eq!(var.function_id, function_id);
     }
 
     // Helper to prepare a model with control flow and data flow analyses done

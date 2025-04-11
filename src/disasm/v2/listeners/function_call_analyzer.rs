@@ -155,6 +155,7 @@ impl FunctionCallAnalyzer {
         for (&function_id, function) in &ssa_result.functions {
             let entry_block_id = model.get_function(function.original_id).entry_block;
             let return_block_id = model.get_function(function.original_id).return_block;
+            let stack_size = model.get_function(function.original_id).stack_size as i128;
 
             let mut parameter_entry_vars: HashMap<i128, SsaVar> = HashMap::new();
 
@@ -171,7 +172,7 @@ impl FunctionCallAnalyzer {
                         // Found a potential parameter offset `n`
                         // Now find the SsaVar with the lowest version for this kind in the function
                         if let Some(entry_var) = find_lowest_version_ssa_var(function, live_kind) {
-                            parameter_entry_vars.insert(*offset, entry_var);
+                            parameter_entry_vars.insert(*offset + stack_size, entry_var);
                         } else {
                             panic!("Function {}: OperandKind {:?} is live_in at entry, but no corresponding SsaVar found.", function_id, live_kind);
                         }

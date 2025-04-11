@@ -1,6 +1,7 @@
 use crate::disasm::v2::{
     instructions::OperandKind,
     listeners::type_inference_analyzer::{ConstraintReason, Type, TypeInferenceAnalyzer},
+    model::FunctionId,
     ssa_form::SsaVar,
 };
 
@@ -49,11 +50,12 @@ mod tests {
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create some SSA variables to infer types for
-        let int_var = SsaVar::new(memory_operand(100), 1);
+        let function_id = FunctionId::from(0);
+        let int_var = SsaVar::new(memory_operand(100), 1, function_id);
 
-        let bool_var = SsaVar::new(memory_operand(101), 1);
+        let bool_var = SsaVar::new(memory_operand(101), 1, function_id);
 
-        let char_var = SsaVar::new(memory_operand(102), 1);
+        let char_var = SsaVar::new(memory_operand(102), 1, function_id);
 
         // Get type variables for these SSA variables
         let int_type = type_inference.type_for_ssavar(&int_var);
@@ -101,7 +103,8 @@ mod tests {
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create an SSA variable for a function pointer
-        let func_ptr_var = SsaVar::new(memory_operand(200), 1);
+        let function_id = FunctionId::from(0);
+        let func_ptr_var = SsaVar::new(memory_operand(200), 1, function_id);
 
         // Get type variable
         let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
@@ -136,11 +139,12 @@ mod tests {
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create variables for testing pointer relationships
-        let int_var = SsaVar::new(memory_operand(100), 1);
+        let function_id = FunctionId::from(0);
+        let int_var = SsaVar::new(memory_operand(100), 1, function_id);
 
-        let ptr_var = SsaVar::new(memory_operand(101), 1);
+        let ptr_var = SsaVar::new(memory_operand(101), 1, function_id);
 
-        let deref_var = SsaVar::new(deref_operand(101), 1);
+        let deref_var = SsaVar::new(deref_operand(101), 1, function_id);
 
         // Get type variables
         let int_type = type_inference.type_for_ssavar(&int_var);
