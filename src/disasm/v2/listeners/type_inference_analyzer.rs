@@ -1,49 +1,102 @@
 use log::{debug, info};
-use std::{collections::HashMap, fmt};
+use std::{cmp::Ordering, collections::HashMap, fmt};
 
 use crate::disasm::v2::{
     control_flow::NextKind,
     dispatching::{EventCollector, EventListener},
     events::{Event, TypeInferenceComplete},
-    instructions::{InstructionKind, Operand, OperandKind},
+    instructions::{InstructionId, InstructionKind, Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar},
 };
 
-/// Unique identifier for a type variable
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TypeVarId(pub FunctionId, pub usize);
-
-impl fmt::Display for TypeVarId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "t{}_{}", self.0, self.1)
-    }
+/// Represents a type in the type system
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Type {
+    Int,
+    Bool,
+    Char,
+    Pointer(Box<Type>),
+    FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
+    String,
+    TypeVar(SsaVar),
 }
 
-/// Represents a type in the type system
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
-pub enum Type {
-    /// Integer type
-    Int,
+impl Type {
+    /// Returns true if this type is a subtype of the other type.
+    ///
+    /// In our type system, a type is a subtype of itself, and Char and Bool are subtypes of Int.
+    pub fn is_subtype_of(&self, other: &Type) -> bool {
+        match (self, other) {
+            // A type is always a subtype of itself
+            (a, b) if a == b => true,
+            (Type::Char, Type::Int) => true,
+            (Type::Bool, Type::Int) => true,
+            // Pointer subtyping is covariant
+            (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
+            // Function pointer subtyping: contravariant args, covariant returns
+            (
+                Type::FunctionPointer {
+                    args: args1,
+                    returns: returns1,
+                },
+                Type::FunctionPointer {
+                    args: args2,
+                    returns: returns2,
+                },
+            ) => {
+                if args1.len() != args2.len() || returns1.len() != returns2.len() {
+                    return false;
+                }
+                // Check args (contravariant): arg2 must be subtype of arg1
+                let args_compatible = args1
+                    .iter()
+                    .zip(args2.iter())
+                    .all(|(a1, a2)| a2.is_subtype_of(a1));
+                // Check returns (covariant): return1 must be subtype of return2
+                let returns_compatible = returns1
+                    .iter()
+                    .zip(returns2.iter())
+                    .all(|(r1, r2)| r1.is_subtype_of(r2));
 
-    /// Boolean type
-    Bool,
+                args_compatible && returns_compatible
+            }
+            // Type variables are not involved in subtyping checks directly here
+            (Type::TypeVar(_), _) | (_, Type::TypeVar(_)) => false,
+            // All other cases aren't subtypes
+            _ => false,
+        }
+    }
 
-    /// Character type
-    Char,
+    /// Returns the most specific type that is a supertype of both types (Least Upper Bound).
+    /// Used for reconciling types during unification when subtyping is involved.
+    /// Returns None if the types are incompatible.
+    pub fn max(a: &Type, b: &Type) -> Option<Type> {
+        if a == b {
+            Some(a.clone())
+        } else if a.is_subtype_of(b) {
+            Some(b.clone()) // b is the supertype
+        } else if b.is_subtype_of(a) {
+            Some(a.clone()) // a is the supertype
+        } else {
+            None
+        }
+    }
 
-    /// Pointer to another type
-    Pointer(Box<Type>),
-
-    /// Function pointer with argument and return types
-    FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
-
-    /// String type
-    #[allow(unused)]
-    String,
-
-    /// Type variable (used during inference)
-    TypeVar(TypeVarId),
+    /// Returns the most specific common type (Greatest Lower Bound, conceptually).
+    /// If one is a subtype of the other, returns the subtype.
+    /// Returns None if they are incompatible or unrelated.
+    pub fn min(a: &Type, b: &Type) -> Option<Type> {
+        if a == b {
+            Some(a.clone())
+        } else if a.is_subtype_of(b) {
+            Some(a.clone()) // a is the subtype (more specific)
+        } else if b.is_subtype_of(a) {
+            Some(b.clone()) // b is the subtype (more specific)
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -76,94 +129,6 @@ impl fmt::Display for Type {
             }
             Type::String => write!(f, "string"),
             Type::TypeVar(t) => write!(f, "{}", t),
-        }
-    }
-}
-
-impl Type {
-    /// Returns true if this type is a subtype of the other type.
-    ///
-    /// In our type system, a type is a subtype of itself, and Char and Bool are subtypes of Int.
-    pub fn is_subtype_of(&self, other: &Type) -> bool {
-        match (self, other) {
-            // A type is always a subtype of itself
-            (a, b) if a == b => true,
-
-            // Char and Bool are subtypes of Int
-            (Type::Char, Type::Int) => true,
-            (Type::Bool, Type::Int) => true,
-
-            // Pointer subtyping is covariant
-            (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
-
-            // Function pointer subtyping: contravariant args, covariant returns
-            (
-                Type::FunctionPointer {
-                    args: args1,
-                    returns: returns1,
-                },
-                Type::FunctionPointer {
-                    args: args2,
-                    returns: returns2,
-                },
-            ) => {
-                if args1.len() != args2.len() || returns1.len() != returns2.len() {
-                    return false;
-                }
-                // Check args (contravariant): arg2 must be subtype of arg1
-                let args_compatible = args1
-                    .iter()
-                    .zip(args2.iter())
-                    .all(|(a1, a2)| a2.is_subtype_of(a1));
-                // Check returns (covariant): return1 must be subtype of return2
-                let returns_compatible = returns1
-                    .iter()
-                    .zip(returns2.iter())
-                    .all(|(r1, r2)| r1.is_subtype_of(r2));
-
-                args_compatible && returns_compatible
-            }
-
-            // Type variables are not involved in subtyping checks directly here
-            (Type::TypeVar(_), _) | (_, Type::TypeVar(_)) => false,
-
-            // All other cases aren't subtypes
-            _ => false,
-        }
-    }
-
-    /// Returns the most specific type that is a supertype of both types (Least Upper Bound).
-    /// Used for reconciling types during unification when subtyping is involved.
-    /// Returns None if the types are incompatible.
-    pub fn least_upper_bound(a: &Type, b: &Type) -> Option<Type> {
-        if a == b {
-            Some(a.clone())
-        } else if a.is_subtype_of(b) {
-            Some(b.clone()) // b is the supertype
-        } else if b.is_subtype_of(a) {
-            Some(a.clone()) // a is the supertype
-        } else {
-            // Check for specific LUB cases like (Pointer(T1), Pointer(T2)) -> Pointer(LUB(T1, T2))
-            // Or Function Pointers (more complex, requires GLB for args)
-            // For now, only handle direct subtyping.
-            None
-        }
-    }
-
-    /// Returns the most specific common type (Greatest Lower Bound, conceptually).
-    /// If one is a subtype of the other, returns the subtype.
-    /// Returns None if they are incompatible or unrelated.
-    pub fn most_specific_common_type(a: &Type, b: &Type) -> Option<Type> {
-        if a == b {
-            Some(a.clone())
-        } else if a.is_subtype_of(b) {
-            Some(a.clone()) // a is the subtype (more specific)
-        } else if b.is_subtype_of(a) {
-            Some(b.clone()) // b is the subtype (more specific)
-        } else {
-            // Handle structural cases if needed (e.g., *T1 and *T2 -> *GLB(T1, T2))
-            // For now, only handle direct subtyping.
-            None
         }
     }
 }
@@ -212,22 +177,20 @@ pub enum ConstraintReason {
 
     /// Indirect function calls imply function pointer type
     IndirectFunctionCall,
-    ImmediateIsInt,
+    ImmediateIsSubtypeOfInt,
     /// Internal reason for reconciliation during unification
     Reconciliation,
 }
 
-/// Represents a constraint between two types
+/// Represents a constraint between two types. The constraint implies that
+/// the left type is a subtype of the right type.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
 struct Constraint {
-    /// The left side of the constraint
     left: Type,
-
-    /// The right side of the constraint
     right: Type,
 
     /// The instruction address where this constraint was generated
-    addr: usize,
+    addr: InstructionId,
 
     /// The reason for this constraint
     reason: ConstraintReason,
@@ -338,47 +301,8 @@ impl TypeInferenceAnalyzer {
         }
     }
 
-    /// Generate a fresh type variable for a given function
-    fn fresh_type_var(&mut self, function_id: FunctionId) -> Type {
-        let id = self.next_type_var_id;
-        self.next_type_var_id += 1;
-        Type::TypeVar(TypeVarId(function_id, id))
-    }
-
-    /// Get the type variable for an SSA variable, creating one if it doesn't exist.
-    pub fn type_for_ssavar(&mut self, var: &SsaVar) -> Type {
-        if let Some(typ) = self.type_vars.get(var) {
-            return typ.clone();
-        }
-
-        let typ = self.fresh_type_var(var.function_id).clone();
-        if let OperandKind::Deref(addr) = var.operand.kind {
-            // First, collect all candidate variables (to avoid borrowing issues)
-            let memory_var = self
-                .type_vars
-                .keys()
-                .filter(|other_var| {
-                    other_var.function_id == var.function_id
-                        && other_var.operand.kind.get_memory() == Some(addr as i128)
-                })
-                .max_by_key(|other_var| other_var.version)
-                .cloned();
-
-            // Now process the candidates with no borrow conflicts
-            if let Some(memory_var) = memory_var {
-                // If we find it, add a deref constraint
-                let pointer_type = self.type_for_ssavar(&memory_var).clone();
-                let instr_id = 5555;
-                self.add_constraint(
-                    pointer_type.clone(),
-                    Type::Pointer(Box::new(typ.clone())),
-                    instr_id,
-                    ConstraintReason::Deref,
-                );
-            }
-        }
-        self.type_vars.insert(var.clone(), typ.clone());
-        typ
+    pub fn type_for_ssavar(&self, var: &SsaVar) -> Type {
+        Type::TypeVar(*var)
     }
 
     /// Add a constraint between two types
@@ -386,7 +310,7 @@ impl TypeInferenceAnalyzer {
         &mut self,
         left: Type,
         right: Type,
-        addr: usize,
+        addr: InstructionId,
         reason: ConstraintReason,
     ) {
         debug!(
@@ -402,16 +326,16 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Generate constraints for a phi function
-    fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, _block_id: BlockId) {
+    fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, block_id: BlockId) {
         let result_type = self.type_for_ssavar(&phi.result);
-        let result_addr = phi.result.operand.offset;
+        let result_addr = InstructionId::from(block_id.index());
 
         // Add constraints between each input and the result
         for (_, input_var) in &phi.inputs {
-            let input_type = self.type_for_ssavar(input_var);
+            let input_type = Type::TypeVar(*input_var);
             self.add_constraint(
-                result_type.clone(),
                 input_type,
+                result_type.clone(),
                 result_addr, // Use address of the result variable definition
                 ConstraintReason::PhiAssignment,
             );
@@ -424,7 +348,7 @@ impl TypeInferenceAnalyzer {
         instruction: &SsaInstruction,
         _block_id: BlockId,
     ) {
-        let instr_id = instruction.id.index();
+        let instr_id = instruction.id;
 
         match &instruction.kind {
             InstructionKind::Assign(target, source) => {
@@ -435,7 +359,7 @@ impl TypeInferenceAnalyzer {
                         src_type.clone(),
                         Type::Int,
                         instr_id,
-                        ConstraintReason::ImmediateIsInt,
+                        ConstraintReason::ImmediateIsSubtypeOfInt,
                     );
                 }
                 self.add_constraint(dst_type, src_type, instr_id, ConstraintReason::Assignment);
@@ -458,8 +382,8 @@ impl TypeInferenceAnalyzer {
             InstructionKind::Input(dst) => {
                 let dst_type = self.type_for_ssavar(dst);
                 self.add_constraint(
-                    dst_type,
                     Type::Char,
+                    dst_type,
                     instr_id,
                     ConstraintReason::InputImpliesChar,
                 );
@@ -506,15 +430,21 @@ impl TypeInferenceAnalyzer {
                 let dst_type = self.type_for_ssavar(dst);
 
                 self.add_constraint(
-                    dst_type,
                     Type::Bool,
+                    dst_type,
                     instr_id,
                     ConstraintReason::CompareDstImpliesBool,
                 );
                 // Sources must be compatible (unifiable). Add constraint.
                 self.add_constraint(
-                    src1_type,
+                    src1_type.clone(),
+                    src2_type.clone(),
+                    instr_id,
+                    ConstraintReason::CompareSrcSameType,
+                );
+                self.add_constraint(
                     src2_type,
+                    src1_type,
                     instr_id,
                     ConstraintReason::CompareSrcSameType,
                 );
@@ -559,8 +489,8 @@ impl TypeInferenceAnalyzer {
         let location_addr = block
             .instructions
             .last()
-            .map(|instr| instr.id.index())
-            .unwrap_or_else(|| block_id.index());
+            .map(|instr| instr.id)
+            .unwrap_or_else(|| InstructionId::from(block_id.index()));
 
         match &block.next {
             NextKind::Condition(cond) => {
@@ -575,9 +505,6 @@ impl TypeInferenceAnalyzer {
             }
 
             NextKind::FunctionCall(call) => {
-                let callee_addr_var = &call.function_addr;
-                let callee_addr_type = self.type_for_ssavar(callee_addr_var);
-
                 if let Some(func_addr) = call.function_addr.operand.kind.get_immediate() {
                     // --- Direct Call ---
                     let fca = model
@@ -585,66 +512,37 @@ impl TypeInferenceAnalyzer {
                         .expect("FunctionCallAnalysis missing");
                     let callee_id = FunctionId::from(func_addr as usize);
 
-                    if let Some(callee_info) = fca.callee_info.get(&callee_id) {
-                        // TODO: Infer function signature (arg/return types) and constrain callee_addr_type
+                    let callee_info = &fca.callee_info[&callee_id];
 
-                        // Link caller arguments to callee parameters
-                        for (caller_offset, callee_param_var) in &callee_info.parameter_entry_vars {
-                            if let Some(caller_arg_var) = block
-                                .end_state
-                                .get(&OperandKind::RelativeMemory(*caller_offset))
-                            {
-                                let caller_arg_type = self.type_for_ssavar(caller_arg_var);
-                                let callee_param_type = self.type_for_ssavar(callee_param_var);
-                                self.add_constraint(
-                                    caller_arg_type,   // Caller provides argument
-                                    callee_param_type, // Callee receives parameter
-                                    location_addr,
-                                    ConstraintReason::FunctionParameterBinding,
-                                );
-                            } else {
-                                log::warn!("Caller arg at offset {} not found in block {} end state for call to {}", caller_offset, block_id, callee_id);
-                            }
+                    // Link caller arguments to callee parameters
+                    for (caller_offset, callee_param_var) in &callee_info.parameter_entry_vars {
+                        if let Some(caller_arg_var) = block
+                            .end_state
+                            .get(&OperandKind::RelativeMemory(*caller_offset))
+                        {
+                            let caller_arg_type = self.type_for_ssavar(caller_arg_var);
+                            let callee_param_type = self.type_for_ssavar(callee_param_var);
+                            self.add_constraint(
+                                caller_arg_type,   // Caller provides argument
+                                callee_param_type, // Callee receives parameter
+                                location_addr,
+                                ConstraintReason::FunctionParameterBinding,
+                            );
+                        } else {
+                            log::warn!("Caller arg at offset {} not found in block {} end state for call to {}", caller_offset, block_id, callee_id);
                         }
-                        // TODO: Link caller return locations to callee return vars (if any)
-                        // This requires knowing return value locations (convention?)
-                        // and the SSA vars for return values in the callee.
-
-                        // Create expected function type based on analysis (if available)
-                        // let expected_args = ... derive from parameter_entry_vars ...;
-                        // let expected_returns = ... derive from return analysis ...;
-                        // self.add_constraint(callee_addr_type, Type::FunctionPointer { args: expected_args, returns: expected_returns }, ...);
-                    } else {
-                        log::warn!("Callee info not found for direct call target {}", callee_id);
-                        // Add a generic function pointer constraint as fallback?
-                        self.add_constraint(
-                            callee_addr_type,
-                            Type::FunctionPointer {
-                                args: vec![],
-                                returns: vec![],
-                            }, // Unknown signature
-                            location_addr,
-                            ConstraintReason::IndirectFunctionCall, // Treat as opaque call
-                        );
                     }
                 } else {
-                    // --- Indirect Call ---
-                    // The callee address variable must be a function pointer.
-                    // We don't know the signature yet, unify with a generic one.
-                    // Unification with specific call sites might refine this later.
                     let fn_type = self.type_for_ssavar(&call.function_addr);
                     self.add_constraint(
-                        fn_type,
                         Type::FunctionPointer {
                             args: vec![],    // Placeholder - args inferred from usage at call site
                             returns: vec![], // Placeholder - returns inferred from usage after call
                         },
+                        fn_type,
                         location_addr,
                         ConstraintReason::IndirectFunctionCall,
                     );
-                    // TODO: Add constraints based on arguments passed at this specific call site.
-                    // e.g., if `[R+1]` is passed, `arg1_type = type_for_ssavar([R+1])`
-                    // constrain `callee_addr_type = fn(arg1_type, ...) -> ...`
                 }
             }
             NextKind::Return => {
@@ -714,7 +612,7 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Solve the collected constraints using unification
-    pub fn unify(&self) -> Result<HashMap<TypeVarId, Type>, String> {
+    pub fn unify(&self) -> Result<HashMap<SsaVar, Type>, String> {
         let mut worklist = self.constraints.clone();
         let mut subst = HashMap::new();
         worklist.sort();
