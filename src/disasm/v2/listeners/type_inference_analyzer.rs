@@ -273,6 +273,13 @@ impl TypeInferenceResult {
         }
         None
     }
+
+    pub fn get_typevar_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
+        if let Some(f @ Type::TypeVar(_)) = self.type_vars.get(var) {
+            return Some(f);
+        }
+        None
+    }
 }
 
 impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
@@ -397,7 +404,7 @@ impl TypeInferenceAnalyzer {
     /// Generate constraints for a phi function
     fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, _block_id: BlockId) {
         let result_type = self.type_for_ssavar(&phi.result);
-        let result_instr_id = 5556;
+        let result_addr = phi.result.operand.offset;
 
         // Add constraints between each input and the result
         for (_, input_var) in &phi.inputs {
@@ -625,6 +632,7 @@ impl TypeInferenceAnalyzer {
                     // The callee address variable must be a function pointer.
                     // We don't know the signature yet, unify with a generic one.
                     // Unification with specific call sites might refine this later.
+                    let fn_type = self.type_for_ssavar(&call.function_addr);
                     self.add_constraint(
                         fn_type,
                         Type::FunctionPointer {
@@ -709,6 +717,8 @@ impl TypeInferenceAnalyzer {
     pub fn unify(&self) -> Result<HashMap<TypeVarId, Type>, String> {
         let mut worklist = self.constraints.clone();
         let mut subst = HashMap::new();
+        worklist.sort();
+        worklist.reverse();
 
         while let Some(constraint) = worklist.pop() {
             let left = Self::substitute(constraint.left.clone(), &subst);
@@ -787,7 +797,6 @@ impl TypeInferenceAnalyzer {
                 }
 
                 // --- Cases for Concrete Types ---
-
                 (Type::Pointer(t1), Type::Pointer(t2)) => {
                     debug!("  -> Pointer: Adding constraint {} = {}", **t1, **t2);
                     // Add constraint to unify the pointed-to types
@@ -853,6 +862,7 @@ impl TypeInferenceAnalyzer {
                     // No action needed, the relationship holds.
                 }
 
+                /*
                 // 7. Conflict: Incompatible concrete types
                 // This catches Int = Bool, *T = Int, fn(...) = Char, etc.
                 (t1, t2) if Self::are_incompatible_concrete_types(t1, t2) => {
@@ -861,7 +871,7 @@ impl TypeInferenceAnalyzer {
                         left, right, constraint
                     ));
                 }
-
+                */
                 _ => {
                     // This case shouldn't normally be reached, but handle unknown cases
                     // by returning an error to be safe
