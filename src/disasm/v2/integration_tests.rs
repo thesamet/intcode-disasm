@@ -56,9 +56,9 @@ mod tests {
         let char_var = SsaVar::new(memory_operand(102), 1);
 
         // Get type variables for these SSA variables
-        let int_type = type_inference.type_for_var(&int_var);
-        let bool_type = type_inference.type_for_var(&bool_var);
-        let char_type = type_inference.type_for_var(&char_var);
+        let int_type = type_inference.type_for_ssavar(&int_var);
+        let bool_type = type_inference.type_for_ssavar(&bool_var);
+        let char_type = type_inference.type_for_ssavar(&char_var);
 
         // Add constraints
         type_inference.add_constraint(
@@ -104,7 +104,7 @@ mod tests {
         let func_ptr_var = SsaVar::new(memory_operand(200), 1);
 
         // Get type variable
-        let func_ptr_type = type_inference.type_for_var(&func_ptr_var);
+        let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -143,9 +143,9 @@ mod tests {
         let deref_var = SsaVar::new(deref_operand(101), 1);
 
         // Get type variables
-        let int_type = type_inference.type_for_var(&int_var);
-        let ptr_type = type_inference.type_for_var(&ptr_var);
-        let deref_type = type_inference.type_for_var(&deref_var);
+        let int_type = type_inference.type_for_ssavar(&int_var);
+        let ptr_type = type_inference.type_for_ssavar(&ptr_var);
+        let deref_type = type_inference.type_for_ssavar(&deref_var);
 
         // Add constraints
         // int_var is an integer

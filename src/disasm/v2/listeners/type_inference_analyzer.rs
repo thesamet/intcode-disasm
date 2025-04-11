@@ -159,7 +159,7 @@ pub struct TypeInferenceAnalyzer {
     constraints: Vec<Constraint>,
 
     /// Map from SSA variables to their types
-    type_vars: HashMap<SsaVar, Type>,
+    type_vars: HashMap<(OperandKind, usize), Type>,
 
     /// Debug markers for variables
     #[allow(unused)]
@@ -172,12 +172,16 @@ pub struct TypeInferenceAnalyzer {
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     inferred_types: HashMap<TypeVarId, Type>,
-    type_vars: HashMap<SsaVar, Type>,
+    type_vars: HashMap<(OperandKind, usize), Type>,
 }
 
 impl TypeInferenceResult {
-    pub fn get_type_for_var(&self, var: &SsaVar) -> Option<&Type> {
-        if let Some(Type::TypeVar(id)) = self.type_vars.get(var).cloned() {
+    pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
+        self.get_type_for_var(var.operand.kind, var.version)
+    }
+
+    fn get_type_for_var(&self, kind: OperandKind, version: usize) -> Option<&Type> {
+        if let Some(Type::TypeVar(id)) = self.type_vars.get(&(kind, version)).cloned() {
             return self.inferred_types.get(&id);
         }
         None
@@ -243,26 +247,30 @@ impl TypeInferenceAnalyzer {
         Type::TypeVar(TypeVarId(id))
     }
 
+    pub fn type_for_ssavar(&mut self, var: &SsaVar) -> Type {
+        self.type_for_var(var.operand.kind, var.version)
+    }
+
     /// Get the type for an SSA variable
-    pub fn type_for_var(&mut self, var: &SsaVar) -> Type {
-        if let Some(typ) = self.type_vars.get(var) {
+    pub fn type_for_var(&mut self, kind: OperandKind, version: usize) -> Type {
+        if let Some(typ) = self.type_vars.get(&(kind, version)) {
             return typ.clone();
         }
 
         let typ = self.fresh_type_var().clone();
-        if let OperandKind::Deref(addr) = var.operand.kind {
+        if let OperandKind::Deref(addr) = kind {
             // First, collect all candidate variables (to avoid borrowing issues)
             let memory_var = self
                 .type_vars
                 .keys()
-                .filter(|other_var| other_var.operand.kind.get_memory() == Some(addr as i128))
-                .max_by_key(|other_var| other_var.version)
+                .filter(|(other_var, _)| other_var.get_memory() == Some(addr as i128))
+                .max_by_key(|(_, ver)| ver)
                 .cloned();
 
             // Now process the candidates with no borrow conflicts
-            if let Some(memory_var) = memory_var {
+            if let Some((memory_var, version)) = memory_var {
                 // If we find it, add a deref constraint
-                let pointer_type = self.type_for_var(&memory_var).clone();
+                let pointer_type = self.type_for_var(memory_var, version).clone();
                 let instr_id = 5555;
                 self.add_constraint(
                     pointer_type.clone(),
@@ -272,7 +280,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
         }
-        self.type_vars.insert(*var, typ.clone());
+        self.type_vars.insert((kind, version), typ.clone());
         typ
     }
 
@@ -298,12 +306,12 @@ impl TypeInferenceAnalyzer {
 
     /// Generate constraints for a phi function
     fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, _block_id: BlockId) {
-        let result_type = self.type_for_var(&phi.result);
+        let result_type = self.type_for_ssavar(&phi.result);
         let result_instr_id = 5556;
 
         // Add constraints between each input and the result
         for (_, input_var) in &phi.inputs {
-            let input_type = self.type_for_var(input_var);
+            let input_type = self.type_for_ssavar(input_var);
             self.add_constraint(
                 result_type.clone(),
                 input_type,
@@ -324,8 +332,8 @@ impl TypeInferenceAnalyzer {
         match &instruction.kind {
             InstructionKind::Assign(target, source) => {
                 // It's an assignment (e.g., dst = src + 0 or dst = src * 1)
-                let dst_type = self.type_for_var(target);
-                let src_type = self.type_for_var(source);
+                let dst_type = self.type_for_ssavar(target);
+                let src_type = self.type_for_ssavar(source);
                 if source.operand.kind.get_immediate().is_some() {
                     self.add_constraint(
                         src_type.clone(),
@@ -338,9 +346,9 @@ impl TypeInferenceAnalyzer {
             }
             InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
-                let src1_type = self.type_for_var(src1);
-                let src2_type = self.type_for_var(src2);
-                let dst_type = self.type_for_var(dst);
+                let src1_type = self.type_for_ssavar(src1);
+                let src2_type = self.type_for_ssavar(src2);
+                let dst_type = self.type_for_ssavar(dst);
                 let reason = match instruction.kind {
                     InstructionKind::Add(_, _, _) => ConstraintReason::AddImpliesInt,
                     _ => ConstraintReason::MulImpliesInt,
@@ -352,7 +360,7 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::Input(dst) => {
-                let dst_type = self.type_for_var(dst);
+                let dst_type = self.type_for_ssavar(dst);
                 self.add_constraint(
                     dst_type,
                     Type::Char,
@@ -362,7 +370,7 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::Output(src) => {
-                let src_type = self.type_for_var(src);
+                let src_type = self.type_for_ssavar(src);
                 self.add_constraint(
                     src_type,
                     Type::Char,
@@ -372,9 +380,9 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::LessThan(src1, src2, dst) => {
-                let src1_type = self.type_for_var(src1);
-                let src2_type = self.type_for_var(src2);
-                let dst_type = self.type_for_var(dst);
+                let src1_type = self.type_for_ssavar(src1);
+                let src2_type = self.type_for_ssavar(src2);
+                let dst_type = self.type_for_ssavar(dst);
 
                 self.add_constraint(
                     dst_type,
@@ -397,9 +405,9 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::Equals(src1, src2, dst) => {
-                let src1_type = self.type_for_var(src1);
-                let src2_type = self.type_for_var(src2);
-                let dst_type = self.type_for_var(dst);
+                let src1_type = self.type_for_ssavar(src1);
+                let src2_type = self.type_for_ssavar(src2);
+                let dst_type = self.type_for_ssavar(dst);
 
                 self.add_constraint(
                     dst_type,
@@ -416,7 +424,7 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::JumpIfTrue(cond, _) | InstructionKind::JumpIfFalse(cond, _) => {
-                let cond_type = self.type_for_var(cond);
+                let cond_type = self.type_for_ssavar(cond);
                 self.add_constraint(
                     cond_type,
                     Type::Bool,
@@ -448,20 +456,20 @@ impl TypeInferenceAnalyzer {
             // Check for the pattern `dest = 0 + Deref(addr)`
             if matches!(src1.operand.kind, OperandKind::Immediate(0)) {
                 if let OperandKind::Deref(addr) = src2.operand.kind {
-                    let dest_type = self.type_for_var(dst);
+                    let dest_type = self.type_for_ssavar(dst);
 
                     // Find the SsaVar for the memory location holding the pointer address.
                     // Search within the type variables already created by the analyzer.
                     let maybe_ptr_mem_var = self
                         .type_vars
                         .keys()
-                        .filter(|k| k.operand.kind.get_memory() == Some(addr as i128))
-                        .max_by_key(|k| k.version)
+                        .filter(|(k, _)| k.get_memory() == Some(addr as i128))
+                        .max_by_key(|(_, v)| v)
                         .cloned(); // Clone needed as we might insert below
 
-                    if let Some(ptr_mem_var) = maybe_ptr_mem_var {
+                    if let Some((ptr_mem_kind, ptr_mem_version)) = maybe_ptr_mem_var {
                         // Found the variable holding the pointer address
-                        let ptr_addr_type = self.type_for_var(&ptr_mem_var); // Get or create its type
+                        let ptr_addr_type = self.type_for_var(ptr_mem_kind, ptr_mem_version); // Get or create its type
                         self.add_constraint(
                             ptr_addr_type,                      // Type of Memory(addr)
                             Type::Pointer(Box::new(dest_type)), // Must be Pointer to dest type
@@ -497,7 +505,7 @@ impl TypeInferenceAnalyzer {
         match next {
             NextKind::Condition(cond) => {
                 // The condition operand must be a boolean
-                let cond_type = self.type_for_var(&cond.condition_operand);
+                let cond_type = self.type_for_ssavar(&cond.condition_operand);
                 self.add_constraint(
                     cond_type,
                     Type::Bool,
@@ -510,7 +518,7 @@ impl TypeInferenceAnalyzer {
                 // For function calls, add constraints for function pointer type
                 if !matches!(call.function_addr.operand.kind, OperandKind::Immediate(_)) {
                     // Only add function pointer constraint for indirect calls
-                    let fn_type = self.type_for_var(&call.function_addr);
+                    let fn_type = self.type_for_ssavar(&call.function_addr);
 
                     // Create a function pointer type
                     // Note: In a real implementation, we would try to determine the actual argument
@@ -795,10 +803,12 @@ impl TypeInferenceAnalyzer {
     /// Get the final type for a variable after unification
     #[cfg(test)]
     pub fn get_var_type(&self, var: &SsaVar, subst: &HashMap<TypeVarId, Type>) -> Option<Type> {
-        self.type_vars.get(var).map(|t| match t {
-            Type::TypeVar(id) => subst.get(id).cloned().unwrap_or_else(|| t.clone()),
-            _ => t.clone(),
-        })
+        self.type_vars
+            .get(&(var.operand.kind, var.version))
+            .map(|t| match t {
+                Type::TypeVar(id) => subst.get(id).cloned().unwrap_or_else(|| t.clone()),
+                _ => t.clone(),
+            })
     }
 
     /// Get the final type for a debug marker after unification
@@ -821,7 +831,7 @@ macro_rules! assert_marker_type {
             .model
             .get_type_inference_result()
             .unwrap()
-            .get_type_for_var(&ssa_var)
+            .get_type_for_ssavar(&ssa_var)
             .expect("No type found for SSA variable");
 
         assert_eq!(
@@ -837,6 +847,7 @@ mod tests {
     use super::*;
     use crate::disasm::parser;
     use crate::disasm::v2::instructions::Operand;
+    use crate::disasm::v2::pretty_print::pretty_print_ssa;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
@@ -926,13 +937,13 @@ mod tests {
             let ti = self.model.get_type_inference_result().unwrap();
             println!("ti: {:?}", ti);
 
-            let ssa_var = ti
+            let (kind, version) = ti
                 .type_vars
                 .keys()
-                .filter(|k| k.operand.kind.get_memory() == Some(addr as i128))
-                .max_by_key(|k| k.version)
+                .filter(|(k, _)| k.get_memory() == Some(addr as i128))
+                .max_by_key(|(_, v)| v)
                 .unwrap_or_else(|| panic!("No type variable found address {}", addr));
-            let actual = ti.get_type_for_var(&ssa_var).unwrap();
+            let actual = ti.get_type_for_var(*kind, *version).unwrap();
             assert_eq!(
                 *actual, expected,
                 "Expected type {:?} but got {:?} for memory address {}",
@@ -976,9 +987,9 @@ mod tests {
         type_inference.mark_var(char_var.clone(), 'c');
 
         // Get type variables for these SSA variables
-        let int_type = type_inference.type_for_var(&int_var);
-        let bool_type = type_inference.type_for_var(&bool_var);
-        let char_type = type_inference.type_for_var(&char_var);
+        let int_type = type_inference.type_for_ssavar(&int_var);
+        let bool_type = type_inference.type_for_ssavar(&bool_var);
+        let char_type = type_inference.type_for_ssavar(&char_var);
 
         // Add constraints
         type_inference.add_constraint(int_type, Type::Int, 1, ConstraintReason::AddImpliesInt);
@@ -1027,7 +1038,7 @@ mod tests {
         type_inference.mark_var(func_ptr_var.clone(), 'a');
 
         // Get type variable
-        let func_ptr_type = type_inference.type_for_var(&func_ptr_var);
+        let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -1074,9 +1085,9 @@ mod tests {
         type_inference.mark_var(deref_var.clone(), 'c');
 
         // Get type variables
-        let int_type = type_inference.type_for_var(&int_var);
-        let ptr_type = type_inference.type_for_var(&ptr_var);
-        let deref_type = type_inference.type_for_var(&deref_var);
+        let int_type = type_inference.type_for_ssavar(&int_var);
+        let ptr_type = type_inference.type_for_ssavar(&ptr_var);
+        let deref_type = type_inference.type_for_ssavar(&deref_var);
 
         // Add constraints
         // int_var is an integer
@@ -1125,11 +1136,11 @@ mod tests {
         let var = SsaVar::new(memory_operand(100), 1);
 
         // Get type variable
-        let var_type = type_inference.type_for_var(&var);
+        let var_type = type_inference.type_for_ssavar(&var);
 
         // Create another variable that will be unified with var_type
         let another_var = SsaVar::new(memory_operand(101), 1);
-        let another_type = type_inference.type_for_var(&another_var);
+        let another_type = type_inference.type_for_ssavar(&another_var);
 
         // First, directly set var_type to int type
         type_inference.add_constraint(
@@ -1261,6 +1272,7 @@ f1:
                     halt
                 "#,
         );
+        pretty_print_ssa(&ctx.model);
         assert_marker_type!(
             ctx,
             'a',

@@ -148,16 +148,18 @@ pub fn format_call_info(model: &ProgramModel, function: &SsaFunction) -> String 
         .and_then(|m| m.callee_info.get(&function.original_id));
 
     if let Some(ca) = ca {
-        let args = ca
-            .return_writes
-            .values()
-            .sorted()
-            .map(format_ssa_var)
-            .collect_vec();
-        let return_values = if args.len() <= 1 {
-            format!("{}", args.join(", "))
-        } else {
-            format!("({})", args.join(", "))
+        let return_values = model
+            .get_function_call_analysis()
+            .and_then(|m| m.get_effective_return_values(function.original_id));
+        let rets = match return_values {
+            Some(return_values) if return_values.len() > 1 => {
+                format!("({})", return_values.iter().map(format_ssa_var).join(", "),)
+            }
+            Some(return_values) if return_values.len() == 1 => {
+                format!("{}", return_values.iter().map(format_ssa_var).join(", "))
+            }
+            Some(_) => format!("void").red().to_string(),
+            None => format!("unknown"),
         };
         format!(
             "({}) -> {}",
@@ -166,13 +168,12 @@ pub fn format_call_info(model: &ProgramModel, function: &SsaFunction) -> String 
                 .sorted()
                 .map(format_ssa_var)
                 .join(", "),
-            return_values
+            rets
         )
     } else {
-        String::new()
+        "".to_string()
     }
 }
-
 pub fn format_callers_comment(model: &ProgramModel, function: &SsaFunction) -> String {
     let callers = model
         .get_function_call_analysis()
@@ -218,4 +219,5 @@ pub fn pretty_print_ssa(model: &ProgramModel) {
             )
         })
         .join("\n\n");
+    println!("{}", s);
 }

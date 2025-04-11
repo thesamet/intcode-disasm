@@ -872,7 +872,7 @@ mod tests {
 
         // Find the output instruction that uses the return value
         let output_instr = return_block.instructions.first().unwrap();
-        println!("Output instruction: {:?}", output_instr);
+        // println!("Output instruction: {:?}", output_instr);
 
         // NOTE: With the removal of DefinitionKind::FunctionReturn, we now rely on
         // the BlockDataFlow.function_returns_in set to track function returns, rather than

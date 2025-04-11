@@ -6,8 +6,9 @@ use crate::disasm::v2::{
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{SsaFunction, SsaResult, SsaVar},
 };
+use itertools::Itertools;
 use log::{debug, trace};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Top-level result container for function call analysis.
 #[derive(Debug, Clone, Default)]
@@ -70,6 +71,34 @@ pub struct CallSiteInfo {
 
     /// BlockId where execution resumes in the caller after the function returns.
     pub return_block_id: BlockId,
+
+    /// Maps caller's argument write SsaVar to callee's parameter entry SsaVar.
+    /// Only populated for direct calls.
+    pub parameter_map: HashMap<SsaVar, SsaVar>,
+
+    /// Maps callee's return write SsaVar to caller's return read SsaVar.
+    /// Only populated for direct calls.
+    pub return_map: HashMap<SsaVar, SsaVar>,
+}
+
+impl FunctionCallAnalysis {
+    pub fn get_effective_return_values(&self, function_id: FunctionId) -> Option<Vec<SsaVar>> {
+        let callers_csi = self
+            .call_site_info
+            .values()
+            .filter(|c| c.target_function_id == Some(function_id))
+            .collect_vec();
+        if callers_csi.is_empty() {
+            None
+        } else {
+            let mut return_reads = HashSet::new();
+            for csi in callers_csi {
+                return_reads.extend(csi.return_map.keys());
+            }
+
+            Some(return_reads.iter().sorted().cloned().collect())
+        }
+    }
 }
 
 fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Option<SsaVar> {
@@ -255,7 +284,18 @@ impl FunctionCallAnalyzer {
                             .clone();
                         return_reads.entry(offset).or_insert(read_var);
                     }
-
+                    let (parameter_map, return_map) =
+                        if let Some(target_function_id) = target_function_id {
+                            populate_call_site_maps(
+                                target_function_id,
+                                &analysis,
+                                model,
+                                &argument_writes,
+                                &return_reads,
+                            )
+                        } else {
+                            (HashMap::new(), HashMap::new())
+                        };
                     analysis.call_site_info.insert(
                         calling_block_id,
                         CallSiteInfo {
@@ -266,6 +306,8 @@ impl FunctionCallAnalyzer {
                             argument_writes,
                             return_reads,
                             return_block_id: call.return_block,
+                            parameter_map,
+                            return_map,
                         },
                     );
                 }
@@ -274,6 +316,46 @@ impl FunctionCallAnalyzer {
 
         analysis
     }
+}
+
+fn populate_call_site_maps(
+    target_id: FunctionId,
+    analysis: &FunctionCallAnalysis,
+    model: &ProgramModel,
+    argument_writes: &HashMap<i128, SsaVar>,
+    return_reads: &HashMap<i128, SsaVar>,
+) -> (HashMap<SsaVar, SsaVar>, HashMap<SsaVar, SsaVar>) {
+    let mut parameter_map = HashMap::new();
+    let mut return_map = HashMap::new();
+    let Some(callee_info) = analysis.callee_info.get(&target_id) else {
+        panic!("Missing callee info for function {}", target_id);
+    };
+
+    let Some(target_function) = model.get_functions().get(&target_id) else {
+        panic!("Missing function details for function {}", target_id);
+    };
+
+    let k = target_function.stack_size as i128; // Get stack adjustment 'k'
+
+    // Build parameter map: Caller Argument Write (+caller_offset) -> Callee Parameter Entry Read (+caller_offset - k)
+    for (caller_offset, caller_arg_var) in argument_writes {
+        // Calculate the corresponding negative offset used by the callee
+        let callee_offset = caller_offset - k;
+        if let Some(callee_param_var) = callee_info.parameter_entry_vars.get(&callee_offset) {
+            parameter_map.insert(*caller_arg_var, *callee_param_var);
+        }
+    }
+
+    // Build return map: Callee Return Write (+caller_offset - k) -> Caller Return Read (+caller_offset)
+    for (caller_offset, caller_ret_var) in return_reads {
+        // Calculate the corresponding negative offset used by the callee for the write
+        let callee_offset = caller_offset - k;
+        if let Some(callee_ret_var) = callee_info.return_writes.get(&callee_offset) {
+            // Note the key/value order: Callee Write -> Caller Read
+            return_map.insert(*callee_ret_var, *caller_ret_var);
+        }
+    }
+    (parameter_map, return_map)
 }
 
 impl EventListener<Event, ProgramModel> for FunctionCallAnalyzer {
