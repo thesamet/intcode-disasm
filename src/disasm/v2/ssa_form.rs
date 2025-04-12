@@ -10,23 +10,25 @@ use std::fmt;
 
 use super::instructions::{GenericInstruction, InstructionId};
 
-/*
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum SsaVarKind {
     Memory(i128),
     Immediate(i128),
     RelativeMemory(i128),
     Deref {
-        address: i128,
+        address: usize,
         address_version: usize,
     },
 }
-*/
 
 /// Represents an SSA variable
 #[derive(Debug, Copy, Clone)]
 pub struct SsaVar {
     /// Original operand this variable represents
-    pub operand: Operand,
+    pub kind: SsaVarKind,
+    pub offset: usize,
+    pub debug_marker: Option<char>,
+
     /// Version number of this SSA variable
     pub version: usize,
     /// Function ID this variable belongs to
@@ -35,9 +37,9 @@ pub struct SsaVar {
 
 impl PartialEq for SsaVar {
     fn eq(&self, other: &Self) -> bool {
-        self.operand.kind == other.operand.kind && 
-        self.version == other.version && 
-        self.function_id == other.function_id
+        self.kind == other.kind
+            && self.version == other.version
+            && self.function_id == other.function_id
     }
 }
 
@@ -45,7 +47,7 @@ impl Eq for SsaVar {}
 
 impl std::hash::Hash for SsaVar {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.operand.kind.hash(state);
+        self.kind.hash(state);
         self.version.hash(state);
         self.function_id.hash(state);
     }
@@ -59,7 +61,7 @@ impl PartialOrd for SsaVar {
 
 impl Ord for SsaVar {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.operand.kind.cmp(&other.operand.kind) {
+        match self.kind.cmp(&other.kind) {
             std::cmp::Ordering::Equal => match self.version.cmp(&other.version) {
                 std::cmp::Ordering::Equal => self.function_id.cmp(&other.function_id),
                 ord => ord,
@@ -71,28 +73,73 @@ impl Ord for SsaVar {
 
 impl From<SsaVar> for Operand {
     fn from(v: SsaVar) -> Self {
-        v.operand
-    }
-}
-impl From<&SsaVar> for Operand {
-    fn from(v: &SsaVar) -> Self {
-        v.operand
+        Operand {
+            kind: match v.kind {
+                SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
+                SsaVarKind::Immediate(val) => OperandKind::Immediate(val),
+                SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
+                SsaVarKind::Deref { address, .. } => OperandKind::Deref(address),
+            },
+            offset: v.offset,
+            debug_marker: v.debug_marker,
+        }
     }
 }
 
 impl SsaVar {
     /// Create a new SSA variable with Regular source
     pub fn new(operand: Operand, version: usize, function_id: FunctionId) -> Self {
-        Self { operand, version, function_id }
+        Self {
+            kind: match operand.kind {
+                OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
+                OperandKind::Immediate(val) => SsaVarKind::Immediate(val),
+                OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+                OperandKind::Deref(offset) => SsaVarKind::Deref {
+                    address: offset,
+                    address_version: 0,
+                },
+            },
+            offset: operand.offset,
+            debug_marker: operand.debug_marker,
+            version,
+            function_id,
+        }
+    }
+
+    pub fn operand(&self) -> Operand {
+        (*self).into()
+    }
+}
+
+impl fmt::Display for SsaVarKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SsaVarKind::Memory(addr) => write!(f, "[{}]", addr),
+            SsaVarKind::Immediate(val) => write!(f, "{}", val),
+            SsaVarKind::RelativeMemory(offset) => {
+                if *offset == 0 {
+                    write!(f, "[R]")
+                } else if *offset > 0 {
+                    write!(f, "[R+{}]", offset)
+                } else {
+                    // Handles negative offsets, e.g., [R-50]
+                    write!(f, "[R{}]", offset)
+                }
+            }
+            SsaVarKind::Deref {
+                address,
+                address_version,
+            } => write!(f, "[[{}_{}]]", address, address_version),
+        }
     }
 }
 
 impl fmt::Display for SsaVar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.operand.kind.is_variable() {
-            write!(f, "{}_{}", self.operand.kind, self.version)
+        if self.operand().kind.is_variable() {
+            write!(f, "{}_{}", self.kind, self.version)
         } else {
-            write!(f, "{}", self.operand.kind)
+            write!(f, "{}", self.kind)
         }
     }
 }
@@ -142,7 +189,7 @@ impl SsaFunction {
             for instr in &block.instructions {
                 // Extract all operands from the instruction kind
                 for operand in instr.reads().iter().chain(instr.writes().iter()) {
-                    if let Some(debug_marker) = operand.operand.debug_marker {
+                    if let Some(debug_marker) = operand.debug_marker {
                         if debug_marker == marker {
                             return Some(*operand);
                         }
@@ -204,48 +251,43 @@ impl<'a> SSAConversionState<'a> {
     }
 
     fn create_next_version(
-        current_versions: &mut HashMap<OperandKind, SsaVar>,
+        current_versions: &mut HashMap<SsaVarKind, SsaVar>,
         var: Operand,
         function_id: FunctionId,
     ) -> SsaVar {
-        let version = current_versions
-            .get(&var.kind)
-            .map(|v| v.version)
-            .unwrap_or(0)
-            + 1;
+        let kind = ssa_var_kind_for_operand(var, current_versions);
+        let version = current_versions.get(&kind).map(|v| v.version).unwrap_or(0) + 1;
         let new_version = SsaVar {
-            operand: var,
+            kind,
             version,
             function_id,
+            offset: var.offset,
+            debug_marker: var.debug_marker,
         };
-        current_versions.insert(var.kind, new_version);
+        current_versions.insert(kind, new_version);
         new_version
     }
 
     fn get_current_version_for(
-        current_versions: &HashMap<OperandKind, SsaVar>,
+        current_versions: &HashMap<SsaVarKind, SsaVar>,
         op: Operand,
         function_id: FunctionId,
     ) -> SsaVar {
-        if let Some(op_kind) = op.kind.as_variable() {
-            if let Some(ssa_var) = current_versions.get(&op_kind) {
-                return SsaVar {
-                    operand: op,
-                    version: ssa_var.version,
-                    function_id,
-                };
-            }
-        }
-        let v = SsaVar {
-            operand: op,
-            version: 0,
+        let ssa_var_kind = ssa_var_kind_for_operand(op, current_versions);
+        SsaVar {
+            kind: ssa_var_kind,
+            version: current_versions
+                .get(&ssa_var_kind)
+                .map(|v| v.version)
+                .unwrap_or(0),
             function_id,
-        };
-        v
+            offset: op.offset,
+            debug_marker: op.debug_marker,
+        }
     }
 
     fn create_ssa_next_kind(
-        current_versions: &HashMap<OperandKind, SsaVar>,
+        current_versions: &HashMap<SsaVarKind, SsaVar>,
         original: &NextKind<Operand>,
         function_id: FunctionId,
     ) -> NextKind<SsaVar> {
@@ -286,7 +328,7 @@ impl<'a> SSAConversionState<'a> {
             for succ_id in block.next.successors() {
                 let succ_block = ssa_blocks.get_mut(&succ_id).unwrap();
                 for phi in succ_block.phi_functions.iter_mut() {
-                    let var_kind = phi.result.operand.kind;
+                    let var_kind = phi.result.operand().kind;
 
                     // If the variable has a current version in the predecessor,
                     // add it as an input to this phi
@@ -305,7 +347,7 @@ impl<'a> SSAConversionState<'a> {
         ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
         visited_blocks: &mut HashSet<BlockId>,
-        current_versions: &mut HashMap<OperandKind, SsaVar>,
+        current_versions: &mut HashMap<SsaVarKind, SsaVar>,
         function_id: FunctionId,
     ) {
         if !visited_blocks.insert(block_id) {
@@ -319,7 +361,11 @@ impl<'a> SSAConversionState<'a> {
         let mut block_phi_functions = Vec::new();
         if let Some(phis) = phi_placements.get(&block_id) {
             for phi in phis {
-                let phi_result = Self::create_next_version(current_versions, phi.result.operand, phi.result.function_id);
+                let phi_result = Self::create_next_version(
+                    current_versions,
+                    phi.result.operand(),
+                    phi.result.function_id,
+                );
 
                 // Create a new phi function with the correct result version
                 let new_phi = PhiFunction {
@@ -327,7 +373,7 @@ impl<'a> SSAConversionState<'a> {
                     inputs: HashMap::new(), // Will be filled with correct input versions below
                 };
                 block_phi_functions.push(new_phi);
-                initial_end_state.insert(phi_result.operand.kind, phi_result);
+                initial_end_state.insert(phi_result.operand().kind, phi_result);
             }
         }
 
@@ -335,15 +381,16 @@ impl<'a> SSAConversionState<'a> {
         let mut block_instructions = Vec::new();
         for instr in &original_block.instructions {
             // Map read operands to their current versions
-            let map_read = &mut |current_versions: &mut HashMap<OperandKind, SsaVar>,
+            let map_read = &mut |current_versions: &mut HashMap<SsaVarKind, SsaVar>,
                                  operand: &Operand| {
                 Self::get_current_version_for(current_versions, *operand, function_id)
             };
 
             // Map write operands, creating new versions
-            let map_write = &mut |current_versions: &mut HashMap<OperandKind, SsaVar>,
+            let map_write = &mut |current_versions: &mut HashMap<SsaVarKind, SsaVar>,
                                   operand: &Operand| {
-                let next_version = Self::create_next_version(current_versions, *operand, function_id);
+                let next_version =
+                    Self::create_next_version(current_versions, *operand, function_id);
                 if operand.kind.is_variable() {
                     initial_end_state.insert(operand.kind, next_version);
                 }
@@ -356,7 +403,8 @@ impl<'a> SSAConversionState<'a> {
         }
 
         // Step 3: Create SSA version of the terminator (next)
-        let ssa_next = Self::create_ssa_next_kind(current_versions, &original_block.next, function_id);
+        let ssa_next =
+            Self::create_ssa_next_kind(current_versions, &original_block.next, function_id);
 
         // Step 4: Create and register the SSA block
         let ssa_block = SsaBlock {
@@ -484,7 +532,7 @@ impl<'a> SSAConversionState<'a> {
                             offset: 0,
                             debug_marker: None,
                         },
-                        0, // Temporary version, will be updated during renaming
+                        0,           // Temporary version, will be updated during renaming
                         function_id, // Function ID that this phi belongs to
                     ),
                     inputs: HashMap::new(), // Will be filled at a later stage.
@@ -538,6 +586,43 @@ impl<'a> SSAConversionState<'a> {
     }
 }
 
+/// Helper function to determine the correct SsaVarKind for a given operand
+///
+/// This function handles conversion from Operand to SsaVarKind, taking into account
+/// any special handling needed for different operand kinds.
+///
+/// For Deref operands, it looks up the current version of the memory address in
+/// the current_versions map to maintain proper SSA form for dereferenced values.
+///
+/// # Arguments
+/// * `var` - The operand to convert to an SsaVarKind
+/// * `current_versions` - The current SSA variable versions map, used to look up
+///    version information for dereferenced memory addresses
+///
+/// # Returns
+/// The appropriate SsaVarKind for the given operand
+fn ssa_var_kind_for_operand(
+    var: Operand,
+    current_versions: &HashMap<SsaVarKind, SsaVar>,
+) -> SsaVarKind {
+    let kind = match var.kind {
+        OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
+        OperandKind::Immediate(val) => SsaVarKind::Immediate(val),
+        OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+        OperandKind::Deref(address) => {
+            let address_version = current_versions
+                .get(&SsaVarKind::Memory(address as i128))
+                .map(|v| v.version)
+                .unwrap_or_default();
+            SsaVarKind::Deref {
+                address,
+                address_version,
+            }
+        }
+    };
+    kind
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,11 +644,9 @@ mod tests {
     macro_rules! ssa_main_rel {
         ($offset:expr, $version:expr) => {
             SsaVar {
-                operand: Operand {
-                    kind: OperandKind::RelativeMemory($offset),
-                    offset: 0,
-                    debug_marker: None,
-                },
+                kind: SsaVarKind::RelativeMemory($offset),
+                offset: 0,
+                debug_marker: None,
                 version: $version,
                 function_id: FunctionId::from(0),
             }
@@ -573,11 +656,9 @@ mod tests {
     macro_rules! ssa_main_mem {
         ($addr:expr, $version:expr) => {
             SsaVar {
-                operand: Operand {
-                    kind: OperandKind::Memory($addr as i128),
-                    offset: 0,
-                    debug_marker: None,
-                },
+                kind: SsaVarKind::Memory($addr as i128),
+                offset: 0,
+                debug_marker: None,
                 version: $version,
                 function_id: FunctionId::from(0),
             }
@@ -587,11 +668,12 @@ mod tests {
     macro_rules! ssa_main_deref {
         ($addr:expr, $deref_version:expr) => {
             SsaVar {
-                operand: Operand {
-                    kind: OperandKind::Deref($addr),
-                    offset: 0,
-                    debug_marker: None,
+                kind: SsaVarKind::Deref {
+                    address: $addr,
+                    address_version: 0,
                 },
+                offset: 0,
+                debug_marker: None,
                 version: $deref_version,
                 function_id: FunctionId::from(0),
             }
@@ -607,9 +689,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
             assert_eq!(
-                $expected.operand.kind, found_var.operand.kind,
+                $expected.operand().kind,
+                found_var.operand().kind,
                 "For marker '{}': Expected kind: {:?}, Actual kind: {:?}",
-                $marker, $expected.operand.kind, found_var.operand.kind
+                $marker,
+                $expected.operand().kind,
+                found_var.operand().kind
             );
             assert_eq!(
                 $expected.version, found_var.version,
@@ -653,7 +738,7 @@ mod tests {
             debug_marker: None,
         }
     }
-    
+
     fn ssavar_from_memory(offset: usize, version: usize, function_id: FunctionId) -> SsaVar {
         SsaVar::new(memory_operand(offset), version, function_id)
     }
@@ -688,7 +773,7 @@ mod tests {
         let function_id = FunctionId::from(0);
         let var = SsaVar::new(operand, 1, function_id);
 
-        assert_eq!(var.operand, operand);
+        assert_eq!(var.operand(), operand);
         assert_eq!(var.version, 1);
         assert_eq!(var.function_id, function_id);
     }
@@ -850,7 +935,7 @@ mod tests {
 
         // Verify that the operand is [100]
         assert_eq!(
-            output_operand.operand.kind,
+            output_operand.operand().kind,
             OperandKind::Memory(100),
             "Output should use [100]"
         );
@@ -989,8 +1074,8 @@ mod tests {
             .find(|instr| {
                 let has_matching_operands = if let InstructionKind::Add(src1, _, dst) = &instr.kind
                 {
-                    src1.operand.kind.get_relative_memory() == Some(-4) && // Read operand is R-4
-                    dst.operand.kind.get_relative_memory() == Some(-4)
+                    src1.operand().kind.get_relative_memory() == Some(-4) && // Read operand is R-4
+                    dst.operand().kind.get_relative_memory() == Some(-4)
                 } else {
                     false
                 };

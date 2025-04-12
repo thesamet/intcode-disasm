@@ -110,14 +110,14 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
     for block in function.blocks.values() {
         // Check Phi results
         for phi in &block.phi_functions {
-            if &phi.result.operand.kind == kind {
+            if &phi.result.operand().kind == kind {
                 if min_var.is_none() || phi.result.version < min_var_version(min_var) {
                     min_var = Some(phi.result);
                 }
             }
             // Check Phi inputs
             for input_var in phi.inputs.values() {
-                if &input_var.operand.kind == kind {
+                if &input_var.operand().kind == kind {
                     if min_var.is_none() || input_var.version < min_var_version(min_var) {
                         min_var = Some(*input_var);
                     }
@@ -129,7 +129,7 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
             // Consider all read operands.
             let operands_in_instr = instr.reads();
             for var in operands_in_instr {
-                if &var.operand.kind == kind {
+                if &var.operand().kind == kind {
                     if min_var.is_none() || var.version < min_var_version(min_var) {
                         min_var = Some(var);
                     }
@@ -248,7 +248,7 @@ impl FunctionCallAnalyzer {
                     let mut target_function_id: Option<FunctionId> = None;
 
                     // Determine Target Function
-                    match call.function_addr.operand.kind {
+                    match call.function_addr.operand().kind {
                         OperandKind::Immediate(addr) => {
                             target_function_id = Some(FunctionId::from(addr as usize));
                         }
@@ -280,7 +280,7 @@ impl FunctionCallAnalyzer {
                         let read_var = instr
                             .reads()
                             .iter()
-                            .find(|r| r.operand.kind.get_relative_memory() == Some(offset))
+                            .find(|r| r.operand().kind.get_relative_memory() == Some(offset))
                             .unwrap()
                             .clone();
                         return_reads.entry(offset).or_insert(read_var);

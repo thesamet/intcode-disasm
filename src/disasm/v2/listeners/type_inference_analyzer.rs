@@ -352,7 +352,7 @@ impl TypeInferenceAnalyzer {
             InstructionKind::Assign(target, source) => {
                 let dst_type = self.type_for_ssavar(target);
                 let src_type = self.type_for_ssavar(source);
-                if source.operand.kind.get_immediate().is_some() {
+                if source.operand().kind.get_immediate().is_some() {
                     self.add_constraint(
                         src_type.clone(),
                         Type::Int,
@@ -503,7 +503,7 @@ impl TypeInferenceAnalyzer {
             }
 
             NextKind::FunctionCall(call) => {
-                if let Some(func_addr) = call.function_addr.operand.kind.get_immediate() {
+                if let Some(func_addr) = call.function_addr.operand().kind.get_immediate() {
                     // --- Direct Call ---
                     let fca = model
                         .get_function_call_analysis()
@@ -891,7 +891,7 @@ mod tests {
             let var = ti
                 .inferred_types
                 .keys()
-                .filter(|var| var.operand.kind.get_memory() == Some(addr as i128))
+                .filter(|var| var.operand().kind.get_memory() == Some(addr as i128))
                 .max_by_key(|var| var.version)
                 .unwrap_or_else(|| panic!("No type variable found for address {}", addr));
 

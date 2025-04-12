@@ -29,12 +29,12 @@ impl<'a> PrettyPrinter<'a> {
             None => "".to_string(),
         };
         let debug_marker = var
-            .operand
+            .operand()
             .debug_marker
             .as_ref()
             .map(|m| format!("'{} ", m).yellow())
             .unwrap_or_default();
-        match var.operand.kind {
+        match var.operand().kind {
             super::instructions::OperandKind::RelativeMemory(offset) => {
                 if offset == 0 {
                     "[R]".cyan().to_string()
