@@ -145,8 +145,13 @@ mod tests {
         );
     }
 
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     #[test]
     fn test_pointer_types() {
+        init();
         // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 

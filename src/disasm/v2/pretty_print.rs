@@ -28,30 +28,38 @@ impl<'a> PrettyPrinter<'a> {
             Some(typ) => format!(": {}", typ),
             None => "".to_string(),
         };
+        let debug_marker = var
+            .operand
+            .debug_marker
+            .as_ref()
+            .map(|m| format!("'{} ", m).yellow())
+            .unwrap_or_default();
         match var.operand.kind {
             super::instructions::OperandKind::RelativeMemory(offset) => {
                 if offset == 0 {
                     "[R]".cyan().to_string()
                 } else if offset > -1 {
-                    format!("[R+{}]_{}{}", offset, var.version, typ)
+                    format!("{}[R+{}]_{}{}", debug_marker, offset, var.version, typ)
                         .cyan()
                         .to_string()
                 } else {
-                    format!("[R{}]_{}{}", offset, var.version, typ)
+                    format!("{}[R{}]_{}{}", debug_marker, offset, var.version, typ)
                         .blue()
                         .to_string()
                 }
             }
             super::instructions::OperandKind::Memory(addr) => {
-                format!("[{}]_{}{}", addr, var.version, typ)
-                    .yellow()
+                format!("{}[{}]_{}{}", debug_marker, addr, var.version, typ)
+                    .purple()
                     .to_string()
             }
             super::instructions::OperandKind::Immediate(val) => {
-                format!("{}", val).green().to_string()
+                format!("{}{}", debug_marker, val).green().to_string()
             }
             super::instructions::OperandKind::Deref(addr) => {
-                format!("*{}{}", addr, typ).magenta().to_string()
+                format!("{}*{}{}", debug_marker, addr, typ)
+                    .bright_red()
+                    .to_string()
             }
         }
     }

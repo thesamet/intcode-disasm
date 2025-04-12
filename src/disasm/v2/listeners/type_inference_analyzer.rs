@@ -33,8 +33,11 @@ impl Type {
         match (self, other) {
             // A type is always a subtype of itself
             (a, b) if a == b => true,
+            (Type::Nothing, _) => true,
+            (_, Type::Any) => true,
             (Type::Char, Type::Int) => true,
             (Type::Bool, Type::Int) => true,
+            // (Type::FunctionPointer { .. }, Type::Int) => true,
             // Pointer subtyping is covariant
             (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
             // Function pointer subtyping: contravariant args, covariant returns
@@ -64,41 +67,31 @@ impl Type {
 
                 args_compatible && returns_compatible
             }
-            // Type variables are not involved in subtyping checks directly here
-            (Type::TypeVar(_), _) | (_, Type::TypeVar(_)) => false,
-            // All other cases aren't subtypes
+            (Type::FunctionPointer { .. }, Type::Int) => true,
             _ => false,
         }
     }
 
-    /// Returns the most specific type that is a supertype of both types (Least Upper Bound).
-    /// Used for reconciling types during unification when subtyping is involved.
-    /// Returns None if the types are incompatible.
-    pub fn max(a: &Type, b: &Type) -> Option<Type> {
-        if a == b {
-            Some(a.clone())
-        } else if a.is_subtype_of(b) {
-            Some(b.clone()) // b is the supertype
-        } else if b.is_subtype_of(a) {
-            Some(a.clone()) // a is the supertype
-        } else {
-            None
+    fn get_typevars(&self) -> Vec<Type> {
+        match self {
+            Type::TypeVar(var) => vec![Type::TypeVar(*var)],
+            Type::Any => vec![],
+            Type::Nothing => vec![],
+            Type::Int => vec![],
+            Type::Bool => vec![],
+            Type::Char => vec![],
+            Type::Pointer(x) => x.get_typevars(),
+            Type::FunctionPointer { args, returns } => args
+                .iter()
+                .chain(returns.iter())
+                .flat_map(|x| x.get_typevars())
+                .collect(),
+            Type::String => vec![],
         }
     }
 
-    /// Returns the most specific common type (Greatest Lower Bound, conceptually).
-    /// If one is a subtype of the other, returns the subtype.
-    /// Returns None if they are incompatible or unrelated.
-    pub fn min(a: &Type, b: &Type) -> Option<Type> {
-        if a == b {
-            Some(a.clone())
-        } else if a.is_subtype_of(b) {
-            Some(a.clone()) // a is the subtype (more specific)
-        } else if b.is_subtype_of(a) {
-            Some(b.clone()) // b is the subtype (more specific)
-        } else {
-            None
-        }
+    fn is_var_free(&self) -> bool {
+        self.get_typevars().is_empty()
     }
 }
 
@@ -110,7 +103,7 @@ impl fmt::Display for Type {
             Type::Int => write!(f, "int"),
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
-            Type::Pointer(t) => write!(f, "*{}", t),
+            Type::Pointer(t) => write!(f, "Pointer({})", t),
             Type::FunctionPointer { args, returns } => {
                 write!(f, "fn(")?;
                 for (i, arg) in args.iter().enumerate() {
@@ -264,6 +257,7 @@ impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
         match event {
             // Start type inference after SSA conversion is complete
             Event::SsaConversionComplete(_) => {
+                self.constraints.clear();
                 info!("Starting type inference analysis");
                 let Some(ssa_result) = model.get_ssa_result() else {
                     panic!("SSA program not available");
@@ -318,7 +312,7 @@ impl TypeInferenceAnalyzer {
         reason: ConstraintReason,
     ) {
         debug!(
-            "Adding constraint: {} = {} ({:?} at {})",
+            "Adding constraint: {} <: {} ({:?} at {})",
             left, right, reason, addr
         );
         self.constraints.push(Constraint {
@@ -366,7 +360,7 @@ impl TypeInferenceAnalyzer {
                         ConstraintReason::ImmediateIsSubtypeOfInt,
                     );
                 }
-                self.add_constraint(dst_type, src_type, instr_id, ConstraintReason::Assignment);
+                self.add_constraint(src_type, dst_type, instr_id, ConstraintReason::Assignment);
             }
             InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
@@ -539,11 +533,11 @@ impl TypeInferenceAnalyzer {
                 } else {
                     let fn_type = self.type_for_ssavar(&call.function_addr);
                     self.add_constraint(
+                        fn_type,
                         Type::FunctionPointer {
                             args: vec![],    // Placeholder - args inferred from usage at call site
                             returns: vec![], // Placeholder - returns inferred from usage after call
                         },
-                        fn_type,
                         location_addr,
                         ConstraintReason::IndirectFunctionCall,
                     );
@@ -591,73 +585,52 @@ impl TypeInferenceAnalyzer {
 
     /// Solve the collected constraints using unification
     pub fn unify(&self) -> Result<TypeInferenceResult, String> {
-        let mut worklist = self.constraints.clone();
         let mut upper_bounds = HashMap::new();
         let mut lower_bounds = HashMap::new();
-        worklist.sort();
-        worklist.reverse();
+        for c in &self.constraints {
+            init_bounds_for_type(&c.left, &mut lower_bounds, &mut upper_bounds);
+            init_bounds_for_type(&c.right, &mut lower_bounds, &mut upper_bounds);
+        }
+
         for typ in [Type::Int, Type::Bool, Type::Char] {
             upper_bounds.insert(typ.clone(), typ.clone());
             lower_bounds.insert(typ.clone(), typ.clone());
         }
 
-        for c in &self.constraints {
-            match c.left {
-                Type::TypeVar(v) => {
-                    upper_bounds.insert(Type::TypeVar(v), Type::Any);
-                    lower_bounds.insert(Type::TypeVar(v), Type::Nothing);
-                }
-                _ => {}
-            }
-            match c.right {
-                Type::TypeVar(v) => {
-                    upper_bounds.insert(Type::TypeVar(v), Type::Any);
-                    lower_bounds.insert(Type::TypeVar(v), Type::Nothing);
-                }
-                _ => {}
-            }
-        }
-
+        let mut changed;
         loop {
-            let mut changed = false;
-            for c in &self.constraints {
-                let Some(left_upper) = upper_bounds.get(&c.left) else {
-                    continue;
-                };
-                let Some(left_lower) = lower_bounds.get(&c.left) else {
-                    continue;
-                };
-                let Some(right_upper) = upper_bounds.get(&c.right) else {
-                    continue;
-                };
-                let Some(right_lower) = lower_bounds.get(&c.right) else {
-                    continue;
-                };
-                let Some(new_left_upper) = glb(left_upper, right_upper) else {
-                    return Err(format!(
-                        "Type conflict for {} and {} for {}",
-                        left_upper, right_upper, c.left
-                    ));
-                };
-                let Some(new_right_lower) = lub(left_lower, right_lower) else {
-                    return Err(format!(
-                        "Type conflict for {} and {} for {}",
-                        left_lower, right_lower, c.right
-                    ));
-                };
-                if new_left_upper != left_upper {
-                    changed = true;
-                    upper_bounds.insert(c.left.clone(), new_left_upper.clone());
+            loop {
+                changed = false;
+                let mut worklist = self.constraints.clone();
+                while let Some(c) = worklist.pop() {
+                    changed |= Self::process_constraint(
+                        &c.left,
+                        &c.right,
+                        &mut upper_bounds,
+                        &mut lower_bounds,
+                    )?;
                 }
-                if new_right_lower != right_lower {
+                if !changed {
+                    break;
+                }
+            }
+            for (key, upper) in upper_bounds.iter_mut() {
+                let lower = lower_bounds.get_mut(key).unwrap();
+                if *upper == Type::Any && *lower != Type::Nothing {
+                    *upper = lower.clone();
                     changed = true;
-                    lower_bounds.insert(c.right.clone(), new_right_lower.clone());
+                    debug!("Setting upper bound for {}: {}", key, lower);
+                } else if *lower == Type::Nothing && *upper != Type::Any {
+                    *lower = upper.clone();
+                    changed = true;
+                    debug!("Setting lower bound for {}: {}", key, upper);
                 }
             }
             if !changed {
                 break;
             }
         }
+
         let inferred_types = upper_bounds
             .iter()
             .filter_map({
@@ -674,6 +647,12 @@ impl TypeInferenceAnalyzer {
                 }
             })
             .collect();
+        for k in upper_bounds.keys() {
+            debug!(
+                "bounds for {}: [{}, {}]",
+                k, lower_bounds[k], upper_bounds[k]
+            );
+        }
         let result = TypeInferenceResult {
             inferred_types,
             #[cfg(test)]
@@ -682,22 +661,73 @@ impl TypeInferenceAnalyzer {
         Ok(result)
     }
 
-    /*
-    /// Check if a type contains a specific type variable
-    fn contains_type_var(typ: &Type, var_id: TypeVarId) -> bool {
-        match typ {
-            Type::TypeVar(id) => *id == var_id,
-            Type::Pointer(inner) => Self::contains_type_var(inner, var_id),
-            Type::FunctionPointer { args, returns } => {
-                args.iter().any(|arg| Self::contains_type_var(arg, var_id))
-                    || returns
-                        .iter()
-                        .any(|ret| Self::contains_type_var(ret, var_id))
-            }
-            _ => false,
+    fn process_constraint(
+        left: &Type,
+        right: &Type,
+        upper_bounds: &mut HashMap<Type, Type>,
+        lower_bounds: &mut HashMap<Type, Type>,
+    ) -> Result<bool, String> {
+        let mut changed = false;
+        let left_upper = upper_bounds.get(&left).cloned().unwrap_or(left.clone());
+        let left_lower = lower_bounds.get(&left).cloned().unwrap_or(left.clone());
+        let right_upper = upper_bounds.get(&right).cloned().unwrap_or(right.clone());
+        let right_lower = lower_bounds.get(&right).cloned().unwrap_or(right.clone());
+        let Some(new_left_upper) = glb(&left_upper, &right_upper) else {
+            return Err(format!(
+                "Type conflict for {} and {} for {}",
+                left_upper, right_upper, left
+            ));
+        };
+        if new_left_upper != left_upper {
+            debug!(
+                "Constraint: {} in [{}, {}] <: {} in [{}, {}]: new upper bound for {}: {}",
+                left, left_lower, left_upper, right, right_lower, right_upper, left, new_left_upper
+            );
+
+            changed = true;
+            upper_bounds.insert(left.clone(), new_left_upper.clone());
         }
+        let Some(new_right_lower) = lub(&left_lower, &right_lower) else {
+            return Err(format!(
+                "Type conflict for {} and {} for {}",
+                left_lower, right_lower, right
+            ));
+        };
+        if new_right_lower != right_lower {
+            debug!(
+                "Constraint: {} in [{}, {}] <: {} in [{}, {}]: new lower bound for {}: {}",
+                left,
+                left_lower,
+                left_upper,
+                right,
+                right_lower,
+                right_upper,
+                right,
+                new_right_lower
+            );
+
+            changed = true;
+            lower_bounds.insert(right.clone(), new_right_lower.clone());
+        }
+        match (left, right) {
+            (Type::Pointer(x), Type::Pointer(y)) => {
+                changed |= Self::process_constraint(x, y, upper_bounds, lower_bounds)?;
+            }
+            (x, Type::Pointer(y)) => {
+                let y_upper = upper_bounds.get(&y).cloned().unwrap_or(*y.clone());
+                let new_upper = Type::Pointer(Box::new(y_upper));
+                if new_upper != left_upper {
+                    debug!(
+                        "Constraint: {} in [{}, {}] <: {} in [{}, {}]: recursing with new upper for x={}: {}",
+                        left, left_lower, left_upper, right, right_lower, right_upper, x, new_upper
+                    );
+                    changed |= Self::process_constraint(x, &new_upper, upper_bounds, lower_bounds)?;
+                }
+            }
+            _ => {}
+        };
+        Ok(changed)
     }
-    */
 
     /// Mark a variable with a debug character for testing
     #[cfg(test)]
@@ -706,56 +736,66 @@ impl TypeInferenceAnalyzer {
     }
 }
 
-fn lub<'a>(left: &'a Type, right: &'a Type) -> Option<&'a Type> {
-    if left == right {
-        return Some(left);
-    }
-    if *left == Type::Nothing {
-        return Some(right);
-    }
-    if *right == Type::Nothing {
-        return Some(left);
-    }
-    if *left == Type::Any {
-        return Some(left);
-    }
-    if *right == Type::Any {
-        return Some(right);
-    }
-    if left.is_subtype_of(right) {
-        return Some(right);
-    } else if right.is_subtype_of(left) {
-        return Some(left);
+fn init_bounds_for_type(
+    typ: &Type,
+    lower_bounds: &mut HashMap<Type, Type>,
+    upper_bounds: &mut HashMap<Type, Type>,
+) {
+    if typ.is_var_free() {
+        upper_bounds.insert(typ.clone(), typ.clone());
+        lower_bounds.insert(typ.clone(), typ.clone());
     } else {
-        return None;
+        upper_bounds.insert(typ.clone(), Type::Any);
+        lower_bounds.insert(typ.clone(), Type::Nothing);
+    }
+    match typ {
+        Type::Nothing => {}
+        Type::Int => {}
+        Type::Bool => {}
+        Type::Char => {}
+        Type::Pointer(x) => init_bounds_for_type(x, lower_bounds, upper_bounds),
+        Type::FunctionPointer { args, returns } => {
+            for arg in args {
+                init_bounds_for_type(arg, lower_bounds, upper_bounds);
+            }
+            for ret in returns {
+                init_bounds_for_type(ret, lower_bounds, upper_bounds);
+            }
+        }
+        Type::String => {}
+        Type::TypeVar(_) => {}
+        Type::Any => {}
+    }
+}
+/// Returns the most specific type that is a supertype of both types (Least Upper Bound).
+/// Used for reconciling types during unification when subtyping is involved.
+/// Returns None if the types are incompatible.
+pub fn lub(a: &Type, b: &Type) -> Option<Type> {
+    if a == b {
+        Some(a.clone())
+    } else if a.is_subtype_of(b) {
+        Some(b.clone()) // b is the supertype
+    } else if b.is_subtype_of(a) {
+        Some(a.clone()) // a is the supertype
+    } else {
+        None
     }
 }
 
-fn glb<'a>(left: &'a Type, right: &'a Type) -> Option<&'a Type> {
-    if left == right {
-        return Some(left);
-    }
-    if *left == Type::Nothing {
-        return Some(left);
-    }
-    if *right == Type::Nothing {
-        return Some(right);
-    }
-    if *left == Type::Any {
-        return Some(right);
-    }
-    if *right == Type::Any {
-        return Some(left);
-    }
-    if left.is_subtype_of(right) {
-        return Some(left);
-    } else if right.is_subtype_of(left) {
-        return Some(right);
+/// Returns the most specific common type (Greatest Lower Bound, conceptually).
+/// If one is a subtype of the other, returns the subtype.
+/// Returns None if they are incompatible or unrelated.
+pub fn glb(a: &Type, b: &Type) -> Option<Type> {
+    if a == b {
+        Some(a.clone())
+    } else if a.is_subtype_of(b) {
+        Some(a.clone()) // a is the subtype (more specific)
+    } else if b.is_subtype_of(a) {
+        Some(b.clone()) // b is the subtype (more specific)
     } else {
-        return None;
+        None
     }
 }
-
 macro_rules! assert_marker_type {
     ($ctx:expr, $marker:expr, $expected_type:expr) => {
         let ssa_var = $ctx
@@ -802,7 +842,11 @@ mod tests {
     }
 
     fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        use std::io::Write;
+        let _ = env_logger::builder()
+            .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
+            .is_test(true)
+            .try_init();
     }
 
     impl TestContext {
@@ -843,7 +887,6 @@ mod tests {
 
         fn assert_type(&mut self, addr: usize, expected: Type) {
             let ti = self.model.get_type_inference_result().unwrap();
-            println!("ti: {:?}", ti);
 
             let var = ti
                 .inferred_types
@@ -953,7 +996,7 @@ mod tests {
         let func_ptr_var = SsaVar::new(memory_operand(200), 1, function_id);
 
         // Mark variable
-        type_inference.mark_var(func_ptr_var.clone(), 'a');
+        type_inference.mark_var(func_ptr_var, 'a');
 
         // Get type variable
         let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
@@ -985,6 +1028,7 @@ mod tests {
     /// Direct API test for pointer type inference
     #[test]
     fn test_pointer_types_api() {
+        init();
         // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -1232,6 +1276,7 @@ f1:
 
     #[test]
     fn test_function_addr_with_debug() {
+        init();
         let ctx = TestContext::new(
             r#"
                     R += 1000
@@ -1284,6 +1329,7 @@ f1:
 
     #[test]
     fn test_link_function_params_to_argument_types_multi() {
+        init();
         let ctx = TestContext::new(
             r#"
                 R += 1000
@@ -1312,6 +1358,7 @@ f1:
                 goto [R]
             "#,
         );
+        pretty_print_ssa(&ctx.model);
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Bool);
         assert_marker_type!(
