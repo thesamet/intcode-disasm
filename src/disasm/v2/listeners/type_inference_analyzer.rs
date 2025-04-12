@@ -1183,7 +1183,7 @@ mod tests {
         if let Err(err) = result {
             // The error message should contain "Type conflict"
             assert!(
-                err.contains("Type conflict"),
+                err.to_lowercase().contains("type conflict"),
                 "Expected error message to contain 'Type conflict', got: {}",
                 err
             );
