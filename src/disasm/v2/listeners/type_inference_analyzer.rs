@@ -199,7 +199,7 @@ impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Constraint: {} = {} at {} because {:?}",
+            "Constraint: {} <: {} at {} because {:?}",
             self.left, self.right, self.addr, self.reason
         )
     }
@@ -629,6 +629,7 @@ impl TypeInferenceAnalyzer {
                 let mut worklist = self.constraints.clone();
                 while let Some(c) = worklist.pop() {
                     changed |= Self::process_constraint(
+                        &c,
                         &c.left,
                         &c.right,
                         &mut upper_bounds,
@@ -687,6 +688,7 @@ impl TypeInferenceAnalyzer {
     }
 
     fn process_constraint(
+        constraint: &Constraint,
         left: &Type,
         right: &Type,
         upper_bounds: &mut HashMap<Type, Type>,
@@ -699,8 +701,8 @@ impl TypeInferenceAnalyzer {
         let right_lower = lower_bounds.get(&right).cloned().unwrap_or(right.clone());
         let Some(new_left_upper) = glb(&left_upper, &right_upper) else {
             return Err(format!(
-                "Type conflict for {} and {} for {}",
-                left_upper, right_upper, left
+                "Upper type conflict for {} and {} for {} at {}",
+                left_upper, right_upper, left, constraint
             ));
         };
         if new_left_upper != left_upper {
@@ -714,8 +716,8 @@ impl TypeInferenceAnalyzer {
         }
         let Some(new_right_lower) = lub(&left_lower, &right_lower) else {
             return Err(format!(
-                "Type conflict for {} and {} for {}",
-                left_lower, right_lower, right
+                "Lower type conflict for {} and {} for {} at {}",
+                left_lower, right_lower, right, constraint
             ));
         };
         if new_right_lower != right_lower {
@@ -736,7 +738,7 @@ impl TypeInferenceAnalyzer {
         }
         match (left, right) {
             (Type::Pointer(x), Type::Pointer(y)) => {
-                changed |= Self::process_constraint(x, y, upper_bounds, lower_bounds)?;
+                changed |= Self::process_constraint(constraint, x, y, upper_bounds, lower_bounds)?;
             }
             (x, Type::Pointer(y)) => {
                 let y_upper = upper_bounds.get(&y).cloned().unwrap_or(*y.clone());
@@ -746,7 +748,13 @@ impl TypeInferenceAnalyzer {
                         "Constraint: {} in [{}, {}] <: {} in [{}, {}]: recursing with new upper for x={}: {}",
                         left, left_lower, left_upper, right, right_lower, right_upper, x, new_upper
                     );
-                    changed |= Self::process_constraint(x, &new_upper, upper_bounds, lower_bounds)?;
+                    changed |= Self::process_constraint(
+                        constraint,
+                        x,
+                        &new_upper,
+                        upper_bounds,
+                        lower_bounds,
+                    )?;
                 }
             }
             _ => {}
@@ -1395,6 +1403,31 @@ f1:
             }
         );
         assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
+    }
+
+    #[test]
+    fn use_function_pointer_for_conditional_jump() {
+        let ctx = TestContext::new(
+            r#"
+                R += 1000
+                'a [R-1] = [5000]
+                'b [R+1] = 65
+                if ![R-1] goto @ret
+                [R] = @ret
+                goto [R-1]
+    ret:
+                halt
+            "#,
+        );
+
+        assert_marker_type!(
+            ctx,
+            'a',
+            Type::FunctionPointer {
+                args: vec![],
+                returns: vec![]
+            }
+        );
     }
 
     #[test]

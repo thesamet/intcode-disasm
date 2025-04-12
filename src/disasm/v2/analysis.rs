@@ -6,7 +6,7 @@ use super::{
     listeners::{
         control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
-        ssa_converter::SsaConverter,
+        ssa_converter::SsaConverter, type_inference_analyzer::TypeInferenceAnalyzer,
     },
     pretty_print::pretty_print_ssa,
 };
@@ -18,8 +18,12 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(ImageScanner::new()));
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+    publisher.add_listener(Box::new(SsaConverter::new()));
+    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
+    pretty_print_ssa(&model);
 }
 
 pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {

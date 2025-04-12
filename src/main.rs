@@ -20,7 +20,10 @@ enum Command {
 }
 
 fn main() {
-    env_logger::builder().format_timestamp(None).init();
+    env_logger::builder()
+        .format_target(false)
+        .format_timestamp(None)
+        .init();
     let cli = Cli::parse();
 
     match cli.command {
