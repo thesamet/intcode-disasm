@@ -16,7 +16,7 @@ impl<'a> PrettyPrinter<'a> {
     fn format_ssa_var(&self, var: &SsaVar) -> String {
         let typ = if let Some(type_info) = self.model.get_type_inference_result() {
             if self.show_type_vars {
-                type_info.get_typevar_for_ssavar(var)
+                type_info.get_type_for_ssavar(var)
             } else {
                 type_info.get_type_for_ssavar(var)
             }

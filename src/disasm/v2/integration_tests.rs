@@ -7,7 +7,7 @@ use crate::disasm::v2::{
 
 #[cfg(test)]
 mod tests {
-    use crate::disasm::v2::instructions::Operand;
+    use crate::disasm::v2::instructions::{InstructionId, Operand};
 
     use super::*;
 
@@ -66,35 +66,47 @@ mod tests {
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
-            1,
+            InstructionId::from(1),
             ConstraintReason::AddImpliesInt,
         );
 
         type_inference.add_constraint(
             bool_type.clone(),
             Type::Bool,
-            2,
+            InstructionId::from(2),
             ConstraintReason::CompareDstImpliesBool,
         );
 
         type_inference.add_constraint(
             char_type.clone(),
             Type::Char,
-            3,
+            InstructionId::from(3),
             ConstraintReason::OutputImpliesChar,
         );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification should succeed");
+        let result = type_inference.unify().expect("Unification should succeed");
 
         // Verify types
-        let int_result = TypeInferenceAnalyzer::substitute(int_type, &substitution);
-        let bool_result = TypeInferenceAnalyzer::substitute(bool_type, &substitution);
-        let char_result = TypeInferenceAnalyzer::substitute(char_type, &substitution);
+        let int_result = result.get_type_for_ssavar(&int_var);
+        let bool_result = result.get_type_for_ssavar(&bool_var);
+        let char_result = result.get_type_for_ssavar(&char_var);
 
-        assert_eq!(int_result, Type::Int, "Variable should be an integer");
-        assert_eq!(bool_result, Type::Bool, "Variable should be a boolean");
-        assert_eq!(char_result, Type::Char, "Variable should be a character");
+        assert_eq!(
+            *int_result.unwrap(),
+            Type::Int,
+            "Variable should b.unwrap()e an integer"
+        );
+        assert_eq!(
+            *bool_result.unwrap(),
+            Type::Bool,
+            "Variable should be a boolean"
+        );
+        assert_eq!(
+            *char_result.unwrap(),
+            Type::Char,
+            "Variable should be a character"
+        );
     }
 
     #[test]
@@ -116,18 +128,18 @@ mod tests {
                 args: vec![],
                 returns: vec![],
             },
-            1,
+            InstructionId::from(1),
             ConstraintReason::IndirectFunctionCall,
         );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification should succeed");
+        let result = type_inference.unify().expect("Unification should succeed");
 
         // Verify type
-        let result = TypeInferenceAnalyzer::substitute(func_ptr_type, &substitution);
+        let result = result.get_type_for_ssavar(&func_ptr_var);
 
         assert!(
-            matches!(result, Type::FunctionPointer { .. }),
+            matches!(*result.unwrap(), Type::FunctionPointer { .. }),
             "Variable should be a function pointer, got: {:?}",
             result
         );
@@ -156,7 +168,7 @@ mod tests {
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
-            1,
+            InstructionId::from(1),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -164,7 +176,7 @@ mod tests {
         type_inference.add_constraint(
             ptr_type.clone(),
             Type::Pointer(Box::new(int_type.clone())),
-            2,
+            InstructionId::from(2),
             ConstraintReason::Assignment,
         );
 
@@ -172,24 +184,32 @@ mod tests {
         type_inference.add_constraint(
             deref_type.clone(),
             int_type.clone(),
-            3,
+            InstructionId::from(3),
             ConstraintReason::Assignment,
         );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification should succeed");
+        let result = type_inference.unify().expect("Unification should succeed");
 
         // Verify types
-        let int_result = TypeInferenceAnalyzer::substitute(int_type, &substitution);
-        let ptr_result = TypeInferenceAnalyzer::substitute(ptr_type, &substitution);
-        let deref_result = TypeInferenceAnalyzer::substitute(deref_type, &substitution);
+        let int_result = result.get_type_for_ssavar(&int_var);
+        let ptr_result = result.get_type_for_ssavar(&ptr_var);
+        let deref_result = result.get_type_for_ssavar(&deref_var);
 
-        assert_eq!(int_result, Type::Int, "int_var should be an integer");
         assert_eq!(
-            ptr_result,
+            *int_result.unwrap(),
+            Type::Int,
+            "int_var should be an integer"
+        );
+        assert_eq!(
+            *ptr_result.unwrap(),
             Type::Pointer(Box::new(Type::Int)),
             "ptr_var should be a pointer to an integer"
         );
-        assert_eq!(deref_result, Type::Int, "deref_var should be an integer");
+        assert_eq!(
+            *deref_result.unwrap(),
+            Type::Int,
+            "deref_var should be an integer"
+        );
     }
 }

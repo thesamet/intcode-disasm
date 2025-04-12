@@ -1,18 +1,20 @@
+use itertools::Itertools;
 use log::{debug, info};
-use std::{cmp::Ordering, collections::HashMap, fmt};
+use std::{collections::HashMap, fmt};
 
 use crate::disasm::v2::{
     control_flow::NextKind,
     dispatching::{EventCollector, EventListener},
     events::{Event, TypeInferenceComplete},
-    instructions::{InstructionId, InstructionKind, Operand, OperandKind},
+    instructions::{InstructionId, InstructionKind, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar},
 };
 
 /// Represents a type in the type system
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Type {
+    Nothing,
     Int,
     Bool,
     Char,
@@ -20,6 +22,7 @@ pub enum Type {
     FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
     String,
     TypeVar(SsaVar),
+    Any,
 }
 
 impl Type {
@@ -102,6 +105,8 @@ impl Type {
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Type::Nothing => write!(f, "nothing"),
+            Type::Any => write!(f, "any"),
             Type::Int => write!(f, "int"),
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
@@ -225,23 +230,27 @@ pub struct TypeInferenceAnalyzer {
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
-    inferred_types: HashMap<TypeVarId, Type>,
-    type_vars: HashMap<SsaVar, Type>,
+    inferred_types: HashMap<SsaVar, Type>,
+    #[cfg(test)]
+    debug_markers: HashMap<char, SsaVar>,
 }
 
 impl TypeInferenceResult {
     pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
-        if let Some(Type::TypeVar(id)) = self.type_vars.get(var).cloned() {
-            return self.inferred_types.get(&id);
-        }
-        None
+        return self.inferred_types.get(var);
     }
 
-    pub fn get_typevar_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
-        if let Some(f @ Type::TypeVar(_)) = self.type_vars.get(var) {
-            return Some(f);
-        }
-        None
+    /// Get the variable associated with a debug marker
+    #[cfg(test)]
+    pub fn get_marked_var(&self, marker: char) -> Option<&SsaVar> {
+        self.debug_markers.get(&marker)
+    }
+
+    /// Get the final type for a debug marker after unification
+    #[cfg(test)]
+    pub fn get_marker_type(&self, marker: char) -> Option<Type> {
+        self.get_marked_var(marker)
+            .and_then(|var| self.get_type_for_ssavar(var).cloned())
     }
 }
 
@@ -264,16 +273,11 @@ impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
 
                 // Solve the constraints through unification
                 match self.unify() {
-                    Ok(substitution) => {
+                    Ok(result) => {
                         log::info!("Type inference completed successfully");
 
                         // Ensure the final substitution map is fully resolved
-                        let final_types = Self::fully_substitute_map(substitution);
-
-                        model.set_type_inference_result(TypeInferenceResult {
-                            inferred_types: final_types,
-                            type_vars: self.type_vars.clone(),
-                        });
+                        model.set_type_inference_result(result);
 
                         // Signal that type inference is complete
                         collector.publish(TypeInferenceComplete { completed: true });
@@ -585,258 +589,100 @@ impl TypeInferenceAnalyzer {
         }
     }
 
-    /// Substitute type variables according to the substitution map recursively.
-    /// This follows the chain `t1 -> t2 -> ... -> T`.
-    pub fn substitute(t: Type, subst: &HashMap<TypeVarId, Type>) -> Type {
-        match t {
-            Type::Int => Type::Int,
-            Type::Bool => Type::Bool,
-            Type::Char => Type::Char,
-            Type::Pointer(t) => Type::Pointer(Box::new(Self::substitute(*t, subst))),
-            Type::FunctionPointer { args, returns } => Type::FunctionPointer {
-                args: args
-                    .into_iter()
-                    .map(|t| Self::substitute(t, subst))
-                    .collect(),
-                returns: returns
-                    .into_iter()
-                    .map(|t| Self::substitute(t, subst))
-                    .collect(),
-            },
-            Type::String => Type::String,
-            Type::TypeVar(id) => subst
-                .get(&id)
-                .map(|t| Self::substitute(t.clone(), subst))
-                .unwrap_or(Type::TypeVar(id)),
-        }
-    }
-
     /// Solve the collected constraints using unification
-    pub fn unify(&self) -> Result<HashMap<SsaVar, Type>, String> {
+    pub fn unify(&self) -> Result<TypeInferenceResult, String> {
         let mut worklist = self.constraints.clone();
-        let mut subst = HashMap::new();
+        let mut upper_bounds = HashMap::new();
+        let mut lower_bounds = HashMap::new();
         worklist.sort();
         worklist.reverse();
+        for typ in [Type::Int, Type::Bool, Type::Char] {
+            upper_bounds.insert(typ.clone(), typ.clone());
+            lower_bounds.insert(typ.clone(), typ.clone());
+        }
 
-        while let Some(constraint) = worklist.pop() {
-            let left = Self::substitute(constraint.left.clone(), &subst);
-            let right = Self::substitute(constraint.right.clone(), &subst);
-
-            match (&left, &right) {
-                (Type::TypeVar(id), Type::TypeVar(id2)) if id == id2 => {
-                    // Same type variable, nothing to do
-                    continue;
+        for c in &self.constraints {
+            match c.left {
+                Type::TypeVar(v) => {
+                    upper_bounds.insert(Type::TypeVar(v), Type::Any);
+                    lower_bounds.insert(Type::TypeVar(v), Type::Nothing);
                 }
-
-                (Type::TypeVar(id), _) => {
-                    // If the type variable already has a substitution, we need to ensure it's compatible
-                    if let Some(existing_type) = subst.get(id) {
-                        if existing_type.is_subtype_of(&right) {
-                            // Existing type is more specific than right, keep it
-                            // No need to add a new constraint
-                            debug!(
-                                "unify: keeping {} as {} (more specific than {})",
-                                id, existing_type, right
-                            );
-                        } else if right.is_subtype_of(existing_type) {
-                            // Right is more specific than existing type, update substitution
-                            debug!(
-                                "unify: refining {} from {} to {} (more specific)",
-                                id, existing_type, right
-                            );
-                            subst.insert(*id, right);
-                        } else {
-                            // Not in a subtyping relationship, add a constraint for compatibility check
-                            worklist.push(Constraint {
-                                left: existing_type.clone(),
-                                right: right.clone(),
-                                addr: constraint.addr,
-                                reason: constraint.reason,
-                            });
-                        }
-                    } else {
-                        // No existing substitution, just add it
-                        debug!("unify: {} => {}", id, right);
-                        subst.insert(*id, right);
-                    }
+                _ => {}
+            }
+            match c.right {
+                Type::TypeVar(v) => {
+                    upper_bounds.insert(Type::TypeVar(v), Type::Any);
+                    lower_bounds.insert(Type::TypeVar(v), Type::Nothing);
                 }
-
-                (_, Type::TypeVar(id)) => {
-                    // If the type variable already has a substitution, we need to ensure it's compatible
-                    if let Some(existing_type) = subst.get(id) {
-                        if existing_type.is_subtype_of(&left) {
-                            // Existing type is more specific than left, keep it
-                            // No need to add a new constraint
-                            debug!(
-                                "unify: keeping {} as {} (more specific than {})",
-                                id, existing_type, left
-                            );
-                        } else if left.is_subtype_of(existing_type) {
-                            // Left is more specific than existing type, update substitution
-                            debug!(
-                                "unify: refining {} from {} to {} (more specific)",
-                                id, existing_type, left
-                            );
-                            subst.insert(*id, left);
-                        } else {
-                            // Not in a subtyping relationship, add a constraint for compatibility check
-                            worklist.push(Constraint {
-                                left: existing_type.clone(),
-                                right: left.clone(),
-                                addr: constraint.addr,
-                                reason: constraint.reason,
-                            });
-                        }
-                    } else {
-                        // No existing substitution, just add it
-                        debug!("unify: {} => {}", id, left);
-                        subst.insert(*id, left);
-                    }
-                }
-
-                // --- Cases for Concrete Types ---
-                (Type::Pointer(t1), Type::Pointer(t2)) => {
-                    debug!("  -> Pointer: Adding constraint {} = {}", **t1, **t2);
-                    // Add constraint to unify the pointed-to types
-                    worklist.push(Constraint {
-                        left: (**t1).clone(),
-                        right: (**t2).clone(),
-                        addr: constraint.addr,
-                        reason: constraint.reason,
-                    });
-                }
-
-                // 5. Function Pointers: fn(A1..) -> R1 = fn(A2..) -> R2
-                (
-                    Type::FunctionPointer {
-                        args: args1,
-                        returns: returns1,
-                    },
-                    Type::FunctionPointer {
-                        args: args2,
-                        returns: returns2,
-                    },
-                ) => {
-                    if args1.len() != args2.len() {
-                        return Err(format!(
-                            "Function pointer argument count mismatch: {} vs {} in ({}) = ({}) (Constraint: {})",
-                            args1.len(), args2.len(), left, right, constraint
-                        ));
-                    }
-                    if returns1.len() != returns2.len() {
-                        return Err(format!(
-                            "Function pointer return count mismatch: {} vs {} in ({}) = ({}) (Constraint: {})",
-                            returns1.len(), returns2.len(), left, right, constraint
-                        ));
-                    }
-
-                    debug!("  -> FuncPtr: Adding constraints for args and returns");
-                    // Add constraints for arguments (unify corresponding types)
-                    for (arg1, arg2) in args1.iter().zip(args2.iter()) {
-                        worklist.push(Constraint {
-                            left: arg1.clone(),
-                            right: arg2.clone(),
-                            addr: constraint.addr,
-                            reason: constraint.reason,
-                        });
-                    }
-                    // Add constraints for returns (unify corresponding types)
-                    for (ret1, ret2) in returns1.iter().zip(returns2.iter()) {
-                        worklist.push(Constraint {
-                            left: ret1.clone(),
-                            right: ret2.clone(),
-                            addr: constraint.addr,
-                            reason: constraint.reason,
-                        });
-                    }
-                }
-
-                // 6. Subtyping: T1 = T2 where T1 <: T2 or T2 <: T1
-                // This case handles relationships between concrete types like Char = Int.
-                // It confirms compatibility but doesn't generate further substitutions between them.
-                // The more specific type should emerge naturally if unified with a variable elsewhere.
-                (t1, t2) if t1.is_subtype_of(t2) || t2.is_subtype_of(t1) => {
-                    debug!("  -> Subtype: Compatible concrete types {} and {}", t1, t2);
-                    // No action needed, the relationship holds.
-                }
-
-                /*
-                // 7. Conflict: Incompatible concrete types
-                // This catches Int = Bool, *T = Int, fn(...) = Char, etc.
-                (t1, t2) if Self::are_incompatible_concrete_types(t1, t2) => {
-                    return Err(format!(
-                        "Type conflict: Cannot unify {} and {} (Constraint: {})",
-                        left, right, constraint
-                    ));
-                }
-                */
-                _ => {
-                    // This case shouldn't normally be reached, but handle unknown cases
-                    // by returning an error to be safe
-                    return Err(format!(
-                        "Unknown type combination: {} and {} at instruction {}",
-                        left, right, constraint.addr
-                    ));
-                }
+                _ => {}
             }
         }
 
-        // Final substitution pass is crucial to resolve chains like t1->t2, t2->Int
-        let final_subst = Self::fully_substitute_map(subst);
-
-        // Final occurs check on the fully substituted map
-        for (id, typ) in &final_subst {
-            if Self::contains_type_var(typ, *id) {
-                // Check if it's just t -> t, which is harmless
-                if matches!(typ, Type::TypeVar(tid) if tid == id) {
+        loop {
+            let mut changed = false;
+            for c in &self.constraints {
+                let Some(left_upper) = upper_bounds.get(&c.left) else {
                     continue;
-                }
-
-                return Err(format!(
-                    "Recursive type detected after unification: {} = {}",
-                    Type::TypeVar(*id),
-                    typ
-                ));
-            }
-        }
-
-        Ok(final_subst)
-    }
-
-    /// Applies substitutions repeatedly until the map stabilizes.
-    fn fully_substitute_map(mut subst: HashMap<TypeVarId, Type>) -> HashMap<TypeVarId, Type> {
-        let mut changed = true;
-        while changed {
-            changed = false;
-            let current_subst = subst.clone(); // Use stable map for lookups in this pass
-
-            for (_var_id, typ) in subst.iter_mut() {
-                let new_type = Self::substitute(typ.clone(), &current_subst);
-                if &new_type != typ {
-                    *typ = new_type;
+                };
+                let Some(left_lower) = lower_bounds.get(&c.left) else {
+                    continue;
+                };
+                let Some(right_upper) = upper_bounds.get(&c.right) else {
+                    continue;
+                };
+                let Some(right_lower) = lower_bounds.get(&c.right) else {
+                    continue;
+                };
+                let Some(new_left_upper) = glb(left_upper, right_upper) else {
+                    return Err(format!(
+                        "Type conflict for {} and {} for {}",
+                        left_upper, right_upper, c.left
+                    ));
+                };
+                let Some(new_right_lower) = lub(left_lower, right_lower) else {
+                    return Err(format!(
+                        "Type conflict for {} and {} for {}",
+                        left_lower, right_lower, c.right
+                    ));
+                };
+                if new_left_upper != left_upper {
                     changed = true;
+                    upper_bounds.insert(c.left.clone(), new_left_upper.clone());
+                }
+                if new_right_lower != right_lower {
+                    changed = true;
+                    lower_bounds.insert(c.right.clone(), new_right_lower.clone());
                 }
             }
+            if !changed {
+                break;
+            }
         }
-        // Optional: Remove trivial identity substitutions (t -> t)
-        subst.retain(|_id, typ| !matches!(typ, Type::TypeVar(tid) if tid == _id));
-        subst
+        let inferred_types = upper_bounds
+            .iter()
+            .filter_map({
+                |(k, v)| match k {
+                    Type::TypeVar(ssa_var) => {
+                        let v = if *v == Type::Any || *v == Type::Nothing {
+                            lower_bounds[k].clone()
+                        } else {
+                            v.clone()
+                        };
+                        Some((*ssa_var, v))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        let result = TypeInferenceResult {
+            inferred_types,
+            #[cfg(test)]
+            debug_markers: self.debug_markers.clone(),
+        };
+        Ok(result)
     }
 
-    /// Determine if two types are incompatible (cannot be unified)
-    fn are_incompatible_types(t1: &Type, t2: &Type) -> bool {
-        match (t1, t2) {
-            // Types with subtyping relationship are compatible
-            _ if t1.is_subtype_of(t2) || t2.is_subtype_of(t1) => false,
-
-            // TypeVars are handled separately in unification
-            (Type::TypeVar(_), _) | (_, Type::TypeVar(_)) => false,
-
-            // Any other combination is incompatible
-            _ => true,
-        }
-    }
-
+    /*
     /// Check if a type contains a specific type variable
     fn contains_type_var(typ: &Type, var_id: TypeVarId) -> bool {
         match typ {
@@ -851,33 +697,62 @@ impl TypeInferenceAnalyzer {
             _ => false,
         }
     }
+    */
 
     /// Mark a variable with a debug character for testing
     #[cfg(test)]
     pub fn mark_var(&mut self, var: SsaVar, marker: char) {
         self.debug_markers.insert(marker, var);
     }
+}
 
-    /// Get the variable associated with a debug marker
-    #[cfg(test)]
-    pub fn get_marked_var(&self, marker: char) -> Option<&SsaVar> {
-        self.debug_markers.get(&marker)
+fn lub<'a>(left: &'a Type, right: &'a Type) -> Option<&'a Type> {
+    if left == right {
+        return Some(left);
     }
-
-    /// Get the final type for a variable after unification
-    #[cfg(test)]
-    pub fn get_var_type(&self, var: &SsaVar, subst: &HashMap<TypeVarId, Type>) -> Option<Type> {
-        self.type_vars.get(var).map(|initial_type| {
-            // Fully substitute the initial type using the final map
-            Self::substitute(initial_type.clone(), subst)
-        })
+    if *left == Type::Nothing {
+        return Some(right);
     }
+    if *right == Type::Nothing {
+        return Some(left);
+    }
+    if *left == Type::Any {
+        return Some(left);
+    }
+    if *right == Type::Any {
+        return Some(right);
+    }
+    if left.is_subtype_of(right) {
+        return Some(right);
+    } else if right.is_subtype_of(left) {
+        return Some(left);
+    } else {
+        return None;
+    }
+}
 
-    /// Get the final type for a debug marker after unification
-    #[cfg(test)]
-    pub fn get_marker_type(&self, marker: char, subst: &HashMap<TypeVarId, Type>) -> Option<Type> {
-        self.get_marked_var(marker)
-            .and_then(|var| self.get_var_type(var, subst))
+fn glb<'a>(left: &'a Type, right: &'a Type) -> Option<&'a Type> {
+    if left == right {
+        return Some(left);
+    }
+    if *left == Type::Nothing {
+        return Some(left);
+    }
+    if *right == Type::Nothing {
+        return Some(right);
+    }
+    if *left == Type::Any {
+        return Some(right);
+    }
+    if *right == Type::Any {
+        return Some(left);
+    }
+    if left.is_subtype_of(right) {
+        return Some(left);
+    } else if right.is_subtype_of(left) {
+        return Some(right);
+    } else {
+        return None;
     }
 }
 
@@ -971,7 +846,7 @@ mod tests {
             println!("ti: {:?}", ti);
 
             let var = ti
-                .type_vars
+                .inferred_types
                 .keys()
                 .filter(|var| var.operand.kind.get_memory() == Some(addr as i128))
                 .max_by_key(|var| var.version)
@@ -1028,29 +903,34 @@ mod tests {
         let char_type = type_inference.type_for_ssavar(&char_var);
 
         // Add constraints
-        type_inference.add_constraint(int_type, Type::Int, 1, ConstraintReason::AddImpliesInt);
+        type_inference.add_constraint(
+            int_type,
+            Type::Int,
+            InstructionId::from(1),
+            ConstraintReason::AddImpliesInt,
+        );
 
         type_inference.add_constraint(
             bool_type,
             Type::Bool,
-            2,
+            InstructionId::from(2),
             ConstraintReason::CompareDstImpliesBool,
         );
 
         type_inference.add_constraint(
             char_type,
             Type::Char,
-            3,
+            InstructionId::from(3),
             ConstraintReason::OutputImpliesChar,
         );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification failed");
+        let result = type_inference.unify().expect("Unification failed");
 
         // Verify types using marker functions
-        let a_type = type_inference.get_marker_type('a', &substitution);
-        let b_type = type_inference.get_marker_type('b', &substitution);
-        let c_type = type_inference.get_marker_type('c', &substitution);
+        let a_type = result.get_marker_type('a');
+        let b_type = result.get_marker_type('b');
+        let c_type = result.get_marker_type('c');
 
         assert_eq!(a_type, Some(Type::Int), "Variable 'a' should be an integer");
         assert_eq!(b_type, Some(Type::Bool), "Variable 'b' should be a boolean");
@@ -1085,15 +965,15 @@ mod tests {
                 args: vec![],
                 returns: vec![],
             },
-            1,
+            InstructionId::from(1),
             ConstraintReason::IndirectFunctionCall,
         );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification should succeed");
+        let result = type_inference.unify().expect("Unification should succeed");
 
         // Verify type using marker function
-        let a_type = type_inference.get_marker_type('a', &substitution);
+        let a_type = result.get_marker_type('a');
 
         assert!(
             matches!(a_type, Some(Type::FunctionPointer { .. })),
@@ -1134,7 +1014,7 @@ mod tests {
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
-            1,
+            InstructionId::from(1),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -1142,20 +1022,25 @@ mod tests {
         type_inference.add_constraint(
             ptr_type,
             Type::Pointer(Box::new(int_type.clone())),
-            2,
+            InstructionId::from(2),
             ConstraintReason::Assignment,
         );
 
         // deref_var gets the value of int_var through ptr_var
-        type_inference.add_constraint(deref_type, int_type, 3, ConstraintReason::Assignment);
+        type_inference.add_constraint(
+            deref_type,
+            int_type,
+            InstructionId::from(3),
+            ConstraintReason::Assignment,
+        );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification should succeed");
+        let result = type_inference.unify().expect("Unification should succeed");
 
         // Verify types using marker functions
-        let a_type = type_inference.get_marker_type('a', &substitution);
-        let b_type = type_inference.get_marker_type('b', &substitution);
-        let c_type = type_inference.get_marker_type('c', &substitution);
+        let a_type = result.get_marker_type('a');
+        let b_type = result.get_marker_type('b');
+        let c_type = result.get_marker_type('c');
 
         assert_eq!(a_type, Some(Type::Int), "Variable 'a' should be an integer");
         assert_eq!(
@@ -1188,7 +1073,7 @@ mod tests {
         type_inference.add_constraint(
             var_type.clone(),
             Type::Char,
-            1,
+            InstructionId::from(1),
             ConstraintReason::OutputImpliesChar,
         );
 
@@ -1196,7 +1081,7 @@ mod tests {
         type_inference.add_constraint(
             another_type.clone(),
             Type::Bool,
-            2,
+            InstructionId::from(2),
             ConstraintReason::JumpConditionImpliesBool,
         );
 
@@ -1205,7 +1090,7 @@ mod tests {
         type_inference.add_constraint(
             var_type.clone(),
             another_type.clone(),
-            3,
+            InstructionId::from(3),
             ConstraintReason::Assignment,
         );
 
@@ -1246,7 +1131,7 @@ mod tests {
         type_inference.add_constraint(
             var_type.clone(),
             Type::Int,
-            1,
+            InstructionId::from(1),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -1254,20 +1139,20 @@ mod tests {
         type_inference.add_constraint(
             var_type.clone(),
             Type::Char,
-            2,
+            InstructionId::from(2),
             ConstraintReason::OutputImpliesChar,
         );
 
         // Solve constraints
-        let substitution = type_inference.unify().expect("Unification should succeed");
+        let result = type_inference.unify().expect("Unification should succeed");
 
         // Get the final type for the variable
-        let final_type = type_inference.get_var_type(&var, &substitution);
+        let final_type = result.get_type_for_ssavar(&var).unwrap();
 
         // The final type should be Char (the more specific type)
         assert_eq!(
-            final_type,
-            Some(Type::Char),
+            *final_type,
+            Type::Char,
             "Expected type to be refined from Int to Char but got {:?}",
             final_type
         );
