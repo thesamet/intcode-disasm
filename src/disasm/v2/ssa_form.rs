@@ -11,7 +11,7 @@ use std::fmt;
 use super::instructions::{GenericInstruction, InstructionId};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum SsaVarKind {
+pub enum SsaVarKind {
     Memory(i128),
     Immediate(i128),
     RelativeMemory(i128),

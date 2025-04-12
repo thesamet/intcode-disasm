@@ -4,7 +4,7 @@ use itertools::Itertools;
 use super::{
     instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaVar},
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaVar, SsaVarKind},
 };
 
 struct PrettyPrinter<'a> {
@@ -34,8 +34,8 @@ impl<'a> PrettyPrinter<'a> {
             .as_ref()
             .map(|m| format!("'{} ", m).yellow())
             .unwrap_or_default();
-        match var.operand().kind {
-            super::instructions::OperandKind::RelativeMemory(offset) => {
+        match var.kind {
+            SsaVarKind::RelativeMemory(offset) => {
                 if offset == 0 {
                     "[R]".cyan().to_string()
                 } else if offset > -1 {
@@ -48,19 +48,18 @@ impl<'a> PrettyPrinter<'a> {
                         .to_string()
                 }
             }
-            super::instructions::OperandKind::Memory(addr) => {
+            SsaVarKind::Memory(addr) => {
                 format!("{}[{}]_{}{}", debug_marker, addr, var.version, typ)
                     .purple()
                     .to_string()
             }
-            super::instructions::OperandKind::Immediate(val) => {
-                format!("{}{}", debug_marker, val).green().to_string()
-            }
-            super::instructions::OperandKind::Deref(addr) => {
-                format!("{}*{}{}", debug_marker, addr, typ)
-                    .bright_red()
-                    .to_string()
-            }
+            SsaVarKind::Immediate(val) => format!("{}{}", debug_marker, val).green().to_string(),
+            SsaVarKind::Deref {
+                address,
+                address_version,
+            } => format!("{}*[{}_{}]{}", debug_marker, address, address_version, typ)
+                .bright_red()
+                .to_string(),
         }
     }
 

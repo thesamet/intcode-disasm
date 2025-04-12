@@ -8,7 +8,7 @@ use crate::disasm::v2::{
     events::{Event, TypeInferenceComplete},
     instructions::{InstructionId, InstructionKind, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar},
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar, SsaVarKind},
 };
 
 /// Represents a type in the type system
@@ -39,6 +39,7 @@ impl Type {
             (Type::Bool, Type::Int) => true,
             // (Type::FunctionPointer { .. }, Type::Int) => true,
             // Pointer subtyping is covariant
+            (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
             // Function pointer subtyping: contravariant args, covariant returns
             (
@@ -473,6 +474,30 @@ impl TypeInferenceAnalyzer {
             InstructionKind::Data(_) => { /* Data doesn't participate in type inference this way */
             }
         }
+        instruction
+            .reads()
+            .iter()
+            .for_each(|operand| match operand.kind {
+                SsaVarKind::Deref {
+                    address,
+                    address_version,
+                } => {
+                    let mem_ssa_var = SsaVar {
+                        kind: SsaVarKind::Memory(address as i128),
+                        offset: operand.offset,
+                        version: address_version,
+                        function_id: operand.function_id,
+                        debug_marker: None,
+                    };
+                    self.add_constraint(
+                        self.type_for_ssavar(&mem_ssa_var),
+                        Type::Pointer(Box::new(self.type_for_ssavar(operand))),
+                        instruction.id,
+                        ConstraintReason::Deref,
+                    );
+                }
+                _ => {}
+            });
     }
 
     /// Generate constraints for control flow transitions
