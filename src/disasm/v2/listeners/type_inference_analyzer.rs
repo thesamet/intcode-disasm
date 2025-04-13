@@ -1,15 +1,35 @@
 use itertools::Itertools;
 use log::{debug, info};
 use std::{collections::HashMap, fmt};
+use thiserror::Error;
 
 use crate::disasm::v2::{
     control_flow::NextKind,
-    dispatching::{EventCollector, EventListener},
-    events::{Event, TypeInferenceComplete},
+    dispatching::EventCollector,
+    events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
     instructions::{InstructionId, InstructionKind, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar, SsaVarKind},
 };
+
+#[derive(Error, Debug)]
+pub enum TypeInferenceError {
+    #[error("Type conflict for {ssa_var}: {message}")]
+    TypeConflict {
+        ssa_var: SsaVar,
+        message: String,
+        partial_result: TypeInferenceResult,
+    },
+
+    #[error("Lower bound conflict: {message}")]
+    LowerBoundConflict { message: String },
+
+    #[error("Upper bound conflict: {message}")]
+    UpperBoundConflict { message: String },
+
+    #[error("Type unification error: {0}")]
+    Other(String),
+}
 
 /// Represents a type in the type system
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -198,23 +218,23 @@ pub enum ConstraintReason {
 /// Represents a constraint between two types. The constraint implies that
 /// the left type is a subtype of the right type.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
-struct Constraint {
-    left: Type,
-    right: Type,
+pub struct Constraint {
+    pub left: Type,
+    pub right: Type,
 
     /// The instruction address where this constraint was generated
-    addr: InstructionId,
-    function_id: FunctionId,
+    pub addr: InstructionId,
+    pub function_id: FunctionId,
 
     /// The reason for this constraint
-    reason: ConstraintReason,
+    pub reason: ConstraintReason,
 }
 
 impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Constraint: {} <: {} at {} because {:?}",
+            "{} <: {} at {} because {:?}",
             self.left, self.right, self.addr, self.reason
         )
     }
@@ -240,8 +260,8 @@ pub struct TypeInferenceAnalyzer {
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     inferred_types: HashMap<SsaVar, Type>,
-    #[cfg(test)]
     debug_markers: HashMap<char, SsaVar>,
+    pub traces: Vec<AnalysisTrace>,
 }
 
 impl TypeInferenceResult {
@@ -261,53 +281,125 @@ impl TypeInferenceResult {
         self.get_marked_var(marker)
             .and_then(|var| self.get_type_for_ssavar(var).cloned())
     }
-}
 
-impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
-    fn on_event(
-        &mut self,
-        model: &mut ProgramModel,
-        event: Event,
-        collector: &mut EventCollector<Event>,
+    /// Get traces for a variable plus any related traces through constraints
+    pub fn get_recursive_traces_for_ssavar(&self, var: &SsaVar) -> Vec<(usize, &AnalysisTrace)> {
+        let type_var = Type::TypeVar(*var);
+        let mut result = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+
+        self.collect_related_traces(type_var, &mut result, &mut visited);
+
+        // Sort the traces by their original order in the trace vector
+        result.sort_by_key(|(idx, _)| *idx);
+
+        result
+    }
+
+    fn collect_related_traces<'a>(
+        &'a self,
+        type_key: Type,
+        result: &mut Vec<(usize, &'a AnalysisTrace)>,
+        visited: &mut std::collections::HashSet<Type>,
     ) {
-        match event {
-            // Start type inference after SSA conversion is complete
-            Event::SsaConversionComplete(_) => {
-                self.constraints.clear();
-                info!("Starting type inference analysis");
-                let Some(ssa_result) = model.get_ssa_result() else {
-                    panic!("SSA program not available");
-                };
+        if !visited.insert(type_key.clone()) {
+            return; // Already visited this type
+        }
 
-                self.generate_constraints_for_program(model, ssa_result);
+        // Find direct changes to this type
+        for (idx, trace) in self.traces.iter().enumerate() {
+            if trace.key == type_key {
+                result.push((idx, trace));
 
-                // Solve the constraints through unification
-                match self.unify() {
-                    Ok(result) => {
-                        log::info!("Type inference completed successfully");
-
-                        // Ensure the final substitution map is fully resolved
-                        model.set_type_inference_result(result);
-
-                        // Signal that type inference is complete
-                        collector.publish(TypeInferenceComplete { completed: true });
+                // For each trace, recursively follow any related types through constraints
+                match &trace.reason {
+                    ChangeReason::DecreaseUpperBoundFromConstraint {
+                        constraint: _,
+                        other,
                     }
-                    Err(error) => {
-                        panic!("Type inference failed: {}", error);
+                    | ChangeReason::IncreaseLowerBoundFromConstraint {
+                        constraint: _,
+                        other,
+                    } => {
+                        self.collect_related_traces(other.clone(), result, visited);
+                    }
+                    ChangeReason::GuessType => {
+                        // No related types to follow
                     }
                 }
             }
-            _ => {
-                // Ignore other events
+        }
+    }
+
+    /// Format all traces for an SSA variable in chronological order
+    pub fn format_traces_for_ssavar(&self, var: &SsaVar) -> String {
+        let traces = self.get_recursive_traces_for_ssavar(var);
+        if traces.is_empty() {
+            return format!("No traces found for {}", var);
+        }
+
+        let mut result = format!("Trace history for {}:\n", var);
+        for (idx, trace) in traces {
+            result.push_str(&format!("{}. {}\n", idx + 1, trace));
+        }
+
+        result
+    }
+}
+
+impl ModelEventListener for TypeInferenceAnalyzer {
+    fn on_function_call_analysis_complete(
+        &mut self,
+        model: &mut ProgramModel,
+        _: FunctionCallAnalysisComplete,
+        collector: &mut EventCollector<Event>,
+    ) {
+        self.constraints.clear();
+        info!("Starting type inference analysis");
+        let Some(ssa_result) = model.get_ssa_result() else {
+            panic!("SSA program not available");
+        };
+
+        self.generate_constraints_for_program(model, ssa_result);
+
+        // Solve the constraints through unification
+        match self.unify() {
+            Ok(result) => {
+                log::info!("Type inference completed successfully");
+
+                // Ensure the final substitution map is fully resolved
+                model.set_type_inference_result(result);
+
+                // Signal that type inference is complete
+                collector.publish(TypeInferenceComplete { completed: true });
+            }
+            Err(error) => {
+                // If this is a type conflict with an SsaVar, output the trace history
+                if let TypeInferenceError::TypeConflict {
+                    ssa_var,
+                    ref partial_result,
+                    ..
+                } = &error
+                {
+                    // Format the trace history for the variable
+                    let trace_history = partial_result.format_traces_for_ssavar(ssa_var);
+                    log::error!(
+                        "Type conflict trace history for {}:\n{}",
+                        ssa_var,
+                        trace_history
+                    );
+                }
+
+                panic!("Type inference failed: {}", error);
             }
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TypeBounds {
-    lower: Type,
-    upper: Type,
+pub struct TypeBounds {
+    pub lower: Type,
+    pub upper: Type,
 }
 
 impl TypeBounds {
@@ -405,23 +497,63 @@ impl TypeBoundsMap {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct BoundChange {
-    old_bounds: Option<TypeBounds>,
-    new_bounds: TypeBounds,
+pub struct BoundChange {
+    pub old_bounds: Option<TypeBounds>,
+    pub new_bounds: TypeBounds,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ChangeReason {
+pub enum ChangeReason {
     DecreaseUpperBoundFromConstraint { constraint: Constraint, other: Type },
     IncreaseLowerBoundFromConstraint { constraint: Constraint, other: Type },
     GuessType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AnalysisTrace {
-    key: Type,
-    change: BoundChange,
-    reason: ChangeReason,
+pub struct AnalysisTrace {
+    pub key: Type,
+    pub change: BoundChange,
+    pub reason: ChangeReason,
+}
+
+impl fmt::Display for AnalysisTrace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let old_bounds_str = match &self.change.old_bounds {
+            Some(bounds) => format!("lower={}, upper={}", bounds.lower, bounds.upper),
+            None => "none".to_string(),
+        };
+
+        let new_bounds_str = format!(
+            "lower={}, upper={}",
+            self.change.new_bounds.lower, self.change.new_bounds.upper
+        );
+
+        write!(
+            f,
+            "Type {}: changed from [{}] to [{}]\n",
+            self.key, old_bounds_str, new_bounds_str
+        )?;
+
+        match &self.reason {
+            ChangeReason::DecreaseUpperBoundFromConstraint { constraint, other } => {
+                write!(
+                    f,
+                    "  Upper bound decreased from constraint: {} caused by {}",
+                    constraint, other
+                )
+            }
+            ChangeReason::IncreaseLowerBoundFromConstraint { constraint, other } => {
+                write!(
+                    f,
+                    "  Lower bound increased from constraint: {} caused by {}",
+                    constraint, other
+                )
+            }
+            ChangeReason::GuessType => {
+                write!(f, "  Type guessed based on existing bounds")
+            }
+        }
+    }
 }
 
 impl TypeInferenceAnalyzer {
@@ -774,7 +906,7 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Solve the collected constraints using unification
-    pub fn unify(&self) -> Result<TypeInferenceResult, String> {
+    pub fn unify(&self) -> Result<TypeInferenceResult, TypeInferenceError> {
         let mut bounds = TypeBoundsMap::new();
         for c in &self.constraints {
             init_bounds_for_type(&c.left, &mut bounds);
@@ -798,7 +930,13 @@ impl TypeInferenceAnalyzer {
                 changed = false;
                 let mut worklist = self.constraints.clone();
                 while let Some(c) = worklist.pop() {
-                    changed |= Self::process_constraint(&c, &c.left, &c.right, &mut bounds)?;
+                    changed |= Self::process_constraint(
+                        &c,
+                        &c.left,
+                        &c.right,
+                        &mut bounds,
+                        &self.debug_markers,
+                    )?;
                 }
                 if !changed {
                     break;
@@ -856,20 +994,7 @@ impl TypeInferenceAnalyzer {
             }
         }
 
-        let inferred_types = bounds
-            .iter()
-            .filter_map({
-                |(k, v)| match k {
-                    Type::TypeVar(ssa_var) => Some((*ssa_var, v.upper.clone())),
-                    _ => None,
-                }
-            })
-            .collect();
-        let result = TypeInferenceResult {
-            inferred_types,
-            #[cfg(test)]
-            debug_markers: self.debug_markers.clone(),
-        };
+        let result = create_partial_result(&bounds, &self.debug_markers);
         Ok(result)
     }
 
@@ -878,7 +1003,8 @@ impl TypeInferenceAnalyzer {
         left: &Type,
         right: &Type,
         bounds: &mut TypeBoundsMap,
-    ) -> Result<bool, String> {
+        debug_markers: &HashMap<char, SsaVar>,
+    ) -> Result<bool, TypeInferenceError> {
         let mut changed = false;
         let left_upper = bounds.upper_bound(&left).cloned().unwrap_or(left.clone());
         let left_lower = bounds.lower_bound(&left).cloned().unwrap_or(left.clone());
@@ -892,10 +1018,24 @@ impl TypeInferenceAnalyzer {
                     // return a "Conflict" type and not fail the unification.
                     Type::Conflict
                 } else {
-                    return Err(format!(
-                        "Upper type conflict for {} and {} for {} at {}",
-                        left_upper, right_upper, left, constraint
-                    ));
+                    // Extract SSA var from the left type if possible
+                    if let Type::TypeVar(ssa_var) = left {
+                        return Err(TypeInferenceError::TypeConflict {
+                            ssa_var: *ssa_var,
+                            message: format!(
+                                "Upper type conflict for {} and {} for {} at {}",
+                                left_upper, right_upper, left, constraint
+                            ),
+                            partial_result: create_partial_result(bounds, debug_markers),
+                        });
+                    } else {
+                        return Err(TypeInferenceError::UpperBoundConflict {
+                            message: format!(
+                                "Upper type conflict for {} and {} for {} at {}",
+                                left_upper, right_upper, left, constraint
+                            ),
+                        });
+                    }
                 }
             }
         };
@@ -918,10 +1058,26 @@ impl TypeInferenceAnalyzer {
                     // return a "Conflict" type and not fail the unification.
                     Type::Conflict
                 } else {
-                    return Err(format!(
-                        "Lower type conflict for {} and {} for {} at {}",
-                        left_lower, right_lower, right, constraint
-                    ));
+                    // Extract SSA var from the right type if possible
+                    if let Type::TypeVar(ssa_var) = right {
+                        // Create a placeholder - the unify method will fill it in
+                        let placeholder_result = create_partial_result(bounds, debug_markers);
+                        return Err(TypeInferenceError::TypeConflict {
+                            ssa_var: *ssa_var,
+                            message: format!(
+                                "Lower type conflict for {} and {} for {} at {}",
+                                left_lower, right_lower, right, constraint
+                            ),
+                            partial_result: placeholder_result,
+                        });
+                    } else {
+                        return Err(TypeInferenceError::LowerBoundConflict {
+                            message: format!(
+                                "Lower type conflict for {} and {} for {} at {}",
+                                left_lower, right_lower, right, constraint
+                            ),
+                        });
+                    }
                 }
             }
         };
@@ -939,13 +1095,14 @@ impl TypeInferenceAnalyzer {
         }
         match (left, right) {
             (Type::Pointer(x), Type::Pointer(y)) => {
-                changed |= Self::process_constraint(constraint, x, y, bounds)?;
+                changed |= Self::process_constraint(constraint, x, y, bounds, debug_markers)?;
             }
             (x, Type::Pointer(y)) => {
                 let y_upper = bounds.upper_bound(&y).cloned().unwrap_or(*y.clone());
                 let new_upper = Type::Pointer(Box::new(y_upper));
                 if new_upper != left_upper {
-                    changed |= Self::process_constraint(constraint, x, &new_upper, bounds)?;
+                    changed |=
+                        Self::process_constraint(constraint, x, &new_upper, bounds, debug_markers)?;
                 }
             }
             _ => {}
@@ -957,6 +1114,28 @@ impl TypeInferenceAnalyzer {
     #[cfg(test)]
     pub fn mark_var(&mut self, var: SsaVar, marker: char) {
         self.debug_markers.insert(marker, var);
+    }
+}
+
+/// Create a TypeInferenceResult from the current state of bounds
+fn create_partial_result(
+    bounds: &TypeBoundsMap,
+    debug_markers: &HashMap<char, SsaVar>,
+) -> TypeInferenceResult {
+    let inferred_types = bounds
+        .iter()
+        .filter_map({
+            |(k, v)| match k {
+                Type::TypeVar(var) => Some((*var, v.upper.clone())),
+                _ => None,
+            }
+        })
+        .collect();
+
+    TypeInferenceResult {
+        inferred_types,
+        debug_markers: debug_markers.clone(),
+        traces: bounds.traces.clone(),
     }
 }
 
@@ -1378,12 +1557,15 @@ mod tests {
 
         // Check if we get the expected error
         if let Err(err) = result {
-            // The error message should contain "Type conflict"
-            assert!(
-                err.to_lowercase().contains("type conflict"),
-                "Expected error message to contain 'Type conflict', got: {}",
-                err
-            );
+            // The error should be a TypeConflict
+            match err {
+                TypeInferenceError::TypeConflict { .. } => {
+                    // Test passes - expected error type
+                }
+                _ => {
+                    panic!("Expected TypeConflict error, got: {:?}", err);
+                }
+            }
         }
     }
 
