@@ -1,7 +1,62 @@
+use colored::*;
 use itertools::Itertools;
 use log::{debug, info};
 use std::{collections::HashMap, fmt};
 use thiserror::Error;
+
+/// Color scheme for trace and type inference visualization
+pub struct TraceColors;
+
+impl TraceColors {
+    // Type colors
+    pub fn var() -> Color {
+        Color::BrightCyan
+    }
+    pub fn type_name() -> Color {
+        Color::BrightMagenta
+    }
+    pub fn bound() -> Color {
+        Color::BrightYellow
+    }
+    pub fn constraint() -> Color {
+        Color::BrightGreen
+    }
+    pub fn location() -> Color {
+        Color::Blue
+    } // Using blue instead of bright black for better readability
+    pub fn header() -> Color {
+        Color::BrightBlue
+    }
+
+    // Apply colors to different elements
+    pub fn format_var<T: fmt::Display>(var: T) -> ColoredString {
+        format!("{}", var).color(Self::var()).bold()
+    }
+
+    pub fn format_type<T: fmt::Display>(typ: T) -> ColoredString {
+        format!("{}", typ).color(Self::type_name()).bold()
+    }
+
+    pub fn format_constraint<T: fmt::Display>(constraint: T) -> ColoredString {
+        format!("{}", constraint).color(Self::constraint()).bold()
+    }
+
+    pub fn format_location<T: fmt::Display>(location: T) -> ColoredString {
+        format!("{}", location).color(Self::location())
+    }
+
+    pub fn format_bound<T: fmt::Display>(bound: T) -> ColoredString {
+        format!("{}", bound).color(Self::bound()).bold()
+    }
+
+    pub fn format_header<T: fmt::Display>(header: T) -> ColoredString {
+        format!("{}", header).color(Self::header()).bold()
+    }
+
+    pub fn format_relation(text: &str) -> ColoredString {
+        text.color(Self::bound()).bold()
+    }
+}
 
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -12,21 +67,44 @@ use crate::disasm::v2::{
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar, SsaVarKind},
 };
 
+/// Enum to distinguish between upper and lower bound conflicts
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundType {
+    Upper,
+    Lower,
+}
+
+impl fmt::Display for BoundType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BoundType::Upper => write!(f, "Upper"),
+            BoundType::Lower => write!(f, "Lower"),
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum TypeInferenceError {
-    #[error("Type conflict for {ssa_var}: {message}")]
+    #[error("Type conflict for {ssa_var}: {bound_type} type conflict between {left} and {right} for {var_type} at {constraint}")]
     TypeConflict {
         ssa_var: SsaVar,
-        message: String,
+        bound_type: BoundType,
+        left: Type,
+        right: Type, 
+        var_type: Type,
+        constraint: Constraint,
         partial_result: TypeInferenceResult,
     },
-
-    #[error("Lower bound conflict: {message}")]
-    LowerBoundConflict { message: String },
-
-    #[error("Upper bound conflict: {message}")]
-    UpperBoundConflict { message: String },
-
+    
+    #[error("{bound_type} bound conflict: type conflict between {left} and {right} for {var_type} at {constraint}")]
+    BoundConflict {
+        bound_type: BoundType,
+        left: Type,
+        right: Type,
+        var_type: Type,
+        constraint: Constraint,
+    },
+    
     #[error("Type unification error: {0}")]
     Other(String),
 }
@@ -215,6 +293,13 @@ pub enum ConstraintReason {
     Reconciliation,
 }
 
+impl fmt::Display for ConstraintReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Delegate to the Debug implementation
+        write!(f, "{:?}", self)
+    }
+}
+
 /// Represents a constraint between two types. The constraint implies that
 /// the left type is a subtype of the right type.
 #[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq)]
@@ -232,10 +317,34 @@ pub struct Constraint {
 
 impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Format the left side with appropriate color
+        let left_str = if let Type::TypeVar(var) = &self.left {
+            TraceColors::format_var(var)
+        } else {
+            TraceColors::format_type(&self.left)
+        };
+
+        // Format the right side with appropriate color
+        let right_str = if let Type::TypeVar(var) = &self.right {
+            TraceColors::format_var(var)
+        } else {
+            TraceColors::format_type(&self.right)
+        };
+
+        // Format the location and reason
+        let location = TraceColors::format_location(format!("{}:{}", self.function_id, self.addr));
+        let reason = TraceColors::format_constraint(&self.reason);
+
         write!(
             f,
-            "{} <: {} at {} because {:?}",
-            self.left, self.right, self.addr, self.reason
+            "{} {} {} {} {} {} {}",
+            left_str,
+            TraceColors::format_relation("<:"),
+            right_str,
+            TraceColors::format_location("at"),
+            location,
+            TraceColors::format_location("because"),
+            reason
         )
     }
 }
@@ -518,39 +627,90 @@ pub struct AnalysisTrace {
 
 impl fmt::Display for AnalysisTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Colorize the key type
+        let key_str = if let Type::TypeVar(var) = &self.key {
+            TraceColors::format_var(var)
+        } else {
+            TraceColors::format_type(&self.key)
+        };
+
+        // Format old bounds with colors
         let old_bounds_str = match &self.change.old_bounds {
-            Some(bounds) => format!("lower={}, upper={}", bounds.lower, bounds.upper),
+            Some(bounds) => format!(
+                "{}, {}",
+                TraceColors::format_type(&bounds.lower),
+                TraceColors::format_type(&bounds.upper)
+            ),
             None => "none".to_string(),
         };
 
+        // Format new bounds with colors
         let new_bounds_str = format!(
-            "lower={}, upper={}",
-            self.change.new_bounds.lower, self.change.new_bounds.upper
+            "{}, {}",
+            TraceColors::format_type(&self.change.new_bounds.lower),
+            TraceColors::format_type(&self.change.new_bounds.upper)
         );
 
         write!(
             f,
-            "Type {}: changed from [{}] to [{}]\n",
-            self.key, old_bounds_str, new_bounds_str
+            "{} {}: changed from [{}] to [{}]\n",
+            TraceColors::format_header("Type"),
+            key_str,
+            old_bounds_str,
+            new_bounds_str
         )?;
 
         match &self.reason {
             ChangeReason::DecreaseUpperBoundFromConstraint { constraint, other } => {
+                let other_str = if let Type::TypeVar(var) = other {
+                    TraceColors::format_var(var)
+                } else {
+                    TraceColors::format_type(other)
+                };
+
+                let constraint_str = format!(
+                    "{} @ {}:{}",
+                    TraceColors::format_constraint(&constraint.reason),
+                    TraceColors::format_location(&constraint.function_id),
+                    TraceColors::format_location(&constraint.addr)
+                );
+
                 write!(
                     f,
-                    "  Upper bound decreased from constraint: {} caused by {}",
-                    constraint, other
+                    "  {} from constraint: {} caused by {}",
+                    TraceColors::format_bound("Upper bound decreased"),
+                    constraint_str,
+                    other_str
                 )
             }
             ChangeReason::IncreaseLowerBoundFromConstraint { constraint, other } => {
+                let other_str = if let Type::TypeVar(var) = other {
+                    TraceColors::format_var(var)
+                } else {
+                    TraceColors::format_type(other)
+                };
+
+                let constraint_str = format!(
+                    "{} @ {}:{}",
+                    TraceColors::format_constraint(&constraint.reason),
+                    TraceColors::format_location(&constraint.function_id),
+                    TraceColors::format_location(&constraint.addr)
+                );
+
                 write!(
                     f,
-                    "  Lower bound increased from constraint: {} caused by {}",
-                    constraint, other
+                    "  {} from constraint: {} caused by {}",
+                    TraceColors::format_bound("Lower bound increased"),
+                    constraint_str,
+                    other_str
                 )
             }
             ChangeReason::GuessType => {
-                write!(f, "  Type guessed based on existing bounds")
+                write!(
+                    f,
+                    "  {} based on existing bounds",
+                    TraceColors::format_type("Type guessed")
+                )
             }
         }
     }
@@ -998,6 +1158,49 @@ impl TypeInferenceAnalyzer {
         Ok(result)
     }
 
+    /// Helper function for handling bound conflicts uniformly
+    fn handle_bound_conflict(
+        constraint: &Constraint,
+        type_var: &Type,
+        current_bound: &Type,
+        new_bound: Option<Type>,
+        bound_type: BoundType,
+        bounds: &mut TypeBoundsMap,
+        debug_markers: &HashMap<char, SsaVar>,
+    ) -> Result<(bool, Type), TypeInferenceError> {
+        match new_bound {
+            Some(bound) => Ok((bound != *current_bound, bound)),
+            None => {
+                if constraint.reason == ConstraintReason::PhiAssignment {
+                    // Phi assignments may not be a live variable. For now,
+                    // return a "Conflict" type and not fail the unification.
+                    Ok((false, Type::Conflict))
+                } else {
+                    // Extract SSA var from the type if possible for better error reporting
+                    if let Type::TypeVar(ssa_var) = type_var {
+                        return Err(TypeInferenceError::TypeConflict {
+                            ssa_var: *ssa_var,
+                            bound_type,
+                            left: constraint.left.clone(),
+                            right: constraint.right.clone(),
+                            var_type: type_var.clone(),
+                            constraint: constraint.clone(),
+                            partial_result: create_partial_result(bounds, debug_markers),
+                        });
+                    } else {
+                        return Err(TypeInferenceError::BoundConflict {
+                            bound_type,
+                            left: constraint.left.clone(),
+                            right: constraint.right.clone(),
+                            var_type: type_var.clone(),
+                            constraint: constraint.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     fn process_constraint(
         constraint: &Constraint,
         left: &Type,
@@ -1010,36 +1213,19 @@ impl TypeInferenceAnalyzer {
         let left_lower = bounds.lower_bound(&left).cloned().unwrap_or(left.clone());
         let right_upper = bounds.upper_bound(&right).cloned().unwrap_or(right.clone());
         let right_lower = bounds.lower_bound(&right).cloned().unwrap_or(right.clone());
-        let new_left_upper = match glb(&left_upper, &right_upper) {
-            Some(x) => x,
-            None => {
-                if constraint.reason == ConstraintReason::PhiAssignment {
-                    // Phi assignments may not not be a live variable. For now,
-                    // return a "Conflict" type and not fail the unification.
-                    Type::Conflict
-                } else {
-                    // Extract SSA var from the left type if possible
-                    if let Type::TypeVar(ssa_var) = left {
-                        return Err(TypeInferenceError::TypeConflict {
-                            ssa_var: *ssa_var,
-                            message: format!(
-                                "Upper type conflict for {} and {} for {} at {}",
-                                left_upper, right_upper, left, constraint
-                            ),
-                            partial_result: create_partial_result(bounds, debug_markers),
-                        });
-                    } else {
-                        return Err(TypeInferenceError::UpperBoundConflict {
-                            message: format!(
-                                "Upper type conflict for {} and {} for {} at {}",
-                                left_upper, right_upper, left, constraint
-                            ),
-                        });
-                    }
-                }
-            }
-        };
-        if new_left_upper != left_upper {
+        
+        // Handle upper bound
+        let (upper_changed, new_left_upper) = Self::handle_bound_conflict(
+            constraint,
+            left,
+            &left_upper,
+            glb(&left_upper, &right_upper),
+            BoundType::Upper,
+            bounds,
+            debug_markers,
+        )?;
+        
+        if upper_changed {
             bounds.register_new_upper(
                 left.clone(),
                 new_left_upper,
@@ -1050,38 +1236,19 @@ impl TypeInferenceAnalyzer {
             );
             changed = true;
         }
-        let new_right_lower = match lub(&left_lower, &right_lower) {
-            Some(x) => x,
-            None => {
-                if constraint.reason == ConstraintReason::PhiAssignment {
-                    // Phi assignments may not not be a live variable. For now,
-                    // return a "Conflict" type and not fail the unification.
-                    Type::Conflict
-                } else {
-                    // Extract SSA var from the right type if possible
-                    if let Type::TypeVar(ssa_var) = right {
-                        // Create a placeholder - the unify method will fill it in
-                        let placeholder_result = create_partial_result(bounds, debug_markers);
-                        return Err(TypeInferenceError::TypeConflict {
-                            ssa_var: *ssa_var,
-                            message: format!(
-                                "Lower type conflict for {} and {} for {} at {}",
-                                left_lower, right_lower, right, constraint
-                            ),
-                            partial_result: placeholder_result,
-                        });
-                    } else {
-                        return Err(TypeInferenceError::LowerBoundConflict {
-                            message: format!(
-                                "Lower type conflict for {} and {} for {} at {}",
-                                left_lower, right_lower, right, constraint
-                            ),
-                        });
-                    }
-                }
-            }
-        };
-        if new_right_lower != right_lower {
+        
+        // Handle lower bound
+        let (lower_changed, new_right_lower) = Self::handle_bound_conflict(
+            constraint,
+            right,
+            &right_lower,
+            lub(&left_lower, &right_lower),
+            BoundType::Lower,
+            bounds,
+            debug_markers,
+        )?;
+        
+        if lower_changed {
             bounds.register_new_lower(
                 right.clone(),
                 new_right_lower,
@@ -1090,7 +1257,6 @@ impl TypeInferenceAnalyzer {
                     other: left.clone(),
                 },
             );
-
             changed = true;
         }
         match (left, right) {
