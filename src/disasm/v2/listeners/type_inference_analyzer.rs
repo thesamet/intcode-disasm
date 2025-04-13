@@ -208,6 +208,22 @@ impl Type {
     }
 }
 
+fn is_concrete_type(typ: &Type) -> bool {
+    match typ {
+        Type::Int | Type::Bool | Type::Char => true,
+        Type::Truthy => true,
+        Type::FunctionPointer { args, returns } => {
+            args.iter().all(is_concrete_type) && returns.iter().all(is_concrete_type)
+        }
+        Type::Pointer(p) => is_concrete_type(p),
+        Type::String => true,
+        Type::TypeVar(_) => false,
+        Type::Conflict => false,
+        Type::Any => false,
+        Type::Nothing => false,
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -486,7 +502,7 @@ impl ModelEventListener for TypeInferenceAnalyzer {
             Err(error) => {
                 // If this is a type conflict with an SsaVar, output the trace history
                 if let TypeInferenceError::TypeConflict {
-                    ssa_var,
+                    
                     ref partial_result,
                     left,
                     right,
@@ -1158,54 +1174,21 @@ impl TypeInferenceAnalyzer {
                 }
             }
             // In this phase we are constraining any type that has a specific upper bound or lower bound
-            /*
             for key in &keys {
                 if key.is_var_free() {
                     continue;
                 }
-                let lower = bounds.lower_bound(&key).unwrap();
-                let upper = bounds.upper_bound(&key).unwrap();
-                match (lower, upper) {
-                    (Type::Nothing, Type::Truthy) | (Type::Truthy, Type::Any) => {
-                        bounds.register_new_lower(key.clone(), Type::Bool, ChangeReason::GuessType);
-                        changed = true;
-                    }
-                    (_, Type::Truthy) if *lower != Type::Truthy => {
-                        bounds.register_new_upper(
-                            key.clone(),
-                            lower.clone(),
-                            ChangeReason::GuessType,
-                        );
-                        changed = true;
-                    }
-                    (Type::Nothing, _)
-                        if *upper != Type::Any
-                            && *upper != Type::Truthy
-                            && *upper != Type::Nothing =>
-                    {
-                        changed = true;
-                        bounds.register_new_lower(
-                            key.clone(),
-                            upper.clone(),
-                            ChangeReason::GuessType,
-                        );
-                    }
-                    (_, Type::Any)
-                        if *lower != Type::Any
-                            && *lower != Type::Nothing
-                            && *lower != Type::Truthy =>
-                    {
-                        bounds.register_new_upper(
-                            key.clone(),
-                            lower.clone(),
-                            ChangeReason::GuessType,
-                        );
-                        changed = true;
-                    }
-                    _ => {}
+                let lower = bounds.lower_bound(&key).unwrap().clone();
+                let upper = bounds.upper_bound(&key).unwrap().clone();
+                if is_concrete_type(&lower) && upper == Type::Any {
+                    bounds.register_new_upper(key.clone(), lower.clone(), ChangeReason::GuessType);
+                    changed = true;
+                }
+                if is_concrete_type(&upper) && lower == Type::Nothing {
+                    bounds.register_new_lower(key.clone(), upper.clone(), ChangeReason::GuessType);
+                    changed = true;
                 }
             }
-            */
             if !changed {
                 break;
             }
