@@ -90,12 +90,12 @@ pub enum TypeInferenceError {
         ssa_var: SsaVar,
         bound_type: BoundType,
         left: Type,
-        right: Type, 
+        right: Type,
         var_type: Type,
         constraint: Constraint,
         partial_result: TypeInferenceResult,
     },
-    
+
     #[error("{bound_type} bound conflict: type conflict between {left} and {right} for {var_type} at {constraint}")]
     BoundConflict {
         bound_type: BoundType,
@@ -104,7 +104,7 @@ pub enum TypeInferenceError {
         var_type: Type,
         constraint: Constraint,
     },
-    
+
     #[error("Type unification error: {0}")]
     Other(String),
 }
@@ -1213,7 +1213,7 @@ impl TypeInferenceAnalyzer {
         let left_lower = bounds.lower_bound(&left).cloned().unwrap_or(left.clone());
         let right_upper = bounds.upper_bound(&right).cloned().unwrap_or(right.clone());
         let right_lower = bounds.lower_bound(&right).cloned().unwrap_or(right.clone());
-        
+
         // Handle upper bound
         let (upper_changed, new_left_upper) = Self::handle_bound_conflict(
             constraint,
@@ -1224,7 +1224,7 @@ impl TypeInferenceAnalyzer {
             bounds,
             debug_markers,
         )?;
-        
+
         if upper_changed {
             bounds.register_new_upper(
                 left.clone(),
@@ -1236,7 +1236,7 @@ impl TypeInferenceAnalyzer {
             );
             changed = true;
         }
-        
+
         // Handle lower bound
         let (lower_changed, new_right_lower) = Self::handle_bound_conflict(
             constraint,
@@ -1247,7 +1247,7 @@ impl TypeInferenceAnalyzer {
             bounds,
             debug_markers,
         )?;
-        
+
         if lower_changed {
             bounds.register_new_lower(
                 right.clone(),
@@ -1883,7 +1883,6 @@ f1:
     }
 
     #[test]
-    #[ignore] // Temporarily ignore this test as it needs to be updated after SsaVar changes
     fn test_link_function_params_to_argument_types() {
         let ctx = TestContext::new(
             r#"
@@ -1979,7 +1978,7 @@ f1:
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "reason"]
     fn test_link_function_return_type_single() {
         let ctx = TestContext::new(
             r#"
@@ -2001,6 +2000,7 @@ f1:
                 goto [R]
             "#,
         );
+        pretty_print_ssa(&ctx.model);
 
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
