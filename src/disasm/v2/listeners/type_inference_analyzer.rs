@@ -24,6 +24,7 @@ pub enum Type {
     TypeVar(SsaVar),
     Truthy, // a marker type for truthy types
     Any,
+    Conflict, // Represents a type that was conflicted, but hopefully it will not be needed.
 }
 
 impl Type {
@@ -98,6 +99,7 @@ impl Type {
                 .collect(),
             Type::String => vec![],
             Type::Truthy => vec![],
+            Type::Conflict => vec![],
         }
     }
 
@@ -139,6 +141,7 @@ impl fmt::Display for Type {
             }
             Type::String => write!(f, "string"),
             Type::TypeVar(t) => write!(f, "{}", t),
+            Type::Conflict => write!(f, "CONFLICT"),
         }
     }
 }
@@ -201,6 +204,7 @@ struct Constraint {
 
     /// The instruction address where this constraint was generated
     addr: InstructionId,
+    function_id: FunctionId,
 
     /// The reason for this constraint
     reason: ConstraintReason,
@@ -321,6 +325,7 @@ impl TypeInferenceAnalyzer {
         left: Type,
         right: Type,
         addr: InstructionId,
+        function_id: FunctionId,
         reason: ConstraintReason,
     ) {
         debug!(
@@ -331,6 +336,7 @@ impl TypeInferenceAnalyzer {
             left,
             right,
             addr,
+            function_id,
             reason,
         });
     }
@@ -347,6 +353,7 @@ impl TypeInferenceAnalyzer {
                 input_type,
                 result_type.clone(),
                 result_addr, // Use address of the result variable definition
+                phi.result.function_id,
                 ConstraintReason::PhiAssignment,
             );
         }
@@ -356,7 +363,7 @@ impl TypeInferenceAnalyzer {
     fn generate_constraints_for_instruction(
         &mut self,
         instruction: &SsaInstruction,
-        _block_id: BlockId,
+        function_id: FunctionId,
     ) {
         let instr_id = instruction.id;
 
@@ -369,10 +376,17 @@ impl TypeInferenceAnalyzer {
                         src_type.clone(),
                         Type::Int,
                         instr_id,
+                        function_id,
                         ConstraintReason::ImmediateIsSubtypeOfInt,
                     );
                 }
-                self.add_constraint(src_type, dst_type, instr_id, ConstraintReason::Assignment);
+                self.add_constraint(
+                    src_type,
+                    dst_type,
+                    instr_id,
+                    function_id,
+                    ConstraintReason::Assignment,
+                );
             }
             InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
@@ -384,9 +398,9 @@ impl TypeInferenceAnalyzer {
                     _ => ConstraintReason::MulImpliesInt,
                 };
 
-                self.add_constraint(dst_type, Type::Int, instr_id, reason);
-                self.add_constraint(src1_type, Type::Int, instr_id, reason);
-                self.add_constraint(src2_type, Type::Int, instr_id, reason);
+                self.add_constraint(dst_type, Type::Int, instr_id, function_id, reason);
+                self.add_constraint(src1_type, Type::Int, instr_id, function_id, reason);
+                self.add_constraint(src2_type, Type::Int, instr_id, function_id, reason);
             }
 
             InstructionKind::Input(dst) => {
@@ -395,6 +409,7 @@ impl TypeInferenceAnalyzer {
                     Type::Char,
                     dst_type,
                     instr_id,
+                    function_id,
                     ConstraintReason::InputImpliesChar,
                 );
             }
@@ -405,6 +420,7 @@ impl TypeInferenceAnalyzer {
                     src_type,
                     Type::Char,
                     instr_id,
+                    function_id,
                     ConstraintReason::OutputImpliesChar,
                 );
             }
@@ -418,18 +434,21 @@ impl TypeInferenceAnalyzer {
                     dst_type,
                     Type::Bool,
                     instr_id,
+                    function_id,
                     ConstraintReason::CompareDstImpliesBool,
                 );
                 self.add_constraint(
                     src1_type,
                     Type::Int,
                     instr_id,
+                    function_id,
                     ConstraintReason::CompareSrcImpliesInt,
                 );
                 self.add_constraint(
                     src2_type,
                     Type::Int,
                     instr_id,
+                    function_id,
                     ConstraintReason::CompareSrcImpliesInt,
                 );
             }
@@ -443,6 +462,7 @@ impl TypeInferenceAnalyzer {
                     Type::Bool,
                     dst_type,
                     instr_id,
+                    function_id,
                     ConstraintReason::CompareDstImpliesBool,
                 );
                 // Sources must be compatible (unifiable). Add constraint.
@@ -450,12 +470,14 @@ impl TypeInferenceAnalyzer {
                     src1_type.clone(),
                     src2_type.clone(),
                     instr_id,
+                    function_id,
                     ConstraintReason::CompareSrcSameType,
                 );
                 self.add_constraint(
                     src2_type,
                     src1_type,
                     instr_id,
+                    function_id,
                     ConstraintReason::CompareSrcSameType,
                 );
             }
@@ -466,6 +488,7 @@ impl TypeInferenceAnalyzer {
                     cond_type,
                     Type::Truthy,
                     instr_id,
+                    function_id,
                     ConstraintReason::JumpConditionImpliesTruthy,
                 );
             }
@@ -477,6 +500,7 @@ impl TypeInferenceAnalyzer {
                     offset_type,
                     Type::Int,
                     instr_id,
+                    function_id,
                     ConstraintReason::AddImpliesInt, // Re-use reason? Or new one?
                 );
             }
@@ -504,6 +528,7 @@ impl TypeInferenceAnalyzer {
                         self.type_for_ssavar(&mem_ssa_var),
                         Type::Pointer(Box::new(self.type_for_ssavar(operand))),
                         instruction.id,
+                        function_id,
                         ConstraintReason::Deref,
                     );
                 }
@@ -516,6 +541,7 @@ impl TypeInferenceAnalyzer {
         &mut self,
         model: &ProgramModel,
         block: &SsaBlock,
+        function_id: FunctionId,
         block_id: BlockId,
     ) {
         // Use the address of the *last* instruction in the block for constraint location, if available.
@@ -534,6 +560,7 @@ impl TypeInferenceAnalyzer {
                     cond_type,
                     Type::Truthy,
                     location_addr, // Location of the conditional jump
+                    function_id,
                     ConstraintReason::JumpConditionImpliesTruthy,
                 );
             }
@@ -560,6 +587,7 @@ impl TypeInferenceAnalyzer {
                                 caller_arg_type,   // Caller provides argument
                                 callee_param_type, // Callee receives parameter
                                 location_addr,
+                                function_id,
                                 ConstraintReason::FunctionParameterBinding,
                             );
                         } else {
@@ -575,6 +603,7 @@ impl TypeInferenceAnalyzer {
                             returns: vec![], // Placeholder - returns inferred from usage after call
                         },
                         location_addr,
+                        function_id,
                         ConstraintReason::IndirectFunctionCall,
                     );
                 }
@@ -587,7 +616,12 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Generate constraints for an entire block
-    fn generate_constraints_for_block(&mut self, model: &ProgramModel, block: &SsaBlock) {
+    fn generate_constraints_for_block(
+        &mut self,
+        model: &ProgramModel,
+        function_id: FunctionId,
+        block: &SsaBlock,
+    ) {
         let block_id = block.original_id;
 
         // Process phi functions
@@ -597,17 +631,17 @@ impl TypeInferenceAnalyzer {
 
         // Process instructions
         for instr in &block.instructions {
-            self.generate_constraints_for_instruction(instr, block_id);
+            self.generate_constraints_for_instruction(instr, function_id);
         }
 
         // Process control flow transition (next)
-        self.generate_constraints_for_next(model, block, block_id);
+        self.generate_constraints_for_next(model, block, function_id, block_id);
     }
 
     /// Generate constraints for a function
     fn generate_constraints_for_function(&mut self, model: &ProgramModel, function: &SsaFunction) {
         for (_, block) in &function.blocks {
-            self.generate_constraints_for_block(model, block);
+            self.generate_constraints_for_block(model, function.original_id, block);
         }
     }
 
@@ -661,7 +695,7 @@ impl TypeInferenceAnalyzer {
                     (Type::Nothing, Type::Truthy) | (Type::Truthy, Type::Any) => {
                         changed = true;
                         *lower = Type::Bool;
-                        debug!("Guessing {}=bool", key);
+                        debug!("Guessing: {}=bool", key);
                     }
                     (_, Type::Truthy) if *lower != Type::Truthy => {
                         changed = true;
@@ -736,30 +770,57 @@ impl TypeInferenceAnalyzer {
         let left_lower = lower_bounds.get(&left).cloned().unwrap_or(left.clone());
         let right_upper = upper_bounds.get(&right).cloned().unwrap_or(right.clone());
         let right_lower = lower_bounds.get(&right).cloned().unwrap_or(right.clone());
-        let Some(new_left_upper) = glb(&left_upper, &right_upper) else {
-            return Err(format!(
-                "Upper type conflict for {} and {} for {} at {}",
-                left_upper, right_upper, left, constraint
-            ));
+        let new_left_upper = match glb(&left_upper, &right_upper) {
+            Some(x) => x,
+            None => {
+                if constraint.reason == ConstraintReason::PhiAssignment {
+                    // Phi assignments may not not be a live variable. For now,
+                    // return a "Conflict" type and not fail the unification.
+                    Type::Conflict
+                } else {
+                    return Err(format!(
+                        "Upper type conflict for {} and {} for {} at {}",
+                        left_upper, right_upper, left, constraint
+                    ));
+                }
+            }
         };
         if new_left_upper != left_upper {
             debug!(
-                "Constraint: {} in [{}, {}] <: {} in [{}, {}]: new upper bound for {}: {}",
-                left, left_lower, left_upper, right, right_lower, right_upper, left, new_left_upper
+                "Constraint at {}: {} in [{}, {}] <: {} in [{}, {}]: new upper bound for {}: {}",
+                constraint.addr,
+                left,
+                left_lower,
+                left_upper,
+                right,
+                right_lower,
+                right_upper,
+                left,
+                new_left_upper
             );
 
             changed = true;
             upper_bounds.insert(left.clone(), new_left_upper.clone());
         }
-        let Some(new_right_lower) = lub(&left_lower, &right_lower) else {
-            return Err(format!(
-                "Lower type conflict for {} and {} for {} at {}",
-                left_lower, right_lower, right, constraint
-            ));
+        let new_right_lower = match lub(&left_lower, &right_lower) {
+            Some(x) => x,
+            None => {
+                if constraint.reason == ConstraintReason::PhiAssignment {
+                    // Phi assignments may not not be a live variable. For now,
+                    // return a "Conflict" type and not fail the unification.
+                    Type::Conflict
+                } else {
+                    return Err(format!(
+                        "Lower type conflict for {} and {} for {} at {}",
+                        left_lower, right_lower, right, constraint
+                    ));
+                }
+            }
         };
         if new_right_lower != right_lower {
             debug!(
-                "Constraint: {} in [{}, {}] <: {} in [{}, {}]: new lower bound for {}: {}",
+                "Constraint at {}: {} in [{}, {}] <: {} in [{}, {}]: new lower bound for {}: {}",
+                constraint.addr,
                 left,
                 left_lower,
                 left_upper,
@@ -824,6 +885,7 @@ fn init_bounds_for_type(
         Type::Bool => {}
         Type::Char => {}
         Type::Truthy => {}
+        Type::Conflict => {}
         Type::Pointer(x) => init_bounds_for_type(x, lower_bounds, upper_bounds),
         Type::FunctionPointer { args, returns } => {
             for arg in args {
@@ -1021,6 +1083,7 @@ mod tests {
             int_type,
             Type::Int,
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -1028,6 +1091,7 @@ mod tests {
             bool_type,
             Type::Bool,
             InstructionId::from(2),
+            FunctionId::from(0),
             ConstraintReason::CompareDstImpliesBool,
         );
 
@@ -1035,6 +1099,7 @@ mod tests {
             char_type,
             Type::Char,
             InstructionId::from(3),
+            FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );
 
@@ -1080,6 +1145,7 @@ mod tests {
                 returns: vec![],
             },
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall,
         );
 
@@ -1130,6 +1196,7 @@ mod tests {
             int_type.clone(),
             Type::Int,
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -1138,6 +1205,7 @@ mod tests {
             ptr_type,
             Type::Pointer(Box::new(int_type.clone())),
             InstructionId::from(2),
+            FunctionId::from(0),
             ConstraintReason::Assignment,
         );
 
@@ -1146,6 +1214,7 @@ mod tests {
             deref_type,
             int_type,
             InstructionId::from(3),
+            FunctionId::from(0),
             ConstraintReason::Assignment,
         );
 
@@ -1189,6 +1258,7 @@ mod tests {
             var_type.clone(),
             Type::Char,
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );
 
@@ -1197,6 +1267,7 @@ mod tests {
             another_type.clone(),
             Type::Bool,
             InstructionId::from(2),
+            FunctionId::from(0),
             ConstraintReason::JumpConditionImpliesTruthy,
         );
 
@@ -1206,6 +1277,7 @@ mod tests {
             var_type.clone(),
             another_type.clone(),
             InstructionId::from(3),
+            FunctionId::from(0),
             ConstraintReason::Assignment,
         );
 
@@ -1247,6 +1319,7 @@ mod tests {
             var_type.clone(),
             Type::Int,
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -1255,6 +1328,7 @@ mod tests {
             var_type.clone(),
             Type::Char,
             InstructionId::from(2),
+            FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );
 

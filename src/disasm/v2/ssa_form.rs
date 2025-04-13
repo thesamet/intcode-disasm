@@ -329,6 +329,14 @@ impl<'a> SSAConversionState<'a> {
                 let succ_block = ssa_blocks.get_mut(&succ_id).unwrap();
                 for phi in succ_block.phi_functions.iter_mut() {
                     let var_kind = phi.result.operand().kind;
+                    if matches!(block.next, NextKind::FunctionCall(_)) {
+                        // If this is a function call return, we don't need to track the
+                        // version of the variable in the predecessor block, since it will
+                        // be overwritten by the return value.
+                        // We want to have an indication in the phi function so we can link
+                        // the caller return value with the end state in the callee return block.
+                        continue;
+                    }
 
                     // If the variable has a current version in the predecessor,
                     // add it as an input to this phi
