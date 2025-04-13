@@ -394,8 +394,7 @@ impl TypeInferenceResult {
     }
 
     /// Get traces for a variable plus any related traces through constraints
-    pub fn get_recursive_traces_for_ssavar(&self, var: &SsaVar) -> Vec<(usize, &AnalysisTrace)> {
-        let type_var = Type::TypeVar(*var);
+    pub fn get_recursive_traces_for_ssavar(&self, type_var: Type) -> Vec<(usize, &AnalysisTrace)> {
         let mut result = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
@@ -443,13 +442,13 @@ impl TypeInferenceResult {
     }
 
     /// Format all traces for an SSA variable in chronological order
-    pub fn format_traces_for_ssavar(&self, var: &SsaVar) -> String {
-        let traces = self.get_recursive_traces_for_ssavar(var);
+    pub fn format_traces_for_ssavar(&self, typ: Type) -> String {
+        let traces = self.get_recursive_traces_for_ssavar(typ.clone());
         if traces.is_empty() {
-            return format!("No traces found for {}", var);
+            return format!("No traces found for {}", typ);
         }
 
-        let mut result = format!("Trace history for {}:\n", var);
+        let mut result = format!("Trace history for {}:\n", typ);
         for (idx, trace) in traces {
             result.push_str(&format!("{}. {}\n", idx + 1, trace));
         }
@@ -489,15 +488,21 @@ impl ModelEventListener for TypeInferenceAnalyzer {
                 if let TypeInferenceError::TypeConflict {
                     ssa_var,
                     ref partial_result,
+                    left,
+                    right,
                     ..
                 } = &error
                 {
                     // Format the trace history for the variable
-                    let trace_history = partial_result.format_traces_for_ssavar(ssa_var);
+                    let trace_history_left = partial_result.format_traces_for_ssavar(left.clone());
+                    let trace_history_right =
+                        partial_result.format_traces_for_ssavar(right.clone());
                     log::error!(
-                        "Type conflict trace history for {}:\n{}",
-                        ssa_var,
-                        trace_history
+                        "Type conflict trace history for left: {}:\n{}\nType conflict trace history for right: {}:\n{}",
+                        left,
+                        trace_history_left,
+                        right,
+                        trace_history_right,
                     );
                 }
 
@@ -1153,6 +1158,7 @@ impl TypeInferenceAnalyzer {
                 }
             }
             // In this phase we are constraining any type that has a specific upper bound or lower bound
+            /*
             for key in &keys {
                 if key.is_var_free() {
                     continue;
@@ -1199,6 +1205,7 @@ impl TypeInferenceAnalyzer {
                     _ => {}
                 }
             }
+            */
             if !changed {
                 break;
             }
@@ -2056,5 +2063,41 @@ f1:
         assert_marker_type!(ctx, 'd', Type::Char);
         assert_marker_type!(ctx, 'e', Type::Bool);
         assert_marker_type!(ctx, 'f', Type::Bool);
+    }
+
+    #[test]
+    fn test_reconcile_truthy_with_pointer_across_functions() {
+        let ctx = TestContext::new(
+            r#"
+                R += 1000
+                'a [320] = 17
+                'b [R+1] = 320
+                [R] = @ret
+                goto @print_char_after_pointer
+    ret:
+                if ![R+1] goto @end
+                [R-1] = [R+1]
+    end:
+                halt
+    print_char_after_pointer:
+                R += 5
+                [R-4] = [R-4] + 55
+                ptr = [R-4]
+                [R-1] = *ptr
+                output('a [R-1])
+                R -= 5
+                goto [R]
+            "#,
+        );
+        pretty_print_ssa(&ctx.model);
+
+        assert_marker_type!(ctx, 'b', Type::Int);
+        assert_marker_type!(ctx, 'c', Type::Int);
+        assert_marker_type!(ctx, 'd', Type::Char);
+        assert_marker_type!(ctx, 'e', Type::Bool);
+        assert_marker_type!(ctx, 'f', Type::Bool);
+        // [R-4] <: [R+1]
+        // [R-4] <: Pointer(Char)
+        // [R+1] <: Truthy
     }
 }
