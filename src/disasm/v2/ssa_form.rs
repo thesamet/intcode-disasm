@@ -332,40 +332,7 @@ impl<'a> SSAConversionState<'a> {
             .collect();
 
         // Step 5: Populate Phi function inputs using PredecessorKind
-        for (&block_id, ssa_block) in ssa_blocks.iter_mut() {
-            let original_block = self.model.get_block(block_id);
-
-            for pred_kind in &original_block.predecessors {
-                let pred_id = pred_kind.source_block_id();
-                let pred_end_state = all_end_states
-                    .get(&pred_id)
-                    .expect("Predecessor block should exist in collected end states");
-
-                for phi in ssa_block.phi_functions.iter_mut() {
-                    let var_kind = phi.result.operand().kind;
-
-                    match pred_kind {
-                        PredecessorKind::FunctionCallReturns(_) => {
-                            // For function returns, the value comes from the callee's return state.
-                            // The phi.result *is* the variable representing this returned value in the caller's context.
-                            // So, we map the FunctionCallReturns predecessor to the phi.result.
-                            phi.inputs.insert(pred_kind.clone(), phi.result);
-                        }
-                        _ => {
-                            // For other predecessors, find the variable version from the predecessor's end state.
-                            if let Some(&pred_var) = pred_end_state.get(&var_kind) {
-                                phi.inputs.insert(pred_kind.clone(), pred_var);
-                            } else {
-                                // This can happen if a variable is live-in to the successor but not defined by the predecessor
-                                // (e.g., potentially an uninitialized read, or defined before the predecessor).
-                                // For now, we don't add an input for this case, but logging might be useful.
-                                // log::trace!("Phi input for {:?} in block {} from pred {:?} not found in end state.", var_kind, block_id, pred_kind);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.populate_phis(self.model, &mut ssa_blocks);
 
         ssa_blocks
     }
@@ -610,6 +577,54 @@ impl<'a> SSAConversionState<'a> {
             }
             if !changed {
                 break;
+            }
+        }
+    }
+
+    // New function to populate phi inputs
+    fn populate_phis(
+        &self,
+        model: &ProgramModel,
+        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
+    ) {
+        // Collect end states before mutable iteration to avoid borrow checker issues
+        let all_end_states: HashMap<_, _> = ssa_blocks
+            .iter()
+            .map(|(id, block)| (*id, block.end_state.clone()))
+            .collect();
+
+        for (&block_id, ssa_block) in ssa_blocks.iter_mut() {
+            let original_block = model.get_block(block_id);
+
+            for pred_kind in &original_block.predecessors {
+                let pred_id = pred_kind.source_block_id();
+                let pred_end_state = all_end_states
+                    .get(&pred_id)
+                    .expect("Predecessor block should exist in collected end states");
+
+                for phi in ssa_block.phi_functions.iter_mut() {
+                    let var_kind = phi.result.operand().kind;
+
+                    match pred_kind {
+                        PredecessorKind::FunctionCallReturns(_) => {
+                            // For function returns, the value comes from the callee's return state.
+                            // The phi.result *is* the variable representing this returned value in the caller's context.
+                            // So, we map the FunctionCallReturns predecessor to the phi.result.
+                            phi.inputs.insert(pred_kind.clone(), phi.result);
+                        }
+                        _ => {
+                            // For other predecessors, find the variable version from the predecessor's end state.
+                            if let Some(&pred_var) = pred_end_state.get(&var_kind) {
+                                phi.inputs.insert(pred_kind.clone(), pred_var);
+                            } else {
+                                // This can happen if a variable is live-in to the successor but not defined by the predecessor
+                                // (e.g., potentially an uninitialized read, or defined before the predecessor).
+                                // For now, we don't add an input for this case, but logging might be useful.
+                                // log::trace!("Phi input for {:?} in block {} from pred {:?} not found in end state.", var_kind, block_id, pred_kind);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
