@@ -22,6 +22,7 @@ pub enum Type {
     FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
     String,
     TypeVar(SsaVar),
+    Truthy, // a marker type for truthy types
     Any,
 }
 
@@ -40,6 +41,10 @@ impl Type {
             // (Type::FunctionPointer { .. }, Type::Int) => true,
             // Pointer subtyping is covariant
             (Type::Pointer(_), Type::Int) => true,
+            (Type::Pointer(_), Type::Truthy) => true,
+            (Type::FunctionPointer { .. }, Type::Truthy) => true,
+            (Type::Int, Type::Truthy) => true,
+            (Type::Bool, Type::Truthy) => true,
             (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
             // Function pointer subtyping: contravariant args, covariant returns
             (
@@ -73,6 +78,10 @@ impl Type {
         }
     }
 
+    pub fn is_strict_subtype_of(&self, other: &Type) -> bool {
+        self != other && self.is_subtype_of(other)
+    }
+
     fn get_typevars(&self) -> Vec<Type> {
         match self {
             Type::TypeVar(var) => vec![Type::TypeVar(*var)],
@@ -88,6 +97,7 @@ impl Type {
                 .flat_map(|x| x.get_typevars())
                 .collect(),
             Type::String => vec![],
+            Type::Truthy => vec![],
         }
     }
 
@@ -105,6 +115,7 @@ impl fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
             Type::Pointer(t) => write!(f, "Pointer({})", t),
+            Type::Truthy => write!(f, "Truthy"),
             Type::FunctionPointer { args, returns } => {
                 write!(f, "fn(")?;
                 for (i, arg) in args.iter().enumerate() {
@@ -154,7 +165,7 @@ pub enum ConstraintReason {
     InputImpliesChar,
 
     /// Jump conditions imply boolean type
-    JumpConditionImpliesBool,
+    JumpConditionImpliesTruthy,
 
     /// Both sides of a comparison must have the same type
     CompareSrcSameType,
@@ -453,9 +464,9 @@ impl TypeInferenceAnalyzer {
                 let cond_type = self.type_for_ssavar(cond);
                 self.add_constraint(
                     cond_type,
-                    Type::Bool,
+                    Type::Truthy,
                     instr_id,
-                    ConstraintReason::JumpConditionImpliesBool,
+                    ConstraintReason::JumpConditionImpliesTruthy,
                 );
             }
 
@@ -521,9 +532,9 @@ impl TypeInferenceAnalyzer {
                 let cond_type = self.type_for_ssavar(&cond.condition_operand);
                 self.add_constraint(
                     cond_type,
-                    Type::Bool,
+                    Type::Truthy,
                     location_addr, // Location of the conditional jump
-                    ConstraintReason::JumpConditionImpliesBool,
+                    ConstraintReason::JumpConditionImpliesTruthy,
                 );
             }
 
@@ -640,16 +651,42 @@ impl TypeInferenceAnalyzer {
                     break;
                 }
             }
+            // In this phase we are constraining any type that has a specific upper bound or lower bound
             for (key, upper) in upper_bounds.iter_mut() {
+                if key.is_var_free() {
+                    continue;
+                }
                 let lower = lower_bounds.get_mut(key).unwrap();
-                if *upper == Type::Any && *lower != Type::Nothing {
-                    *upper = lower.clone();
-                    changed = true;
-                    debug!("Setting upper bound for {}: {}", key, lower);
-                } else if *lower == Type::Nothing && *upper != Type::Any {
-                    *lower = upper.clone();
-                    changed = true;
-                    debug!("Setting lower bound for {}: {}", key, upper);
+                match (&lower, &upper) {
+                    (Type::Nothing, Type::Truthy) | (Type::Truthy, Type::Any) => {
+                        changed = true;
+                        *lower = Type::Bool;
+                        debug!("Guessing {}=bool", key);
+                    }
+                    (_, Type::Truthy) if *lower != Type::Truthy => {
+                        changed = true;
+                        *upper = lower.clone();
+                        debug!("Guessing {}={} (upper was Truthy)", key, upper);
+                    }
+                    (Type::Nothing, _)
+                        if *upper != Type::Any
+                            && *upper != Type::Truthy
+                            && *upper != Type::Nothing =>
+                    {
+                        changed = true;
+                        *lower = upper.clone();
+                        debug!("Guessing {}={} (lower was Nothing)", key, upper);
+                    }
+                    (_, Type::Any)
+                        if *lower != Type::Any
+                            && *lower != Type::Nothing
+                            && *lower != Type::Truthy =>
+                    {
+                        *upper = lower.clone();
+                        changed = true;
+                        debug!("Guessing {}={} (upper was Any)", key, upper);
+                    }
+                    _ => {}
                 }
             }
             if !changed {
@@ -786,6 +823,7 @@ fn init_bounds_for_type(
         Type::Int => {}
         Type::Bool => {}
         Type::Char => {}
+        Type::Truthy => {}
         Type::Pointer(x) => init_bounds_for_type(x, lower_bounds, upper_bounds),
         Type::FunctionPointer { args, returns } => {
             for arg in args {
@@ -1159,7 +1197,7 @@ mod tests {
             another_type.clone(),
             Type::Bool,
             InstructionId::from(2),
-            ConstraintReason::JumpConditionImpliesBool,
+            ConstraintReason::JumpConditionImpliesTruthy,
         );
 
         // Now create a constraint between the two variables
@@ -1393,7 +1431,7 @@ f1:
         );
         pretty_print_ssa(&ctx.model);
         assert_marker_type!(ctx, 'a', Type::Char);
-        assert_marker_type!(ctx, 'b', Type::Bool);
+        assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(
             ctx,
             'c',
@@ -1419,6 +1457,7 @@ f1:
                 halt
             "#,
         );
+        pretty_print_ssa(&ctx.model);
 
         assert_marker_type!(
             ctx,
