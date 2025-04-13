@@ -304,6 +304,126 @@ impl EventListener<Event, ProgramModel> for TypeInferenceAnalyzer {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TypeBounds {
+    lower: Type,
+    upper: Type,
+}
+
+impl TypeBounds {
+    fn new(lower: Type, upper: Type) -> Self {
+        Self { lower, upper }
+    }
+}
+
+struct TypeBoundsMap {
+    bounds: HashMap<Type, TypeBounds>,
+    traces: Vec<AnalysisTrace>,
+}
+
+impl TypeBoundsMap {
+    fn new() -> Self {
+        Self {
+            bounds: HashMap::new(),
+            traces: Vec::new(),
+        }
+    }
+
+    fn all_keys(&self) -> Vec<Type> {
+        self.bounds.keys().cloned().collect()
+    }
+
+    fn iter(&self) -> std::collections::hash_map::Iter<'_, Type, TypeBounds> {
+        self.bounds.iter()
+    }
+
+    fn upper_bound(&self, key: &Type) -> Option<&Type> {
+        self.bounds.get(key).map(|b| &b.upper)
+    }
+
+    fn lower_bound(&self, key: &Type) -> Option<&Type> {
+        self.bounds.get(key).map(|b| &b.lower)
+    }
+
+    fn type_bound(&self, key: &Type) -> Option<&TypeBounds> {
+        self.bounds.get(key)
+    }
+
+    fn insert_key(&mut self, key: Type, lower: Type, upper: Type) {
+        self.bounds.insert(key, TypeBounds { lower, upper });
+    }
+
+    fn update_bound(
+        &mut self,
+        key: Type,
+        old_bounds: Option<TypeBounds>,
+        new_bounds: TypeBounds,
+        reason: ChangeReason,
+    ) {
+        let trace = AnalysisTrace {
+            key: key.clone(),
+            change: BoundChange {
+                old_bounds,
+                new_bounds: new_bounds.clone(),
+            },
+            reason,
+        };
+        self.traces.push(trace);
+        self.bounds.insert(key, new_bounds);
+    }
+
+    fn register_new_upper(&mut self, key: Type, new_upper: Type, reason: ChangeReason) {
+        let old_bounds = self.bounds.get(&key).cloned();
+        let lower = old_bounds
+            .as_ref()
+            .map(|b| b.lower.clone())
+            .unwrap_or(Type::Nothing);
+
+        let new_bounds = TypeBounds {
+            lower,
+            upper: new_upper,
+        };
+
+        self.update_bound(key, old_bounds, new_bounds, reason);
+    }
+
+    fn register_new_lower(&mut self, key: Type, new_lower: Type, reason: ChangeReason) {
+        let old_bounds = self.bounds.get(&key).cloned();
+        let upper = old_bounds
+            .as_ref()
+            .map(|b| b.upper.clone())
+            .clone()
+            .unwrap_or(Type::Any);
+
+        let new_bounds = TypeBounds {
+            lower: new_lower,
+            upper: upper.clone(),
+        };
+
+        self.update_bound(key, old_bounds, new_bounds, reason);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BoundChange {
+    old_bounds: Option<TypeBounds>,
+    new_bounds: TypeBounds,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChangeReason {
+    DecreaseUpperBoundFromConstraint { constraint: Constraint, other: Type },
+    IncreaseLowerBoundFromConstraint { constraint: Constraint, other: Type },
+    GuessType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AnalysisTrace {
+    key: Type,
+    change: BoundChange,
+    reason: ChangeReason,
+}
+
 impl TypeInferenceAnalyzer {
     /// Create a new type inference engine
     pub fn new() -> Self {
@@ -655,17 +775,22 @@ impl TypeInferenceAnalyzer {
 
     /// Solve the collected constraints using unification
     pub fn unify(&self) -> Result<TypeInferenceResult, String> {
-        let mut upper_bounds = HashMap::new();
-        let mut lower_bounds = HashMap::new();
+        let mut bounds = TypeBoundsMap::new();
         for c in &self.constraints {
-            init_bounds_for_type(&c.left, &mut lower_bounds, &mut upper_bounds);
-            init_bounds_for_type(&c.right, &mut lower_bounds, &mut upper_bounds);
+            init_bounds_for_type(&c.left, &mut bounds);
+            init_bounds_for_type(&c.right, &mut bounds);
         }
 
         for typ in [Type::Int, Type::Bool, Type::Char] {
-            upper_bounds.insert(typ.clone(), typ.clone());
-            lower_bounds.insert(typ.clone(), typ.clone());
+            bounds.insert_key(typ.clone(), typ.clone(), typ.clone());
         }
+
+        let keys = bounds
+            .all_keys()
+            .iter()
+            .filter(|k| !k.is_var_free())
+            .cloned()
+            .collect_vec();
 
         let mut changed;
         loop {
@@ -673,34 +798,31 @@ impl TypeInferenceAnalyzer {
                 changed = false;
                 let mut worklist = self.constraints.clone();
                 while let Some(c) = worklist.pop() {
-                    changed |= Self::process_constraint(
-                        &c,
-                        &c.left,
-                        &c.right,
-                        &mut upper_bounds,
-                        &mut lower_bounds,
-                    )?;
+                    changed |= Self::process_constraint(&c, &c.left, &c.right, &mut bounds)?;
                 }
                 if !changed {
                     break;
                 }
             }
             // In this phase we are constraining any type that has a specific upper bound or lower bound
-            for (key, upper) in upper_bounds.iter_mut() {
+            for key in &keys {
                 if key.is_var_free() {
                     continue;
                 }
-                let lower = lower_bounds.get_mut(key).unwrap();
-                match (&lower, &upper) {
+                let lower = bounds.lower_bound(&key).unwrap();
+                let upper = bounds.upper_bound(&key).unwrap();
+                match (lower, upper) {
                     (Type::Nothing, Type::Truthy) | (Type::Truthy, Type::Any) => {
+                        bounds.register_new_lower(key.clone(), Type::Bool, ChangeReason::GuessType);
                         changed = true;
-                        *lower = Type::Bool;
-                        debug!("Guessing: {}=bool", key);
                     }
                     (_, Type::Truthy) if *lower != Type::Truthy => {
+                        bounds.register_new_upper(
+                            key.clone(),
+                            lower.clone(),
+                            ChangeReason::GuessType,
+                        );
                         changed = true;
-                        *upper = lower.clone();
-                        debug!("Guessing {}={} (upper was Truthy)", key, upper);
                     }
                     (Type::Nothing, _)
                         if *upper != Type::Any
@@ -708,17 +830,23 @@ impl TypeInferenceAnalyzer {
                             && *upper != Type::Nothing =>
                     {
                         changed = true;
-                        *lower = upper.clone();
-                        debug!("Guessing {}={} (lower was Nothing)", key, upper);
+                        bounds.register_new_lower(
+                            key.clone(),
+                            upper.clone(),
+                            ChangeReason::GuessType,
+                        );
                     }
                     (_, Type::Any)
                         if *lower != Type::Any
                             && *lower != Type::Nothing
                             && *lower != Type::Truthy =>
                     {
-                        *upper = lower.clone();
+                        bounds.register_new_upper(
+                            key.clone(),
+                            lower.clone(),
+                            ChangeReason::GuessType,
+                        );
                         changed = true;
-                        debug!("Guessing {}={} (upper was Any)", key, upper);
                     }
                     _ => {}
                 }
@@ -728,28 +856,15 @@ impl TypeInferenceAnalyzer {
             }
         }
 
-        let inferred_types = upper_bounds
+        let inferred_types = bounds
             .iter()
             .filter_map({
                 |(k, v)| match k {
-                    Type::TypeVar(ssa_var) => {
-                        let v = if *v == Type::Any || *v == Type::Nothing {
-                            lower_bounds[k].clone()
-                        } else {
-                            v.clone()
-                        };
-                        Some((*ssa_var, v))
-                    }
+                    Type::TypeVar(ssa_var) => Some((*ssa_var, v.upper.clone())),
                     _ => None,
                 }
             })
             .collect();
-        for k in upper_bounds.keys() {
-            debug!(
-                "bounds for {}: [{}, {}]",
-                k, lower_bounds[k], upper_bounds[k]
-            );
-        }
         let result = TypeInferenceResult {
             inferred_types,
             #[cfg(test)]
@@ -762,14 +877,13 @@ impl TypeInferenceAnalyzer {
         constraint: &Constraint,
         left: &Type,
         right: &Type,
-        upper_bounds: &mut HashMap<Type, Type>,
-        lower_bounds: &mut HashMap<Type, Type>,
+        bounds: &mut TypeBoundsMap,
     ) -> Result<bool, String> {
         let mut changed = false;
-        let left_upper = upper_bounds.get(&left).cloned().unwrap_or(left.clone());
-        let left_lower = lower_bounds.get(&left).cloned().unwrap_or(left.clone());
-        let right_upper = upper_bounds.get(&right).cloned().unwrap_or(right.clone());
-        let right_lower = lower_bounds.get(&right).cloned().unwrap_or(right.clone());
+        let left_upper = bounds.upper_bound(&left).cloned().unwrap_or(left.clone());
+        let left_lower = bounds.lower_bound(&left).cloned().unwrap_or(left.clone());
+        let right_upper = bounds.upper_bound(&right).cloned().unwrap_or(right.clone());
+        let right_lower = bounds.lower_bound(&right).cloned().unwrap_or(right.clone());
         let new_left_upper = match glb(&left_upper, &right_upper) {
             Some(x) => x,
             None => {
@@ -786,21 +900,15 @@ impl TypeInferenceAnalyzer {
             }
         };
         if new_left_upper != left_upper {
-            debug!(
-                "Constraint at {}: {} in [{}, {}] <: {} in [{}, {}]: new upper bound for {}: {}",
-                constraint.addr,
-                left,
-                left_lower,
-                left_upper,
-                right,
-                right_lower,
-                right_upper,
-                left,
-                new_left_upper
+            bounds.register_new_upper(
+                left.clone(),
+                new_left_upper,
+                ChangeReason::DecreaseUpperBoundFromConstraint {
+                    constraint: constraint.clone(),
+                    other: right.clone(),
+                },
             );
-
             changed = true;
-            upper_bounds.insert(left.clone(), new_left_upper.clone());
         }
         let new_right_lower = match lub(&left_lower, &right_lower) {
             Some(x) => x,
@@ -818,41 +926,26 @@ impl TypeInferenceAnalyzer {
             }
         };
         if new_right_lower != right_lower {
-            debug!(
-                "Constraint at {}: {} in [{}, {}] <: {} in [{}, {}]: new lower bound for {}: {}",
-                constraint.addr,
-                left,
-                left_lower,
-                left_upper,
-                right,
-                right_lower,
-                right_upper,
-                right,
-                new_right_lower
+            bounds.register_new_lower(
+                right.clone(),
+                new_right_lower,
+                ChangeReason::IncreaseLowerBoundFromConstraint {
+                    constraint: constraint.clone(),
+                    other: left.clone(),
+                },
             );
 
             changed = true;
-            lower_bounds.insert(right.clone(), new_right_lower.clone());
         }
         match (left, right) {
             (Type::Pointer(x), Type::Pointer(y)) => {
-                changed |= Self::process_constraint(constraint, x, y, upper_bounds, lower_bounds)?;
+                changed |= Self::process_constraint(constraint, x, y, bounds)?;
             }
             (x, Type::Pointer(y)) => {
-                let y_upper = upper_bounds.get(&y).cloned().unwrap_or(*y.clone());
+                let y_upper = bounds.upper_bound(&y).cloned().unwrap_or(*y.clone());
                 let new_upper = Type::Pointer(Box::new(y_upper));
                 if new_upper != left_upper {
-                    debug!(
-                        "Constraint: {} in [{}, {}] <: {} in [{}, {}]: recursing with new upper for x={}: {}",
-                        left, left_lower, left_upper, right, right_lower, right_upper, x, new_upper
-                    );
-                    changed |= Self::process_constraint(
-                        constraint,
-                        x,
-                        &new_upper,
-                        upper_bounds,
-                        lower_bounds,
-                    )?;
+                    changed |= Self::process_constraint(constraint, x, &new_upper, bounds)?;
                 }
             }
             _ => {}
@@ -867,17 +960,11 @@ impl TypeInferenceAnalyzer {
     }
 }
 
-fn init_bounds_for_type(
-    typ: &Type,
-    lower_bounds: &mut HashMap<Type, Type>,
-    upper_bounds: &mut HashMap<Type, Type>,
-) {
+fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
     if typ.is_var_free() {
-        upper_bounds.insert(typ.clone(), typ.clone());
-        lower_bounds.insert(typ.clone(), typ.clone());
+        bounds.insert_key(typ.clone(), typ.clone(), typ.clone());
     } else {
-        upper_bounds.insert(typ.clone(), Type::Any);
-        lower_bounds.insert(typ.clone(), Type::Nothing);
+        bounds.insert_key(typ.clone(), Type::Nothing, Type::Any);
     }
     match typ {
         Type::Nothing => {}
@@ -886,13 +973,13 @@ fn init_bounds_for_type(
         Type::Char => {}
         Type::Truthy => {}
         Type::Conflict => {}
-        Type::Pointer(x) => init_bounds_for_type(x, lower_bounds, upper_bounds),
+        Type::Pointer(x) => init_bounds_for_type(x, bounds),
         Type::FunctionPointer { args, returns } => {
             for arg in args {
-                init_bounds_for_type(arg, lower_bounds, upper_bounds);
+                init_bounds_for_type(arg, bounds);
             }
             for ret in returns {
-                init_bounds_for_type(ret, lower_bounds, upper_bounds);
+                init_bounds_for_type(ret, bounds);
             }
         }
         Type::String => {}

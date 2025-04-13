@@ -67,6 +67,7 @@ mod tests {
             int_type.clone(),
             Type::Int,
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -74,6 +75,7 @@ mod tests {
             bool_type.clone(),
             Type::Bool,
             InstructionId::from(2),
+            FunctionId::from(0),
             ConstraintReason::CompareDstImpliesBool,
         );
 
@@ -81,6 +83,7 @@ mod tests {
             char_type.clone(),
             Type::Char,
             InstructionId::from(3),
+            FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );
 
@@ -129,6 +132,7 @@ mod tests {
                 returns: vec![],
             },
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall,
         );
 
@@ -174,6 +178,7 @@ mod tests {
             int_type.clone(),
             Type::Int,
             InstructionId::from(1),
+            FunctionId::from(0),
             ConstraintReason::AddImpliesInt,
         );
 
@@ -182,6 +187,7 @@ mod tests {
             ptr_type.clone(),
             Type::Pointer(Box::new(int_type.clone())),
             InstructionId::from(2),
+            FunctionId::from(0),
             ConstraintReason::Assignment,
         );
 
@@ -190,6 +196,7 @@ mod tests {
             deref_type.clone(),
             int_type.clone(),
             InstructionId::from(3),
+            FunctionId::from(0),
             ConstraintReason::Assignment,
         );
 
