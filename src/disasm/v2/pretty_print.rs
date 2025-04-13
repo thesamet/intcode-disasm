@@ -2,6 +2,7 @@ use colored::*;
 use itertools::Itertools;
 
 use super::{
+    control_flow::PredecessorKind,
     instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaVar, SsaVarKind},
@@ -67,8 +68,16 @@ impl<'a> PrettyPrinter<'a> {
         let inputs = phi
             .inputs
             .iter()
-            .sorted()
-            .map(|(block_id, var)| format!("{}: {}", block_id, self.format_ssa_var(var)))
+            .sorted_by_key(|(pred_kind, _)| pred_kind.source_block_id())
+            .map(|(pred_kind, var)| {
+                let source_id = pred_kind.source_block_id();
+                let call_marker = if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
+                    "(call)"
+                } else {
+                    ""
+                };
+                format!("{}{}: {}", source_id, call_marker, self.format_ssa_var(var))
+            })
             .join(", ");
         format!("{} = φ({})", self.format_ssa_var(&phi.result), inputs)
     }

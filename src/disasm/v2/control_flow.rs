@@ -60,7 +60,7 @@ where
 }
 
 // Describes how control flow enters a block
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PredecessorKind<T>
 where
     T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
@@ -149,7 +149,7 @@ impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Condition<T> {
     pub from_block: BlockId,    // Block containing the conditional jump
     pub condition_operand: T,   // The operand being tested
@@ -195,4 +195,11 @@ pub struct Block {
     // CFG Information (added by ControlFlowGraphBuilder)
     pub next: NextKind<Operand>,
     pub predecessors: Vec<PredecessorKind<Operand>>,
+}
+
+/// Information about a function call for control flow analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionCallInfo<T> {
+    /// The operand holding the function address (could be immediate or variable).
+    pub function_addr: T,
 }

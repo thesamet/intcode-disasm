@@ -67,6 +67,8 @@ use crate::disasm::v2::{
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar, SsaVarKind},
 };
 
+use crate::disasm::v2::control_flow::PredecessorKind;
+
 /// Enum to distinguish between upper and lower bound conflicts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundType {
@@ -754,20 +756,68 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Generate constraints for a phi function
-    fn generate_constraints_for_phi(&mut self, phi: &PhiFunction, block_id: BlockId) {
+    fn generate_constraints_for_phi(
+        &mut self,
+        model: &ProgramModel,
+        phi: &PhiFunction,
+        block_id: BlockId,
+    ) {
         let result_type = self.type_for_ssavar(&phi.result);
         let result_addr = InstructionId::from(block_id.index());
 
-        // Add constraints between each input and the result
-        for (_, input_var) in &phi.inputs {
-            let input_type = Type::TypeVar(*input_var);
-            self.add_constraint(
-                input_type,
-                result_type.clone(),
-                result_addr, // Use address of the result variable definition
-                phi.result.function_id,
-                ConstraintReason::PhiAssignment,
-            );
+        // Add constraints between each input source and the result
+        for (pred_kind, input_var) in &phi.inputs {
+            match pred_kind {
+                PredecessorKind::FunctionCallReturns(call_info) => {
+                    // This phi input represents a return value.
+                    // We need to link the phi.result (caller's view of the return value)
+                    // with the actual return values from the callee, if known.
+                    let fca = model.get_function_call_analysis().expect("FCA missing");
+
+                    // Find the call site info for this specific call
+                    if let Some(csi) = fca.call_site_info.get(&call_info.calling_block) {
+                        // Link the phi.result (caller's return read var) to the
+                        // corresponding callee's return write var via the return_map.
+                        for (callee_ret_write_var, caller_ret_read_var) in &csi.return_map {
+                            // We are looking for the specific entry where the caller's read variable
+                            // matches the input_var (which should be phi.result for this predecessor kind).
+                            if caller_ret_read_var == input_var {
+                                let callee_ret_write_type =
+                                    self.type_for_ssavar(callee_ret_write_var);
+                                let caller_ret_read_type =
+                                    self.type_for_ssavar(caller_ret_read_var);
+
+                                // Constraint: CalleeWrite <: CallerRead (propagates type from callee to caller)
+                                self.add_constraint(
+                                    callee_ret_write_type,
+                                    caller_ret_read_type,
+                                    result_addr, // Location in the caller (phi function)
+                                    phi.result.function_id,
+                                    ConstraintReason::FunctionReturnBinding,
+                                );
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "Call site info not found for block {} during phi constraint generation for {}.",
+                            call_info.calling_block, phi.result
+                        );
+                        // Fallback if call site info is missing? Add basic PhiAssignment?
+                        // For now, we just skip adding a constraint for this specific return value.
+                    }
+                }
+                _ => {
+                    // Standard predecessor: Input <: Result
+                    let input_type = self.type_for_ssavar(input_var);
+                    self.add_constraint(
+                        input_type,
+                        result_type.clone(),
+                        result_addr, // Use address of the result variable definition
+                        phi.result.function_id,
+                        ConstraintReason::PhiAssignment,
+                    );
+                }
+            }
         }
     }
 
@@ -1038,7 +1088,7 @@ impl TypeInferenceAnalyzer {
 
         // Process phi functions
         for phi in &block.phi_functions {
-            self.generate_constraints_for_phi(phi, block_id);
+            self.generate_constraints_for_phi(model, phi, block_id);
         }
 
         // Process instructions
@@ -1978,7 +2028,6 @@ f1:
     }
 
     #[test]
-    #[ignore = "reason"]
     fn test_link_function_return_type_single() {
         let ctx = TestContext::new(
             r#"
