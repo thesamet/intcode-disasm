@@ -6,7 +6,8 @@ use log::debug;
 use crate::disasm::v2::control_flow::FunctionCall;
 use crate::disasm::v2::data_flow::BlockDataFlow;
 use crate::disasm::v2::data_flow::CallSiteInfo;
-use crate::disasm::v2::events::DataFlowAnalysisComplete;
+use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
+use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -384,10 +385,19 @@ impl ModelEventListener for DataFlowAnalyzer {
             .extend(df_result_for_function.block_results);
 
         // Publish completion event for this function
-        sender.publish(DataFlowAnalysisComplete {
+        sender.publish(FunctionDataFlowAnalysisComplete {
             function_id: event.function_id,
         });
         debug!("Data Flow Analysis committed for {}", event.function_id);
+    }
+
+    fn on_control_flow_analysis_phase_complete(
+        &mut self,
+        _model: &mut ProgramModel,
+        _event: events::ControlFlowAnalysisPhaseComplete,
+        sender: &mut events::Sender,
+    ) {
+        sender.publish(DataFlowAnalysisPhaseComplete {});
     }
 }
 // TODO: Add tests

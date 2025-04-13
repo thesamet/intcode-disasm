@@ -19,16 +19,22 @@ event_types_enum! {Event, ProgramModel,
         pub function_id: FunctionId,
     }
 
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    pub struct ControlFlowAnalysisPhaseComplete {}
+
     /// Signals that data flow analysis (reaching definitions, liveness) has completed for a function.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct DataFlowAnalysisComplete {
+    pub struct FunctionDataFlowAnalysisComplete {
         pub function_id: FunctionId,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DataFlowAnalysisPhaseComplete {
     }
 
     /// Signals that SSA conversion has completed
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct SsaConversionComplete {
-        pub completed: bool,
     }
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

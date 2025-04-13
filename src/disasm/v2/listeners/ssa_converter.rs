@@ -1,8 +1,8 @@
 use log::info;
 
 use crate::disasm::v2::{
-    dispatching::{EventCollector, EventListener},
-    events::{Event, SsaConversionComplete},
+    dispatching::EventCollector,
+    events::{DataFlowAnalysisPhaseComplete, Event, ModelEventListener, SsaConversionComplete},
     model::ProgramModel,
     ssa_form::SsaResult,
 };
@@ -17,22 +17,16 @@ impl SsaConverter {
     }
 }
 
-impl EventListener<Event, ProgramModel> for SsaConverter {
-    fn on_event(
+impl ModelEventListener for SsaConverter {
+    fn on_data_flow_analysis_phase_complete(
         &mut self,
         model: &mut ProgramModel,
-        event: Event,
+        _event: DataFlowAnalysisPhaseComplete,
         collector: &mut EventCollector<Event>,
     ) {
-        match event {
-            // Wait for data flow analysis to complete for all functions
-            Event::DataFlowAnalysisComplete(_) => {
-                let ssa_result = SsaResult::from_program_model(model);
-                model.set_ssa_result(ssa_result);
-                info!("SSA conversion complete");
-                collector.publish(SsaConversionComplete { completed: true });
-            }
-            _ => {}
-        }
+        let ssa_result = SsaResult::from_program_model(model);
+        model.set_ssa_result(ssa_result);
+        info!("SSA conversion complete");
+        collector.publish(SsaConversionComplete {});
     }
 }

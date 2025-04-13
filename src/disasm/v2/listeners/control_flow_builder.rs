@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::disasm::v2::{
     control_flow::{Block, Condition, FunctionCall, NextKind, PredecessorKind},
-    events::{self, FunctionCfgBuilt, ImageScannerComplete, ModelEventListener}, // + FunctionCfgBuilt
+    events::{
+        self, ControlFlowAnalysisPhaseComplete, FunctionCfgBuilt, ImageScannerComplete,
+        ModelEventListener,
+    }, // + FunctionCfgBuilt
     instructions::{Instruction, Operand},
     model::{BlockId, FunctionId, ProgramModel},
     Span,
@@ -279,6 +282,7 @@ impl ModelEventListener for ControlFlowGraphBuilder {
 
             self.build_cfg_for_function(model, func_id, rec_func, sender);
         }
+        sender.publish(ControlFlowAnalysisPhaseComplete {});
     }
 }
 
