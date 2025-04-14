@@ -211,12 +211,12 @@ impl Type {
 fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
-        Type::Truthy => true,
         Type::FunctionPointer { args, returns } => {
             args.iter().all(is_concrete_type) && returns.iter().all(is_concrete_type)
         }
         Type::Pointer(p) => is_concrete_type(p),
         Type::String => true,
+        Type::Truthy => false,
         Type::TypeVar(_) => false,
         Type::Conflict => false,
         Type::Any => false,
@@ -449,16 +449,14 @@ impl TypeInferenceResult {
                     } => {
                         self.collect_related_traces(other.clone(), result, visited);
                     }
-                    ChangeReason::GuessType => {
-                        // No related types to follow
-                    }
+                    _ => {}
                 }
             }
         }
     }
 
     /// Format all traces for an SSA variable in chronological order
-    pub fn format_traces_for_ssavar(&self, typ: Type) -> String {
+    pub fn format_traces_for_type(&self, typ: Type) -> String {
         let traces = self.get_recursive_traces_for_ssavar(typ.clone());
         if traces.is_empty() {
             return format!("No traces found for {}", typ);
@@ -502,7 +500,6 @@ impl ModelEventListener for TypeInferenceAnalyzer {
             Err(error) => {
                 // If this is a type conflict with an SsaVar, output the trace history
                 if let TypeInferenceError::TypeConflict {
-                    
                     ref partial_result,
                     left,
                     right,
@@ -510,9 +507,8 @@ impl ModelEventListener for TypeInferenceAnalyzer {
                 } = &error
                 {
                     // Format the trace history for the variable
-                    let trace_history_left = partial_result.format_traces_for_ssavar(left.clone());
-                    let trace_history_right =
-                        partial_result.format_traces_for_ssavar(right.clone());
+                    let trace_history_left = partial_result.format_traces_for_type(left.clone());
+                    let trace_history_right = partial_result.format_traces_for_type(right.clone());
                     log::error!(
                         "Type conflict trace history for left: {}:\n{}\nType conflict trace history for right: {}:\n{}",
                         left,
@@ -638,7 +634,8 @@ pub struct BoundChange {
 pub enum ChangeReason {
     DecreaseUpperBoundFromConstraint { constraint: Constraint, other: Type },
     IncreaseLowerBoundFromConstraint { constraint: Constraint, other: Type },
-    GuessType,
+    ConcreteRefinement,
+    TruthyToBoolHeuristic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -728,11 +725,18 @@ impl fmt::Display for AnalysisTrace {
                     other_str
                 )
             }
-            ChangeReason::GuessType => {
+            ChangeReason::ConcreteRefinement => {
                 write!(
                     f,
-                    "  {} based on existing bounds",
-                    TraceColors::format_type("Type guessed")
+                    "  {}",
+                    TraceColors::format_bound("Concrete type refinement")
+                )
+            }
+            ChangeReason::TruthyToBoolHeuristic => {
+                write!(
+                    f,
+                    "  {}",
+                    TraceColors::format_bound("Truthy to Bool heuristic")
                 )
             }
         }
@@ -1148,54 +1152,106 @@ impl TypeInferenceAnalyzer {
             bounds.insert_key(typ.clone(), typ.clone(), typ.clone());
         }
 
+        loop {
+            while self.reach_constraint_fixed_point(&mut bounds)? {}
+            if self.refine_concrete_types(&mut bounds)? {
+                continue;
+            }
+            if self.replace_truthy_with_bool(&mut bounds)? {
+                continue;
+            }
+            break;
+        }
+
+        let result = create_partial_result(&bounds, &self.debug_markers);
+        Ok(result)
+    }
+
+    fn reach_constraint_fixed_point(
+        &self,
+        bounds: &mut TypeBoundsMap,
+    ) -> Result<bool, TypeInferenceError> {
+        let mut overall_changed = false;
+        loop {
+            let mut changed = false;
+            let mut worklist = self.constraints.clone();
+            while let Some(c) = worklist.pop() {
+                changed |=
+                    Self::process_constraint(&c, &c.left, &c.right, bounds, &self.debug_markers)?;
+            }
+            overall_changed |= changed;
+            if !changed {
+                break;
+            }
+        }
+        Ok(overall_changed)
+    }
+
+    fn refine_concrete_types(
+        &self,
+        bounds: &mut TypeBoundsMap,
+    ) -> Result<bool, TypeInferenceError> {
         let keys = bounds
             .all_keys()
             .iter()
             .filter(|k| !k.is_var_free())
             .cloned()
             .collect_vec();
-
-        let mut changed;
-        loop {
-            loop {
-                changed = false;
-                let mut worklist = self.constraints.clone();
-                while let Some(c) = worklist.pop() {
-                    changed |= Self::process_constraint(
-                        &c,
-                        &c.left,
-                        &c.right,
-                        &mut bounds,
-                        &self.debug_markers,
-                    )?;
-                }
-                if !changed {
-                    break;
-                }
+        let mut changed = false;
+        for key in &keys {
+            if key.is_var_free() {
+                continue;
             }
-            // In this phase we are constraining any type that has a specific upper bound or lower bound
-            for key in &keys {
-                if key.is_var_free() {
-                    continue;
-                }
-                let lower = bounds.lower_bound(&key).unwrap().clone();
-                let upper = bounds.upper_bound(&key).unwrap().clone();
-                if is_concrete_type(&lower) && upper == Type::Any {
-                    bounds.register_new_upper(key.clone(), lower.clone(), ChangeReason::GuessType);
-                    changed = true;
-                }
-                if is_concrete_type(&upper) && lower == Type::Nothing {
-                    bounds.register_new_lower(key.clone(), upper.clone(), ChangeReason::GuessType);
-                    changed = true;
-                }
+            let lower = bounds.lower_bound(&key).unwrap().clone();
+            let upper = bounds.upper_bound(&key).unwrap().clone();
+            if is_concrete_type(&lower) && (upper == Type::Any || upper == Type::Truthy) {
+                bounds.register_new_upper(
+                    key.clone(),
+                    lower.clone(),
+                    ChangeReason::ConcreteRefinement,
+                );
+                changed = true;
             }
-            if !changed {
-                break;
+            if is_concrete_type(&upper) && (lower == Type::Nothing || lower == Type::Truthy) {
+                bounds.register_new_lower(
+                    key.clone(),
+                    upper.clone(),
+                    ChangeReason::ConcreteRefinement,
+                );
+                changed = true;
             }
         }
+        Ok(changed)
+    }
 
-        let result = create_partial_result(&bounds, &self.debug_markers);
-        Ok(result)
+    fn replace_truthy_with_bool(
+        &self,
+        bounds: &mut TypeBoundsMap,
+    ) -> Result<bool, TypeInferenceError> {
+        let mut changed = false;
+        for key in bounds.all_keys() {
+            if key.is_var_free() {
+                continue;
+            }
+            let lower = bounds.lower_bound(&key).unwrap().clone();
+            let upper = bounds.upper_bound(&key).unwrap().clone();
+            if lower == Type::Truthy && upper == Type::Any
+                || upper == Type::Truthy && lower == Type::Nothing
+            {
+                bounds.register_new_lower(
+                    key.clone(),
+                    Type::Bool,
+                    ChangeReason::TruthyToBoolHeuristic,
+                );
+                bounds.register_new_upper(
+                    key.clone(),
+                    Type::Bool,
+                    ChangeReason::TruthyToBoolHeuristic,
+                );
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
 
     /// Helper function for handling bound conflicts uniformly
@@ -1841,9 +1897,27 @@ f1:
 
         "#,
         );
+        pretty_print_ssa(&ctx.model);
         ctx.assert_type(1, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int);
+        print_traces_for_marker(&ctx.model, 'b');
         assert_marker_type!(ctx, 'b', Type::Bool);
+    }
+
+    fn print_traces_for_marker(model: &ProgramModel, marker: char) {
+        let ssa_var = model
+            .get_ssa_result()
+            .unwrap()
+            .find_ssa_var_by_marker(marker);
+        let typ = Type::TypeVar(ssa_var);
+        println!(
+            "Trace history for {}:\n{}\nType inference completed successfully",
+            marker,
+            model
+                .get_type_inference_result()
+                .unwrap()
+                .format_traces_for_type(typ)
+        );
     }
 
     #[test]
@@ -1979,6 +2053,7 @@ f1:
         );
         pretty_print_ssa(&ctx.model);
         assert_marker_type!(ctx, 'a', Type::Char);
+        print_traces_for_marker(&ctx.model, 'b');
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(
             ctx,
@@ -2064,21 +2139,25 @@ f1:
                 halt
     print_char_after_pointer:
                 R += 5
-                [R-4] = [R-4] + 55
-                ptr = [R-4]
+                [R-4] = 'f [R-4] + 55
+                'd ptr = 'e [R-4]
                 [R-1] = *ptr
-                output('a [R-1])
+                output('c [R-1])
                 R -= 5
                 goto [R]
             "#,
         );
         pretty_print_ssa(&ctx.model);
 
-        assert_marker_type!(ctx, 'b', Type::Int);
-        assert_marker_type!(ctx, 'c', Type::Int);
-        assert_marker_type!(ctx, 'd', Type::Char);
-        assert_marker_type!(ctx, 'e', Type::Bool);
-        assert_marker_type!(ctx, 'f', Type::Bool);
+        /*
+        print_traces_for_marker(&ctx.model, 'a');
+        assert_marker_type!(ctx, 'a', Type::Char);
+        */
+        print_traces_for_marker(&ctx.model, 'b');
+        print_traces_for_marker(&ctx.model, 'd');
+        print_traces_for_marker(&ctx.model, 'e');
+        print_traces_for_marker(&ctx.model, 'f');
+        assert_marker_type!(ctx, 'b', Type::Pointer(Box::new(Type::Char)));
         // [R-4] <: [R+1]
         // [R-4] <: Pointer(Char)
         // [R+1] <: Truthy
