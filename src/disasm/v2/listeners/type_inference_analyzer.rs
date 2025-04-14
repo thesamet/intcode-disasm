@@ -346,7 +346,7 @@ impl fmt::Display for Constraint {
 
         // Format the location and reason
         let location = TraceColors::format_location(format!("{}:{}", self.function_id, self.addr));
-        let reason = TraceColors::format_constraint(&self.reason);
+        let reason = TraceColors::format_constraint(self.reason);
 
         write!(
             f,
@@ -656,9 +656,9 @@ impl fmt::Display for AnalysisTrace {
             TraceColors::format_type(&self.change.new_bounds.upper)
         );
 
-        write!(
+        writeln!(
             f,
-            "{} {}: changed from [{}] to [{}]\n",
+            "{} {}: changed from [{}] to [{}]",
             TraceColors::format_header("Type"),
             key_str,
             old_bounds_str,
@@ -675,9 +675,9 @@ impl fmt::Display for AnalysisTrace {
 
                 let constraint_str = format!(
                     "{} @ {}:{}",
-                    TraceColors::format_constraint(&constraint.reason),
-                    TraceColors::format_location(&constraint.function_id),
-                    TraceColors::format_location(&constraint.addr)
+                    TraceColors::format_constraint(constraint.reason),
+                    TraceColors::format_location(constraint.function_id),
+                    TraceColors::format_location(constraint.addr)
                 );
 
                 write!(
@@ -697,9 +697,9 @@ impl fmt::Display for AnalysisTrace {
 
                 let constraint_str = format!(
                     "{} @ {}:{}",
-                    TraceColors::format_constraint(&constraint.reason),
-                    TraceColors::format_location(&constraint.function_id),
-                    TraceColors::format_location(&constraint.addr)
+                    TraceColors::format_constraint(constraint.reason),
+                    TraceColors::format_location(constraint.function_id),
+                    TraceColors::format_location(constraint.addr)
                 );
 
                 write!(
@@ -995,27 +995,24 @@ impl TypeInferenceAnalyzer {
         instruction
             .reads()
             .iter()
-            .for_each(|operand| match operand.kind {
-                SsaVarKind::Deref {
+            .for_each(|operand| if let SsaVarKind::Deref {
                     address,
                     address_version,
-                } => {
-                    let mem_ssa_var = SsaVar {
-                        kind: SsaVarKind::Memory(address as i128),
-                        offset: operand.offset,
-                        version: address_version,
-                        function_id: operand.function_id,
-                        debug_marker: None,
-                    };
-                    self.add_constraint(
-                        self.type_for_ssavar(&mem_ssa_var),
-                        Type::Pointer(Box::new(self.type_for_ssavar(operand))),
-                        instruction.id,
-                        function_id,
-                        ConstraintReason::Deref,
-                    );
-                }
-                _ => {}
+                } = operand.kind {
+                let mem_ssa_var = SsaVar {
+                    kind: SsaVarKind::Memory(address as i128),
+                    offset: operand.offset,
+                    version: address_version,
+                    function_id: operand.function_id,
+                    debug_marker: None,
+                };
+                self.add_constraint(
+                    self.type_for_ssavar(&mem_ssa_var),
+                    Type::Pointer(Box::new(self.type_for_ssavar(operand))),
+                    instruction.id,
+                    function_id,
+                    ConstraintReason::Deref,
+                );
             });
     }
 
@@ -1123,7 +1120,7 @@ impl TypeInferenceAnalyzer {
 
     /// Generate constraints for a function
     fn generate_constraints_for_function(&mut self, model: &ProgramModel, function: &SsaFunction) {
-        for (_, block) in &function.blocks {
+        for block in function.blocks.values() {
             self.generate_constraints_for_block(model, function.original_id, block);
         }
     }
@@ -1131,7 +1128,7 @@ impl TypeInferenceAnalyzer {
     /// Generate constraints for the entire program
     pub fn generate_constraints_for_program(&mut self, model: &ProgramModel, result: &SsaResult) {
         // Process each function in the program
-        for (_, function) in &result.functions {
+        for function in result.functions.values() {
             self.generate_constraints_for_function(model, function);
         }
     }
@@ -1202,8 +1199,8 @@ impl TypeInferenceAnalyzer {
             if key.is_var_free() {
                 continue;
             }
-            let lower = bounds.lower_bound(&key).unwrap().clone();
-            let upper = bounds.upper_bound(&key).unwrap().clone();
+            let lower = bounds.lower_bound(key).unwrap().clone();
+            let upper = bounds.upper_bound(key).unwrap().clone();
             if is_concrete_type(&lower) && (upper == Type::Any || upper == Type::Truthy) {
                 bounds.register_new_upper(
                     key.clone(),
@@ -1274,7 +1271,7 @@ impl TypeInferenceAnalyzer {
                 } else {
                     // Extract SSA var from the type if possible for better error reporting
                     if let Type::TypeVar(ssa_var) = type_var {
-                        return Err(TypeInferenceError::TypeConflict {
+                        Err(TypeInferenceError::TypeConflict {
                             ssa_var: *ssa_var,
                             bound_type,
                             left: constraint.left.clone(),
@@ -1286,15 +1283,15 @@ impl TypeInferenceAnalyzer {
                                 #[cfg(test)]
                                 debug_markers,
                             ),
-                        });
+                        })
                     } else {
-                        return Err(TypeInferenceError::BoundConflict {
+                        Err(TypeInferenceError::BoundConflict {
                             bound_type,
                             left: constraint.left.clone(),
                             right: constraint.right.clone(),
                             var_type: type_var.clone(),
                             constraint: constraint.clone(),
-                        });
+                        })
                     }
                 }
             }
@@ -1309,10 +1306,10 @@ impl TypeInferenceAnalyzer {
         debug_markers: &HashMap<char, SsaVar>,
     ) -> Result<bool, TypeInferenceError> {
         let mut changed = false;
-        let left_upper = bounds.upper_bound(&left).cloned().unwrap_or(left.clone());
-        let left_lower = bounds.lower_bound(&left).cloned().unwrap_or(left.clone());
-        let right_upper = bounds.upper_bound(&right).cloned().unwrap_or(right.clone());
-        let right_lower = bounds.lower_bound(&right).cloned().unwrap_or(right.clone());
+        let left_upper = bounds.upper_bound(left).cloned().unwrap_or(left.clone());
+        let left_lower = bounds.lower_bound(left).cloned().unwrap_or(left.clone());
+        let right_upper = bounds.upper_bound(right).cloned().unwrap_or(right.clone());
+        let right_lower = bounds.lower_bound(right).cloned().unwrap_or(right.clone());
 
         // Handle upper bound
         let (upper_changed, new_left_upper) = Self::handle_bound_conflict(
@@ -1366,7 +1363,7 @@ impl TypeInferenceAnalyzer {
                 changed |= Self::process_constraint(constraint, x, y, bounds, debug_markers)?;
             }
             (x, Type::Pointer(y)) => {
-                let y_upper = bounds.upper_bound(&y).cloned().unwrap_or(*y.clone());
+                let y_upper = bounds.upper_bound(y).cloned().unwrap_or(*y.clone());
                 let new_upper = Type::Pointer(Box::new(y_upper));
                 if new_upper.is_strict_subtype_of(&left_upper) {
                     changed |=
@@ -1608,9 +1605,9 @@ mod tests {
         let char_var = SsaVar::new(memory_operand(102), 1, function_id);
 
         // Mark variables for easier identification in tests
-        type_inference.mark_var(int_var.clone(), 'a');
-        type_inference.mark_var(bool_var.clone(), 'b');
-        type_inference.mark_var(char_var.clone(), 'c');
+        type_inference.mark_var(int_var, 'a');
+        type_inference.mark_var(bool_var, 'b');
+        type_inference.mark_var(char_var, 'c');
 
         // Get type variables for these SSA variables
         let int_type = type_inference.type_for_ssavar(&int_var);
@@ -1718,9 +1715,9 @@ mod tests {
         let deref_var = SsaVar::new(deref_operand(101), 1, function_id);
 
         // Mark variables
-        type_inference.mark_var(int_var.clone(), 'a');
-        type_inference.mark_var(ptr_var.clone(), 'b');
-        type_inference.mark_var(deref_var.clone(), 'c');
+        type_inference.mark_var(int_var, 'a');
+        type_inference.mark_var(ptr_var, 'b');
+        type_inference.mark_var(deref_var, 'c');
 
         // Get type variables
         let int_type = type_inference.type_for_ssavar(&int_var);

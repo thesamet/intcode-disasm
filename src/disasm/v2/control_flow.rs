@@ -6,6 +6,7 @@ use super::{
 
 // Describes how control flow leaves a block
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum NextKind<T>
 where
     T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
@@ -23,6 +24,7 @@ where
     // Program halts
     Halt,
     // Control flow path is unknown (e.g., jump target is not immediate/calculable yet)
+    #[default]
     Unknown,
 }
 
@@ -154,14 +156,6 @@ impl<T> Condition<T> {
     }
 }
 
-impl<T> Default for NextKind<T>
-where
-    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
-{
-    fn default() -> Self {
-        NextKind::Unknown
-    }
-}
 
 /// A block in the control flow graph
 #[derive(Debug, Clone, PartialEq, Eq)]

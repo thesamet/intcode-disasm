@@ -86,7 +86,7 @@ impl ControlFlowGraphBuilder {
             .collect();
 
         block_boundaries.extend(recognized_func.halts.iter().map(|h| h.end));
-        block_boundaries.extend(recognized_func.jump_targets.iter().map(|j| j));
+        block_boundaries.extend(recognized_func.jump_targets.iter());
         block_boundaries.extend(recognized_func.jump_instructions.iter().map(|j| j.span.end));
         block_boundaries.extend(
             recognized_func
@@ -186,7 +186,7 @@ impl ControlFlowGraphBuilder {
 
             // Determine next kind, passing the block_id for context
             let next_kind =
-                determine_next_kind(*block_id, last_instr, block.span.end, &recognized_func);
+                determine_next_kind(*block_id, last_instr, block.span.end, recognized_func);
 
             // Store predecessors temporarily, checking if target blocks exist
             match &next_kind {
@@ -309,8 +309,8 @@ fn determine_next_kind(
             BlockId::from(call.return_address),
         ))
     } else if let Some(target_addr) = last_instr.immediate_goto() {
-        NextKind::Goto(BlockId::from(target_addr as usize))
-    } else if let Some(_) = last_instr.goto_address() {
+        NextKind::Goto(BlockId::from(target_addr))
+    } else if last_instr.goto_address().is_some() {
         panic!(
             "Unexpected non-immediate goto at {}: {}",
             last_instr.span.start, last_instr
@@ -323,7 +323,7 @@ fn determine_next_kind(
             from_block: block_id,
             condition_operand,
             jump_if_true,
-            target_block: BlockId::from(target_addr as usize),
+            target_block: BlockId::from(target_addr),
             follows_block: BlockId::from(block_end_addr), // Fallthrough address
         })
     } else if last_instr.is_conditional_jump() {

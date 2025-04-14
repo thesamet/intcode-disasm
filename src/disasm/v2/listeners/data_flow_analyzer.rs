@@ -353,7 +353,7 @@ impl ModelEventListener for DataFlowAnalyzer {
         // If there is use of undefined [R+n] values, we check it comes from a function, and
         // that function is unique.
         for block_id in &function.blocks {
-            let br = df_result_for_function.block_results.get(&block_id).unwrap();
+            let br = df_result_for_function.block_results.get(block_id).unwrap();
             let return_usage_in_block = br
                 .use_before_def
                 .iter()

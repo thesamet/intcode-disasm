@@ -374,7 +374,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
             8 => (Opcode::Equals, 3),
             9 => (Opcode::AdjustRelativeBase, 1),
             99 => (Opcode::Halt, 0),
-            _ => return Err(ParseError::InvalidOpcode(opcode_val as i128)),
+            _ => return Err(ParseError::InvalidOpcode(opcode_val)),
         };
 
         if offset + operand_count >= input.len() {
@@ -401,7 +401,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
                 };
                 Ok(Operand {
                     kind,
-                    offset: offset + i + 1 as usize,
+                    offset: offset + i + 1_usize,
                     debug_marker,
                 })
             })
@@ -556,7 +556,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         read_positions
             .iter()
             .filter_map(|&pos| {
-                let Some(op) = self.kind.operand_at(pos).clone() else {
+                let Some(op) = self.kind.operand_at(pos) else {
                     return None;
                 };
 

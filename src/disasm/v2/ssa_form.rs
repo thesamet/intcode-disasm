@@ -188,7 +188,7 @@ impl SsaFunction {
     // Helper to find an SSA variable with a specific debug marker
     #[cfg(test)]
     pub fn find_ssa_var_by_marker(&self, marker: char) -> Option<SsaVar> {
-        for (_, block) in &self.blocks {
+        for block in self.blocks.values() {
             for instr in &block.instructions {
                 // Extract all operands from the instruction kind
                 for operand in instr.reads().iter().chain(instr.writes().iter()) {
@@ -223,7 +223,7 @@ impl SsaResult {
         let mut converter = SSAConversionState::new(model);
 
         // Process each function in the model
-        for (&function_id, _) in model.functions() {
+        for &function_id in model.functions().keys() {
             let ssa_func = SsaFunction {
                 original_id: function_id,
                 blocks: converter.convert_function(function_id),
@@ -323,7 +323,7 @@ impl<'a> SSAConversionState<'a> {
             function_id,
         );
 
-        self.compute_start_end_states(&self.model, &mut ssa_blocks);
+        self.compute_start_end_states(self.model, &mut ssa_blocks);
 
         // Step 5: Populate Phi function inputs using PredecessorKind
         self.populate_phis(self.model, &mut ssa_blocks);
@@ -467,7 +467,7 @@ impl<'a> SSAConversionState<'a> {
                         for def in &pred_flow.defs_out {
                             all_incoming_defs
                                 .entry(def.location)
-                                .or_insert_with(HashSet::new)
+                                .or_default()
                                 .insert(def.instruction_id);
                         }
                     }
@@ -552,11 +552,11 @@ impl<'a> SSAConversionState<'a> {
                     let pred_id = pred.source_block_id();
                     if let Some(pred_block) = ssa_blocks.get(&pred_id) {
                         for (var_kind, var) in pred_block.end_state.iter() {
-                            new_in.insert(*var_kind, var.clone());
+                            new_in.insert(*var_kind, *var);
                         }
                     }
                 }
-                let ssa_block = ssa_blocks.get_mut(&block_id).unwrap();
+                let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
                 if ssa_block.start_state != new_in {
                     changed = true;
                     ssa_block.start_state = new_in.clone();
@@ -993,7 +993,7 @@ mod tests {
         // Print block information to debug
         for (func_id, function) in &ssa_result.functions {
             println!("Function: {}", func_id);
-            for (block_id, _) in &function.blocks {
+            for block_id in function.blocks.keys() {
                 println!("  Block: {}", block_id);
             }
         }
@@ -1078,14 +1078,14 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                let has_matching_operands = if let InstructionKind::Add(src1, _, dst) = &instr.kind
+                
+                if let InstructionKind::Add(src1, _, dst) = &instr.kind
                 {
                     src1.operand().kind.get_relative_memory() == Some(-4) && // Read operand is R-4
                     dst.operand().kind.get_relative_memory() == Some(-4)
                 } else {
                     false
-                };
-                has_matching_operands
+                }
                 // Write operand is R-4
             })
             .expect("Should have found the addition instruction");

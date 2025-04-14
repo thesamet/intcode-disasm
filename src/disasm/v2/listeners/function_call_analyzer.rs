@@ -108,17 +108,13 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
     for block in function.blocks.values() {
         // Check Phi results
         for phi in &block.phi_functions {
-            if &phi.result.operand().kind == kind {
-                if min_var.is_none() || phi.result.version < min_var_version(min_var) {
-                    min_var = Some(phi.result);
-                }
+            if &phi.result.operand().kind == kind && (min_var.is_none() || phi.result.version < min_var_version(min_var)) {
+                min_var = Some(phi.result);
             }
             // Check Phi inputs
             for input_var in phi.inputs.values() {
-                if &input_var.operand().kind == kind {
-                    if min_var.is_none() || input_var.version < min_var_version(min_var) {
-                        min_var = Some(*input_var);
-                    }
+                if &input_var.operand().kind == kind && (min_var.is_none() || input_var.version < min_var_version(min_var)) {
+                    min_var = Some(*input_var);
                 }
             }
         }
@@ -127,10 +123,8 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
             // Consider all read operands.
             let operands_in_instr = instr.reads();
             for var in operands_in_instr {
-                if &var.operand().kind == kind {
-                    if min_var.is_none() || var.version < min_var_version(min_var) {
-                        min_var = Some(var);
-                    }
+                if &var.operand().kind == kind && (min_var.is_none() || var.version < min_var_version(min_var)) {
+                    min_var = Some(var);
                 }
             }
         }
@@ -273,12 +267,11 @@ impl FunctionCallAnalyzer {
                             .flat_map(|b| b.instructions.iter())
                             .find(|i| i.id == instr_id)
                             .unwrap();
-                        let read_var = instr
+                        let read_var = *instr
                             .reads()
                             .iter()
                             .find(|r| r.operand().kind.get_relative_memory() == Some(offset))
-                            .unwrap()
-                            .clone();
+                            .unwrap();
                         return_reads.entry(offset).or_insert(read_var);
                     }
                     let (parameter_map, return_map) =

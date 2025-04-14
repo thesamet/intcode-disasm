@@ -210,16 +210,13 @@ impl<'a> PrettyPrinter<'a> {
                     )
                 }
                 Some(return_values) if return_values.len() == 1 => {
-                    format!(
-                        "{}",
-                        return_values
+                    return_values
                             .iter()
                             .map(|v| self.format_ssa_var(v))
-                            .join(", ")
-                    )
+                            .join(", ").to_string()
                 }
-                Some(_) => format!("void").red().to_string(),
-                None => format!("unknown"),
+                Some(_) => "void".to_string().red().to_string(),
+                None => "unknown".to_string(),
             };
             format!(
                 "({}) -> {}",

@@ -86,7 +86,7 @@ impl ModelEventListener for ImageScanner {
             .collect_vec();
         let result = ImageScannerResult {
             recognized_functions,
-            data_segments: data_segments,
+            data_segments,
         };
         model.set_image_scanner_result(result, sender);
     }

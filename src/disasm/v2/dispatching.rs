@@ -253,7 +253,7 @@ mod tests {
         publisher.add_listener(Box::new(listener2.clone()));
 
         let event_b = EventB { val_b: 57 };
-        publisher.publish(event_b.clone()); // Clone event_b data for assertion
+        publisher.publish(event_b); // Clone event_b data for assertion
 
         publisher.process_events(&mut model);
 
@@ -261,7 +261,7 @@ mod tests {
         let received2 = listener2.received_events();
 
         assert_eq!(received1.len(), 1);
-        assert_eq!(received1[0], TestEvent::EventB(event_b.clone())); // Use cloned event_b
+        assert_eq!(received1[0], TestEvent::EventB(event_b)); // Use cloned event_b
 
         assert_eq!(received2.len(), 1);
         assert_eq!(received2[0], TestEvent::EventB(event_b)); // Use original event_b
@@ -276,7 +276,7 @@ mod tests {
 
         let event_b_to_publish = EventB { val_b: 95 };
         // Listener will publish EventB when it receives EventA
-        let listener = TestListener::new(Some(event_b_to_publish.clone().into()));
+        let listener = TestListener::new(Some(event_b_to_publish.into()));
 
         publisher.add_listener(Box::new(listener.clone()));
 
@@ -307,7 +307,7 @@ mod tests {
 
         let event_b_to_publish = EventB { val_b: 37 };
         // Listener will publish EventB when it receives EventA
-        let listener = TestListener::new(Some(event_b_to_publish.clone().into()));
+        let listener = TestListener::new(Some(event_b_to_publish.into()));
 
         publisher.add_listener(Box::new(listener.clone()));
 

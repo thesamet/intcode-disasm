@@ -53,7 +53,7 @@ fn disassemble(input: String) {
         for inst in func.instructions {
             println!("{:8}  {}", inst.span.start, inst);
         }
-        println!("");
+        println!();
     }
 }
 
