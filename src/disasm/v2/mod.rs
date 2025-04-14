@@ -11,6 +11,7 @@ pub mod listeners;
 pub mod model;
 pub mod pretty_print;
 pub mod ssa_form;
+pub mod type_inference;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {

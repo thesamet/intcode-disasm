@@ -3,5 +3,3 @@ pub mod data_flow_analyzer;
 pub mod function_call_analyzer;
 pub mod image_scanner;
 pub mod ssa_converter;
-pub mod type_inference;
-

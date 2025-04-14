@@ -6,9 +6,10 @@ use super::{
     listeners::{
         control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
-        ssa_converter::SsaConverter, type_inference::TypeInferenceAnalyzer,
+        ssa_converter::SsaConverter,
     },
     pretty_print::pretty_print_ssa,
+    type_inference::TypeInferenceAnalyzer,
 };
 
 /// Run the analysis pipeline and print data flow information

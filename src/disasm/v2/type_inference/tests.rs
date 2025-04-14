@@ -1,6 +1,5 @@
 #[cfg(test)]
-mod tests {
-    
+mod type_inference_tests {
 
     use crate::disasm::parser;
     use crate::disasm::v2::{
@@ -18,12 +17,12 @@ mod tests {
     };
 
     // Import from the parent module (type_inference)
-    
-    use crate::disasm::v2::listeners::type_inference::{
+
+    use crate::disasm::v2::type_inference::{
         analyzer::TypeInferenceAnalyzer, // Import the analyzer
         constraints::ConstraintReason,
         solver::{self, TypeInferenceError}, // Import solver module itself
-        types::{Type},
+        types::Type,
     };
 
     macro_rules! assert_marker_type {
@@ -39,7 +38,10 @@ mod tests {
                 .get_type_inference_result()
                 .unwrap()
                 .get_type_for_ssavar(&ssa_var)
-                .expect(&format!("No type found for SSA variable marker {}", $marker));
+                .expect(&format!(
+                    "No type found for SSA variable marker {}",
+                    $marker
+                ));
 
             assert_eq!(
                 *actual_type, $expected_type,
@@ -113,6 +115,23 @@ mod tests {
                 *actual, expected,
                 "Expected type {:?} but got {:?} for memory address {}",
                 expected, actual, addr
+            );
+        }
+
+        fn print_traces_for_marker(&self, marker: char) {
+            let ssa_var = self
+                .model
+                .get_ssa_result()
+                .unwrap()
+                .find_ssa_var_by_marker(marker);
+            let typ = Type::SsaVar(ssa_var);
+            println!(
+                "Trace history for {}:\n{}\nType inference completed successfully",
+                marker,
+                self.model
+                    .get_type_inference_result()
+                    .unwrap()
+                    .format_traces_for_type(typ)
             );
         }
     }
@@ -196,7 +215,12 @@ mod tests {
         // Verify types using marker functions
         let mut final_result = result;
         // Copy debug markers for test verification
-        final_result.debug_markers.extend(type_inference.get_debug_markers().iter().map(|(k, v)| (*k, *v)));
+        final_result.debug_markers.extend(
+            type_inference
+                .get_debug_markers()
+                .iter()
+                .map(|(k, v)| (*k, *v)),
+        );
 
         let a_type = final_result.get_marker_type('a');
         let b_type = final_result.get_marker_type('b');
@@ -247,7 +271,12 @@ mod tests {
 
         // Verify type using marker function
         let mut final_result = result;
-        final_result.debug_markers.extend(type_inference.get_debug_markers().iter().map(|(k, v)| (*k, *v)));
+        final_result.debug_markers.extend(
+            type_inference
+                .get_debug_markers()
+                .iter()
+                .map(|(k, v)| (*k, *v)),
+        );
         let a_type = final_result.get_marker_type('a');
 
         assert_eq!(
@@ -323,7 +352,12 @@ mod tests {
 
         // Verify types using marker functions
         let mut final_result = result;
-        final_result.debug_markers.extend(type_inference.get_debug_markers().iter().map(|(k, v)| (*k, *v)));
+        final_result.debug_markers.extend(
+            type_inference
+                .get_debug_markers()
+                .iter()
+                .map(|(k, v)| (*k, *v)),
+        );
         let a_type = final_result.get_marker_type('a');
         let b_type = final_result.get_marker_type('b');
         let c_type = final_result.get_marker_type('c');
@@ -483,24 +517,8 @@ f1:
         pretty_print_ssa(&ctx.model);
         ctx.assert_type(1, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int);
-        print_traces_for_marker(&ctx.model, 'b');
+        ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Bool);
-    }
-
-    fn print_traces_for_marker(model: &ProgramModel, marker: char) {
-        let ssa_var = model
-            .get_ssa_result()
-            .unwrap()
-            .find_ssa_var_by_marker(marker);
-        let typ = Type::SsaVar(ssa_var);
-        println!(
-            "Trace history for {}:\n{}\nType inference completed successfully",
-            marker,
-            model
-                .get_type_inference_result()
-                .unwrap()
-                .format_traces_for_type(typ)
-        );
     }
 
     #[test]
@@ -623,7 +641,7 @@ f1:
         );
         pretty_print_ssa(&ctx.model);
         assert_marker_type!(ctx, 'a', Type::Char);
-        print_traces_for_marker(&ctx.model, 'b');
+        ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', function_pointer(vec![], vec![]));
         assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
@@ -706,13 +724,13 @@ f1:
         pretty_print_ssa(&ctx.model);
 
         /*
-        print_traces_for_marker(&ctx.model, 'a');
+        ctx.print_traces_for_marker('a');
         assert_marker_type!(ctx, 'a', Type::Char);
         */
-        print_traces_for_marker(&ctx.model, 'b');
-        print_traces_for_marker(&ctx.model, 'd');
-        print_traces_for_marker(&ctx.model, 'e');
-        print_traces_for_marker(&ctx.model, 'f');
+        ctx.print_traces_for_marker('b');
+        ctx.print_traces_for_marker('d');
+        ctx.print_traces_for_marker('e');
+        ctx.print_traces_for_marker('f');
         assert_marker_type!(ctx, 'b', Type::Pointer(Box::new(Type::Char)));
         // [R-4] <: [R+1]
         // [R-4] <: Pointer(Char)

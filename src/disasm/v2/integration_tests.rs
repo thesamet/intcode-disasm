@@ -1,8 +1,10 @@
 use crate::disasm::v2::{
     instructions::OperandKind,
-    listeners::type_inference::{analyzer::TypeInferenceAnalyzer, constraints::ConstraintReason, solver, types::Type},
     model::FunctionId,
     ssa_form::SsaVar,
+    type_inference::{
+        analyzer::TypeInferenceAnalyzer, constraints::ConstraintReason, solver, types::Type,
+    },
 };
 
 #[cfg(test)]
