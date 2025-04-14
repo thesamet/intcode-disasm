@@ -8,7 +8,7 @@ use super::{
     id_types::define_id_type,
     listeners::{
         function_call_analyzer::FunctionCallAnalysis, image_scanner::ImageScannerResult,
-        type_inference_analyzer::TypeInferenceResult,
+        type_inference::TypeInferenceResult,
     },
     ssa_form::SsaResult,
 };

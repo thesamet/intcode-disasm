@@ -16,7 +16,12 @@ pub struct ImageScannerResult {
     pub data_segments: Vec<Span>,
 }
 
-pub(crate) struct ImageScanner {}
+/// Scans the image memory for potential code/data segments.
+#[derive(Clone, Debug, Default)]
+pub struct ImageScanner {
+    // ... existing fields ...
+}
+
 impl ImageScanner {
     pub(crate) fn new() -> Self {
         Self {}
@@ -48,7 +53,7 @@ pub struct BaseFunctionCall {
 It finds all function spans and all locations for which there is a direct
 jump to and from */
 impl ModelEventListener for ImageScanner {
-    fn on_image_added(
+    fn on_image_added<'a>(
         &mut self,
         model: &mut ProgramModel,
         _event: ImageAdded,

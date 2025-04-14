@@ -6,7 +6,7 @@ use super::{
     listeners::{
         control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
-        ssa_converter::SsaConverter, type_inference_analyzer::TypeInferenceAnalyzer,
+        ssa_converter::SsaConverter, type_inference::TypeInferenceAnalyzer,
     },
     pretty_print::pretty_print_ssa,
 };

@@ -1,0 +1,95 @@
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+
+use crate::disasm::v2::ssa_form::SsaVar;
+
+use super::solver::{AnalysisTrace, ChangeReason};
+use super::types::Type;
+
+#[derive(Debug, Clone)]
+pub struct TypeInferenceResult {
+    pub inferred_types: HashMap<SsaVar, Type>,
+    #[cfg(test)]
+    pub debug_markers: HashMap<char, SsaVar>,
+    pub traces: Vec<AnalysisTrace>,
+}
+
+impl TypeInferenceResult {
+    pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
+        self.inferred_types.get(var)
+    }
+
+    /// Get the variable associated with a debug marker
+    #[cfg(test)]
+    pub fn get_marked_var(&self, marker: char) -> Option<&SsaVar> {
+        self.debug_markers.get(&marker)
+    }
+
+    /// Get the final type for a debug marker after unification
+    #[cfg(test)]
+    pub fn get_marker_type(&self, marker: char) -> Option<Type> {
+        self.get_marked_var(marker)
+            .and_then(|var| self.get_type_for_ssavar(var).cloned())
+    }
+
+    /// Get traces for a variable plus any related traces through constraints
+    pub fn get_recursive_traces_for_ssavar(&self, type_var: Type) -> Vec<(usize, &AnalysisTrace)> {
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+
+        self.collect_related_traces(type_var, &mut result, &mut visited);
+
+        // Sort the traces by their original order in the trace vector
+        result.sort_by_key(|(idx, _)| *idx);
+
+        result
+    }
+
+    fn collect_related_traces<'a>(
+        &'a self,
+        type_key: Type,
+        result: &mut Vec<(usize, &'a AnalysisTrace)>,
+        visited: &mut HashSet<Type>,
+    ) {
+        if !visited.insert(type_key.clone()) {
+            return; // Already visited this type
+        }
+
+        // Find direct changes to this type
+        for (idx, trace) in self.traces.iter().enumerate() {
+            if trace.key == type_key {
+                result.push((idx, trace));
+
+                // For each trace, recursively follow any related types through constraints
+                match &trace.reason {
+                    ChangeReason::DecreaseUpperBoundFromConstraint {
+                        constraint: _,
+                        other,
+                    }
+                    | ChangeReason::IncreaseLowerBoundFromConstraint {
+                        constraint: _,
+                        other,
+                    } => {
+                        self.collect_related_traces(other.clone(), result, visited);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Format all traces for an SSA variable in chronological order
+    pub fn format_traces_for_type(&self, typ: Type) -> String {
+        let traces = self.get_recursive_traces_for_ssavar(typ.clone());
+        if traces.is_empty() {
+            return format!("No traces found for {}", typ);
+        }
+
+        let mut result = format!("Trace history for {}:\n", typ);
+        for (idx, trace) in traces {
+            result.push_str(&format!("{}. {}\n", idx + 1, trace));
+        }
+
+        result
+    }
+}

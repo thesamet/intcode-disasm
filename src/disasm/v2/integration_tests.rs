@@ -1,6 +1,6 @@
 use crate::disasm::v2::{
     instructions::OperandKind,
-    listeners::type_inference_analyzer::{ConstraintReason, Type, TypeInferenceAnalyzer},
+    listeners::type_inference::{analyzer::TypeInferenceAnalyzer, constraints::ConstraintReason, solver, types::Type},
     model::FunctionId,
     ssa_form::SsaVar,
 };
@@ -52,10 +52,13 @@ mod tests {
         // Create some SSA variables to infer types for
         let function_id = FunctionId::from(0);
         let int_var = SsaVar::new(memory_operand(100), 1, function_id);
-
         let bool_var = SsaVar::new(memory_operand(101), 1, function_id);
-
         let char_var = SsaVar::new(memory_operand(102), 1, function_id);
+
+        // Mark variables for testing
+        type_inference.mark_var(int_var, 'a');
+        type_inference.mark_var(bool_var, 'b');
+        type_inference.mark_var(char_var, 'c');
 
         // Get type variables for these SSA variables
         let int_type = type_inference.type_for_ssavar(&int_var);
@@ -70,7 +73,6 @@ mod tests {
             FunctionId::from(0),
             ConstraintReason::AddSecondParameterImpliesInt,
         );
-
         type_inference.add_constraint(
             bool_type.clone(),
             Type::Bool,
@@ -78,7 +80,6 @@ mod tests {
             FunctionId::from(0),
             ConstraintReason::CompareDstImpliesBool,
         );
-
         type_inference.add_constraint(
             char_type.clone(),
             Type::Char,
@@ -87,10 +88,14 @@ mod tests {
             ConstraintReason::OutputImpliesChar,
         );
 
-        // Solve constraints
-        let result = type_inference.unify().expect("Unification should succeed");
+        // Solve constraints using solver::unify
+        let result = solver::unify(
+            type_inference.get_constraints(),
+            type_inference.get_debug_markers(),
+        )
+        .expect("Unification should succeed");
 
-        // Verify types
+        // Verify types using the result
         let int_result = result.get_type_for_ssavar(&int_var);
         let bool_result = result.get_type_for_ssavar(&bool_var);
         let char_result = result.get_type_for_ssavar(&char_var);
@@ -98,7 +103,7 @@ mod tests {
         assert_eq!(
             *int_result.unwrap(),
             Type::Int,
-            "Variable should b.unwrap()e an integer"
+            "Variable should be an integer"
         );
         assert_eq!(
             *bool_result.unwrap(),
@@ -124,6 +129,9 @@ mod tests {
         // Get type variable
         let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
 
+        // Mark variable for testing
+        type_inference.mark_var(func_ptr_var, 'f');
+
         // Add constraint for function pointer
         type_inference.add_constraint(
             func_ptr_type.clone(),
@@ -136,16 +144,20 @@ mod tests {
             ConstraintReason::IndirectFunctionCall,
         );
 
-        // Solve constraints
-        let result = type_inference.unify().expect("Unification should succeed");
+        // Solve constraints using solver::unify
+        let result = solver::unify(
+            type_inference.get_constraints(),
+            type_inference.get_debug_markers(),
+        )
+        .expect("Unification should succeed");
 
         // Verify type
-        let result = result.get_type_for_ssavar(&func_ptr_var);
+        let final_type = result.get_type_for_ssavar(&func_ptr_var);
 
         assert!(
-            matches!(*result.unwrap(), Type::Function { .. }),
+            matches!(*final_type.unwrap(), Type::Function { .. }),
             "Variable should be a function pointer, got: {:?}",
-            result
+            final_type
         );
     }
 
@@ -162,10 +174,13 @@ mod tests {
         // Create variables for testing pointer relationships
         let function_id = FunctionId::from(0);
         let int_var = SsaVar::new(memory_operand(100), 1, function_id);
-
         let ptr_var = SsaVar::new(memory_operand(101), 1, function_id);
-
         let deref_var = SsaVar::new(deref_operand(101), 1, function_id);
+
+        // Mark variables for testing
+        type_inference.mark_var(int_var, 'i');
+        type_inference.mark_var(ptr_var, 'p');
+        type_inference.mark_var(deref_var, 'd');
 
         // Get type variables
         let int_type = type_inference.type_for_ssavar(&int_var);
@@ -173,7 +188,6 @@ mod tests {
         let deref_type = type_inference.type_for_ssavar(&deref_var);
 
         // Add constraints
-        // int_var is an integer
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
@@ -181,8 +195,6 @@ mod tests {
             FunctionId::from(0),
             ConstraintReason::AddSecondParameterImpliesInt,
         );
-
-        // ptr_var is a pointer to int_var
         type_inference.add_constraint(
             ptr_type.clone(),
             Type::Pointer(Box::new(int_type.clone())),
@@ -190,8 +202,6 @@ mod tests {
             FunctionId::from(0),
             ConstraintReason::Assignment,
         );
-
-        // deref_var gets the value of int_var through ptr_var
         type_inference.add_constraint(
             deref_type.clone(),
             int_type.clone(),
@@ -200,8 +210,12 @@ mod tests {
             ConstraintReason::Assignment,
         );
 
-        // Solve constraints
-        let result = type_inference.unify().expect("Unification should succeed");
+        // Solve constraints using solver::unify
+        let result = solver::unify(
+            type_inference.get_constraints(),
+            type_inference.get_debug_markers(),
+        )
+        .expect("Unification should succeed");
 
         // Verify types
         let int_result = result.get_type_for_ssavar(&int_var);
