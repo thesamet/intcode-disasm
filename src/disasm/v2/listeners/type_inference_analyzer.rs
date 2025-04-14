@@ -119,7 +119,7 @@ pub enum Type {
     Bool,
     Char,
     Pointer(Box<Type>),
-    FunctionPointer { args: Vec<Type>, returns: Vec<Type> },
+    Function { args: Vec<Type>, returns: Vec<Type> },
     String,
     TypeVar(SsaVar),
     Truthy, // a marker type for truthy types
@@ -143,17 +143,17 @@ impl Type {
             // Pointer subtyping is covariant
             (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(_), Type::Truthy) => true,
-            (Type::FunctionPointer { .. }, Type::Truthy) => true,
+            (Type::Function { .. }, Type::Truthy) => true,
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
             (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
             // Function pointer subtyping: contravariant args, covariant returns
             (
-                Type::FunctionPointer {
+                Type::Function {
                     args: args1,
                     returns: returns1,
                 },
-                Type::FunctionPointer {
+                Type::Function {
                     args: args2,
                     returns: returns2,
                 },
@@ -174,7 +174,7 @@ impl Type {
 
                 args_compatible && returns_compatible
             }
-            (Type::FunctionPointer { .. }, Type::Int) => true,
+            (Type::Function { .. }, Type::Int) => true,
             _ => false,
         }
     }
@@ -192,7 +192,7 @@ impl Type {
             Type::Bool => vec![],
             Type::Char => vec![],
             Type::Pointer(x) => x.get_typevars(),
-            Type::FunctionPointer { args, returns } => args
+            Type::Function { args, returns } => args
                 .iter()
                 .chain(returns.iter())
                 .flat_map(|x| x.get_typevars())
@@ -211,7 +211,7 @@ impl Type {
 fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
-        Type::FunctionPointer { args, returns } => {
+        Type::Function { args, returns } => {
             args.iter().all(is_concrete_type) && returns.iter().all(is_concrete_type)
         }
         Type::Pointer(p) => is_concrete_type(p),
@@ -234,7 +234,7 @@ impl fmt::Display for Type {
             Type::Char => write!(f, "char"),
             Type::Pointer(t) => write!(f, "Pointer({})", t),
             Type::Truthy => write!(f, "Truthy"),
-            Type::FunctionPointer { args, returns } => {
+            Type::Function { args, returns } => {
                 write!(f, "fn(")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -1102,10 +1102,10 @@ impl TypeInferenceAnalyzer {
                     let fn_type = self.type_for_ssavar(&call.function_addr);
                     self.add_constraint(
                         fn_type,
-                        Type::FunctionPointer {
+                        Type::Pointer(Box::new(Type::Function {
                             args: vec![],    // Placeholder - args inferred from usage at call site
                             returns: vec![], // Placeholder - returns inferred from usage after call
-                        },
+                        })),
                         location_addr,
                         function_id,
                         ConstraintReason::IndirectFunctionCall,
@@ -1379,7 +1379,7 @@ impl TypeInferenceAnalyzer {
             (x, Type::Pointer(y)) => {
                 let y_upper = bounds.upper_bound(&y).cloned().unwrap_or(*y.clone());
                 let new_upper = Type::Pointer(Box::new(y_upper));
-                if new_upper != left_upper {
+                if new_upper.is_strict_subtype_of(&left_upper) {
                     changed |=
                         Self::process_constraint(constraint, x, &new_upper, bounds, debug_markers)?;
                 }
@@ -1432,7 +1432,7 @@ fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
         Type::Truthy => {}
         Type::Conflict => {}
         Type::Pointer(x) => init_bounds_for_type(x, bounds),
-        Type::FunctionPointer { args, returns } => {
+        Type::Function { args, returns } => {
             for arg in args {
                 init_bounds_for_type(arg, bounds);
             }
@@ -1598,6 +1598,10 @@ mod tests {
         }
     }
 
+    fn function_pointer(args: Vec<Type>, returns: Vec<Type>) -> Type {
+        Type::Pointer(Box::new(Type::Function { args, returns }))
+    }
+
     /// Direct API test for type inference (no assembly parsing)
     #[test]
     fn test_basic_type_inference_api() {
@@ -1685,10 +1689,7 @@ mod tests {
         // Add constraint for function pointer
         type_inference.add_constraint(
             func_ptr_type,
-            Type::FunctionPointer {
-                args: vec![],
-                returns: vec![],
-            },
+            function_pointer(vec![], vec![]),
             InstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall,
@@ -1700,10 +1701,11 @@ mod tests {
         // Verify type using marker function
         let a_type = result.get_marker_type('a');
 
-        assert!(
-            matches!(a_type, Some(Type::FunctionPointer { .. })),
+        assert_eq!(
+            a_type.as_ref().unwrap(),
+            &function_pointer(vec![], vec![]),
             "Variable 'a' should be a function pointer, got: {:?}",
-            a_type
+            a_type.as_ref().unwrap()
         );
     }
 
@@ -1976,13 +1978,7 @@ f1:
 
             "#,
         );
-        ctx.assert_type(
-            1001,
-            Type::FunctionPointer {
-                args: vec![],
-                returns: vec![],
-            },
-        );
+        ctx.assert_type(1001, function_pointer(vec![], vec![]));
     }
 
     #[test]
@@ -2001,14 +1997,7 @@ f1:
                 "#,
         );
         pretty_print_ssa(&ctx.model);
-        assert_marker_type!(
-            ctx,
-            'a',
-            Type::FunctionPointer {
-                args: vec![],
-                returns: vec![],
-            }
-        );
+        assert_marker_type!(ctx, 'a', function_pointer(vec![], vec![]));
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
     }
@@ -2072,14 +2061,7 @@ f1:
         assert_marker_type!(ctx, 'a', Type::Char);
         print_traces_for_marker(&ctx.model, 'b');
         assert_marker_type!(ctx, 'b', Type::Int);
-        assert_marker_type!(
-            ctx,
-            'c',
-            Type::FunctionPointer {
-                args: vec![],
-                returns: vec![],
-            }
-        );
+        assert_marker_type!(ctx, 'c', function_pointer(vec![], vec![]));
         assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
     }
 
@@ -2099,14 +2081,7 @@ f1:
         );
         pretty_print_ssa(&ctx.model);
 
-        assert_marker_type!(
-            ctx,
-            'a',
-            Type::FunctionPointer {
-                args: vec![],
-                returns: vec![]
-            }
-        );
+        assert_marker_type!(ctx, 'a', function_pointer(vec![], vec![]));
     }
 
     #[test]

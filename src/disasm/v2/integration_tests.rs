@@ -127,7 +127,7 @@ mod tests {
         // Add constraint for function pointer
         type_inference.add_constraint(
             func_ptr_type.clone(),
-            Type::FunctionPointer {
+            Type::Function {
                 args: vec![],
                 returns: vec![],
             },
@@ -143,7 +143,7 @@ mod tests {
         let result = result.get_type_for_ssavar(&func_ptr_var);
 
         assert!(
-            matches!(*result.unwrap(), Type::FunctionPointer { .. }),
+            matches!(*result.unwrap(), Type::Function { .. }),
             "Variable should be a function pointer, got: {:?}",
             result
         );
