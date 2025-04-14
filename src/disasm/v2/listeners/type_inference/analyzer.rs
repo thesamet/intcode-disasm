@@ -1,5 +1,4 @@
 use log::{debug, info};
-use std::collections::HashMap;
 
 use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},
@@ -23,7 +22,7 @@ pub struct TypeInferenceAnalyzer {
     constraints: Vec<Constraint>,
     /// Debug markers for variables
     #[cfg(test)]
-    debug_markers: HashMap<char, SsaVar>,
+    debug_markers: std::collections::HashMap<char, SsaVar>,
 }
 
 impl TypeInferenceAnalyzer {
@@ -32,7 +31,7 @@ impl TypeInferenceAnalyzer {
         Self {
             constraints: Vec::new(),
             #[cfg(test)]
-            debug_markers: HashMap::new(),
+            debug_markers: std::collections::HashMap::new(),
         }
     }
 
@@ -439,13 +438,14 @@ impl TypeInferenceAnalyzer {
     }
 
     /// Get a slice of the generated constraints.
+    #[cfg(test)]
     pub fn get_constraints(&self) -> &[Constraint] {
         &self.constraints
     }
 
     /// Get the debug markers map (test only).
     #[cfg(test)]
-    pub fn get_debug_markers(&self) -> &HashMap<char, SsaVar> {
+    pub fn get_debug_markers(&self) -> &std::collections::HashMap<char, SsaVar> {
         &self.debug_markers
     }
 }

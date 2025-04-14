@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 
 use crate::disasm::v2::ssa_form::SsaVar;
 

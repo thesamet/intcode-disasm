@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    
 
     use crate::disasm::parser;
     use crate::disasm::v2::{
@@ -18,13 +18,12 @@ mod tests {
     };
 
     // Import from the parent module (type_inference)
-    use super::*;
+    
     use crate::disasm::v2::listeners::type_inference::{
         analyzer::TypeInferenceAnalyzer, // Import the analyzer
         constraints::ConstraintReason,
-        result::TypeInferenceResult,
         solver::{self, TypeInferenceError}, // Import solver module itself
-        types::{Type, self},
+        types::{Type},
     };
 
     macro_rules! assert_marker_type {

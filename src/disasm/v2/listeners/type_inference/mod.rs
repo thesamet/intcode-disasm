@@ -10,5 +10,3 @@ pub mod visuals;
 // Re-export key types and functions for external use
 pub use analyzer::TypeInferenceAnalyzer;
 pub use result::TypeInferenceResult;
-pub use solver::TypeInferenceError;
-pub use types::Type;
