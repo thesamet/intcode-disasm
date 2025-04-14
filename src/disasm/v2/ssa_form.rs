@@ -116,16 +116,9 @@ impl fmt::Display for SsaVarKind {
         match self {
             SsaVarKind::Memory(addr) => write!(f, "[{}]", addr),
             SsaVarKind::Immediate(val) => write!(f, "{}", val),
-            SsaVarKind::RelativeMemory(offset) => {
-                if *offset == 0 {
-                    write!(f, "[R]")
-                } else if *offset > 0 {
-                    write!(f, "[R+{}]", offset)
-                } else {
-                    // Handles negative offsets, e.g., [R-50]
-                    write!(f, "[R{}]", offset)
-                }
-            }
+            SsaVarKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
+            SsaVarKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{}]", offset),
+            SsaVarKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
             SsaVarKind::Deref {
                 address,
                 address_version,
@@ -1078,9 +1071,7 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                
-                if let InstructionKind::Add(src1, _, dst) = &instr.kind
-                {
+                if let InstructionKind::Add(src1, _, dst) = &instr.kind {
                     src1.operand().kind.get_relative_memory() == Some(-4) && // Read operand is R-4
                     dst.operand().kind.get_relative_memory() == Some(-4)
                 } else {

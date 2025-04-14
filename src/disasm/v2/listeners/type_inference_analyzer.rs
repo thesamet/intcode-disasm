@@ -95,7 +95,7 @@ pub enum TypeInferenceError {
         right: Type,
         var_type: Type,
         constraint: Constraint,
-        partial_result: TypeInferenceResult,
+        partial_result: Box<TypeInferenceResult>,
     },
 
     #[error("{bound_type} bound conflict: type conflict between {left} and {right} for {var_type} at {constraint}")]
@@ -117,7 +117,7 @@ pub enum Type {
     Char,
     Pointer(Box<Type>),
     Function { args: Vec<Type>, returns: Vec<Type> },
-    TypeVar(SsaVar),
+    SsaVar(SsaVar),
     Truthy, // a marker type for truthy types
     Any,
     Conflict, // Represents a type that was conflicted, but hopefully it will not be needed.
@@ -179,19 +179,19 @@ impl Type {
         self != other && self.is_subtype_of(other)
     }
 
-    fn get_typevars(&self) -> Vec<Type> {
+    fn get_types_recursive(&self) -> Vec<Type> {
         match self {
-            Type::TypeVar(var) => vec![Type::TypeVar(*var)],
+            Type::SsaVar(var) => vec![Type::SsaVar(*var)],
             Type::Any => vec![],
             Type::Nothing => vec![],
             Type::Int => vec![],
             Type::Bool => vec![],
             Type::Char => vec![],
-            Type::Pointer(x) => x.get_typevars(),
+            Type::Pointer(x) => x.get_types_recursive(),
             Type::Function { args, returns } => args
                 .iter()
                 .chain(returns.iter())
-                .flat_map(|x| x.get_typevars())
+                .flat_map(|x| x.get_types_recursive())
                 .collect(),
             Type::Truthy => vec![],
             Type::Conflict => vec![],
@@ -199,7 +199,7 @@ impl Type {
     }
 
     fn is_var_free(&self) -> bool {
-        self.get_typevars().is_empty()
+        self.get_types_recursive().is_empty()
     }
 }
 
@@ -211,7 +211,7 @@ fn is_concrete_type(typ: &Type) -> bool {
         }
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => false,
-        Type::TypeVar(_) => false,
+        Type::SsaVar(_) => false,
         Type::Conflict => false,
         Type::Any => false,
         Type::Nothing => false,
@@ -249,7 +249,7 @@ impl fmt::Display for Type {
                 }
                 Ok(())
             }
-            Type::TypeVar(t) => write!(f, "{}", t),
+            Type::SsaVar(t) => write!(f, "{}", t),
             Type::Conflict => write!(f, "CONFLICT"),
         }
     }
@@ -331,14 +331,14 @@ pub struct Constraint {
 impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Format the left side with appropriate color
-        let left_str = if let Type::TypeVar(var) = &self.left {
+        let left_str = if let Type::SsaVar(var) = &self.left {
             TraceColors::format_var(var)
         } else {
             TraceColors::format_type(&self.left)
         };
 
         // Format the right side with appropriate color
-        let right_str = if let Type::TypeVar(var) = &self.right {
+        let right_str = if let Type::SsaVar(var) = &self.right {
             TraceColors::format_var(var)
         } else {
             TraceColors::format_type(&self.right)
@@ -633,7 +633,7 @@ pub struct AnalysisTrace {
 impl fmt::Display for AnalysisTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Colorize the key type
-        let key_str = if let Type::TypeVar(var) = &self.key {
+        let key_str = if let Type::SsaVar(var) = &self.key {
             TraceColors::format_var(var)
         } else {
             TraceColors::format_type(&self.key)
@@ -667,7 +667,7 @@ impl fmt::Display for AnalysisTrace {
 
         match &self.reason {
             ChangeReason::DecreaseUpperBoundFromConstraint { constraint, other } => {
-                let other_str = if let Type::TypeVar(var) = other {
+                let other_str = if let Type::SsaVar(var) = other {
                     TraceColors::format_var(var)
                 } else {
                     TraceColors::format_type(other)
@@ -689,7 +689,7 @@ impl fmt::Display for AnalysisTrace {
                 )
             }
             ChangeReason::IncreaseLowerBoundFromConstraint { constraint, other } => {
-                let other_str = if let Type::TypeVar(var) = other {
+                let other_str = if let Type::SsaVar(var) = other {
                     TraceColors::format_var(var)
                 } else {
                     TraceColors::format_type(other)
@@ -738,7 +738,7 @@ impl TypeInferenceAnalyzer {
     }
 
     pub fn type_for_ssavar(&self, var: &SsaVar) -> Type {
-        Type::TypeVar(*var)
+        Type::SsaVar(*var)
     }
 
     /// Add a constraint between two types
@@ -992,13 +992,12 @@ impl TypeInferenceAnalyzer {
             InstructionKind::Data(_) => { /* Data doesn't participate in type inference this way */
             }
         }
-        instruction
-            .reads()
-            .iter()
-            .for_each(|operand| if let SsaVarKind::Deref {
-                    address,
-                    address_version,
-                } = operand.kind {
+        instruction.reads().iter().for_each(|operand| {
+            if let SsaVarKind::Deref {
+                address,
+                address_version,
+            } = operand.kind
+            {
                 let mem_ssa_var = SsaVar {
                     kind: SsaVarKind::Memory(address as i128),
                     offset: operand.offset,
@@ -1013,7 +1012,8 @@ impl TypeInferenceAnalyzer {
                     function_id,
                     ConstraintReason::Deref,
                 );
-            });
+            }
+        });
     }
 
     /// Generate constraints for control flow transitions
@@ -1173,8 +1173,7 @@ impl TypeInferenceAnalyzer {
             let mut changed = false;
             let mut worklist = self.constraints.clone();
             while let Some(c) = worklist.pop() {
-                changed |=
-                    Self::process_constraint(&c, &c.left, &c.right, bounds, &self.debug_markers)?;
+                changed |= Self::process_constraint(&c, &c.left, &c.right, bounds)?;
             }
             overall_changed |= changed;
             if !changed {
@@ -1259,7 +1258,6 @@ impl TypeInferenceAnalyzer {
         new_bound: Option<Type>,
         bound_type: BoundType,
         bounds: &mut TypeBoundsMap,
-        #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
     ) -> Result<(bool, Type), TypeInferenceError> {
         match new_bound {
             Some(bound) => Ok((bound != *current_bound, bound)),
@@ -1270,7 +1268,7 @@ impl TypeInferenceAnalyzer {
                     Ok((false, Type::Conflict))
                 } else {
                     // Extract SSA var from the type if possible for better error reporting
-                    if let Type::TypeVar(ssa_var) = type_var {
+                    if let Type::SsaVar(ssa_var) = type_var {
                         Err(TypeInferenceError::TypeConflict {
                             ssa_var: *ssa_var,
                             bound_type,
@@ -1278,11 +1276,11 @@ impl TypeInferenceAnalyzer {
                             right: constraint.right.clone(),
                             var_type: type_var.clone(),
                             constraint: constraint.clone(),
-                            partial_result: create_partial_result(
+                            partial_result: Box::new(create_partial_result(
                                 bounds,
                                 #[cfg(test)]
-                                debug_markers,
-                            ),
+                                &HashMap::new(),
+                            )),
                         })
                     } else {
                         Err(TypeInferenceError::BoundConflict {
@@ -1303,7 +1301,6 @@ impl TypeInferenceAnalyzer {
         left: &Type,
         right: &Type,
         bounds: &mut TypeBoundsMap,
-        debug_markers: &HashMap<char, SsaVar>,
     ) -> Result<bool, TypeInferenceError> {
         let mut changed = false;
         let left_upper = bounds.upper_bound(left).cloned().unwrap_or(left.clone());
@@ -1319,8 +1316,6 @@ impl TypeInferenceAnalyzer {
             glb(&left_upper, &right_upper),
             BoundType::Upper,
             bounds,
-            #[cfg(test)]
-            debug_markers,
         )?;
 
         if upper_changed {
@@ -1343,8 +1338,6 @@ impl TypeInferenceAnalyzer {
             lub(&left_lower, &right_lower),
             BoundType::Lower,
             bounds,
-            #[cfg(test)]
-            debug_markers,
         )?;
 
         if lower_changed {
@@ -1360,14 +1353,13 @@ impl TypeInferenceAnalyzer {
         }
         match (left, right) {
             (Type::Pointer(x), Type::Pointer(y)) => {
-                changed |= Self::process_constraint(constraint, x, y, bounds, debug_markers)?;
+                changed |= Self::process_constraint(constraint, x, y, bounds)?;
             }
             (x, Type::Pointer(y)) => {
                 let y_upper = bounds.upper_bound(y).cloned().unwrap_or(*y.clone());
                 let new_upper = Type::Pointer(Box::new(y_upper));
                 if new_upper.is_strict_subtype_of(&left_upper) {
-                    changed |=
-                        Self::process_constraint(constraint, x, &new_upper, bounds, debug_markers)?;
+                    changed |= Self::process_constraint(constraint, x, &new_upper, bounds)?;
                 }
             }
             _ => {}
@@ -1391,7 +1383,7 @@ fn create_partial_result(
         .iter()
         .filter_map({
             |(k, v)| match k {
-                Type::TypeVar(var) => Some((*var, v.upper.clone())),
+                Type::SsaVar(var) => Some((*var, v.upper.clone())),
                 _ => None,
             }
         })
@@ -1399,9 +1391,9 @@ fn create_partial_result(
 
     TypeInferenceResult {
         inferred_types,
+        traces: bounds.traces.clone(),
         #[cfg(test)]
         debug_markers: debug_markers.clone(),
-        traces: bounds.traces.clone(),
     }
 }
 
@@ -1427,7 +1419,7 @@ fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
                 init_bounds_for_type(ret, bounds);
             }
         }
-        Type::TypeVar(_) => {}
+        Type::SsaVar(_) => {}
         Type::Any => {}
     }
 }
@@ -1450,10 +1442,8 @@ pub fn lub(a: &Type, b: &Type) -> Option<Type> {
 /// If one is a subtype of the other, returns the subtype.
 /// Returns None if they are incompatible or unrelated.
 pub fn glb(a: &Type, b: &Type) -> Option<Type> {
-    if a == b {
+    if a == b || a.is_subtype_of(b) {
         Some(a.clone())
-    } else if a.is_subtype_of(b) {
-        Some(a.clone()) // a is the subtype (more specific)
     } else if b.is_subtype_of(a) {
         Some(b.clone()) // b is the subtype (more specific)
     } else {
@@ -1915,7 +1905,7 @@ f1:
             .get_ssa_result()
             .unwrap()
             .find_ssa_var_by_marker(marker);
-        let typ = Type::TypeVar(ssa_var);
+        let typ = Type::SsaVar(ssa_var);
         println!(
             "Trace history for {}:\n{}\nType inference completed successfully",
             marker,

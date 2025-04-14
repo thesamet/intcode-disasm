@@ -4,7 +4,7 @@ use super::{
     control_flow::Block,
     data_flow::DataFlowResult,
     dispatching::{EventCollector, EventPublisher},
-    events::{Event, ImageAddedEvent, ImageScannerComplete},
+    events::{Event, ImageAdded, ImageScannerComplete},
     id_types::define_id_type,
     listeners::{
         function_call_analyzer::FunctionCallAnalysis, image_scanner::ImageScannerResult,
@@ -48,7 +48,7 @@ impl ProgramModel {
 
     pub fn load_image(&mut self, image: &[i128], sender: &mut EventPublisher<Event, Self>) {
         self.image = image.to_vec();
-        sender.publish(ImageAddedEvent {});
+        sender.publish(ImageAdded {});
     }
 
     pub fn get_image(&self) -> &Vec<i128> {

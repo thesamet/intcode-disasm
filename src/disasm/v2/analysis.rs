@@ -72,11 +72,6 @@ mod tests {
         // side effects in its current state (doesn't call process_events),
         // the primary test is that it completes without panicking.
         run_analysis(sample_image);
-
-        // No assertions possible here without modifying `run_analysis` to return
-        // the model state or having listeners with verifiable side effects
-        // after calling `publisher.process_events()`.
-        assert!(true, "run_analysis completed without panic");
     }
 
     // Add more specific tests here as the functionality evolves.

@@ -45,10 +45,8 @@ pub struct ControlFlowGraphBuilder {}
  *
  * 3.  **Determines Control Flow Links:** For each created block, it analyzes the *last* instruction
  *     to determine how control flow exits:
- *     *   **Conditional Jump:** Sets `NextKind::Condition`, linking to both the target block (if jump taken)
- *       and the fallthrough block (if jump not taken).
- *     *   **Unconditional Jump:** Sets `NextKind::Goto`, linking only to the target block. There is *no*
- *       fallthrough from an unconditional jump.
+ *     *   **Conditional Jump:** Sets `NextKind::Condition`, linking to both the target block (if jump taken) and the fallthrough block (if jump not taken).
+ *     *   **Unconditional Jump:** Sets `NextKind::Goto`, linking only to the target block. There is *no* fallthrough from an unconditional jump.
  *     *   **Function Call:** Sets `NextKind::FunctionCall`, storing call details and linking to the return block.
  *     *   **Return Sequence:** Sets `NextKind::Return` if the block ends with the canonical `goto [R]`.
  *     *   **Halt:** Sets `NextKind::Halt`.

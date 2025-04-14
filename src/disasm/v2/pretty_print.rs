@@ -10,16 +10,16 @@ use super::{
 
 struct PrettyPrinter<'a> {
     model: &'a ProgramModel,
-    show_type_vars: bool,
+    show_types: bool,
 }
 
 impl<'a> PrettyPrinter<'a> {
     fn format_ssa_var(&self, var: &SsaVar) -> String {
         let typ = if let Some(type_info) = self.model.get_type_inference_result() {
-            if self.show_type_vars {
+            if self.show_types {
                 type_info.get_type_for_ssavar(var)
             } else {
-                type_info.get_type_for_ssavar(var)
+                None
             }
         } else {
             None
@@ -209,12 +209,11 @@ impl<'a> PrettyPrinter<'a> {
                             .join(", "),
                     )
                 }
-                Some(return_values) if return_values.len() == 1 => {
-                    return_values
-                            .iter()
-                            .map(|v| self.format_ssa_var(v))
-                            .join(", ").to_string()
-                }
+                Some(return_values) if return_values.len() == 1 => return_values
+                    .iter()
+                    .map(|v| self.format_ssa_var(v))
+                    .join(", ")
+                    .to_string(),
                 Some(_) => "void".to_string().red().to_string(),
                 None => "unknown".to_string(),
             };
@@ -287,7 +286,7 @@ impl<'a> PrettyPrinter<'a> {
 pub fn pretty_print_ssa(model: &ProgramModel) {
     let printer = PrettyPrinter {
         model,
-        show_type_vars: false,
+        show_types: false,
     };
     printer.print_ssa();
 }
@@ -296,7 +295,7 @@ pub fn pretty_print_ssa(model: &ProgramModel) {
 pub fn pretty_print_type_vars(model: &ProgramModel) {
     let printer = PrettyPrinter {
         model,
-        show_type_vars: true,
+        show_types: true,
     };
     printer.print_ssa();
 }

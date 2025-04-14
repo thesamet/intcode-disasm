@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use itertools::Itertools;
 
 use crate::disasm::v2::{
-    events::{self, ImageAddedEvent, ModelEventListener},
+    events::{self, ImageAdded, ModelEventListener},
     instructions::{Instruction, Opcode, Operand, ParseError},
     model::ProgramModel,
     Span,
@@ -48,10 +48,10 @@ pub struct BaseFunctionCall {
 It finds all function spans and all locations for which there is a direct
 jump to and from */
 impl ModelEventListener for ImageScanner {
-    fn on_image_added_event<'a>(
+    fn on_image_added(
         &mut self,
         model: &mut ProgramModel,
-        _event: ImageAddedEvent,
+        _event: ImageAdded,
         sender: &mut events::Sender,
     ) {
         let mut i = 0;

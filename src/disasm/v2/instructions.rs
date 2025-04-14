@@ -1,4 +1,4 @@
-#[deny(unused_attributes)]
+#![deny(unused_attributes)]
 use core::fmt;
 use itertools::Itertools;
 use thiserror::Error;
@@ -70,16 +70,9 @@ impl fmt::Display for OperandKind {
         match self {
             OperandKind::Memory(addr) => write!(f, "[{}]", addr),
             OperandKind::Immediate(val) => write!(f, "{}", val),
-            OperandKind::RelativeMemory(offset) => {
-                if *offset == 0 {
-                    write!(f, "[R]")
-                } else if *offset > 0 {
-                    write!(f, "[R+{}]", offset)
-                } else {
-                    // Handles negative offsets, e.g., [R-50]
-                    write!(f, "[R{}]", offset)
-                }
-            }
+            OperandKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
+            OperandKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{}]", offset),
+            OperandKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
             OperandKind::Deref(offset) => write!(f, "[[{}]]", offset),
         }
     }
@@ -556,9 +549,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         read_positions
             .iter()
             .filter_map(|&pos| {
-                let Some(op) = self.kind.operand_at(pos) else {
-                    return None;
-                };
+                let op = self.kind.operand_at(pos)?;
 
                 // Only include memory locations, not immediate values
                 if matches!(
