@@ -12,7 +12,7 @@ mod type_inference_tests {
             ssa_converter::SsaConverter,
         },
         model::{FunctionId, ProgramModel},
-        pretty_print::{pretty_print_ssa, pretty_print_type_vars},
+        pretty_print::{pretty_print_ssa, pretty_print_with_types},
         ssa_form::SsaVar,
     };
 
@@ -602,7 +602,7 @@ f1:
                 goto [R]
             "#,
         );
-        pretty_print_type_vars(&ctx.model);
+        pretty_print_with_types(&ctx.model);
         assert_marker_type!(ctx, 'd', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Char);
         assert_marker_type!(ctx, 'a', Type::Char);

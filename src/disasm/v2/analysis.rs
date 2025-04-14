@@ -8,7 +8,7 @@ use super::{
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
         ssa_converter::SsaConverter,
     },
-    pretty_print::pretty_print_ssa,
+    pretty_print::{pretty_print_ssa, pretty_print_with_types},
     type_inference::TypeInferenceAnalyzer,
 };
 
@@ -24,7 +24,7 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     model.load_image(&image, &mut publisher);
     publisher.process_events(&mut model);
-    pretty_print_ssa(&model);
+    pretty_print_with_types(&model);
 }
 
 pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {
