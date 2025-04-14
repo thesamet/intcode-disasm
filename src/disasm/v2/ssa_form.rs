@@ -325,12 +325,6 @@ impl<'a> SSAConversionState<'a> {
 
         self.compute_start_end_states(&self.model, &mut ssa_blocks);
 
-        // Collect end states before mutable iteration to avoid borrow checker issues
-        let all_end_states: HashMap<_, _> = ssa_blocks
-            .iter()
-            .map(|(id, block)| (*id, block.end_state.clone()))
-            .collect();
-
         // Step 5: Populate Phi function inputs using PredecessorKind
         self.populate_phis(self.model, &mut ssa_blocks);
 
@@ -496,7 +490,7 @@ impl<'a> SSAConversionState<'a> {
                             .return_values_accessed
                             .keys() // Get iterator of keys (&i128)
                             .cloned() // Get iterator of values (i128)
-                            .map(OperandKind::relative_memory) // Convert to OperandKind
+                            .map(OperandKind::RelativeMemory) // Convert to OperandKind
                             .collect_vec() // Collect into Vec<OperandKind>
                     })
                     .unwrap()
@@ -582,11 +576,7 @@ impl<'a> SSAConversionState<'a> {
     }
 
     // New function to populate phi inputs
-    fn populate_phis(
-        &self,
-        model: &ProgramModel,
-        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
-    ) {
+    fn populate_phis(&self, model: &ProgramModel, ssa_blocks: &mut HashMap<BlockId, SsaBlock>) {
         // Collect end states before mutable iteration to avoid borrow checker issues
         let all_end_states: HashMap<_, _> = ssa_blocks
             .iter()
@@ -778,34 +768,6 @@ mod tests {
     fn memory_operand(offset: usize) -> Operand {
         Operand {
             kind: OperandKind::Memory(offset as i128),
-            offset: 0,
-            debug_marker: None,
-        }
-    }
-
-    fn ssavar_from_memory(offset: usize, version: usize, function_id: FunctionId) -> SsaVar {
-        SsaVar::new(memory_operand(offset), version, function_id)
-    }
-
-    fn relative_memory_operand(offset: i128) -> Operand {
-        Operand {
-            kind: OperandKind::RelativeMemory(offset),
-            offset: 0,
-            debug_marker: None,
-        }
-    }
-
-    fn immediate_operand(value: i128) -> Operand {
-        Operand {
-            kind: OperandKind::Immediate(value),
-            offset: 0,
-            debug_marker: None,
-        }
-    }
-
-    fn deref_operand(offset: usize) -> Operand {
-        Operand {
-            kind: OperandKind::Deref(offset),
             offset: 0,
             debug_marker: None,
         }

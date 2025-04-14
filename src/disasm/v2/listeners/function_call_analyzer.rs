@@ -31,9 +31,6 @@ impl FunctionCallAnalysis {
 /// Information about a function when it's being called (Callee's perspective).
 #[derive(Debug, Clone)]
 pub struct CalleeInfo {
-    pub function_id: FunctionId,
-    pub entry_block: BlockId, // BlockId where the function code starts.
-
     /// Parameters expected by this function.
     /// Maps the parameter offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *first read* of that parameter,
@@ -48,6 +45,7 @@ pub struct CalleeInfo {
 
 /// Information about a specific location where a function call occurs (Caller's perspective).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CallSiteInfo {
     pub calling_block_id: BlockId, // Block containing the call instruction.
     pub calling_function_id: FunctionId, // Function containing the call.
@@ -203,8 +201,6 @@ impl FunctionCallAnalyzer {
             analysis.callee_info.insert(
                 function_id,
                 CalleeInfo {
-                    function_id,
-                    entry_block: entry_block_id,
                     parameter_entry_vars, // Renamed from parameter_reads
                     return_writes,
                 },

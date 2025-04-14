@@ -84,18 +84,14 @@ pub struct BlockDataFlow {
 /// Contains flow data about call sites.
 #[derive(Debug, Clone)]
 pub struct CallSiteInfo {
-    // The function being called. May be indirect.
-    pub function_addr: OperandKind,
-
     // The set of positive offsets `n` identifying return value locations `[R+n]`
     // that are read by subsequent blocks having access to the function's return state.
     pub return_values_accessed: HashMap<i128, InstructionId>,
 }
 
 impl CallSiteInfo {
-    pub fn new(function_addr: OperandKind) -> Self {
+    pub fn new() -> Self {
         CallSiteInfo {
-            function_addr,
             return_values_accessed: HashMap::new(),
         }
     }

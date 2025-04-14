@@ -106,9 +106,6 @@ pub enum TypeInferenceError {
         var_type: Type,
         constraint: Constraint,
     },
-
-    #[error("Type unification error: {0}")]
-    Other(String),
 }
 
 /// Represents a type in the type system
@@ -120,7 +117,6 @@ pub enum Type {
     Char,
     Pointer(Box<Type>),
     Function { args: Vec<Type>, returns: Vec<Type> },
-    String,
     TypeVar(SsaVar),
     Truthy, // a marker type for truthy types
     Any,
@@ -197,7 +193,6 @@ impl Type {
                 .chain(returns.iter())
                 .flat_map(|x| x.get_typevars())
                 .collect(),
-            Type::String => vec![],
             Type::Truthy => vec![],
             Type::Conflict => vec![],
         }
@@ -215,7 +210,6 @@ fn is_concrete_type(typ: &Type) -> bool {
             args.iter().all(is_concrete_type) && returns.iter().all(is_concrete_type)
         }
         Type::Pointer(p) => is_concrete_type(p),
-        Type::String => true,
         Type::Truthy => false,
         Type::TypeVar(_) => false,
         Type::Conflict => false,
@@ -255,7 +249,6 @@ impl fmt::Display for Type {
                 }
                 Ok(())
             }
-            Type::String => write!(f, "string"),
             Type::TypeVar(t) => write!(f, "{}", t),
             Type::Conflict => write!(f, "CONFLICT"),
         }
@@ -311,8 +304,6 @@ pub enum ConstraintReason {
     /// Indirect function calls imply function pointer type
     IndirectFunctionCall,
     ImmediateIsSubtypeOfInt,
-    /// Internal reason for reconciliation during unification
-    Reconciliation,
 }
 
 impl fmt::Display for ConstraintReason {
@@ -376,21 +367,15 @@ impl fmt::Display for Constraint {
 pub struct TypeInferenceAnalyzer {
     /// List of constraints to solve
     constraints: Vec<Constraint>,
-
-    /// Map from SSA variables to their types
-    type_vars: HashMap<SsaVar, Type>,
-
     /// Debug markers for variables
     #[allow(unused)]
     debug_markers: HashMap<char, SsaVar>,
-
-    /// Next available type variable ID
-    next_type_var_id: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     inferred_types: HashMap<SsaVar, Type>,
+    #[cfg(test)]
     debug_markers: HashMap<char, SsaVar>,
     pub traces: Vec<AnalysisTrace>,
 }
@@ -569,12 +554,8 @@ impl TypeBoundsMap {
         self.bounds.get(key).map(|b| &b.lower)
     }
 
-    fn type_bound(&self, key: &Type) -> Option<&TypeBounds> {
-        self.bounds.get(key)
-    }
-
     fn insert_key(&mut self, key: Type, lower: Type, upper: Type) {
-        self.bounds.insert(key, TypeBounds { lower, upper });
+        self.bounds.insert(key, TypeBounds::new(lower, upper));
     }
 
     fn update_bound(
@@ -752,9 +733,7 @@ impl TypeInferenceAnalyzer {
     pub fn new() -> Self {
         Self {
             constraints: Vec::new(),
-            type_vars: HashMap::new(),
             debug_markers: HashMap::new(),
-            next_type_var_id: 0,
         }
     }
 
@@ -1180,7 +1159,11 @@ impl TypeInferenceAnalyzer {
             break;
         }
 
-        let result = create_partial_result(&bounds, &self.debug_markers);
+        let result = create_partial_result(
+            &bounds,
+            #[cfg(test)]
+            &self.debug_markers,
+        );
         Ok(result)
     }
 
@@ -1279,7 +1262,7 @@ impl TypeInferenceAnalyzer {
         new_bound: Option<Type>,
         bound_type: BoundType,
         bounds: &mut TypeBoundsMap,
-        debug_markers: &HashMap<char, SsaVar>,
+        #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
     ) -> Result<(bool, Type), TypeInferenceError> {
         match new_bound {
             Some(bound) => Ok((bound != *current_bound, bound)),
@@ -1298,7 +1281,11 @@ impl TypeInferenceAnalyzer {
                             right: constraint.right.clone(),
                             var_type: type_var.clone(),
                             constraint: constraint.clone(),
-                            partial_result: create_partial_result(bounds, debug_markers),
+                            partial_result: create_partial_result(
+                                bounds,
+                                #[cfg(test)]
+                                debug_markers,
+                            ),
                         });
                     } else {
                         return Err(TypeInferenceError::BoundConflict {
@@ -1335,6 +1322,7 @@ impl TypeInferenceAnalyzer {
             glb(&left_upper, &right_upper),
             BoundType::Upper,
             bounds,
+            #[cfg(test)]
             debug_markers,
         )?;
 
@@ -1358,6 +1346,7 @@ impl TypeInferenceAnalyzer {
             lub(&left_lower, &right_lower),
             BoundType::Lower,
             bounds,
+            #[cfg(test)]
             debug_markers,
         )?;
 
@@ -1399,7 +1388,7 @@ impl TypeInferenceAnalyzer {
 /// Create a TypeInferenceResult from the current state of bounds
 fn create_partial_result(
     bounds: &TypeBoundsMap,
-    debug_markers: &HashMap<char, SsaVar>,
+    #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
 ) -> TypeInferenceResult {
     let inferred_types = bounds
         .iter()
@@ -1413,6 +1402,7 @@ fn create_partial_result(
 
     TypeInferenceResult {
         inferred_types,
+        #[cfg(test)]
         debug_markers: debug_markers.clone(),
         traces: bounds.traces.clone(),
     }
@@ -1440,7 +1430,6 @@ fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
                 init_bounds_for_type(ret, bounds);
             }
         }
-        Type::String => {}
         Type::TypeVar(_) => {}
         Type::Any => {}
     }
@@ -1474,28 +1463,6 @@ pub fn glb(a: &Type, b: &Type) -> Option<Type> {
         None
     }
 }
-macro_rules! assert_marker_type {
-    ($ctx:expr, $marker:expr, $expected_type:expr) => {
-        let ssa_var = $ctx
-            .model
-            .get_ssa_result()
-            .unwrap()
-            .find_ssa_var_by_marker($marker);
-
-        let actual_type = $ctx
-            .model
-            .get_type_inference_result()
-            .unwrap()
-            .get_type_for_ssavar(&ssa_var)
-            .expect("No type found for SSA variable");
-
-        assert_eq!(
-            *actual_type, $expected_type,
-            "Marker {} has incorrect type: expected {:?}, actual {:?}",
-            $marker, $expected_type, actual_type
-        );
-    };
-}
 
 #[cfg(test)]
 mod tests {
@@ -1513,6 +1480,29 @@ mod tests {
         },
         model::ProgramModel,
     };
+
+    macro_rules! assert_marker_type {
+        ($ctx:expr, $marker:expr, $expected_type:expr) => {
+            let ssa_var = $ctx
+                .model
+                .get_ssa_result()
+                .unwrap()
+                .find_ssa_var_by_marker($marker);
+
+            let actual_type = $ctx
+                .model
+                .get_type_inference_result()
+                .unwrap()
+                .get_type_for_ssavar(&ssa_var)
+                .expect("No type found for SSA variable");
+
+            assert_eq!(
+                *actual_type, $expected_type,
+                "Marker {} has incorrect type: expected {:?}, actual {:?}",
+                $marker, $expected_type, actual_type
+            );
+        };
+    }
 
     /// TestContext for type inference tests
     struct TestContext {

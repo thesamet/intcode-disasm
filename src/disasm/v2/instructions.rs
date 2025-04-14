@@ -1,3 +1,4 @@
+#[deny(unused_attributes)]
 use core::fmt;
 use itertools::Itertools;
 use thiserror::Error;
@@ -17,25 +18,18 @@ pub enum OperandKind {
 }
 
 impl OperandKind {
-    pub fn memory(value: i128) -> Self {
-        OperandKind::Memory(value)
-    }
-
-    pub fn immediate(value: i128) -> Self {
-        OperandKind::Immediate(value)
-    }
-
-    pub fn relative_memory(offset: i128) -> Self {
-        OperandKind::RelativeMemory(offset)
-    }
-
-    pub fn deref(offset: usize) -> Self {
-        OperandKind::Deref(offset)
-    }
-
+    #[allow(dead_code)]
     pub fn get_memory(&self) -> Option<i128> {
         match self {
             OperandKind::Memory(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get_deref(&self) -> Option<usize> {
+        match self {
+            OperandKind::Deref(offset) => Some(*offset),
             _ => None,
         }
     }
@@ -62,29 +56,12 @@ impl OperandKind {
         matches!(self, OperandKind::RelativeMemory(n) if *n < 0)
     }
 
-    pub fn get_deref(&self) -> Option<usize> {
-        match self {
-            OperandKind::Deref(offset) => Some(*offset),
-            _ => None,
-        }
-    }
-
     /// Returns true if this is a variable operand, not an immediate value
     pub fn is_variable(&self) -> bool {
         !matches!(
             self,
             OperandKind::Immediate(_) | OperandKind::RelativeMemory(0)
         )
-    }
-
-    /// Returns this operand if it's a variable (not an immediate value)
-    /// Used for SSA conversion
-    pub fn as_variable(&self) -> Option<Self> {
-        if self.is_variable() {
-            Some(*self)
-        } else {
-            None
-        }
     }
 }
 
@@ -243,22 +220,6 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    pub fn from_i128(value: i128) -> Result<Opcode, ParseError> {
-        match value {
-            1 => Ok(Opcode::Add),
-            2 => Ok(Opcode::Mul),
-            3 => Ok(Opcode::Input),
-            4 => Ok(Opcode::Output),
-            5 => Ok(Opcode::JumpIfTrue),
-            6 => Ok(Opcode::JumpIfFalse),
-            7 => Ok(Opcode::LessThan),
-            8 => Ok(Opcode::Equals),
-            9 => Ok(Opcode::AdjustRelativeBase),
-            99 => Ok(Opcode::Halt),
-            _ => Err(ParseError::InvalidOpcode(value)),
-        }
-    }
-
     pub fn as_i128(&self) -> i128 {
         match self {
             Opcode::Add => 1,

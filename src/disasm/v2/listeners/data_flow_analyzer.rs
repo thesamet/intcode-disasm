@@ -338,12 +338,12 @@ impl ModelEventListener for DataFlowAnalyzer {
             df_result_for_function
                 .block_results
                 .insert(*block_id, BlockDataFlow::new());
-            if let NextKind::FunctionCall(ref fc) = model.get_block(*block_id).next {
+            if let NextKind::FunctionCall(_) = model.get_block(*block_id).next {
                 df_result_for_function
                     .block_results
                     .get_mut(block_id)
                     .unwrap()
-                    .call_site_info = Some(CallSiteInfo::new(fc.function_addr.kind));
+                    .call_site_info = Some(CallSiteInfo::new());
             }
         }
 
@@ -410,7 +410,7 @@ mod tests {
             dispatching::EventPublisher,
             events::Event,
             // Need to import OperandKind for assertions potentially
-            instructions::{InstructionId, Operand, OperandKind},
+            instructions::{InstructionId, OperandKind},
             listeners::{
                 control_flow_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
             },
@@ -435,29 +435,6 @@ mod tests {
         model.load_image(&binary, &mut publisher);
         publisher.process_events(&mut model);
         model // Return model with CFG and DataFlow results
-    }
-
-    // Helper to create an Operand for assertions (adjust offset as needed)
-    fn mem_op(addr: i128) -> Operand {
-        Operand {
-            kind: OperandKind::Memory(addr),
-            offset: 0, // Offset doesn't affect equality/hash if kind is Memory(v)
-            debug_marker: None,
-        }
-    }
-    fn rel_op(offset: i128) -> Operand {
-        Operand {
-            kind: OperandKind::RelativeMemory(offset),
-            offset: 0, // Offset doesn't affect equality/hash if kind is RelativeMemory(v)
-            debug_marker: None,
-        }
-    }
-    fn imm_op(val: i128) -> Operand {
-        Operand {
-            kind: OperandKind::Immediate(val),
-            offset: 0, // Offset doesn't affect equality/hash if kind is Immediate(v)
-            debug_marker: None,
-        }
     }
 
     // Helper to create an OperandKind for assertions
@@ -743,7 +720,6 @@ mod tests {
                     "#,
         );
 
-        let main_id = FunctionId::from(0);
         let block0_id = BlockId::from(0); // main entry + call setup
         let block21_id = BlockId::from(21); // main return block
         let block25_id = BlockId::from(25); // main actual return sequence
@@ -762,7 +738,6 @@ mod tests {
         );
 
         // --- Check Defs reaching return block (Block 21) ---
-        let callee_addr_op = imm_op(30); // Address of callee for FunctionReturn kind
         let expected_defs_in21: HashSet<_> = [
             // Def A: [100]=50 (@0, i2) - Reaches, assuming [100] is distinct from [R+1],[R+2]
             def(2, mem_kind(100), 0),

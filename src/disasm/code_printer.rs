@@ -1,3 +1,4 @@
+#![deny(unused_attributes)]
 use std::fmt::{Arguments, Write};
 
 #[macro_export]
@@ -7,6 +8,7 @@ macro_rules! line {
     };
 }
 
+#[allow(dead_code)]
 pub trait CodeWriter {
     fn line(&mut self, s: &str);
 
@@ -38,6 +40,7 @@ pub struct CodePrinter {
     out: String,
 }
 
+#[allow(dead_code)]
 impl CodePrinter {
     pub fn new() -> Self {
         CodePrinter { out: String::new() }

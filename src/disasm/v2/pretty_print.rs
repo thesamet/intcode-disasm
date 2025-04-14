@@ -295,6 +295,7 @@ pub fn pretty_print_ssa(model: &ProgramModel) {
     printer.print_ssa();
 }
 
+#[cfg(test)]
 pub fn pretty_print_type_vars(model: &ProgramModel) {
     let printer = PrettyPrinter {
         model,

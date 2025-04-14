@@ -146,18 +146,6 @@ impl ProgramModel {
 
 define_id_type!(BlockId);
 
-define_id_type!(ParameterId);
-#[derive(Debug, Clone)]
-struct Parameter {
-    id: ParameterId,
-}
-
-define_id_type!(ReturnValueId);
-#[derive(Debug, Clone)]
-struct ReturnValue {
-    id: ReturnValueId,
-}
-
 #[derive(Debug, Clone)]
 pub struct Function {
     // Basic structural info (always available)
