@@ -361,6 +361,10 @@ impl ModelEventListener for DataFlowAnalyzer {
                 .filter(|&(n, _)| n > 0)
                 .collect_vec();
             if !return_usage_in_block.is_empty() {
+                println!(
+                    "Block {:?} has return usages: {:?}",
+                    block_id, return_usage_in_block
+                );
                 assert_eq!(br.function_returns_in.len(), 1);
                 let calling_block = br.function_returns_in.iter().next().unwrap().calling_block;
                 let calling_block = df_result_for_function

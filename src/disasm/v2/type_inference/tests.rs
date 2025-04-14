@@ -2,6 +2,7 @@
 mod type_inference_tests {
 
     use crate::disasm::parser;
+    use crate::disasm::v2::pretty_print::pretty_print_with_types;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
@@ -12,7 +13,6 @@ mod type_inference_tests {
             ssa_converter::SsaConverter,
         },
         model::{FunctionId, ProgramModel},
-        pretty_print::{pretty_print_ssa, pretty_print_with_types},
         ssa_form::SsaVar,
     };
 
@@ -514,7 +514,7 @@ f1:
 
         "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_with_types(&ctx.model);
         ctx.assert_type(1, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int);
         ctx.print_traces_for_marker('b');
@@ -578,7 +578,7 @@ f1:
                     halt
                 "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_with_types(&ctx.model);
         assert_marker_type!(ctx, 'a', function_pointer(vec![], vec![]));
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
@@ -639,7 +639,7 @@ f1:
                 goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_with_types(&ctx.model);
         assert_marker_type!(ctx, 'a', Type::Char);
         ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Int);
@@ -661,7 +661,7 @@ f1:
                 halt
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_with_types(&ctx.model);
 
         assert_marker_type!(ctx, 'a', function_pointer(vec![], vec![]));
     }
@@ -688,7 +688,7 @@ f1:
                 goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_with_types(&ctx.model);
 
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
@@ -721,7 +721,7 @@ f1:
                 goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_with_types(&ctx.model);
 
         /*
         ctx.print_traces_for_marker('a');
@@ -735,5 +735,40 @@ f1:
         // [R-4] <: [R+1]
         // [R-4] <: Pointer(Char)
         // [R+1] <: Truthy
+    }
+
+    #[test]
+    #[ignore]
+    fn test_type_decuction_in_equality() {
+        let ctx = TestContext::new(
+            r#"
+                R += 1000         ; 0
+                ppi = 350
+                [R-1] = *ppi
+                ppi2 = [R-1]
+                [1300] = *ppi2 * 19
+                [R+1] = ppi
+                [R] = @ret        ; 2
+                goto @takes_ptr   ; 6
+            ret:
+                [R-2] = [R+1] == 15
+                halt
+
+            takes_ptr:
+                R += 2
+                'y foo = [R-1]
+                [R-1] = 'x *foo == 0
+                R -= 2
+                goto [R]
+                "#,
+        );
+        pretty_print_with_types(&ctx.model);
+        ctx.print_traces_for_marker('x');
+        ctx.print_traces_for_marker('y');
+        assert_marker_type!(
+            ctx,
+            'x',
+            Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Int))))
+        );
     }
 }
