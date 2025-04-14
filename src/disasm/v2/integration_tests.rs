@@ -68,7 +68,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddImpliesInt,
+            ConstraintReason::AddSecondParameterImpliesInt,
         );
 
         type_inference.add_constraint(
@@ -179,7 +179,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddImpliesInt,
+            ConstraintReason::AddSecondParameterImpliesInt,
         );
 
         // ptr_var is a pointer to int_var

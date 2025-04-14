@@ -266,7 +266,11 @@ impl fmt::Display for Type {
 #[derive(Debug, Clone, Copy, PartialEq, Ord, PartialOrd, Eq)]
 pub enum ConstraintReason {
     /// Addition operations imply integer types
-    AddImpliesInt,
+    AddSecondParameterImpliesInt,
+
+    // The addition is either numeric or pointer addition. The destination is a more
+    // generic type that can contain the type of the first parameter.
+    AddFirstParameterSubtypeOfDestination,
 
     /// Multiplication operations imply integer types
     MulImpliesInt,
@@ -875,15 +879,28 @@ impl TypeInferenceAnalyzer {
                     ConstraintReason::Assignment,
                 );
             }
-            InstructionKind::Add(src1, src2, dst) | InstructionKind::Mul(src1, src2, dst) => {
+            InstructionKind::Add(src1, src2, dst) => {
+                let src1_type = self.type_for_ssavar(src1);
+                let src2_type = self.type_for_ssavar(src2);
+                let dst_type = self.type_for_ssavar(dst);
+                let reason = ConstraintReason::AddSecondParameterImpliesInt;
+
+                self.add_constraint(src1_type.clone(), Type::Int, instr_id, function_id, reason);
+                self.add_constraint(src2_type, Type::Int, instr_id, function_id, reason);
+                self.add_constraint(
+                    src1_type,
+                    dst_type,
+                    instr_id,
+                    function_id,
+                    ConstraintReason::AddFirstParameterSubtypeOfDestination,
+                );
+            }
+            InstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
                 let src1_type = self.type_for_ssavar(src1);
                 let src2_type = self.type_for_ssavar(src2);
                 let dst_type = self.type_for_ssavar(dst);
-                let reason = match instruction.kind {
-                    InstructionKind::Add(_, _, _) => ConstraintReason::AddImpliesInt,
-                    _ => ConstraintReason::MulImpliesInt,
-                };
+                let reason = ConstraintReason::MulImpliesInt;
 
                 self.add_constraint(dst_type, Type::Int, instr_id, function_id, reason);
                 self.add_constraint(src1_type, Type::Int, instr_id, function_id, reason);
@@ -988,7 +1005,7 @@ impl TypeInferenceAnalyzer {
                     Type::Int,
                     instr_id,
                     function_id,
-                    ConstraintReason::AddImpliesInt, // Re-use reason? Or new one?
+                    ConstraintReason::ImmediateIsSubtypeOfInt, // Re-use reason? Or new one?
                 );
             }
             InstructionKind::Halt => { /* No operands */ }
@@ -1612,7 +1629,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddImpliesInt,
+            ConstraintReason::AddSecondParameterImpliesInt,
         );
 
         type_inference.add_constraint(
@@ -1725,7 +1742,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddImpliesInt,
+            ConstraintReason::AddSecondParameterImpliesInt,
         );
 
         // ptr_var is a pointer to int_var
@@ -1851,7 +1868,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddImpliesInt,
+            ConstraintReason::AddSecondParameterImpliesInt,
         );
 
         // Then, constrain it to Char from I/O - this should refine the type
