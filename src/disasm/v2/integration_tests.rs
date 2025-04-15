@@ -15,6 +15,14 @@ mod tests {
 
     use super::*;
 
+    fn init() {
+        use std::io::Write;
+        let _ = env_logger::builder()
+            .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
+            .is_test(true)
+            .try_init();
+    }
+
     fn memory_operand(offset: usize) -> Operand {
         Operand {
             kind: OperandKind::Memory(offset as i128),
@@ -50,7 +58,7 @@ mod tests {
     /// Simplified test for type inference using direct API calls
     #[test]
     fn test_type_inference_basics() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        init();
         let model = ProgramModel::new();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -125,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_function_pointer_types() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        init();
         let model = ProgramModel::new();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -169,13 +177,8 @@ mod tests {
         );
     }
 
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
-    }
-
     #[test]
     fn test_pointer_types() {
-        let _ = env_logger::builder().is_test(true).try_init();
         init();
         let mut type_inference = TypeInferenceAnalyzer::new();
 

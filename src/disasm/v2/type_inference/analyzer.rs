@@ -1,3 +1,5 @@
+use std::{borrow::BorrowMut, sync::atomic::AtomicUsize};
+
 use log::{debug, info};
 
 use crate::disasm::v2::{
@@ -20,7 +22,6 @@ use super::{
 pub struct TypeInferenceAnalyzer {
     /// List of constraints to solve
     constraints: Vec<Constraint>,
-    next_var_id: usize,
 
     /// Debug markers for variables
     #[cfg(test)]
@@ -32,16 +33,9 @@ impl TypeInferenceAnalyzer {
     pub fn new() -> Self {
         Self {
             constraints: Vec::new(),
-            next_var_id: 0,
             #[cfg(test)]
             debug_markers: std::collections::HashMap::new(),
         }
-    }
-
-    fn new_var(&mut self) -> Type {
-        let var = Type::Variable(self.next_var_id);
-        self.next_var_id += 1;
-        var
     }
 
     pub fn type_for_ssavar(&self, var: &SsaVar) -> Type {
@@ -323,13 +317,6 @@ impl TypeInferenceAnalyzer {
         });
     }
 
-    fn new_function_pointer(&mut self) -> Type {
-        Type::Pointer(Box::new(Type::Function {
-            args: Box::new(self.new_var()),
-            returns: Box::new(self.new_var()),
-        }))
-    }
-
     /// Generate constraints for control flow transitions
     fn generate_constraints_for_next(
         &mut self,
@@ -390,7 +377,7 @@ impl TypeInferenceAnalyzer {
                     }
                 } else {
                     let fn_type = self.type_for_ssavar(&call.function_addr);
-                    let new_fp = self.new_function_pointer();
+                    let new_fp = Type::new_function_pointer();
                     self.add_constraint(
                         fn_type,
                         new_fp,

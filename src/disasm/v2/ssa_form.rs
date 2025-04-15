@@ -745,7 +745,6 @@ mod tests {
 
     impl TestContext {
         fn new(assembly: &str) -> Self {
-            let _ = env_logger::builder().is_test(true).try_init();
             let model = setup_analyzed_model(assembly);
 
             // Extract the main function (always at ID 0)

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, sync::atomic::AtomicUsize};
 
 use itertools::Itertools;
 
@@ -20,6 +20,8 @@ pub enum Type {
     Any,
     Conflict, // Represents a type that was conflicted, but hopefully it will not be needed.
 }
+
+static NEXT_VAR_ID: AtomicUsize = AtomicUsize::new(1);
 
 impl Type {
     /// Returns true if this type is a subtype of the other type.
@@ -49,26 +51,7 @@ impl Type {
                     args: args2,
                     returns: returns2,
                 },
-            ) => {
-                /*
-                if args1.len() != args2.len() || returns1.len() != returns2.len() {
-                    return false;
-                }
-                // Check args (contravariant): arg2 must be subtype of arg1
-                let args_compatible = args1
-                    .iter()
-                    .zip(args2.iter())
-                    .all(|(a1, a2)| a2.is_subtype_of(a1));
-                // Check returns (covariant): return1 must be subtype of return2
-                let returns_compatible = returns1
-                    .iter()
-                    .zip(returns2.iter())
-                    .all(|(r1, r2)| r1.is_subtype_of(r2));
-
-                args_compatible && returns_compatible
-                */
-                true
-            }
+            ) => args2.is_subtype_of(args1),
             (Type::Function { .. }, Type::Int) => true,
             _ => false,
         }
@@ -80,14 +63,14 @@ impl Type {
 
     fn get_types_recursive(&self) -> Vec<Type> {
         match self {
-            Type::SsaVar(var) => vec![Type::SsaVar(*var)],
+            Type::SsaVar(_) => vec![self.clone()],
             Type::Any => vec![],
             Type::Nothing => vec![],
             Type::Int => vec![],
             Type::Bool => vec![],
             Type::Char => vec![],
             Type::Pointer(x) => x.get_types_recursive(),
-            Type::Variable(_) => vec![],
+            Type::Variable(_) => vec![self.clone()],
             Type::Tuple(x) => x.iter().flat_map(|x| x.get_types_recursive()).collect(),
             Type::Function { args, returns } => args
                 .get_types_recursive()
@@ -101,6 +84,41 @@ impl Type {
 
     pub fn is_var_free(&self) -> bool {
         self.get_types_recursive().is_empty()
+    }
+
+    pub fn new_var() -> Type {
+        let id = NEXT_VAR_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Type::Variable(id)
+    }
+
+    pub fn new_function_pointer() -> Type {
+        Type::Pointer(Box::new(Type::Function {
+            args: Box::new(Type::new_var()),
+            returns: Box::new(Type::new_var()),
+        }))
+    }
+
+    pub fn is_function_pointer(typ: &Type) -> bool {
+        match typ {
+            Type::Pointer(p) => {
+                let Type::Function { .. } = p.as_ref() else {
+                    return false;
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn extract_function_from_pointer(typ: &Type) -> Option<(&Type, &Type)> {
+        // if !is_func
+        match typ {
+            Type::Pointer(p) => match p.as_ref() {
+                Type::Function { args, returns } => Some((args, returns)),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 }
 
