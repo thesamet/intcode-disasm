@@ -53,6 +53,8 @@ pub enum ConstraintReason {
     /// Indirect function calls imply function pointer type
     IndirectFunctionCall,
     ImmediateIsSubtypeOfInt,
+    PointerSubtype,
+    FunctionTypeParameter,
 }
 
 impl fmt::Display for ConstraintReason {

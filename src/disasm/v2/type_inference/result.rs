@@ -8,7 +8,6 @@ use super::types::Type;
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub inferred_types: HashMap<SsaVar, Type>,
-    #[cfg(test)]
     pub debug_markers: HashMap<char, SsaVar>,
     pub traces: Vec<AnalysisTrace>,
 }

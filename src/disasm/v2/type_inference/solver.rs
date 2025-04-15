@@ -280,7 +280,7 @@ impl fmt::Display for AnalysisTrace {
 pub fn unify(
     model: &ProgramModel,
     constraints: &[Constraint],
-    #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaVar>,
 ) -> Result<TypeInferenceResult, TypeInferenceError> {
     let constraints = constraints.to_vec();
     let mut bounds = TypeBoundsMap::new();
@@ -294,46 +294,55 @@ pub fn unify(
     }
 
     loop {
-        while reach_constraint_fixed_point(&constraints, &mut bounds)? {}
+        while reach_constraint_fixed_point(&constraints, &mut bounds, debug_markers)? {}
         /*
         if refine_function_pointers(model, &mut bounds)? {
             continue;
         }
         */
         if refine_concrete_types(&mut bounds)? {
+            trace!("Refined concrete types changed");
             continue;
         }
         if replace_truthy_with_bool(&mut bounds)? {
+            trace!("Replaced truthy with bool changed");
             continue;
         }
         break;
     }
+    for b in bounds.iter() {
+        trace!("{:?}", b);
+    }
 
-    let result = create_partial_result(
-        &bounds,
-        #[cfg(test)]
-        debug_markers,
-    );
+    let result = create_partial_result(&bounds, debug_markers);
     Ok(result)
 }
 
 fn reach_constraint_fixed_point(
     constraints: &[Constraint],
     bounds: &mut TypeBoundsMap,
+    debug_markers: &HashMap<char, SsaVar>,
 ) -> Result<bool, TypeInferenceError> {
     let mut overall_changed = false;
     loop {
-        let mut changed = false;
+        let mut changed_in_iteration = false;
         let mut worklist = constraints.to_vec(); // Clone constraints into a worklist
         while let Some(c) = worklist.pop() {
-            changed |= process_constraint(&c, &c.left, &c.right, bounds)?;
+            let (changed, constraints) =
+                process_constraint(&c, &c.left, &c.right, bounds, debug_markers)?;
+            changed_in_iteration |= changed;
+            overall_changed |= changed_in_iteration;
+            worklist.extend(constraints);
         }
-        overall_changed |= changed;
-        if !changed {
-            break;
+        trace!(
+            "changed_in_iteration: {} changed_overall: {}",
+            changed_in_iteration,
+            overall_changed
+        );
+        if !changed_in_iteration {
+            return Ok(overall_changed);
         }
     }
-    Ok(overall_changed)
 }
 
 fn refine_function_pointers(
@@ -461,22 +470,21 @@ fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInfe
 }
 
 /// Helper function for handling bound conflicts uniformly
-fn handle_bound_conflict(
+fn ok_or_bound_conflict(
     constraint: &Constraint,
     type_var: &Type,
-    current_bound: &Type,
     new_bound: Option<Type>,
     bound_type: BoundType,
     bounds: &mut TypeBoundsMap,
-    #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
-) -> Result<(bool, Type), TypeInferenceError> {
+    debug_markers: &HashMap<char, SsaVar>,
+) -> Result<Type, TypeInferenceError> {
     match new_bound {
-        Some(bound) => Ok((bound != *current_bound, bound)),
+        Some(bound) => Ok(bound),
         None => {
             if constraint.reason == ConstraintReason::PhiAssignment {
                 // Phi assignments may not be a live variable. For now,
                 // return a "Conflict" type and not fail the unification.
-                Ok((false, Type::Conflict))
+                Ok(Type::Conflict)
             } else {
                 // Extract SSA var from the type if possible for better error reporting
                 if let Type::Variable(VariableKind::SsaVar(ssa_var)) = type_var {
@@ -487,11 +495,7 @@ fn handle_bound_conflict(
                         right: constraint.right.clone(),
                         var_type: type_var.clone(),
                         constraint: constraint.clone(),
-                        partial_result: Box::new(create_partial_result(
-                            bounds,
-                            #[cfg(test)]
-                            debug_markers,
-                        )),
+                        partial_result: Box::new(create_partial_result(bounds, debug_markers)),
                     })
                 } else {
                     Err(TypeInferenceError::BoundConflict {
@@ -512,87 +516,103 @@ fn process_constraint(
     left: &Type,
     right: &Type,
     bounds: &mut TypeBoundsMap,
-) -> Result<bool, TypeInferenceError> {
-    let mut changed = false;
-    let left_upper = bounds.upper_bound(left).cloned().unwrap_or(left.clone());
-    let left_lower = bounds.lower_bound(left).cloned().unwrap_or(left.clone());
-    let right_upper = bounds.upper_bound(right).cloned().unwrap_or(right.clone());
-    let right_lower = bounds.lower_bound(right).cloned().unwrap_or(right.clone());
+    debug_markers: &HashMap<char, SsaVar>,
+) -> Result<(bool, Vec<Constraint>), TypeInferenceError> {
     trace!("Processing constraint: {}", constraint);
-
-    // Handle upper bound
-    trace!(
-        "glb({}, {}) = {:?}",
-        left_upper,
-        right_upper,
-        glb(&left_upper, &right_upper)
-    );
-    let (upper_changed, new_left_upper) = handle_bound_conflict(
+    let mut result = vec![];
+    let left_lower = bounds.lower_bound(left).cloned().unwrap_or(left.clone());
+    let left_upper = bounds.upper_bound(left).cloned().unwrap_or(left.clone());
+    let right_lower = bounds.lower_bound(right).cloned().unwrap_or(right.clone());
+    let right_upper = bounds.upper_bound(right).cloned().unwrap_or(right.clone());
+    let left_new_upper = glb(&left_upper, &right_upper);
+    let right_new_lower = lub(&left_lower, &right_lower);
+    let left_new_upper = ok_or_bound_conflict(
         constraint,
         left,
-        &left_upper,
-        glb(&left_upper, &right_upper),
+        left_new_upper,
         BoundType::Upper,
         bounds,
-        #[cfg(test)]
-        &HashMap::new(), // Pass empty map for now, fix later if needed
+        debug_markers,
     )?;
-
-    if upper_changed {
-        bounds.register_new_upper(
-            left.clone(),
-            new_left_upper,
-            ChangeReason::DecreaseUpperBoundFromConstraint {
-                constraint: constraint.clone(),
-                other: right.clone(),
-            },
-        );
-        changed = true;
-    }
-    trace!(
-        "lub({}, {}) = {:?}",
-        left_lower,
-        right_lower,
-        lub(&left_lower, &right_lower)
-    );
-
-    // Handle lower bound
-    let (lower_changed, new_right_lower) = handle_bound_conflict(
+    let right_new_lower = ok_or_bound_conflict(
         constraint,
         right,
-        &right_lower,
-        lub(&left_lower, &right_lower),
+        right_new_lower,
         BoundType::Lower,
         bounds,
-        #[cfg(test)]
-        &HashMap::new(), // Pass empty map for now, fix later if needed
+        debug_markers,
     )?;
-
-    if lower_changed {
+    let mut changed = false;
+    if right_new_lower != right_lower {
         bounds.register_new_lower(
             right.clone(),
-            new_right_lower,
-            ChangeReason::IncreaseLowerBoundFromConstraint {
+            right_new_lower.clone(),
+            ChangeReason::DecreaseUpperBoundFromConstraint {
                 constraint: constraint.clone(),
                 other: left.clone(),
             },
         );
+        trace!(
+            "Changed upper bound of {} from {} to {}",
+            right,
+            right_lower,
+            right_new_lower
+        );
         changed = true;
     }
+    if left_new_upper != left_upper {
+        bounds.register_new_upper(
+            left.clone(),
+            left_new_upper.clone(),
+            ChangeReason::IncreaseLowerBoundFromConstraint {
+                constraint: constraint.clone(),
+                other: right.clone(),
+            },
+        );
+        trace!(
+            "Changed lower bound of {} from {} to {}",
+            left,
+            left_upper,
+            left_new_upper
+        );
+        changed = true;
+    }
+
     match (left, right) {
         (Type::Pointer(x), Type::Pointer(y)) => {
-            changed |= process_constraint(constraint, x, y, bounds)?;
+            result.push(Constraint {
+                left: *x.clone(),
+                right: *y.clone(),
+                addr: constraint.addr,
+                function_id: constraint.function_id,
+                reason: ConstraintReason::PointerSubtype,
+            });
         }
         (x, Type::Pointer(y)) => {
-            let y_upper = bounds.upper_bound(y).cloned().unwrap_or(*y.clone());
+            let y_upper = bounds.upper_bound(&y).unwrap_or(y).clone();
             let new_upper = Type::Pointer(Box::new(y_upper));
             if new_upper.is_strict_subtype_of(&left_upper) {
-                changed |= process_constraint(constraint, x, &new_upper, bounds)?;
+                result.push(Constraint {
+                    left: x.clone(),
+                    right: new_upper,
+                    addr: constraint.addr,
+                    function_id: constraint.function_id,
+                    reason: ConstraintReason::PointerSubtype,
+                });
             }
+        }
+        (Type::Function { args: a1, .. }, Type::Function { args: a2, .. }) => {
+            result.push(Constraint {
+                left: *a2.clone(),
+                right: *a1.clone(),
+                addr: constraint.addr,
+                function_id: constraint.function_id,
+                reason: ConstraintReason::FunctionTypeParameter,
+            });
         }
         _ => {}
     };
-    Ok(changed)
+    Ok((changed, result))
 }
 
 pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) -> (Type, Type) {
@@ -641,7 +661,7 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) -> (T
 /// Create a TypeInferenceResult from the current state of bounds
 pub(crate) fn create_partial_result(
     bounds: &TypeBoundsMap,
-    #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaVar>,
 ) -> TypeInferenceResult {
     let inferred_types = bounds
         .iter()
@@ -656,7 +676,6 @@ pub(crate) fn create_partial_result(
     TypeInferenceResult {
         inferred_types,
         traces: bounds.traces.clone(),
-        #[cfg(test)]
         debug_markers: debug_markers.clone(),
     }
 }
