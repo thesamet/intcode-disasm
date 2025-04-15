@@ -160,7 +160,7 @@ mod type_inference_tests {
                 .get_ssa_result()
                 .unwrap()
                 .find_ssa_var_by_marker(marker);
-            let typ = Type::SsaVar(ssa_var);
+            let typ = Type::from_ssavar(&ssa_var);
             println!(
                 "Trace history for {}:\n{}\nType inference completed successfully",
                 marker,
@@ -215,9 +215,9 @@ mod type_inference_tests {
         type_inference.mark_var(char_var, 'c');
 
         // Get type variables for these SSA variables
-        let int_type = type_inference.type_for_ssavar(&int_var);
-        let bool_type = type_inference.type_for_ssavar(&bool_var);
-        let char_type = type_inference.type_for_ssavar(&char_var);
+        let int_type = Type::from_ssavar(&int_var);
+        let bool_type = Type::from_ssavar(&bool_var);
+        let char_type = Type::from_ssavar(&char_var);
 
         // Add constraints
         type_inference.add_constraint(
@@ -292,7 +292,7 @@ mod type_inference_tests {
         type_inference.mark_var(func_ptr_var, 'a');
 
         // Get type variable
-        let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
+        let func_ptr_type = Type::from_ssavar(&func_ptr_var);
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -349,9 +349,9 @@ mod type_inference_tests {
         type_inference.mark_var(deref_var, 'c');
 
         // Get type variables
-        let int_type = type_inference.type_for_ssavar(&int_var);
-        let ptr_type = type_inference.type_for_ssavar(&ptr_var);
-        let deref_type = type_inference.type_for_ssavar(&deref_var);
+        let int_type = Type::from_ssavar(&int_var);
+        let ptr_type = Type::from_ssavar(&ptr_var);
+        let deref_type = Type::from_ssavar(&deref_var);
 
         // Add constraints
         // int_var is an integer
@@ -424,11 +424,11 @@ mod type_inference_tests {
         let var = SsaVar::new(memory_operand(100), 1, function_id);
 
         // Get type variable
-        let var_type = type_inference.type_for_ssavar(&var);
+        let var_type = Type::from_ssavar(&var);
 
         // Create another variable that will be unified with var_type
         let another_var = SsaVar::new(memory_operand(101), 1, function_id);
-        let another_type = type_inference.type_for_ssavar(&another_var);
+        let another_type = Type::from_ssavar(&another_var);
 
         // First, directly set var_type to char type
         type_inference.add_constraint(
@@ -497,7 +497,7 @@ mod type_inference_tests {
         let var = SsaVar::new(memory_operand(100), 1, function_id);
 
         // Get type variable
-        let var_type = type_inference.type_for_ssavar(&var);
+        let var_type = Type::from_ssavar(&var);
 
         // First, constrain it to Int from arithmetic
         type_inference.add_constraint(

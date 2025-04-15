@@ -80,14 +80,14 @@ pub struct Constraint {
 impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Format the left side with appropriate color
-        let left_str = if let Type::SsaVar(var) = &self.left {
+        let left_str = if let Type::Variable(var) = &self.left {
             TraceColors::format_var(var)
         } else {
             TraceColors::format_type(&self.left)
         };
 
         // Format the right side with appropriate color
-        let right_str = if let Type::SsaVar(var) = &self.right {
+        let right_str = if let Type::Variable(var) = &self.right {
             TraceColors::format_var(var)
         } else {
             TraceColors::format_type(&self.right)

@@ -1,5 +1,3 @@
-use std::{borrow::BorrowMut, sync::atomic::AtomicUsize};
-
 use log::{debug, info};
 
 use crate::disasm::v2::{
@@ -38,10 +36,6 @@ impl TypeInferenceAnalyzer {
         }
     }
 
-    pub fn type_for_ssavar(&self, var: &SsaVar) -> Type {
-        Type::SsaVar(*var)
-    }
-
     /// Add a constraint between two types
     pub fn add_constraint(
         &mut self,
@@ -71,7 +65,7 @@ impl TypeInferenceAnalyzer {
         phi: &PhiFunction,
         block_id: BlockId,
     ) {
-        let result_type = self.type_for_ssavar(&phi.result);
+        let result_type = Type::from_ssavar(&phi.result);
         let result_addr = InstructionId::from(block_id.index());
 
         // Add constraints between each input source and the result
@@ -91,10 +85,8 @@ impl TypeInferenceAnalyzer {
                             // We are looking for the specific entry where the caller's read variable
                             // matches the input_var (which should be phi.result for this predecessor kind).
                             if caller_ret_read_var == input_var {
-                                let callee_ret_write_type =
-                                    self.type_for_ssavar(callee_ret_write_var);
-                                let caller_ret_read_type =
-                                    self.type_for_ssavar(caller_ret_read_var);
+                                let callee_ret_write_type = Type::from_ssavar(callee_ret_write_var);
+                                let caller_ret_read_type = Type::from_ssavar(caller_ret_read_var);
 
                                 // Constraint: CalleeWrite <: CallerRead (propagates type from callee to caller)
                                 self.add_constraint(
@@ -117,7 +109,7 @@ impl TypeInferenceAnalyzer {
                 }
                 _ => {
                     // Standard predecessor: Input <: Result
-                    let input_type = self.type_for_ssavar(input_var);
+                    let input_type = Type::from_ssavar(input_var);
                     self.add_constraint(
                         input_type,
                         result_type.clone(),
@@ -140,8 +132,8 @@ impl TypeInferenceAnalyzer {
 
         match &instruction.kind {
             InstructionKind::Assign(target, source) => {
-                let dst_type = self.type_for_ssavar(target);
-                let src_type = self.type_for_ssavar(source);
+                let dst_type = Type::from_ssavar(target);
+                let src_type = Type::from_ssavar(source);
                 if source.operand().kind.get_immediate().is_some() {
                     self.add_constraint(
                         src_type.clone(),
@@ -160,9 +152,9 @@ impl TypeInferenceAnalyzer {
                 );
             }
             InstructionKind::Add(src1, src2, dst) => {
-                let src1_type = self.type_for_ssavar(src1);
-                let src2_type = self.type_for_ssavar(src2);
-                let dst_type = self.type_for_ssavar(dst);
+                let src1_type = Type::from_ssavar(src1);
+                let src2_type = Type::from_ssavar(src2);
+                let dst_type = Type::from_ssavar(dst);
                 let reason = ConstraintReason::AddSecondParameterImpliesInt;
 
                 self.add_constraint(src1_type.clone(), Type::Int, instr_id, function_id, reason);
@@ -177,9 +169,9 @@ impl TypeInferenceAnalyzer {
             }
             InstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
-                let src1_type = self.type_for_ssavar(src1);
-                let src2_type = self.type_for_ssavar(src2);
-                let dst_type = self.type_for_ssavar(dst);
+                let src1_type = Type::from_ssavar(src1);
+                let src2_type = Type::from_ssavar(src2);
+                let dst_type = Type::from_ssavar(dst);
                 let reason = ConstraintReason::MulImpliesInt;
 
                 self.add_constraint(dst_type, Type::Int, instr_id, function_id, reason);
@@ -188,7 +180,7 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::Input(dst) => {
-                let dst_type = self.type_for_ssavar(dst);
+                let dst_type = Type::from_ssavar(dst);
                 self.add_constraint(
                     Type::Char,
                     dst_type,
@@ -199,7 +191,7 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::Output(src) => {
-                let src_type = self.type_for_ssavar(src);
+                let src_type = Type::from_ssavar(src);
                 self.add_constraint(
                     src_type,
                     Type::Char,
@@ -210,9 +202,9 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::LessThan(src1, src2, dst) => {
-                let src1_type = self.type_for_ssavar(src1);
-                let src2_type = self.type_for_ssavar(src2);
-                let dst_type = self.type_for_ssavar(dst);
+                let src1_type = Type::from_ssavar(src1);
+                let src2_type = Type::from_ssavar(src2);
+                let dst_type = Type::from_ssavar(dst);
 
                 self.add_constraint(
                     dst_type,
@@ -238,9 +230,9 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::Equals(src1, src2, dst) => {
-                let src1_type = self.type_for_ssavar(src1);
-                let src2_type = self.type_for_ssavar(src2);
-                let dst_type = self.type_for_ssavar(dst);
+                let src1_type = Type::from_ssavar(src1);
+                let src2_type = Type::from_ssavar(src2);
+                let dst_type = Type::from_ssavar(dst);
 
                 self.add_constraint(
                     Type::Bool,
@@ -267,7 +259,7 @@ impl TypeInferenceAnalyzer {
             }
 
             InstructionKind::JumpIfTrue(cond, _) | InstructionKind::JumpIfFalse(cond, _) => {
-                let cond_type = self.type_for_ssavar(cond);
+                let cond_type = Type::from_ssavar(cond);
                 self.add_constraint(
                     cond_type,
                     Type::Truthy,
@@ -279,7 +271,7 @@ impl TypeInferenceAnalyzer {
 
             InstructionKind::AdjustRelativeBase(offset) => {
                 // The offset operand must be an integer
-                let offset_type = self.type_for_ssavar(offset);
+                let offset_type = Type::from_ssavar(offset);
                 self.add_constraint(
                     offset_type,
                     Type::Int,
@@ -307,8 +299,8 @@ impl TypeInferenceAnalyzer {
                     debug_marker: None,
                 };
                 self.add_constraint(
-                    self.type_for_ssavar(&mem_ssa_var),
-                    Type::Pointer(Box::new(self.type_for_ssavar(operand))),
+                    Type::from_ssavar(&mem_ssa_var),
+                    Type::Pointer(Box::new(Type::from_ssavar(operand))),
                     instruction.id,
                     function_id,
                     ConstraintReason::Deref,
@@ -336,7 +328,7 @@ impl TypeInferenceAnalyzer {
         match &block.next {
             NextKind::Condition(cond) => {
                 // The condition operand must be a boolean
-                let cond_type = self.type_for_ssavar(&cond.condition_operand);
+                let cond_type = Type::from_ssavar(&cond.condition_operand);
                 self.add_constraint(
                     cond_type,
                     Type::Truthy,
@@ -362,8 +354,8 @@ impl TypeInferenceAnalyzer {
                             .end_state
                             .get(&OperandKind::RelativeMemory(*caller_offset))
                         {
-                            let caller_arg_type = self.type_for_ssavar(caller_arg_var);
-                            let callee_param_type = self.type_for_ssavar(callee_param_var);
+                            let caller_arg_type = Type::from_ssavar(caller_arg_var);
+                            let callee_param_type = Type::from_ssavar(callee_param_var);
                             self.add_constraint(
                                 caller_arg_type,   // Caller provides argument
                                 callee_param_type, // Callee receives parameter
@@ -376,7 +368,7 @@ impl TypeInferenceAnalyzer {
                         }
                     }
                 } else {
-                    let fn_type = self.type_for_ssavar(&call.function_addr);
+                    let fn_type = Type::from_ssavar(&call.function_addr);
                     let new_fp = Type::new_function_pointer();
                     self.add_constraint(
                         fn_type,

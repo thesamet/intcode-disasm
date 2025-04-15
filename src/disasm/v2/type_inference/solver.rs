@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
-use super::types::{glb, is_concrete_type, lub, Type};
+use super::types::{glb, is_concrete_type, lub, Type, VariableKind};
 use super::visuals::TraceColors;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::{SsaVar, SsaVarKind};
@@ -173,7 +173,7 @@ pub struct AnalysisTrace {
 impl fmt::Display for AnalysisTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Colorize the key type
-        let key_str = if let Type::SsaVar(var) = &self.key {
+        let key_str = if let Type::Variable(var) = &self.key {
             TraceColors::format_var(var)
         } else {
             TraceColors::format_type(&self.key)
@@ -207,7 +207,7 @@ impl fmt::Display for AnalysisTrace {
 
         match &self.reason {
             ChangeReason::DecreaseUpperBoundFromConstraint { constraint, other } => {
-                let other_str = if let Type::SsaVar(var) = other {
+                let other_str = if let Type::Variable(var) = other {
                     TraceColors::format_var(var)
                 } else {
                     TraceColors::format_type(other)
@@ -229,7 +229,7 @@ impl fmt::Display for AnalysisTrace {
                 )
             }
             ChangeReason::IncreaseLowerBoundFromConstraint { constraint, other } => {
-                let other_str = if let Type::SsaVar(var) = other {
+                let other_str = if let Type::Variable(var) = other {
                     TraceColors::format_var(var)
                 } else {
                     TraceColors::format_type(other)
@@ -344,10 +344,10 @@ fn refine_function_pointers(
     let bounds_keys = bounds.all_keys();
     for key in bounds_keys {
         match key {
-            Type::SsaVar(SsaVar {
+            Type::Variable(VariableKind::SsaVar(SsaVar {
                 kind: SsaVarKind::Immediate(func_addr),
                 ..
-            }) => {
+            })) => {
                 let upper_bound = bounds.upper_bound(&key).unwrap().clone();
                 let Type::Pointer(ptr_type) = upper_bound else {
                     continue;
@@ -383,7 +383,7 @@ fn refine_function_pointers(
                 {
                     let v = Type::new_var();
                     tuple_elems.push(v.clone());
-                    bounds.insert_key(v, Type::Nothing, Type::SsaVar(*callee_ssa_var));
+                    bounds.insert_key(v, Type::Nothing, Type::from_ssavar(callee_ssa_var));
                 }
                 let tuple_type = Type::Tuple(tuple_elems);
                 let fp = Type::new_function_pointer();
@@ -479,7 +479,7 @@ fn handle_bound_conflict(
                 Ok((false, Type::Conflict))
             } else {
                 // Extract SSA var from the type if possible for better error reporting
-                if let Type::SsaVar(ssa_var) = type_var {
+                if let Type::Variable(VariableKind::SsaVar(ssa_var)) = type_var {
                     Err(TypeInferenceError::TypeConflict {
                         ssa_var: *ssa_var,
                         bound_type,
@@ -634,9 +634,7 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) -> (T
             }
             bounds.insert_key(typ.clone(), Type::Tuple(lower), Type::Tuple(upper))
         }
-        Type::Variable(_) | Type::SsaVar(_) => {
-            bounds.insert_key(typ.clone(), Type::Nothing, Type::Any)
-        }
+        Type::Variable(_) => bounds.insert_key(typ.clone(), Type::Nothing, Type::Any),
     }
 }
 
@@ -649,7 +647,7 @@ pub(crate) fn create_partial_result(
         .iter()
         .filter_map({
             |(k, v)| match k {
-                Type::SsaVar(var) => Some((*var, v.upper.clone())), // Use upper bound as the inferred type for now
+                Type::Variable(VariableKind::SsaVar(var)) => Some((*var, v.upper.clone())), // Use upper bound as the inferred type for now
                 _ => None,
             }
         })

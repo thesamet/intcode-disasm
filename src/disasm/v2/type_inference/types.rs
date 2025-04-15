@@ -1,8 +1,26 @@
-use std::{fmt, sync::atomic::AtomicUsize};
+use std::{
+    fmt::{self, Display},
+    sync::atomic::AtomicUsize,
+};
 
 use itertools::Itertools;
 
 use crate::disasm::v2::ssa_form::SsaVar;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum VariableKind {
+    SsaVar(SsaVar),
+    TypeVar(usize),
+}
+
+impl Display for VariableKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VariableKind::SsaVar(var) => write!(f, "{}", var),
+            VariableKind::TypeVar(id) => write!(f, "T{}", id),
+        }
+    }
+}
 
 /// Represents a type in the type system
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -13,8 +31,7 @@ pub enum Type {
     Char,
     Pointer(Box<Type>),
     Function { args: Box<Type>, returns: Box<Type> }, // Both types are always tuples.
-    SsaVar(SsaVar),
-    Variable(usize),
+    Variable(VariableKind),
     Tuple(Vec<Type>),
     Truthy, // a marker type for truthy types
     Any,
@@ -57,13 +74,23 @@ impl Type {
         }
     }
 
+    pub fn from_ssavar(var: &SsaVar) -> Type {
+        Type::Variable(VariableKind::SsaVar(*var))
+    }
+
+    pub fn as_ssavar(&self) -> Option<&SsaVar> {
+        match self {
+            Type::Variable(VariableKind::SsaVar(var)) => Some(var),
+            _ => None,
+        }
+    }
+
     pub fn is_strict_subtype_of(&self, other: &Type) -> bool {
         self != other && self.is_subtype_of(other)
     }
 
     fn get_types_recursive(&self) -> Vec<Type> {
         match self {
-            Type::SsaVar(_) => vec![self.clone()],
             Type::Any => vec![],
             Type::Nothing => vec![],
             Type::Int => vec![],
@@ -88,7 +115,7 @@ impl Type {
 
     pub fn new_var() -> Type {
         let id = NEXT_VAR_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Type::Variable(id)
+        Type::Variable(VariableKind::TypeVar(id))
     }
 
     pub fn new_function_pointer() -> Type {
@@ -132,7 +159,6 @@ pub fn is_concrete_type(typ: &Type) -> bool {
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => false,
-        Type::SsaVar(_) => false,
         Type::Conflict => false,
         Type::Any => false,
         Type::Nothing => false,
@@ -150,7 +176,8 @@ impl fmt::Display for Type {
             Type::Char => write!(f, "char"),
             Type::Pointer(t) => write!(f, "Pointer({})", t),
             Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{}", t)).join(", ")),
-            Type::Variable(id) => write!(f, "T{}", id),
+            Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{}", id),
+            Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{}", var),
             Type::Truthy => write!(f, "Truthy"),
             Type::Function { args, returns } => {
                 write!(f, "fn(")?;
@@ -159,7 +186,6 @@ impl fmt::Display for Type {
                 write!(f, "{}", returns)?;
                 Ok(())
             }
-            Type::SsaVar(t) => write!(f, "{}", t),
             Type::Conflict => write!(f, "CONFLICT"),
         }
     }

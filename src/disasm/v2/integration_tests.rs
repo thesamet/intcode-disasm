@@ -74,9 +74,9 @@ mod tests {
         type_inference.mark_var(char_var, 'c');
 
         // Get type variables for these SSA variables
-        let int_type = type_inference.type_for_ssavar(&int_var);
-        let bool_type = type_inference.type_for_ssavar(&bool_var);
-        let char_type = type_inference.type_for_ssavar(&char_var);
+        let int_type = Type::from_ssavar(&int_var);
+        let bool_type = Type::from_ssavar(&bool_var);
+        let char_type = Type::from_ssavar(&char_var);
 
         // Add constraints
         type_inference.add_constraint(
@@ -142,7 +142,7 @@ mod tests {
         let func_ptr_var = SsaVar::new(memory_operand(200), 1, function_id);
 
         // Get type variable
-        let func_ptr_type = type_inference.type_for_ssavar(&func_ptr_var);
+        let func_ptr_type = Type::from_ssavar(&func_ptr_var);
 
         // Mark variable for testing
         type_inference.mark_var(func_ptr_var, 'f');
@@ -194,9 +194,9 @@ mod tests {
         type_inference.mark_var(deref_var, 'd');
 
         // Get type variables
-        let int_type = type_inference.type_for_ssavar(&int_var);
-        let ptr_type = type_inference.type_for_ssavar(&ptr_var);
-        let deref_type = type_inference.type_for_ssavar(&deref_var);
+        let int_type = Type::from_ssavar(&int_var);
+        let ptr_type = Type::from_ssavar(&ptr_var);
+        let deref_type = Type::from_ssavar(&deref_var);
 
         // Add constraints
         type_inference.add_constraint(
