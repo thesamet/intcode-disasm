@@ -27,27 +27,42 @@ mod type_inference_tests {
 
     macro_rules! assert_marker_type {
         ($ctx:expr, $marker:expr, $expected_type:expr) => {
-            let ssa_var = $ctx
-                .model
-                .get_ssa_result()
-                .unwrap()
-                .find_ssa_var_by_marker($marker);
-
-            let actual_type = $ctx
-                .model
-                .get_type_inference_result()
-                .unwrap()
-                .get_type_for_ssavar(&ssa_var)
-                .expect(&format!(
-                    "No type found for SSA variable marker {}",
-                    $marker
-                ));
+            let actual_type = $ctx.get_marker_type($marker);
 
             assert_eq!(
-                *actual_type, $expected_type,
+                actual_type, $expected_type,
                 "Marker {} has incorrect type: expected {:?}, actual {:?}",
                 $marker, $expected_type, actual_type
             );
+        };
+    }
+
+    macro_rules! assert_function_pointer {
+        ($typ: expr) => {
+            let Type::Pointer(ptr_type) = $typ else {
+                panic!("Not a function pointer, got {:?}", $typ);
+            };
+            let Type::Function { .. } = **ptr_type else {
+                panic!("Not a function pointer, got {:?}", $typ);
+            };
+        };
+    }
+
+    macro_rules! assert_marker_is_function_pointer {
+        ($ctx:expr, $marker:expr) => {
+            let actual_type = $ctx.get_marker_type($marker);
+            let Type::Pointer(ptr_type) = &actual_type else {
+                panic!(
+                    "Marker {} is not a function pointer, got {:?}",
+                    $marker, actual_type
+                );
+            };
+            let Type::Function { .. } = **ptr_type else {
+                panic!(
+                    "Marker {} is not a function pointer, got {:?}",
+                    $marker, actual_type
+                );
+            };
         };
     }
 
@@ -100,7 +115,22 @@ mod type_inference_tests {
             Self { model }
         }
 
-        fn assert_type(&mut self, addr: usize, expected: Type) {
+        fn get_marker_type(&self, marker: char) -> Type {
+            let ssa_var = self
+                .model
+                .get_ssa_result()
+                .unwrap()
+                .find_ssa_var_by_marker(marker);
+
+            self.model
+                .get_type_inference_result()
+                .unwrap()
+                .get_type_for_ssavar(&ssa_var)
+                .expect(&format!("No type found for SSA variable marker {}", marker))
+                .clone()
+        }
+
+        fn get_type_at_addr(&self, addr: usize) -> Option<&Type> {
             let ti = self.model.get_type_inference_result().unwrap();
 
             let var = ti
@@ -110,7 +140,13 @@ mod type_inference_tests {
                 .max_by_key(|var| var.version)
                 .unwrap_or_else(|| panic!("No type variable found for address {}", addr));
 
-            let actual = ti.get_type_for_ssavar(var).unwrap();
+            ti.get_type_for_ssavar(var)
+        }
+
+        fn assert_type(&self, addr: usize, expected: Type) {
+            let Some(actual) = self.get_type_at_addr(addr) else {
+                panic!("No type found for address {}", addr);
+            };
             assert_eq!(
                 *actual, expected,
                 "Expected type {:?} but got {:?} for memory address {}",
@@ -152,8 +188,11 @@ mod type_inference_tests {
         }
     }
 
-    fn function_pointer(args: Vec<Type>, returns: Vec<Type>) -> Type {
-        Type::Pointer(Box::new(Type::Function { args, returns }))
+    fn function_pointer(args: &[Type], returns: &[Type]) -> Type {
+        Type::Pointer(Box::new(Type::Function {
+            args: Box::new(Type::Tuple(args.to_vec())),
+            returns: Box::new(Type::Tuple(returns.to_vec())),
+        }))
     }
 
     /// Direct API test for type inference (no assembly parsing)
@@ -206,7 +245,9 @@ mod type_inference_tests {
         );
 
         // Solve constraints directly using the solver function
+        let model = ProgramModel::new();
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )
@@ -256,14 +297,16 @@ mod type_inference_tests {
         // Add constraint for function pointer
         type_inference.add_constraint(
             func_ptr_type,
-            function_pointer(vec![], vec![]),
+            function_pointer(&vec![], &vec![]),
             InstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall,
         );
 
         // Solve constraints
+        let model = ProgramModel::new();
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )
@@ -281,7 +324,7 @@ mod type_inference_tests {
 
         assert_eq!(
             a_type.as_ref().unwrap(),
-            &function_pointer(vec![], vec![]),
+            &function_pointer(&vec![], &vec![]),
             "Variable 'a' should be a function pointer, got: {:?}",
             a_type.as_ref().unwrap()
         );
@@ -344,7 +387,9 @@ mod type_inference_tests {
         );
 
         // Solve constraints
+        let model = ProgramModel::new();
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )
@@ -419,7 +464,9 @@ mod type_inference_tests {
         );
 
         // Unification should fail due to type conflict
+        let model = ProgramModel::new();
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         );
@@ -476,7 +523,9 @@ mod type_inference_tests {
         );
 
         // Solve constraints
+        let model = ProgramModel::new();
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )
@@ -497,7 +546,7 @@ mod type_inference_tests {
 
     #[test]
     fn test_type_inference() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
         R += 5000
         [3] = 'a [1] + [2]
@@ -523,7 +572,7 @@ f1:
 
     #[test]
     fn test_boolean_comparison() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
             R += 1000
             [1000] = [1001] < [1002]
@@ -537,7 +586,7 @@ f1:
 
     #[test]
     fn test_output_implies_char() {
-        let mut ctx = TestContext::new(
+        let ctx = TestContext::new(
             r#"
             R += 1000
             output [1001]
@@ -560,7 +609,7 @@ f1:
 
             "#,
         );
-        ctx.assert_type(1001, function_pointer(vec![], vec![]));
+        assert_function_pointer!(ctx.get_type_at_addr(1001).unwrap());
     }
 
     #[test]
@@ -579,7 +628,7 @@ f1:
                 "#,
         );
         pretty_print_with_types(&ctx.model);
-        assert_marker_type!(ctx, 'a', function_pointer(vec![], vec![]));
+        assert_marker_is_function_pointer!(ctx, 'a');
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
     }
@@ -643,7 +692,7 @@ f1:
         assert_marker_type!(ctx, 'a', Type::Char);
         ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Int);
-        assert_marker_type!(ctx, 'c', function_pointer(vec![], vec![]));
+        assert_marker_is_function_pointer!(ctx, 'c');
         assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
     }
 
@@ -662,8 +711,7 @@ f1:
             "#,
         );
         pretty_print_with_types(&ctx.model);
-
-        assert_marker_type!(ctx, 'a', function_pointer(vec![], vec![]));
+        assert_marker_is_function_pointer!(ctx, 'a');
     }
 
     #[test]
@@ -770,5 +818,54 @@ f1:
             'x',
             Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Int))))
         );
+    }
+
+    #[test]
+    fn test_signatures_for_indirect_calls() {
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+            'a [R+1] = 'x @op1
+            [R] = @ret1
+            goto @makes_indirect_call
+        ret1:
+            'b [R+1] = @op2
+            [R] = @ret2
+            goto @makes_indirect_call
+        ret2:
+            [R-1] = [R+1] * 17
+        halt
+
+    makes_indirect_call:
+            R += 4
+            [R+1] = 3
+            [R+2] = 54
+            [R] = @fret
+            goto [R-3]
+        fret:
+            [R-3] = [R+1]
+            R -= 4
+            goto [R]
+
+    op1:
+            R += 4
+            [R-1] = [R-3] * 7
+            output([R-2])
+            [R-3] = 35
+            R -= 4
+            goto [R]
+
+    op2:
+            R += 4
+            [R-1] = [R-3] * 16
+            output([R-2])
+            [R-3] = 35
+            R -= 4
+            goto [R]
+            "#,
+        );
+        pretty_print_with_types(&ctx.model);
+        ctx.print_traces_for_marker('a');
+        assert!(false);
     }
 }

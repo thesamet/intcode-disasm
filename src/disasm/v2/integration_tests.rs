@@ -7,6 +7,8 @@ use crate::disasm::v2::{
     },
 };
 
+use crate::disasm::v2::model::ProgramModel;
+
 #[cfg(test)]
 mod tests {
     use crate::disasm::v2::instructions::{InstructionId, Operand};
@@ -48,7 +50,8 @@ mod tests {
     /// Simplified test for type inference using direct API calls
     #[test]
     fn test_type_inference_basics() {
-        // Create a manual type inference engine
+        let _ = env_logger::builder().is_test(true).try_init();
+        let model = ProgramModel::new();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create some SSA variables to infer types for
@@ -92,6 +95,7 @@ mod tests {
 
         // Solve constraints using solver::unify
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )
@@ -121,7 +125,8 @@ mod tests {
 
     #[test]
     fn test_function_pointer_types() {
-        // Create a manual type inference engine
+        let _ = env_logger::builder().is_test(true).try_init();
+        let model = ProgramModel::new();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create an SSA variable for a function pointer
@@ -138,8 +143,8 @@ mod tests {
         type_inference.add_constraint(
             func_ptr_type.clone(),
             Type::Function {
-                args: vec![],
-                returns: vec![],
+                args: Box::new(Type::Tuple(vec![])),
+                returns: Box::new(Type::Tuple(vec![])),
             },
             InstructionId::from(1),
             FunctionId::from(0),
@@ -148,6 +153,7 @@ mod tests {
 
         // Solve constraints using solver::unify
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )
@@ -169,8 +175,8 @@ mod tests {
 
     #[test]
     fn test_pointer_types() {
+        let _ = env_logger::builder().is_test(true).try_init();
         init();
-        // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create variables for testing pointer relationships
@@ -213,7 +219,9 @@ mod tests {
         );
 
         // Solve constraints using solver::unify
+        let model = ProgramModel::new();
         let result = solver::unify(
+            &model,
             type_inference.get_constraints(),
             type_inference.get_debug_markers(),
         )

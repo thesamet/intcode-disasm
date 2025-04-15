@@ -25,9 +25,9 @@ pub struct ProgramModel {
 
     ssa_result: Option<SsaResult>,
 
-    type_inference_result: Option<TypeInferenceResult>,
-
     function_call_analysis: Option<FunctionCallAnalysis>,
+
+    type_inference_result: Option<TypeInferenceResult>,
 }
 
 impl ProgramModel {
@@ -83,6 +83,10 @@ impl ProgramModel {
 
     pub fn add_function(&mut self, function: Function) {
         self.functions.insert(function.function_id, function);
+    }
+
+    pub fn has_function(&self, function_id: FunctionId) -> bool {
+        self.functions.contains_key(&function_id)
     }
 
     pub fn get_function(&self, function_id: FunctionId) -> &Function {

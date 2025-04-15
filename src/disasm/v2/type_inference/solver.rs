@@ -7,7 +7,8 @@ use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
 use super::types::{glb, is_concrete_type, lub, Type};
 use super::visuals::TraceColors;
-use crate::disasm::v2::ssa_form::SsaVar;
+use crate::disasm::v2::model::{FunctionId, ProgramModel};
+use crate::disasm::v2::ssa_form::{SsaVar, SsaVarKind};
 
 /// Enum to distinguish between upper and lower bound conflicts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,11 +266,13 @@ impl fmt::Display for AnalysisTrace {
 
 /// Solve the collected constraints using unification
 pub fn unify(
+    model: &ProgramModel,
     constraints: &[Constraint],
     #[cfg(test)] debug_markers: &HashMap<char, SsaVar>,
 ) -> Result<TypeInferenceResult, TypeInferenceError> {
+    let mut constraints = constraints.to_vec();
     let mut bounds = TypeBoundsMap::new();
-    for c in constraints {
+    for c in &constraints {
         init_bounds_for_type(&c.left, &mut bounds);
         init_bounds_for_type(&c.right, &mut bounds);
     }
@@ -279,7 +282,10 @@ pub fn unify(
     }
 
     loop {
-        while reach_constraint_fixed_point(constraints, &mut bounds)? {}
+        while reach_constraint_fixed_point(&constraints, &mut bounds)? {}
+        if refine_function_pointers(model, &mut constraints, &mut bounds)? {
+            continue;
+        }
         if refine_concrete_types(&mut bounds)? {
             continue;
         }
@@ -316,6 +322,79 @@ fn reach_constraint_fixed_point(
     Ok(overall_changed)
 }
 
+fn refine_function_pointers(
+    model: &ProgramModel,
+    constraints: &[Constraint],
+    bounds: &mut TypeBoundsMap,
+) -> Result<bool, TypeInferenceError> {
+    let mut changed = false;
+    for (key, b) in bounds.iter() {
+        match key {
+            Type::SsaVar(SsaVar {
+                kind: SsaVarKind::Immediate(func_addr),
+                ..
+            }) => {
+                let Type::Pointer(ptr_type) = &b.upper else {
+                    continue;
+                };
+                let Type::Function { args, returns } = &(**ptr_type) else {
+                    continue;
+                };
+                let function_id = FunctionId::from(*func_addr as usize);
+                if !model.has_function(function_id) {
+                    continue;
+                }
+                let Some(callee_info) = model
+                    .get_function_call_analysis()
+                    .unwrap()
+                    .callee_info
+                    .get(&function_id)
+                else {
+                    continue;
+                };
+
+                /*
+                for &(caller_offset, callee_ssa_var) in callee_info.parameter_entry_vars {
+                    let c = Constraint {
+                        left: Type::SsaVar(callee_ssa_var),
+                        right: Type::Int,
+                        reason: ConstraintReason::IndirectFunctionCall,
+                        function_id,
+                        addr: caller_offset,
+                    };
+                    constraints.push(c);
+                }
+
+
+                    continue;
+                };
+                */
+                println!("Got immediate func: {:?}", callee_info);
+                /*
+                let val = args.iter().chain(returns.iter()).find_map(|arg| {
+                    if let Type::SsaVar(SsaVar {
+                        kind: SsaVarKind::Immediate(val),
+                        ..
+                    }) = arg {
+                        Some(*val)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(val) = val {
+                Type::Pointer(Type::Function { args
+                    , returns })
+                }
+                if
+                */
+                println!("Got immediate func: {:?}", key);
+            }
+            _ => {}
+        }
+    }
+    Ok(changed)
+}
+
 fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
     let keys = bounds
         .all_keys()
@@ -331,19 +410,11 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferen
         let lower = bounds.lower_bound(key).unwrap().clone();
         let upper = bounds.upper_bound(key).unwrap().clone();
         if is_concrete_type(&lower) && (upper == Type::Any || upper == Type::Truthy) {
-            bounds.register_new_upper(
-                key.clone(),
-                lower.clone(),
-                ChangeReason::ConcreteRefinement,
-            );
+            bounds.register_new_upper(key.clone(), lower.clone(), ChangeReason::ConcreteRefinement);
             changed = true;
         }
         if is_concrete_type(&upper) && (lower == Type::Nothing || lower == Type::Truthy) {
-            bounds.register_new_lower(
-                key.clone(),
-                upper.clone(),
-                ChangeReason::ConcreteRefinement,
-            );
+            bounds.register_new_lower(key.clone(), upper.clone(), ChangeReason::ConcreteRefinement);
             changed = true;
         }
     }
@@ -361,16 +432,8 @@ fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInfe
         if lower == Type::Truthy && upper == Type::Any
             || upper == Type::Truthy && lower == Type::Nothing
         {
-            bounds.register_new_lower(
-                key.clone(),
-                Type::Bool,
-                ChangeReason::TruthyToBoolHeuristic,
-            );
-            bounds.register_new_upper(
-                key.clone(),
-                Type::Bool,
-                ChangeReason::TruthyToBoolHeuristic,
-            );
+            bounds.register_new_lower(key.clone(), Type::Bool, ChangeReason::TruthyToBoolHeuristic);
+            bounds.register_new_upper(key.clone(), Type::Bool, ChangeReason::TruthyToBoolHeuristic);
             changed = true;
         }
     }
@@ -514,11 +577,13 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
         Type::Conflict => {}
         Type::Pointer(x) => init_bounds_for_type(x, bounds),
         Type::Function { args, returns } => {
-            for arg in args {
-                init_bounds_for_type(arg, bounds);
-            }
-            for ret in returns {
-                init_bounds_for_type(ret, bounds);
+            init_bounds_for_type(args, bounds);
+            init_bounds_for_type(returns, bounds);
+        }
+        Type::Variable(_) => {}
+        Type::Tuple(ts) => {
+            for t in ts {
+                init_bounds_for_type(t, bounds);
             }
         }
         Type::SsaVar(_) => {}

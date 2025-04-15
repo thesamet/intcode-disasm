@@ -1,5 +1,7 @@
 use std::fmt;
 
+use itertools::Itertools;
+
 use crate::disasm::v2::ssa_form::SsaVar;
 
 /// Represents a type in the type system
@@ -10,8 +12,10 @@ pub enum Type {
     Bool,
     Char,
     Pointer(Box<Type>),
-    Function { args: Vec<Type>, returns: Vec<Type> },
+    Function { args: Box<Type>, returns: Box<Type> }, // Both types are always tuples.
     SsaVar(SsaVar),
+    Variable(usize),
+    Tuple(Vec<Type>),
     Truthy, // a marker type for truthy types
     Any,
     Conflict, // Represents a type that was conflicted, but hopefully it will not be needed.
@@ -29,8 +33,6 @@ impl Type {
             (_, Type::Any) => true,
             (Type::Char, Type::Int) => true,
             (Type::Bool, Type::Int) => true,
-            // (Type::FunctionPointer { .. }, Type::Int) => true,
-            // Pointer subtyping is covariant
             (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(_), Type::Truthy) => true,
             (Type::Function { .. }, Type::Truthy) => true,
@@ -48,6 +50,7 @@ impl Type {
                     returns: returns2,
                 },
             ) => {
+                /*
                 if args1.len() != args2.len() || returns1.len() != returns2.len() {
                     return false;
                 }
@@ -63,6 +66,8 @@ impl Type {
                     .all(|(r1, r2)| r1.is_subtype_of(r2));
 
                 args_compatible && returns_compatible
+                */
+                true
             }
             (Type::Function { .. }, Type::Int) => true,
             _ => false,
@@ -82,10 +87,12 @@ impl Type {
             Type::Bool => vec![],
             Type::Char => vec![],
             Type::Pointer(x) => x.get_types_recursive(),
+            Type::Variable(_) => vec![],
+            Type::Tuple(x) => x.iter().flat_map(|x| x.get_types_recursive()).collect(),
             Type::Function { args, returns } => args
-                .iter()
-                .chain(returns.iter())
-                .flat_map(|x| x.get_types_recursive())
+                .get_types_recursive()
+                .into_iter()
+                .chain(returns.get_types_recursive().into_iter())
                 .collect(),
             Type::Truthy => vec![],
             Type::Conflict => vec![],
@@ -101,14 +108,17 @@ pub fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
         Type::Function { args, returns } => {
-            args.iter().all(is_concrete_type) && returns.iter().all(is_concrete_type)
+            args.get_types_recursive().iter().all(is_concrete_type)
+                && returns.get_types_recursive().iter().all(is_concrete_type)
         }
+        Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => false,
         Type::SsaVar(_) => false,
         Type::Conflict => false,
         Type::Any => false,
         Type::Nothing => false,
+        Type::Variable(_) => false,
     }
 }
 
@@ -121,26 +131,14 @@ impl fmt::Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
             Type::Pointer(t) => write!(f, "Pointer({})", t),
+            Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{}", t)).join(", ")),
+            Type::Variable(id) => write!(f, "T{}", id),
             Type::Truthy => write!(f, "Truthy"),
             Type::Function { args, returns } => {
                 write!(f, "fn(")?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", arg)?;
-                }
+                write!(f, "{}", args)?;
                 write!(f, ") -> ")?;
-                if returns.is_empty() {
-                    write!(f, "void")?;
-                } else {
-                    for (i, ret) in returns.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", ret)?;
-                    }
-                }
+                write!(f, "{}", returns)?;
                 Ok(())
             }
             Type::SsaVar(t) => write!(f, "{}", t),

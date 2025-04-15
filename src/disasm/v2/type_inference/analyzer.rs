@@ -20,6 +20,8 @@ use super::{
 pub struct TypeInferenceAnalyzer {
     /// List of constraints to solve
     constraints: Vec<Constraint>,
+    next_var_id: usize,
+
     /// Debug markers for variables
     #[cfg(test)]
     debug_markers: std::collections::HashMap<char, SsaVar>,
@@ -30,9 +32,16 @@ impl TypeInferenceAnalyzer {
     pub fn new() -> Self {
         Self {
             constraints: Vec::new(),
+            next_var_id: 0,
             #[cfg(test)]
             debug_markers: std::collections::HashMap::new(),
         }
+    }
+
+    fn new_var(&mut self) -> Type {
+        let var = Type::Variable(self.next_var_id);
+        self.next_var_id += 1;
+        var
     }
 
     pub fn type_for_ssavar(&self, var: &SsaVar) -> Type {
@@ -314,6 +323,13 @@ impl TypeInferenceAnalyzer {
         });
     }
 
+    fn new_function_pointer(&mut self) -> Type {
+        Type::Pointer(Box::new(Type::Function {
+            args: Box::new(self.new_var()),
+            returns: Box::new(self.new_var()),
+        }))
+    }
+
     /// Generate constraints for control flow transitions
     fn generate_constraints_for_next(
         &mut self,
@@ -374,12 +390,10 @@ impl TypeInferenceAnalyzer {
                     }
                 } else {
                     let fn_type = self.type_for_ssavar(&call.function_addr);
+                    let new_fp = self.new_function_pointer();
                     self.add_constraint(
                         fn_type,
-                        Type::Pointer(Box::new(Type::Function {
-                            args: vec![],    // Placeholder - args inferred from usage at call site
-                            returns: vec![], // Placeholder - returns inferred from usage after call
-                        })),
+                        new_fp,
                         location_addr,
                         function_id,
                         ConstraintReason::IndirectFunctionCall,
@@ -467,6 +481,7 @@ impl ModelEventListener for TypeInferenceAnalyzer {
 
         // Solve the constraints through unification
         let solve_result = solver::unify(
+            model,
             &self.constraints,
             #[cfg(test)]
             &self.debug_markers,

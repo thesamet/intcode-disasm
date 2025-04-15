@@ -1,3 +1,4 @@
+use log::error;
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, take_while1},
@@ -533,8 +534,9 @@ pub fn parse_program(
             Ok((offset, instruction))
         })
         .collect::<Result<Vec<(usize, Instruction)>, String>>()
-        .map_err(|_| {
+        .map_err(|t| {
             // Convert String error to nom::Err
+            error!("Parsing error: {}", t);
             nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
             // Pass input string slice
         })?;

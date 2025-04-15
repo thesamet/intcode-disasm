@@ -109,6 +109,13 @@ impl SsaVar {
     pub fn operand(&self) -> Operand {
         (*self).into()
     }
+
+    pub fn get_immediate(&self) -> Option<i128> {
+        match self.kind {
+            SsaVarKind::Immediate(val) => Some(val),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for SsaVarKind {
