@@ -817,7 +817,6 @@ f1:
     }
 
     #[test]
-    #[ignore]
     fn test_signatures_for_indirect_calls() {
         let ctx = TestContext::new(
             r#"

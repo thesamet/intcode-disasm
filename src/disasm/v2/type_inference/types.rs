@@ -7,6 +7,8 @@ use itertools::Itertools;
 
 use crate::disasm::v2::ssa_form::SsaVar;
 
+use super::solver::TypeBoundsMap;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableKind {
     SsaVar(SsaVar),
@@ -44,12 +46,19 @@ impl Type {
     /// Returns true if this type is a subtype of the other type.
     ///
     /// In our type system, a type is a subtype of itself, and Char and Bool are subtypes of Int.
-    pub fn is_subtype_of(&self, other: &Type) -> bool {
+    pub fn is_subtype_of(&self, other: &Type, bounds: &TypeBoundsMap) -> bool {
         match (self, other) {
             // A type is always a subtype of itself
             (a, b) if a == b => true,
-            (Type::Nothing, _) => true,
             (_, Type::Any) => true,
+            (Type::Nothing, _) => true,
+            (a, Type::Variable(_)) => {
+                if let Some(b_lower) = bounds.lower_bound(other) {
+                    a.is_subtype_of(b_lower, bounds)
+                } else {
+                    false
+                }
+            }
             (Type::Char, Type::Int) => true,
             (Type::Bool, Type::Int) => true,
             (Type::Pointer(_), Type::Int) => true,
@@ -57,7 +66,18 @@ impl Type {
             (Type::Function { .. }, Type::Truthy) => true,
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
-            (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                if ts1.len() != ts2.len() {
+                    return false;
+                }
+                for (t1, t2) in ts1.iter().zip(ts2.iter()) {
+                    if !t1.is_subtype_of(t2, bounds) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b, bounds),
             // Function pointer subtyping: contravariant args, covariant returns
             (
                 Type::Function {
@@ -68,7 +88,7 @@ impl Type {
                     args: args2,
                     returns: returns2,
                 },
-            ) => args2.is_subtype_of(args1),
+            ) => args2.is_subtype_of(args1, bounds),
             (Type::Function { .. }, Type::Int) => true,
             _ => false,
         }
@@ -85,8 +105,8 @@ impl Type {
         }
     }
 
-    pub fn is_strict_subtype_of(&self, other: &Type) -> bool {
-        self != other && self.is_subtype_of(other)
+    pub fn is_strict_subtype_of(&self, other: &Type, bounds: &TypeBoundsMap) -> bool {
+        self != other && self.is_subtype_of(other, bounds)
     }
 
     fn get_types_recursive(&self) -> Vec<Type> {
@@ -194,12 +214,12 @@ impl fmt::Display for Type {
 /// Returns the most specific type that is a supertype of both types (Least Upper Bound).
 /// Used for reconciling types during unification when subtyping is involved.
 /// Returns None if the types are incompatible.
-pub fn lub(a: &Type, b: &Type) -> Option<Type> {
+pub fn lub(a: &Type, b: &Type, bounds: &TypeBoundsMap) -> Option<Type> {
     if a == b {
         Some(a.clone())
-    } else if a.is_subtype_of(b) {
+    } else if a.is_subtype_of(b, bounds) {
         Some(b.clone()) // b is the supertype
-    } else if b.is_subtype_of(a) {
+    } else if b.is_subtype_of(a, bounds) {
         Some(a.clone()) // a is the supertype
     } else {
         None
@@ -209,10 +229,10 @@ pub fn lub(a: &Type, b: &Type) -> Option<Type> {
 /// Returns the most specific common type (Greatest Lower Bound, conceptually).
 /// If one is a subtype of the other, returns the subtype.
 /// Returns None if they are incompatible or unrelated.
-pub fn glb(a: &Type, b: &Type) -> Option<Type> {
-    if a == b || a.is_subtype_of(b) {
+pub fn glb(a: &Type, b: &Type, bounds: &TypeBoundsMap) -> Option<Type> {
+    if a == b || a.is_subtype_of(b, bounds) {
         Some(a.clone())
-    } else if b.is_subtype_of(a) {
+    } else if b.is_subtype_of(a, bounds) {
         Some(b.clone()) // b is the subtype (more specific)
     } else {
         None

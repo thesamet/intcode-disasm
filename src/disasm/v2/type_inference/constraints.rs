@@ -55,6 +55,7 @@ pub enum ConstraintReason {
     ImmediateIsSubtypeOfInt,
     PointerSubtype,
     FunctionTypeParameter,
+    TupleSubtype,
 }
 
 impl fmt::Display for ConstraintReason {
