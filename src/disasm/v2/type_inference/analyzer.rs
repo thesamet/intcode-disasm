@@ -22,7 +22,6 @@ pub struct TypeInferenceAnalyzer {
     constraints: Vec<Constraint>,
 
     /// Debug markers for variables
-    #[cfg(test)]
     debug_markers: std::collections::HashMap<char, SsaVar>,
 }
 
@@ -31,7 +30,6 @@ impl TypeInferenceAnalyzer {
     pub fn new() -> Self {
         Self {
             constraints: Vec::new(),
-            #[cfg(test)]
             debug_markers: std::collections::HashMap::new(),
         }
     }
@@ -459,12 +457,7 @@ impl ModelEventListener for TypeInferenceAnalyzer {
         self.generate_constraints_for_program(model, ssa_result);
 
         // Solve the constraints through unification
-        let solve_result = solver::unify(
-            model,
-            &self.constraints,
-            #[cfg(test)]
-            &self.debug_markers,
-        );
+        let solve_result = solver::unify(model, &self.constraints, &self.debug_markers);
 
         match solve_result {
             Ok(result) => {
