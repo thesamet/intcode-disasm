@@ -7,8 +7,6 @@ use itertools::Itertools;
 
 use crate::disasm::v2::ssa_form::SsaVar;
 
-use super::solver::TypeBoundsMap;
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableKind {
     SsaVar(SsaVar),
@@ -32,7 +30,7 @@ pub enum Type {
     Bool,
     Char,
     Pointer(Box<Type>),
-    Function { args: Box<Type>, returns: Box<Type> }, // Both types are always tuples.
+    Function { args: Box<Type>, returns: Box<Type> }, // Box<Type> }, // Both types are always tuples.
     Variable(VariableKind),
     Tuple(Vec<Type>),
     Truthy, // a marker type for truthy types
@@ -46,19 +44,14 @@ impl Type {
     /// Returns true if this type is a subtype of the other type.
     ///
     /// In our type system, a type is a subtype of itself, and Char and Bool are subtypes of Int.
-    pub fn is_subtype_of(&self, other: &Type, bounds: &TypeBoundsMap) -> bool {
+    pub fn is_subtype_of(&self, other: &Type) -> bool {
+        assert!(self.is_var_free());
+        assert!(other.is_var_free());
         match (self, other) {
             // A type is always a subtype of itself
             (a, b) if a == b => true,
             (_, Type::Any) => true,
             (Type::Nothing, _) => true,
-            (a, Type::Variable(_)) => {
-                if let Some(b_lower) = bounds.lower_bound(other) {
-                    a.is_subtype_of(b_lower, bounds)
-                } else {
-                    false
-                }
-            }
             (Type::Char, Type::Int) => true,
             (Type::Bool, Type::Int) => true,
             (Type::Pointer(_), Type::Int) => true,
@@ -71,13 +64,13 @@ impl Type {
                     return false;
                 }
                 for (t1, t2) in ts1.iter().zip(ts2.iter()) {
-                    if !t1.is_subtype_of(t2, bounds) {
+                    if !t1.is_subtype_of(t2) {
                         return false;
                     }
                 }
                 true
             }
-            (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b, bounds),
+            (Type::Pointer(a), Type::Pointer(b)) => a.is_subtype_of(b),
             // Function pointer subtyping: contravariant args, covariant returns
             (
                 Type::Function {
@@ -88,8 +81,10 @@ impl Type {
                     args: args2,
                     returns: returns2,
                 },
-            ) => args2.is_subtype_of(args1, bounds),
+            ) => args2.is_subtype_of(args1),
             (Type::Function { .. }, Type::Int) => true,
+            (_, Type::Variable(_)) => unreachable!(),
+            (Type::Variable(_), _) => unreachable!(),
             _ => false,
         }
     }
@@ -105,8 +100,8 @@ impl Type {
         }
     }
 
-    pub fn is_strict_subtype_of(&self, other: &Type, bounds: &TypeBoundsMap) -> bool {
-        self != other && self.is_subtype_of(other, bounds)
+    pub fn is_strict_subtype_of(&self, other: &Type) -> bool {
+        self != other && self.is_subtype_of(other)
     }
 
     fn get_types_recursive(&self) -> Vec<Type> {
@@ -172,10 +167,7 @@ impl Type {
 pub fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
-        Type::Function { args, returns } => {
-            args.get_types_recursive().iter().all(is_concrete_type)
-                && returns.get_types_recursive().iter().all(is_concrete_type)
-        }
+        Type::Function { args, returns } => is_concrete_type(args) && is_concrete_type(returns),
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => false,
@@ -214,12 +206,14 @@ impl fmt::Display for Type {
 /// Returns the most specific type that is a supertype of both types (Least Upper Bound).
 /// Used for reconciling types during unification when subtyping is involved.
 /// Returns None if the types are incompatible.
-pub fn lub(a: &Type, b: &Type, bounds: &TypeBoundsMap) -> Option<Type> {
+pub fn lub(a: &Type, b: &Type) -> Option<Type> {
+    assert!(a.is_var_free());
+    assert!(b.is_var_free());
     if a == b {
         Some(a.clone())
-    } else if a.is_subtype_of(b, bounds) {
+    } else if a.is_subtype_of(b) {
         Some(b.clone()) // b is the supertype
-    } else if b.is_subtype_of(a, bounds) {
+    } else if b.is_subtype_of(a) {
         Some(a.clone()) // a is the supertype
     } else {
         None
@@ -229,10 +223,13 @@ pub fn lub(a: &Type, b: &Type, bounds: &TypeBoundsMap) -> Option<Type> {
 /// Returns the most specific common type (Greatest Lower Bound, conceptually).
 /// If one is a subtype of the other, returns the subtype.
 /// Returns None if they are incompatible or unrelated.
-pub fn glb(a: &Type, b: &Type, bounds: &TypeBoundsMap) -> Option<Type> {
-    if a == b || a.is_subtype_of(b, bounds) {
+pub fn glb(a: &Type, b: &Type) -> Option<Type> {
+    assert!(a.is_var_free());
+    assert!(b.is_var_free());
+
+    if a == b || a.is_subtype_of(b) {
         Some(a.clone())
-    } else if b.is_subtype_of(a, bounds) {
+    } else if b.is_subtype_of(a) {
         Some(b.clone()) // b is the subtype (more specific)
     } else {
         None

@@ -454,8 +454,6 @@ impl ModelEventListener for TypeInferenceAnalyzer {
             panic!("SSA program not available");
         };
 
-        self.generate_constraints_for_program(model, ssa_result);
-
         // Solve the constraints through unification
         let solve_result = solver::unify(model, &self.constraints, &self.debug_markers);
 
@@ -473,21 +471,23 @@ impl ModelEventListener for TypeInferenceAnalyzer {
                 // If this is a type conflict with an SsaVar, output the trace history
                 if let TypeInferenceError::TypeConflict {
                     ref partial_result,
-                    left,
-                    right,
+                    key, other,
                     .. // ignore other fields
                 } = &error
                 {
+                    log::error!("Type conflict: {}", error);
+                    /*
                     // Format the trace history for the variable
-                    let trace_history_left = partial_result.format_traces_for_type(left.clone());
-                    let trace_history_right = partial_result.format_traces_for_type(right.clone());
+                    let trace_history_var = partial_result.format_traces_for_type(key.clone());
+                    let trace_history_other = partial_result.format_traces_for_type(other.clone());
                     log::error!(
-                        "Type conflict trace history for left: {}:\n{}\nType conflict trace history for right: {}:\n{}",
-                        left,
-                        trace_history_left,
-                        right,
-                        trace_history_right,
+                        "Type conflict trace history for var: {}:\n{}\nType conflict trace history for other: {}:\n{}",
+                        var,
+                        trace_history_var,
+                        other:
+                        trace_history_other,,
                     );
+                    */
                 }
 
                 panic!("Type inference failed: {}", error);

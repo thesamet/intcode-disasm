@@ -6,11 +6,12 @@ use thiserror::Error;
 
 use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
-use super::types::{glb, is_concrete_type, lub, Type, VariableKind};
+use super::types::VariableKind;
 use super::visuals::TraceColors;
 use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::{SsaVar, SsaVarKind};
+use crate::disasm::v2::type_inference::types::{glb, lub, Type};
 
 /// Enum to distinguish between upper and lower bound conflicts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,13 +31,12 @@ impl fmt::Display for BoundType {
 
 #[derive(Error, Debug)]
 pub enum TypeInferenceError {
-    #[error("Type conflict for {ssa_var}: {bound_type} type conflict between {left} and {right} for {var_type} at {constraint}")]
+    #[error("Type conflict for {key}: type conflict between existing {bound_type} bound {current_bound} and {other} at {constraint}")]
     TypeConflict {
-        ssa_var: SsaVar,
+        key: VariableKind,
         bound_type: BoundType,
-        left: Type,
-        right: Type,
-        var_type: Type,
+        other: Type,
+        current_bound: Type,
         constraint: Constraint,
         partial_result: Box<TypeInferenceResult>,
     },
@@ -64,7 +64,7 @@ impl TypeBounds {
 }
 
 pub(crate) struct TypeBoundsMap {
-    bounds: HashMap<Type, TypeBounds>,
+    bounds: HashMap<VariableKind, TypeBounds>,
     pub traces: Vec<AnalysisTrace>,
 }
 
@@ -76,31 +76,30 @@ impl TypeBoundsMap {
         }
     }
 
-    pub(crate) fn all_keys(&self) -> Vec<Type> {
+    pub(crate) fn all_keys(&self) -> Vec<VariableKind> {
         self.bounds.keys().cloned().collect()
     }
 
-    pub(crate) fn iter(&self) -> std::collections::hash_map::Iter<'_, Type, TypeBounds> {
+    pub(crate) fn iter(&self) -> std::collections::hash_map::Iter<'_, VariableKind, TypeBounds> {
         self.bounds.iter()
     }
 
-    pub(crate) fn upper_bound(&self, key: &Type) -> Option<&Type> {
+    pub(crate) fn upper_bound(&self, key: &VariableKind) -> Option<&Type> {
         self.bounds.get(key).map(|b| &b.upper)
     }
 
-    pub(crate) fn lower_bound(&self, key: &Type) -> Option<&Type> {
+    pub(crate) fn lower_bound(&self, key: &VariableKind) -> Option<&Type> {
         self.bounds.get(key).map(|b| &b.lower)
     }
 
-    pub(crate) fn insert_key(&mut self, key: Type, lower: Type, upper: Type) -> (Type, Type) {
+    pub(crate) fn insert_key(&mut self, key: VariableKind, lower: Type, upper: Type) {
         self.bounds
             .insert(key, TypeBounds::new(lower.clone(), upper.clone()));
-        (lower, upper)
     }
 
     fn update_bound(
         &mut self,
-        key: Type,
+        key: &VariableKind,
         old_bounds: Option<TypeBounds>,
         new_bounds: TypeBounds,
         reason: ChangeReason,
@@ -114,10 +113,15 @@ impl TypeBoundsMap {
             reason,
         };
         self.traces.push(trace);
-        self.bounds.insert(key, new_bounds);
+        self.bounds.insert(key.clone(), new_bounds);
     }
 
-    pub(crate) fn register_new_upper(&mut self, key: Type, new_upper: Type, reason: ChangeReason) {
+    pub(crate) fn register_new_upper(
+        &mut self,
+        key: &VariableKind,
+        new_upper: Type,
+        reason: ChangeReason,
+    ) {
         let old_bounds = self.bounds.get(&key).cloned();
         let lower = old_bounds
             .as_ref()
@@ -138,7 +142,12 @@ impl TypeBoundsMap {
         self.update_bound(key, old_bounds, new_bounds, reason);
     }
 
-    pub(crate) fn register_new_lower(&mut self, key: Type, new_lower: Type, reason: ChangeReason) {
+    pub(crate) fn register_new_lower(
+        &mut self,
+        key: &VariableKind,
+        new_lower: Type,
+        reason: ChangeReason,
+    ) {
         let old_bounds = self.bounds.get(&key).cloned();
         let upper = old_bounds
             .as_ref()
@@ -158,7 +167,7 @@ impl TypeBoundsMap {
             upper: upper.clone(),
         };
 
-        self.update_bound(key, old_bounds, new_bounds, reason);
+        self.update_bound(&key, old_bounds, new_bounds, reason);
     }
 }
 
@@ -179,7 +188,7 @@ pub enum ChangeReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalysisTrace {
-    pub key: Type,
+    pub key: VariableKind,
     pub change: BoundChange,
     pub reason: ChangeReason,
 }
@@ -187,11 +196,7 @@ pub struct AnalysisTrace {
 impl fmt::Display for AnalysisTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Colorize the key type
-        let key_str = if let Type::Variable(var) = &self.key {
-            TraceColors::format_var(var)
-        } else {
-            TraceColors::format_type(&self.key)
-        };
+        let key_str = TraceColors::format_var(&self.key);
 
         // Format old bounds with colors
         let old_bounds_str = match &self.change.old_bounds {
@@ -303,10 +308,6 @@ pub fn unify(
         init_bounds_for_type(&c.right, &mut bounds);
     }
 
-    for typ in [Type::Int, Type::Bool, Type::Char] {
-        bounds.insert_key(typ.clone(), typ.clone(), typ.clone());
-    }
-
     loop {
         while reach_constraint_fixed_point(model, &constraints, &mut bounds, debug_markers)? {}
         /*
@@ -340,8 +341,7 @@ fn reach_constraint_fixed_point(
         let mut changed_in_iteration = false;
         let mut worklist = constraints.to_vec(); // Clone constraints into a worklist
         while let Some(c) = worklist.pop() {
-            let (changed, constraints) =
-                process_constraint(model, &c, &c.left, &c.right, bounds, debug_markers)?;
+            let (changed, constraints) = process_constraint(model, &c, bounds, debug_markers)?;
             changed_in_iteration |= changed;
             overall_changed |= changed_in_iteration;
             worklist.extend(constraints);
@@ -432,13 +432,8 @@ fn refine_function_pointers(
 */
 
 fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
-    let keys = bounds
-        .all_keys()
-        .iter()
-        .filter(|k| !k.is_var_free())
-        .cloned()
-        .collect_vec();
     let mut changed = false;
+    /*
     for key in &keys {
         let lower = bounds.lower_bound(key).unwrap().clone();
         let upper = bounds.upper_bound(key).unwrap().clone();
@@ -471,11 +466,13 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferen
             changed = true;
         }
     }
+    */
     Ok(changed)
 }
 
 fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
     let mut changed = false;
+    /*
     for key in bounds.all_keys() {
         if key.is_var_free() {
             continue;
@@ -490,46 +487,43 @@ fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInfe
             changed = true;
         }
     }
+    */
     Ok(changed)
 }
 
 /// Helper function for handling bound conflicts uniformly
 fn ok_or_bound_conflict(
     constraint: &Constraint,
-    type_var: &Type,
-    new_bound: Option<Type>,
+    key: &VariableKind,
     bound_type: BoundType,
+    refined: Option<Type>,
+    other: &Type,
     bounds: &mut TypeBoundsMap,
     debug_markers: &HashMap<char, SsaVar>,
 ) -> Result<Type, TypeInferenceError> {
-    match new_bound {
-        Some(bound) => Ok(bound),
+    match refined {
+        Some(refined) => Ok(refined),
         None => {
+            let current_bound = match bound_type {
+                BoundType::Upper => bounds.upper_bound(key),
+                BoundType::Lower => bounds.lower_bound(key),
+            }
+            .unwrap()
+            .clone();
             if constraint.reason == ConstraintReason::PhiAssignment {
                 // Phi assignments may not be a live variable. For now,
                 // return a "Conflict" type and not fail the unification.
                 Ok(Type::Conflict)
             } else {
                 // Extract SSA var from the type if possible for better error reporting
-                if let Type::Variable(VariableKind::SsaVar(ssa_var)) = type_var {
-                    Err(TypeInferenceError::TypeConflict {
-                        ssa_var: *ssa_var,
-                        bound_type,
-                        left: constraint.left.clone(),
-                        right: constraint.right.clone(),
-                        var_type: type_var.clone(),
-                        constraint: constraint.clone(),
-                        partial_result: Box::new(create_partial_result(bounds, debug_markers)),
-                    })
-                } else {
-                    Err(TypeInferenceError::BoundConflict {
-                        bound_type,
-                        left: constraint.left.clone(),
-                        right: constraint.right.clone(),
-                        var_type: type_var.clone(),
-                        constraint: constraint.clone(),
-                    })
-                }
+                Err(TypeInferenceError::TypeConflict {
+                    key: key.clone(),
+                    bound_type,
+                    other: other.clone(),
+                    current_bound,
+                    constraint: constraint.clone(),
+                    partial_result: Box::new(create_partial_result(bounds, debug_markers)),
+                })
             }
         }
     }
@@ -538,73 +532,75 @@ fn ok_or_bound_conflict(
 fn process_constraint(
     model: &ProgramModel,
     constraint: &Constraint,
-    left: &Type,
-    right: &Type,
     bounds: &mut TypeBoundsMap,
     debug_markers: &HashMap<char, SsaVar>,
 ) -> Result<(bool, Vec<Constraint>), TypeInferenceError> {
     trace!("Processing constraint: {}", constraint);
     let mut result = vec![];
-    let left_lower = bounds.lower_bound(left).cloned().unwrap_or(left.clone());
-    let left_upper = bounds.upper_bound(left).cloned().unwrap_or(left.clone());
-    let right_lower = bounds.lower_bound(right).cloned().unwrap_or(right.clone());
-    let right_upper = bounds.upper_bound(right).cloned().unwrap_or(right.clone());
-    let left_new_upper = glb(&left_upper, &right_upper, bounds);
-    let right_new_lower = lub(&left_lower, &right_lower, bounds);
-    let left_new_upper = ok_or_bound_conflict(
-        constraint,
-        left,
-        left_new_upper,
-        BoundType::Upper,
-        bounds,
-        debug_markers,
-    )?;
-    let right_new_lower = ok_or_bound_conflict(
-        constraint,
-        right,
-        right_new_lower,
-        BoundType::Lower,
-        bounds,
-        debug_markers,
-    )?;
     let mut changed = false;
-    if right_new_lower != right_lower {
-        bounds.register_new_lower(
-            right.clone(),
-            right_new_lower.clone(),
-            ChangeReason::DecreaseUpperBoundFromConstraint {
-                constraint: constraint.clone(),
-                other: left.clone(),
-            },
-        );
-        trace!(
-            "Changed lower bound of {} from {} to {}",
-            right,
-            right_lower,
-            right_new_lower
-        );
-        changed = true;
-    }
-    if left_new_upper != left_upper {
-        bounds.register_new_upper(
-            left.clone(),
-            left_new_upper.clone(),
-            ChangeReason::IncreaseLowerBoundFromConstraint {
-                constraint: constraint.clone(),
-                other: right.clone(),
-            },
-        );
-        trace!(
-            "Changed upper bound of {} from {} to {}",
-            left,
-            left_upper,
-            left_new_upper
-        );
-        changed = true;
-    }
-    add_function_pointer_constraints(model, bounds, &left, &left_new_upper, &mut result);
-    add_function_pointer_constraints(model, bounds, &right_new_lower, &right, &mut result);
-    match (left, right) {
+    match (constraint.left.clone(), constraint.right.clone()) {
+        (Type::Variable(v), x) => {
+            let v_upper = bounds.upper_bound(&v).cloned().unwrap();
+            let new_v_upper = glb(&v_upper, &effective_upper_bound(&x, bounds));
+            let new_v_upper = ok_or_bound_conflict(
+                constraint,
+                &v,
+                BoundType::Upper,
+                new_v_upper,
+                &x,
+                bounds,
+                debug_markers,
+            )?;
+            if v_upper != new_v_upper {
+                bounds.register_new_upper(
+                    &v,
+                    new_v_upper.clone(),
+                    ChangeReason::DecreaseUpperBoundFromConstraint {
+                        constraint: constraint.clone(),
+                        other: x,
+                    },
+                );
+                trace!(
+                    "Changed upper bound of {} from {} to {}",
+                    v,
+                    v_upper,
+                    new_v_upper,
+                );
+                changed = true;
+            }
+            add_function_pointer_constraints(model, bounds, &v, &v_upper, &mut result);
+        }
+        (x, Type::Variable(v)) => {
+            let v_lower = bounds.lower_bound(&v).unwrap().clone();
+            let new_v_lower = lub(&v_lower, &effective_lower_bound(&x, bounds));
+            let new_v_lower = ok_or_bound_conflict(
+                constraint,
+                &v,
+                BoundType::Lower,
+                new_v_lower,
+                &x,
+                bounds,
+                debug_markers,
+            )?;
+            if v_lower != new_v_lower {
+                bounds.register_new_lower(
+                    &v,
+                    new_v_lower.clone(),
+                    ChangeReason::IncreaseLowerBoundFromConstraint {
+                        constraint: constraint.clone(),
+                        other: x,
+                    },
+                );
+                trace!(
+                    "Changed lower bound of {} from {} to {}",
+                    v,
+                    v_lower,
+                    new_v_lower,
+                );
+                changed = true;
+            }
+            add_function_pointer_constraints(model, bounds, &v, &v_lower, &mut result);
+        }
         (Type::Pointer(x), Type::Pointer(y)) => {
             result.push(Constraint {
                 left: *x.clone(),
@@ -614,40 +610,13 @@ fn process_constraint(
                 reason: ConstraintReason::PointerSubtype,
             });
         }
-        (x, Type::Pointer(y)) => {
-            let y_upper = bounds.upper_bound(&y).unwrap_or(y).clone();
-            let new_upper = Type::Pointer(Box::new(y_upper));
-            if new_upper.is_strict_subtype_of(&left_upper, bounds) {
+
+        (Type::Tuple(ts), Type::Tuple(us)) => {
+            assert!(ts.len() == us.len());
+            for (t, u) in ts.iter().zip(us) {
                 result.push(Constraint {
-                    left: x.clone(),
-                    right: new_upper,
-                    addr: constraint.addr,
-                    function_id: constraint.function_id,
-                    reason: ConstraintReason::PointerSubtype,
-                });
-            }
-        }
-        (x, Type::Tuple(ts)) => {
-            let mut new_upper = vec![];
-            for t in ts {
-                let t_upper = bounds.upper_bound(&t).unwrap_or(t).clone();
-                new_upper.push(t_upper);
-            }
-            let new_upper = Type::Tuple(new_upper);
-            trace!(
-                "Considering for x={} new_upper={}. We have left_upper={}",
-                x,
-                new_upper,
-                left_upper
-            );
-            trace!(
-                " Is subtype: {}",
-                new_upper.is_subtype_of(&left_upper, bounds)
-            );
-            if new_upper.is_strict_subtype_of(&left_upper, bounds) {
-                result.push(Constraint {
-                    left: x.clone(),
-                    right: new_upper,
+                    left: t.clone(),
+                    right: u.clone(),
                     addr: constraint.addr,
                     function_id: constraint.function_id,
                     reason: ConstraintReason::TupleSubtype,
@@ -668,68 +637,122 @@ fn process_constraint(
     Ok((changed, result))
 }
 
+fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
+    match typ {
+        Type::Int | Type::Bool | Type::Char => typ.clone(),
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
+        Type::Pointer(x) => Type::Pointer(Box::new(effective_upper_bound(x, bounds))),
+        Type::Function { args, returns } => {
+            let args = effective_lower_bound(args, bounds);
+            let returns = effective_upper_bound(returns, bounds);
+            Type::Function {
+                args: Box::new(args),
+                returns: Box::new(returns),
+            }
+        }
+        Type::Tuple(ts) => Type::Tuple(
+            ts.iter()
+                .map(|t| effective_upper_bound(t, bounds))
+                .collect(),
+        ),
+        Type::Variable(v) => bounds.upper_bound(v).unwrap().clone(),
+    }
+}
+
+fn effective_lower_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
+    match typ {
+        Type::Int | Type::Bool | Type::Char => typ.clone(),
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
+        Type::Pointer(x) => Type::Pointer(Box::new(effective_lower_bound(x, bounds))),
+        Type::Function { args, returns } => {
+            let args = effective_upper_bound(args, bounds);
+            let returns = effective_lower_bound(returns, bounds);
+            Type::Function {
+                args: Box::new(args),
+                returns: Box::new(returns),
+            }
+        }
+        Type::Tuple(ts) => Type::Tuple(
+            ts.iter()
+                .map(|t| effective_lower_bound(t, bounds))
+                .collect(),
+        ),
+        Type::Variable(v) => {
+            let v_lower = bounds.lower_bound(v).unwrap();
+            v_lower.clone()
+        }
+    }
+}
+
 fn add_function_pointer_constraints(
     model: &ProgramModel,
     bounds: &mut TypeBoundsMap,
-    lower: &Type,
+    lower: &VariableKind,
     upper: &Type,
     result: &mut Vec<Constraint>,
 ) {
-    let Type::Variable(VariableKind::SsaVar(SsaVar {
+    let VariableKind::SsaVar(SsaVar {
         kind: SsaVarKind::Immediate(addr),
         ..
-    })) = lower
+    }) = lower
     else {
         return;
     };
-    let addr = FunctionId::from(*addr as usize);
+    let function_id = FunctionId::from(*addr as usize);
+    let Some(callee_info) = model
+        .get_function_call_analysis()
+        .unwrap()
+        .callee_info
+        .get(&function_id)
+    else {
+        return;
+    };
 
     let Some((args, rets)) = Type::extract_function_from_pointer(upper) else {
         return;
     };
+    let Type::Variable(args_kind @ VariableKind::TypeVar(_)) = args else {
+        return;
+    };
     assert!(matches!(args, Type::Variable(VariableKind::TypeVar(_))));
-    let args_upper = bounds.upper_bound(args).unwrap();
-    let args_upper = if bounds.upper_bound(args) == Some(&Type::Any) {
+    let args_upper = effective_upper_bound(args, bounds);
+    let args_upper = if args_upper == Type::Any {
         // We have not processed this function pointer yet. Processing
         // ensures that the type variable of args is a subtype of a tuple
         // that corresponds to the callee's parameter SSA vars.
-        let Some(callee_info) = model
-            .get_function_call_analysis()
-            .unwrap()
-            .callee_info
-            .get(&addr)
-        else {
-            return;
-        };
         let mut t_vars = vec![];
-        for (i, callee_ssa_var) in callee_info
-            .parameter_entry_vars
-            .iter()
-            .sorted_by_key(|(k, _)| *k)
-        {
+        for _ in 0..callee_info.parameter_entry_vars.len() {
             let v = Type::new_var();
             t_vars.push(v.clone());
-            result.push(Constraint {
-                right: Type::from_ssavar(callee_ssa_var),
-                left: v.clone(),
-                addr: InstructionId::from(addr.index()),
-                function_id: addr,
-                reason: ConstraintReason::FunctionParameterBinding,
-            });
         }
         let t = Type::Tuple(t_vars);
         init_bounds_for_type(&t, bounds);
+        bounds.register_new_upper(
+            args_kind,
+            t.clone(),
+            ChangeReason::IndirectFuctionParameterBinding(function_id),
+        );
         t
     } else {
-        args_upper.clone()
+        args_upper
     };
-    result.push(Constraint {
-        left: args.clone(),
-        right: args_upper,
-        addr: InstructionId::from(addr.index()),
-        function_id: addr,
-        reason: ConstraintReason::FunctionParameterBinding,
-    });
+    let Type::Tuple(ts) = args_upper else {
+        unreachable!();
+    };
+    for (ti, (_, callee_ssa_var)) in ts.iter().zip(
+        callee_info
+            .parameter_entry_vars
+            .iter()
+            .sorted_by_key(|(k, _)| *k),
+    ) {
+        result.push(Constraint {
+            left: Type::from_ssavar(callee_ssa_var),
+            right: ti.clone(),
+            addr: InstructionId::from(function_id.index()),
+            function_id,
+            reason: ConstraintReason::FunctionParameterBinding,
+        });
+    }
 
     /*
     result.push(Constraint {
@@ -742,32 +765,25 @@ fn add_function_pointer_constraints(
     */
 }
 
-pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) -> (Type, Type) {
+pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
     match typ {
-        Type::Int | Type::Bool | Type::Char => {
-            bounds.insert_key(typ.clone(), typ.clone(), typ.clone())
-        }
-        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => (Type::Nothing, Type::Any),
+        Type::Int | Type::Bool | Type::Char => {}
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => {}
         Type::Pointer(x) => {
-            let (lower, upper) = init_bounds_for_type(x, bounds);
-            bounds.insert_key(
-                typ.clone(),
-                Type::Pointer(Box::new(lower)),
-                Type::Pointer(Box::new(upper)),
-            )
+            init_bounds_for_type(x, bounds);
         }
         Type::Function { args, returns } => {
             let _ = init_bounds_for_type(args, bounds);
             let _ = init_bounds_for_type(returns, bounds);
-            bounds.insert_key(typ.clone(), typ.clone(), typ.clone())
         }
         Type::Tuple(ts) => {
             for t in ts {
                 init_bounds_for_type(t, bounds);
             }
-            bounds.insert_key(typ.clone(), typ.clone(), typ.clone())
         }
-        Type::Variable(_) => bounds.insert_key(typ.clone(), Type::Nothing, Type::Any),
+        Type::Variable(v) => {
+            bounds.insert_key(v.clone(), Type::Nothing, Type::Any);
+        }
     }
 }
 
@@ -780,7 +796,7 @@ pub(crate) fn create_partial_result(
         .iter()
         .filter_map({
             |(k, v)| match k {
-                Type::Variable(VariableKind::SsaVar(var)) => Some((*var, v.upper.clone())), // Use upper bound as the inferred type for now
+                VariableKind::SsaVar(var) => Some((*var, v.upper.clone())), // Use upper bound as the inferred type for now
                 _ => None,
             }
         })

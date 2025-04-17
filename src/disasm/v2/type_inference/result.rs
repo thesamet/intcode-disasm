@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::disasm::v2::ssa_form::SsaVar;
 
 use super::solver::{AnalysisTrace, ChangeReason};
-use super::types::Type;
+use super::types::{Type, VariableKind};
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
@@ -31,7 +31,10 @@ impl TypeInferenceResult {
     }
 
     /// Get traces for a variable plus any related traces through constraints
-    pub fn get_recursive_traces_for_ssavar(&self, type_var: Type) -> Vec<(usize, &AnalysisTrace)> {
+    pub fn get_recursive_traces_for_var(
+        &self,
+        type_var: VariableKind,
+    ) -> Vec<(usize, &AnalysisTrace)> {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
 
@@ -45,9 +48,9 @@ impl TypeInferenceResult {
 
     fn collect_related_traces<'a>(
         &'a self,
-        type_key: Type,
+        type_key: VariableKind,
         result: &mut Vec<(usize, &'a AnalysisTrace)>,
-        visited: &mut HashSet<Type>,
+        visited: &mut HashSet<VariableKind>,
     ) {
         if !visited.insert(type_key.clone()) {
             return; // Already visited this type
@@ -68,7 +71,9 @@ impl TypeInferenceResult {
                         constraint: _,
                         other,
                     } => {
+                        /*
                         self.collect_related_traces(other.clone(), result, visited);
+                        */
                     }
                     _ => {}
                 }
@@ -77,8 +82,8 @@ impl TypeInferenceResult {
     }
 
     /// Format all traces for an SSA variable in chronological order
-    pub fn format_traces_for_type(&self, typ: Type) -> String {
-        let traces = self.get_recursive_traces_for_ssavar(typ.clone());
+    pub fn format_traces_for_var(&self, typ: VariableKind) -> String {
+        let traces = self.get_recursive_traces_for_var(typ.clone());
         if traces.is_empty() {
             return format!("No traces found for {}", typ);
         }

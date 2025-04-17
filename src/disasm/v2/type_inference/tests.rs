@@ -3,6 +3,7 @@ mod type_inference_tests {
 
     use crate::disasm::parser;
     use crate::disasm::v2::pretty_print::pretty_print_with_types;
+    use crate::disasm::v2::type_inference::types::VariableKind;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
@@ -160,14 +161,14 @@ mod type_inference_tests {
                 .get_ssa_result()
                 .unwrap()
                 .find_ssa_var_by_marker(marker);
-            let typ = Type::from_ssavar(&ssa_var);
+            let kind = VariableKind::SsaVar(ssa_var);
             println!(
                 "Trace history for {}:\n{}\nType inference completed successfully",
                 marker,
                 self.model
                     .get_type_inference_result()
                     .unwrap()
-                    .format_traces_for_type(typ)
+                    .format_traces_for_var(kind)
             );
         }
     }
