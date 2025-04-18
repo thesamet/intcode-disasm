@@ -5,7 +5,8 @@ use super::{
     control_flow::PredecessorKind,
     instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaVar, SsaVarKind},
+    // Import SsaOperand as well
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaVar, SsaVarKind},
 };
 
 struct PrettyPrinter<'a> {
@@ -14,53 +15,61 @@ struct PrettyPrinter<'a> {
 }
 
 impl<'a> PrettyPrinter<'a> {
-    fn format_ssa_var(&self, var: &SsaVar) -> String {
-        let typ = if let Some(type_info) = self.model.get_type_inference_result() {
-            if self.show_types {
-                type_info.get_type_for_ssavar(var)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let typ = match typ {
-            Some(typ) => format!(": {}", typ),
-            None => "".to_string(),
-        };
-        let debug_marker = var
-            .operand()
-            .debug_marker
-            .as_ref()
-            .map(|m| format!("'{} ", m).yellow())
-            .unwrap_or_default();
-        match var.kind {
-            SsaVarKind::RelativeMemory(offset) => {
-                if offset == 0 {
-                    "[R]".cyan().to_string()
-                } else if offset > -1 {
-                    format!("{}[R+{}]_{}{}", debug_marker, offset, var.version, typ)
-                        .cyan()
-                        .to_string()
+    // Renamed to format_ssa_operand as it now handles both Constants and Variables
+    fn format_ssa_operand(&self, ssa_op: &SsaOperand) -> String {
+        match ssa_op {
+            SsaOperand::Constant(val) => format!("{}", val).green().to_string(),
+            SsaOperand::Variable(var) => {
+                // Formatting logic for SsaVar moved here
+                let typ = if let Some(type_info) = self.model.get_type_inference_result() {
+                    if self.show_types {
+                        type_info.get_type_for_ssavar(var) // Type info is per-variable
+                    } else {
+                        None
+                    }
                 } else {
-                    format!("{}[R{}]_{}{}", debug_marker, offset, var.version, typ)
-                        .blue()
-                        .to_string()
+                    None
+                };
+
+                let typ_str = match typ {
+                    Some(typ) => format!(": {}", typ),
+                    None => "".to_string(),
+                };
+
+                // Use SsaVar::to_operand() to get debug marker
+                let debug_marker = var
+                    .to_operand() // Use the correct method
+                    .debug_marker
+                    .as_ref()
+                    .map(|m| format!("'{} ", m).yellow())
+                    .unwrap_or_default();
+
+                match var.kind {
+                    SsaVarKind::RelativeMemory(offset) => {
+                        if offset == 0 {
+                            "[R]".cyan().to_string() // Version not shown for [R]_0 usually
+                        } else if offset > -1 {
+                            format!("{}[R+{}]_{}{}", debug_marker, offset, var.version, typ_str)
+                                .cyan()
+                                .to_string()
+                        } else {
+                            format!("{}[R{}]_{}{}", debug_marker, offset, var.version, typ_str)
+                                .blue()
+                                .to_string()
+                        }
+                    }
+                    SsaVarKind::Memory(addr) => {
+                        format!("{}[{}]_{}{}", debug_marker, addr, var.version, typ_str)
+                            .purple()
+                            .to_string()
+                    }
+                    SsaVarKind::Deref { address, address_version } => {
+                        format!("{}*[{}_{}]_{}{}", debug_marker, address, address_version, var.version, typ_str)
+                            .bright_red()
+                            .to_string()
+                    }
                 }
             }
-            SsaVarKind::Memory(addr) => {
-                format!("{}[{}]_{}{}", debug_marker, addr, var.version, typ)
-                    .purple()
-                    .to_string()
-            }
-            SsaVarKind::Immediate(val) => format!("{}{}", debug_marker, val).green().to_string(),
-            SsaVarKind::Deref {
-                address,
-                address_version,
-            } => format!("{}*[{}_{}]{}", debug_marker, address, address_version, typ)
-                .bright_red()
-                .to_string(),
         }
     }
 
@@ -69,75 +78,79 @@ impl<'a> PrettyPrinter<'a> {
             .inputs
             .iter()
             .sorted_by_key(|(pred_kind, _)| pred_kind.source_block_id())
-            .map(|(pred_kind, var)| {
+            .map(|(pred_kind, ssa_op)| { // Now iterates over SsaOperand
                 let source_id = pred_kind.source_block_id();
                 let call_marker = if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
                     "(call)"
                 } else {
                     ""
                 };
-                format!("{}{}: {}", source_id, call_marker, self.format_ssa_var(var))
+                // Format the SsaOperand (Constant or Variable)
+                format!("{}{}: {}", source_id, call_marker, self.format_ssa_operand(ssa_op))
             })
             .join(", ");
-        format!("{} = φ({})", self.format_ssa_var(&phi.result), inputs)
+        // Phi result is always an SsaVar, wrap it for formatting
+        format!("{} = φ({})", self.format_ssa_operand(&SsaOperand::Variable(phi.result)), inputs)
     }
 
-    fn format_instruction(&self, instr: &GenericInstruction<SsaVar>) -> String {
+    // Update to take GenericInstruction<SsaOperand>
+    fn format_instruction(&self, instr: &GenericInstruction<SsaOperand>) -> String {
+        // Use format_ssa_operand for all operands
         match &instr.kind {
             InstructionKind::Add(a, b, c) => {
                 format!(
                     "{} = {} + {}",
-                    self.format_ssa_var(c),
-                    self.format_ssa_var(a),
-                    self.format_ssa_var(b)
+                    self.format_ssa_operand(c),
+                    self.format_ssa_operand(a),
+                    self.format_ssa_operand(b)
                 )
             }
             InstructionKind::Mul(a, b, c) => {
                 format!(
                     "{} = {} * {}",
-                    self.format_ssa_var(c),
-                    self.format_ssa_var(a),
-                    self.format_ssa_var(b)
+                    self.format_ssa_operand(c),
+                    self.format_ssa_operand(a),
+                    self.format_ssa_operand(b)
                 )
             }
             InstructionKind::Input(a) => {
-                format!("{} = input()", self.format_ssa_var(a))
+                format!("{} = input()", self.format_ssa_operand(a))
             }
             InstructionKind::Output(a) => {
-                format!("output({})", self.format_ssa_var(a))
+                format!("output({})", self.format_ssa_operand(a))
             }
             InstructionKind::JumpIfTrue(cond, target) => {
                 format!(
                     "if {} goto {}",
-                    self.format_ssa_var(cond),
-                    self.format_ssa_var(target)
+                    self.format_ssa_operand(cond),
+                    self.format_ssa_operand(target)
                 )
             }
             InstructionKind::JumpIfFalse(cond, target) => {
                 format!(
                     "if !{} goto {}",
-                    self.format_ssa_var(cond),
-                    self.format_ssa_var(target)
+                    self.format_ssa_operand(cond),
+                    self.format_ssa_operand(target)
                 )
             }
             InstructionKind::LessThan(a, b, c) => {
                 format!(
                     "{} = {} < {}",
-                    self.format_ssa_var(c),
-                    self.format_ssa_var(a),
-                    self.format_ssa_var(b)
+                    self.format_ssa_operand(c),
+                    self.format_ssa_operand(a),
+                    self.format_ssa_operand(b)
                 )
             }
             InstructionKind::Equals(a, b, c) => {
                 format!(
                     "{} = {} == {}",
-                    self.format_ssa_var(c),
-                    self.format_ssa_var(a),
-                    self.format_ssa_var(b)
+                    self.format_ssa_operand(c),
+                    self.format_ssa_operand(a),
+                    self.format_ssa_operand(b)
                 )
             }
             InstructionKind::AdjustRelativeBase(a) => {
-                format!("R += {}", self.format_ssa_var(a))
+                format!("R += {}", self.format_ssa_operand(a))
             }
             InstructionKind::Halt => "halt".red().to_string(),
             InstructionKind::Data(values) => {
@@ -147,13 +160,13 @@ impl<'a> PrettyPrinter<'a> {
                 )
             }
             InstructionKind::Goto(target) => {
-                format!("goto {}", self.format_ssa_var(target))
+                format!("goto {}", self.format_ssa_operand(target))
             }
             InstructionKind::Assign(target, source) => {
                 format!(
                     "{} = {}",
-                    self.format_ssa_var(target),
-                    self.format_ssa_var(source)
+                    self.format_ssa_operand(target),
+                    self.format_ssa_operand(source)
                 )
             }
         }
@@ -205,16 +218,18 @@ impl<'a> PrettyPrinter<'a> {
                         "({})",
                         return_values
                             .iter()
-                            .map(|v| self.format_ssa_var(v))
+                            // Return values are SsaVar, wrap for formatting
+                            .map(|v| self.format_ssa_operand(&SsaOperand::Variable(*v)))
                             .join(", "),
                     )
                 }
                 Some(return_values) if return_values.len() == 1 => return_values
                     .iter()
-                    .map(|v| self.format_ssa_var(v))
+                    // Return values are SsaVar, wrap for formatting
+                    .map(|v| self.format_ssa_operand(&SsaOperand::Variable(*v)))
                     .join(", ")
                     .to_string(),
-                Some(_) => "void".to_string().red().to_string(),
+                Some(_) => "void".to_string().red().to_string(), // Empty return_values vec
                 None => "unknown".to_string(),
             };
             format!(
@@ -222,9 +237,10 @@ impl<'a> PrettyPrinter<'a> {
                 ca.parameter_entry_vars
                     .values()
                     .sorted()
-                    .map(|v| self.format_ssa_var(v))
+                    // Parameter entry vars are SsaVar, wrap for formatting
+                    .map(|v| self.format_ssa_operand(&SsaOperand::Variable(*v)))
                     .join(", "),
-                rets
+                rets // Already formatted string
             )
         } else {
             "".to_string()

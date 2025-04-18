@@ -5,7 +5,7 @@ use std::{
 
 use itertools::Itertools;
 
-use crate::disasm::v2::ssa_form::SsaVar;
+use crate::disasm::v2::ssa_form::{SsaOperand, SsaVar};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableKind {
@@ -94,6 +94,15 @@ impl Type {
 
     pub fn from_ssavar(var: &SsaVar) -> Type {
         Type::Variable(VariableKind::SsaVar(*var))
+    }
+
+    pub fn from_ssaoperand(ssa_op: &SsaOperand) -> Type {
+        match ssa_op {
+            SsaOperand::Constant(val) => {
+                unreachable!("TODO!");
+            } //Type::from_constant(*val),
+            SsaOperand::Variable(var) => Type::from_ssavar(var),
+        }
     }
 
     pub fn as_ssavar(&self) -> Option<&SsaVar> {
