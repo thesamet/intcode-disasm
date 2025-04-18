@@ -11,7 +11,10 @@ use crate::disasm::v2::model::ProgramModel;
 
 #[cfg(test)]
 mod tests {
-    use crate::disasm::v2::instructions::{InstructionId, Operand};
+    use crate::disasm::v2::{
+        instructions::{InstructionId, Operand},
+        ssa_form::SsaOperand,
+    };
 
     use super::*;
 
@@ -64,9 +67,9 @@ mod tests {
 
         // Create some SSA variables to infer types for
         let function_id = FunctionId::from(0);
-        let int_var = SsaVar::new(memory_operand(100), 1, function_id);
-        let bool_var = SsaVar::new(memory_operand(101), 1, function_id);
-        let char_var = SsaVar::new(memory_operand(102), 1, function_id);
+        let int_var = SsaOperand::from_operand(&memory_operand(100), 1, function_id);
+        let bool_var = SsaOperand::from_operand(&memory_operand(101), 1, function_id);
+        let char_var = SsaOperand::from_operand(&memory_operand(102), 1, function_id);
 
         // Mark variables for testing
         type_inference.mark_var(int_var, 'a');
@@ -74,9 +77,9 @@ mod tests {
         type_inference.mark_var(char_var, 'c');
 
         // Get type variables for these SSA variables
-        let int_type = Type::from_ssavar(&int_var);
-        let bool_type = Type::from_ssavar(&bool_var);
-        let char_type = Type::from_ssavar(&char_var);
+        let int_type = Type::from_ssaoperand(&int_var);
+        let bool_type = Type::from_ssaoperand(&bool_var);
+        let char_type = Type::from_ssaoperand(&char_var);
 
         // Add constraints
         type_inference.add_constraint(
@@ -110,9 +113,9 @@ mod tests {
         .expect("Unification should succeed");
 
         // Verify types using the result
-        let int_result = result.get_type_for_ssavar(&int_var);
-        let bool_result = result.get_type_for_ssavar(&bool_var);
-        let char_result = result.get_type_for_ssavar(&char_var);
+        let int_result = result.get_type_for_ssavar(&int_var.as_variable().unwrap());
+        let bool_result = result.get_type_for_ssavar(&bool_var.as_variable().unwrap());
+        let char_result = result.get_type_for_ssavar(&char_var.as_variable().unwrap());
 
         assert_eq!(
             *int_result.unwrap(),
@@ -139,13 +142,13 @@ mod tests {
 
         // Create an SSA variable for a function pointer
         let function_id = FunctionId::from(0);
-        let func_ptr_var = SsaVar::new(memory_operand(200), 1, function_id);
+        let func_ptr_var = SsaVar::from_operand(&memory_operand(200), 1, function_id);
 
         // Get type variable
         let func_ptr_type = Type::from_ssavar(&func_ptr_var);
 
         // Mark variable for testing
-        type_inference.mark_var(func_ptr_var, 'f');
+        type_inference.mark_var(SsaOperand::Variable(func_ptr_var), 'f');
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -184,9 +187,9 @@ mod tests {
 
         // Create variables for testing pointer relationships
         let function_id = FunctionId::from(0);
-        let int_var = SsaVar::new(memory_operand(100), 1, function_id);
-        let ptr_var = SsaVar::new(memory_operand(101), 1, function_id);
-        let deref_var = SsaVar::new(deref_operand(101), 1, function_id);
+        let int_var = SsaOperand::from_operand(&memory_operand(100), 1, function_id);
+        let ptr_var = SsaOperand::from_operand(&memory_operand(101), 1, function_id);
+        let deref_var = SsaOperand::from_operand(&deref_operand(101), 1, function_id);
 
         // Mark variables for testing
         type_inference.mark_var(int_var, 'i');
@@ -194,9 +197,9 @@ mod tests {
         type_inference.mark_var(deref_var, 'd');
 
         // Get type variables
-        let int_type = Type::from_ssavar(&int_var);
-        let ptr_type = Type::from_ssavar(&ptr_var);
-        let deref_type = Type::from_ssavar(&deref_var);
+        let int_type = Type::from_ssaoperand(&int_var);
+        let ptr_type = Type::from_ssaoperand(&ptr_var);
+        let deref_type = Type::from_ssaoperand(&deref_var);
 
         // Add constraints
         type_inference.add_constraint(
@@ -231,9 +234,9 @@ mod tests {
         .expect("Unification should succeed");
 
         // Verify types
-        let int_result = result.get_type_for_ssavar(&int_var);
-        let ptr_result = result.get_type_for_ssavar(&ptr_var);
-        let deref_result = result.get_type_for_ssavar(&deref_var);
+        let int_result = result.get_type_for_ssavar(int_var.as_variable().unwrap());
+        let ptr_result = result.get_type_for_ssavar(&ptr_var.as_variable().unwrap());
+        let deref_result = result.get_type_for_ssavar(&deref_var.as_variable().unwrap());
 
         assert_eq!(
             *int_result.unwrap(),

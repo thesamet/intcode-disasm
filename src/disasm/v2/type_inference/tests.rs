@@ -3,6 +3,7 @@ mod type_inference_tests {
 
     use crate::disasm::parser;
     use crate::disasm::v2::pretty_print::pretty_print_with_types;
+    use crate::disasm::v2::ssa_form::SsaOperand;
     use crate::disasm::v2::type_inference::types::VariableKind;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
@@ -147,12 +148,12 @@ mod type_inference_tests {
                 .model
                 .get_ssa_result()
                 .unwrap()
-                .find_ssa_var_by_marker(marker);
+                .find_ssa_operand_by_marker(marker);
 
             self.model
                 .get_type_inference_result()
                 .unwrap()
-                .get_type_for_ssavar(&ssa_var)
+                .get_type_for_ssavar(&ssa_var.as_variable().unwrap())
                 .expect(&format!("No type found for SSA variable marker {}", marker))
                 .clone()
         }
@@ -163,7 +164,7 @@ mod type_inference_tests {
             let var = ti
                 .inferred_types
                 .keys()
-                .filter(|var| var.operand().kind.get_memory() == Some(addr as i128))
+                .filter(|var| var.to_operand().kind.get_memory() == Some(addr as i128))
                 .max_by_key(|var| var.version)
                 .unwrap_or_else(|| panic!("No type variable found for address {}", addr));
 
@@ -186,8 +187,8 @@ mod type_inference_tests {
                 .model
                 .get_ssa_result()
                 .unwrap()
-                .find_ssa_var_by_marker(marker);
-            let kind = VariableKind::SsaVar(ssa_var);
+                .find_ssa_operand_by_marker(marker);
+            let kind = VariableKind::SsaVar(*ssa_var.as_variable().unwrap());
             println!(
                 "Trace history for {}:\n{}\nType inference completed successfully",
                 marker,
@@ -232,14 +233,14 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create some SSA variables to infer types for
-        let int_var = SsaVar::new(memory_operand(100), 1, function_id);
-        let bool_var = SsaVar::new(memory_operand(101), 1, function_id);
-        let char_var = SsaVar::new(memory_operand(102), 1, function_id);
+        let int_var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
+        let bool_var = SsaVar::from_operand(&memory_operand(101), 1, function_id);
+        let char_var = SsaVar::from_operand(&memory_operand(102), 1, function_id);
 
         // Mark variables for easier identification in tests
-        type_inference.mark_var(int_var, 'a');
-        type_inference.mark_var(bool_var, 'b');
-        type_inference.mark_var(char_var, 'c');
+        type_inference.mark_var(SsaOperand::Variable(int_var), 'a');
+        type_inference.mark_var(SsaOperand::Variable(bool_var), 'b');
+        type_inference.mark_var(SsaOperand::Variable(char_var), 'c');
 
         // Get type variables for these SSA variables
         let int_type = Type::from_ssavar(&int_var);
@@ -313,13 +314,13 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create an SSA variable for a function pointer
-        let func_ptr_var = SsaVar::new(memory_operand(200), 1, function_id);
+        let func_ptr_var = SsaOperand::from_operand(&memory_operand(200), 1, function_id);
 
         // Mark variable
         type_inference.mark_var(func_ptr_var, 'a');
 
         // Get type variable
-        let func_ptr_type = Type::from_ssavar(&func_ptr_var);
+        let func_ptr_type = Type::from_ssavar(&func_ptr_var.as_variable().unwrap());
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -362,18 +363,18 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create variables for testing pointer relationships
-        let int_var = SsaVar::new(memory_operand(100), 1, function_id);
+        let int_var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
 
         // For a pointer variable, we use Memory kind in SSA
-        let ptr_var = SsaVar::new(memory_operand(101), 1, function_id);
+        let ptr_var = SsaVar::from_operand(&memory_operand(101), 1, function_id);
 
         // For dereferenced variables, we use the Deref kind
-        let deref_var = SsaVar::new(deref_operand(101), 1, function_id);
+        let deref_var = SsaVar::from_operand(&deref_operand(101), 1, function_id);
 
         // Mark variables
-        type_inference.mark_var(int_var, 'a');
-        type_inference.mark_var(ptr_var, 'b');
-        type_inference.mark_var(deref_var, 'c');
+        type_inference.mark_var(SsaOperand::Variable(int_var), 'a');
+        type_inference.mark_var(SsaOperand::Variable(ptr_var), 'b');
+        type_inference.mark_var(SsaOperand::Variable(deref_var), 'c');
 
         // Get type variables
         let int_type = Type::from_ssavar(&int_var);
@@ -448,13 +449,13 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create a variable
-        let var = SsaVar::new(memory_operand(100), 1, function_id);
+        let var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
 
         // Get type variable
         let var_type = Type::from_ssavar(&var);
 
         // Create another variable that will be unified with var_type
-        let another_var = SsaVar::new(memory_operand(101), 1, function_id);
+        let another_var = SsaVar::from_operand(&memory_operand(101), 1, function_id);
         let another_type = Type::from_ssavar(&another_var);
 
         // First, directly set var_type to char type
@@ -521,7 +522,7 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create a variable
-        let var = SsaVar::new(memory_operand(100), 1, function_id);
+        let var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
 
         // Get type variable
         let var_type = Type::from_ssavar(&var);

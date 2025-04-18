@@ -22,6 +22,15 @@ pub enum SsaVarKind {
     },
 }
 
+impl SsaVarKind {
+    pub fn get_relative_memory(&self) -> Option<i128> {
+        match self {
+            SsaVarKind::RelativeMemory(offset) => Some(*offset),
+            _ => None,
+        }
+    }
+}
+
 // Represents a versioned SSA variable
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SsaVar {
@@ -34,6 +43,36 @@ pub struct SsaVar {
 }
 
 impl SsaVar {
+    pub fn new(kind: SsaVarKind, version: usize, function_id: FunctionId) -> Self {
+        Self {
+            kind,
+            version,
+            function_id,
+            offset: 0,
+            debug_marker: None,
+        }
+    }
+
+    pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> Self {
+        Self {
+            kind: match operand.kind {
+                OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
+                OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+                OperandKind::Immediate(val) => {
+                    unreachable!("Cannot create SsaVar from immediate operand: {:?}", val)
+                }
+                OperandKind::Deref(address) => SsaVarKind::Deref {
+                    address,
+                    address_version: 0,
+                },
+            },
+            version,
+            function_id,
+            offset: operand.offset,
+            debug_marker: operand.debug_marker,
+        }
+    }
+
     // Convert SsaVar back to a representative Operand
     pub fn to_operand(&self) -> Operand {
         Operand {
@@ -81,6 +120,27 @@ impl SsaOperand {
                 debug_marker: var.debug_marker,
             },
         }
+    }
+
+    pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> SsaOperand {
+        let kind = match operand.kind {
+            OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
+            OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+            OperandKind::Immediate(val) => {
+                return SsaOperand::Constant(val);
+            }
+            OperandKind::Deref(address) => SsaVarKind::Deref {
+                address,
+                address_version: 0,
+            },
+        };
+        SsaOperand::Variable(SsaVar {
+            kind,
+            version,
+            function_id,
+            offset: operand.offset,
+            debug_marker: operand.debug_marker,
+        })
     }
 
     pub fn get_immediate(&self) -> Option<i128> {
@@ -286,20 +346,31 @@ impl<'a> SSAConversionState<'a> {
                 let ssa_var_kind = operand_to_ssa_var_kind(op, current_versions)
                     .expect("Expected variable kind for version lookup");
 
-                let current_var = current_versions
+                // Retrieve the base SsaVar (version and kind)
+                let base_var = current_versions
                     .get(&ssa_var_kind)
                     .copied() // Get a copy of the SsaVar
                     .unwrap_or_else(|| {
-                        // If not found, it's version 0
+                        // If not found, it's version 0.
+                        // The marker from the operand `op` is used here.
                         SsaVar {
                             kind: ssa_var_kind,
                             version: 0,
                             function_id,
                             offset: op.offset,
-                            debug_marker: op.debug_marker,
+                            debug_marker: op.debug_marker, // Use marker from op
                         }
                     });
-                SsaOperand::Variable(current_var)
+
+                // Create the final SsaOperand::Variable, always using the marker
+                // from the operand `op` being read, but the version from base_var.
+                SsaOperand::Variable(SsaVar {
+                    kind: base_var.kind,
+                    version: base_var.version,
+                    function_id: base_var.function_id,
+                    offset: op.offset, // Use offset from the specific operand `op`
+                    debug_marker: op.debug_marker, // Always use marker from the specific operand `op`
+                })
             }
         }
     }
@@ -1198,6 +1269,7 @@ mod tests {
                 halt
             "#,
         );
+        pretty_print_ssa(&ctx.model);
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
@@ -1225,7 +1297,7 @@ mod tests {
                                                                // 'c' marks the *ptr read. The SsaOperand will be Deref.
                                                                // The version of the *Deref* itself depends on when *ptr was last written (version 3).
                                                                // The address_version inside Deref depends on the version of ptr when read (version 3).
-        assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3, 1)); // Expecting address_version 3, deref version 1
+        assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3, 0)); // Expecting address_version 3, deref version 0
         assert_marker_at_main!(ctx, 'd', ssa_var_rel!(1, 1)); // [R+1] = *ptr
     }
 

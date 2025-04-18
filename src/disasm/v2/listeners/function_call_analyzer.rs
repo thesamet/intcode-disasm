@@ -4,7 +4,7 @@ use crate::disasm::v2::{
     events::{self, Event},
     instructions::OperandKind,
     model::{BlockId, FunctionId, ProgramModel},
-    ssa_form::{SsaFunction, SsaResult, SsaVar},
+    ssa_form::{SsaFunction, SsaOperand, SsaResult, SsaVar},
 };
 use itertools::Itertools;
 use log::{debug, trace};
@@ -55,7 +55,7 @@ pub struct CallSiteInfo {
     pub target_function_id: Option<FunctionId>,
 
     /// The SSA variable representing the target address for indirect calls (`goto [addr]`).
-    pub target_address_var: Option<SsaVar>,
+    pub target_address_var: Option<SsaOperand>,
 
     /// Arguments provided *by the caller* before the call.
     /// Maps the argument offset `n` (from `[R+n]`, n > 0) to the SSA variable
@@ -108,12 +108,16 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
     for block in function.blocks.values() {
         // Check Phi results
         for phi in &block.phi_functions {
-            if &phi.result.operand().kind == kind && (min_var.is_none() || phi.result.version < min_var_version(min_var)) {
+            if &phi.result.to_operand().kind == kind
+                && (min_var.is_none() || phi.result.version < min_var_version(min_var))
+            {
                 min_var = Some(phi.result);
             }
             // Check Phi inputs
             for input_var in phi.inputs.values() {
-                if &input_var.operand().kind == kind && (min_var.is_none() || input_var.version < min_var_version(min_var)) {
+                if &input_var.to_operand().kind == kind
+                    && (min_var.is_none() || input_var.version < min_var_version(min_var))
+                {
                     min_var = Some(*input_var);
                 }
             }
@@ -123,8 +127,12 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
             // Consider all read operands.
             let operands_in_instr = instr.reads();
             for var in operands_in_instr {
-                if &var.operand().kind == kind && (min_var.is_none() || var.version < min_var_version(min_var)) {
-                    min_var = Some(var);
+                if let SsaOperand::Variable(var) = var {
+                    if &var.to_operand().kind == kind
+                        && (min_var.is_none() || var.version < min_var_version(min_var))
+                    {
+                        min_var = Some(var);
+                    }
                 }
             }
         }
@@ -234,11 +242,11 @@ impl FunctionCallAnalyzer {
                         })
                         .collect();
                     let mut return_reads: HashMap<i128, SsaVar> = HashMap::new();
-                    let mut target_address_var: Option<SsaVar> = None;
+                    let mut target_address_var: Option<SsaOperand> = None;
                     let mut target_function_id: Option<FunctionId> = None;
 
                     // Determine Target Function
-                    match call.function_addr.operand().kind {
+                    match call.function_addr.to_operand().kind {
                         OperandKind::Immediate(addr) => {
                             target_function_id = Some(FunctionId::from(addr as usize));
                         }
@@ -270,9 +278,11 @@ impl FunctionCallAnalyzer {
                         let read_var = *instr
                             .reads()
                             .iter()
-                            .find(|r| r.operand().kind.get_relative_memory() == Some(offset))
+                            .find(|r| r.to_operand().kind.get_relative_memory() == Some(offset))
                             .unwrap();
-                        return_reads.entry(offset).or_insert(read_var);
+                        return_reads
+                            .entry(offset)
+                            .or_insert(*read_var.as_variable().unwrap());
                     }
                     let (parameter_map, return_map) =
                         if let Some(target_function_id) = target_function_id {

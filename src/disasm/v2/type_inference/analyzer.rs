@@ -6,7 +6,10 @@ use crate::disasm::v2::{
     events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
     instructions::{InstructionId, InstructionKind},
     model::{BlockId, FunctionId, ProgramModel},
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaResult, SsaVar, SsaVarKind},
+    ssa_form::{
+        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaResult, SsaVar,
+        SsaVarKind,
+    },
 };
 
 use super::{
@@ -22,7 +25,7 @@ pub struct TypeInferenceAnalyzer {
     constraints: Vec<Constraint>,
 
     /// Debug markers for variables
-    debug_markers: std::collections::HashMap<char, SsaVar>,
+    debug_markers: std::collections::HashMap<char, SsaOperand>,
 }
 
 impl TypeInferenceAnalyzer {
@@ -284,23 +287,30 @@ impl TypeInferenceAnalyzer {
             }
         }
         instruction.reads().iter().for_each(|operand| {
-            if let ssaoperandKind::Deref {
-                address,
-                address_version,
-            } = operand.kind
+            if let SsaOperand::Variable(SsaVar {
+                kind:
+                    SsaVarKind::Deref {
+                        address,
+                        address_version,
+                    },
+                offset,
+                version,
+                function_id,
+                ..
+            }) = operand
             {
-                let mem_ssa_var = ssaoperand {
-                    kind: ssaoperandKind::Memory(address as i128),
-                    offset: operand.offset,
-                    version: address_version,
-                    function_id: operand.function_id,
+                let mem_ssa_var = SsaOperand::Variable(SsaVar {
+                    kind: SsaVarKind::Memory(*address as i128),
+                    offset: *offset,
+                    version: *address_version,
+                    function_id: *function_id,
                     debug_marker: None,
-                };
+                });
                 self.add_constraint(
                     Type::from_ssaoperand(&mem_ssa_var),
                     Type::Pointer(Box::new(Type::from_ssaoperand(operand))),
                     instruction.id,
-                    function_id,
+                    *function_id,
                     ConstraintReason::Deref,
                 );
             }
@@ -423,7 +433,7 @@ impl TypeInferenceAnalyzer {
 
     /// Mark a variable with a debug character for testing
     #[cfg(test)]
-    pub fn mark_var(&mut self, var: SsaVar, marker: char) {
+    pub fn mark_var(&mut self, var: SsaOperand, marker: char) {
         self.debug_markers.insert(marker, var);
     }
 
@@ -435,7 +445,7 @@ impl TypeInferenceAnalyzer {
 
     /// Get the debug markers map (test only).
     #[cfg(test)]
-    pub fn get_debug_markers(&self) -> &std::collections::HashMap<char, SsaVar> {
+    pub fn get_debug_markers(&self) -> &std::collections::HashMap<char, SsaOperand> {
         &self.debug_markers
     }
 }

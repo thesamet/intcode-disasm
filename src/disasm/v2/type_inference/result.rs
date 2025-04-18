@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::v2::ssa_form::SsaVar;
+use crate::disasm::v2::ssa_form::{SsaOperand, SsaVar};
 
 use super::solver::{AnalysisTrace, ChangeReason};
 use super::types::{Type, VariableKind};
@@ -8,7 +8,7 @@ use super::types::{Type, VariableKind};
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub inferred_types: HashMap<SsaVar, Type>,
-    pub debug_markers: HashMap<char, SsaVar>,
+    pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
 }
 
@@ -19,15 +19,17 @@ impl TypeInferenceResult {
 
     /// Get the variable associated with a debug marker
     #[cfg(test)]
-    pub fn get_marked_var(&self, marker: char) -> Option<&SsaVar> {
+    pub fn get_marked_var(&self, marker: char) -> Option<&SsaOperand> {
         self.debug_markers.get(&marker)
     }
 
     /// Get the final type for a debug marker after unification
     #[cfg(test)]
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {
-        self.get_marked_var(marker)
-            .and_then(|var| self.get_type_for_ssavar(var).cloned())
+        self.get_marked_var(marker).and_then(|var| {
+            self.get_type_for_ssavar(var.as_variable().unwrap())
+                .cloned()
+        })
     }
 
     /// Get traces for a variable plus any related traces through constraints

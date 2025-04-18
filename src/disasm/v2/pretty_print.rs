@@ -63,11 +63,15 @@ impl<'a> PrettyPrinter<'a> {
                             .purple()
                             .to_string()
                     }
-                    SsaVarKind::Deref { address, address_version } => {
-                        format!("{}*[{}_{}]_{}{}", debug_marker, address, address_version, var.version, typ_str)
-                            .bright_red()
-                            .to_string()
-                    }
+                    SsaVarKind::Deref {
+                        address,
+                        address_version,
+                    } => format!(
+                        "{}*[{}_{}]_{}{}",
+                        debug_marker, address, address_version, var.version, typ_str
+                    )
+                    .bright_red()
+                    .to_string(),
                 }
             }
         }
@@ -78,7 +82,8 @@ impl<'a> PrettyPrinter<'a> {
             .inputs
             .iter()
             .sorted_by_key(|(pred_kind, _)| pred_kind.source_block_id())
-            .map(|(pred_kind, ssa_op)| { // Now iterates over SsaOperand
+            .map(|(pred_kind, ssa_op)| {
+                // Now iterates over SsaOperand
                 let source_id = pred_kind.source_block_id();
                 let call_marker = if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
                     "(call)"
@@ -86,11 +91,20 @@ impl<'a> PrettyPrinter<'a> {
                     ""
                 };
                 // Format the SsaOperand (Constant or Variable)
-                format!("{}{}: {}", source_id, call_marker, self.format_ssa_operand(ssa_op))
+                format!(
+                    "{}{}: {}",
+                    source_id,
+                    call_marker,
+                    self.format_ssa_operand(&SsaOperand::Variable(*ssa_op))
+                )
             })
             .join(", ");
         // Phi result is always an SsaVar, wrap it for formatting
-        format!("{} = φ({})", self.format_ssa_operand(&SsaOperand::Variable(phi.result)), inputs)
+        format!(
+            "{} = φ({})",
+            self.format_ssa_operand(&SsaOperand::Variable(phi.result)),
+            inputs
+        )
     }
 
     // Update to take GenericInstruction<SsaOperand>

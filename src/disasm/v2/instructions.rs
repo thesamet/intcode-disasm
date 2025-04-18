@@ -58,10 +58,7 @@ impl OperandKind {
 
     /// Returns true if this is a variable operand, not an immediate value
     pub fn is_variable(&self) -> bool {
-        !matches!(
-            self,
-            OperandKind::Immediate(_) | OperandKind::RelativeMemory(0)
-        )
+        !matches!(self, OperandKind::Immediate(_))
     }
 }
 

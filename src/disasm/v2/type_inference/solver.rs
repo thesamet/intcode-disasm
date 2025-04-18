@@ -10,7 +10,7 @@ use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
 use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
-use crate::disasm::v2::ssa_form::{SsaVar, SsaVarKind};
+use crate::disasm::v2::ssa_form::{SsaOperand, SsaVar, SsaVarKind};
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
 
 /// Enum to distinguish between upper and lower bound conflicts
@@ -299,7 +299,7 @@ impl fmt::Display for AnalysisTrace {
 pub fn unify(
     model: &ProgramModel,
     constraints: &[Constraint],
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
 ) -> Result<TypeInferenceResult, TypeInferenceError> {
     let constraints = constraints.to_vec();
     let mut bounds = TypeBoundsMap::new();
@@ -334,7 +334,7 @@ fn reach_constraint_fixed_point(
     model: &ProgramModel,
     constraints: &[Constraint],
     bounds: &mut TypeBoundsMap,
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
 ) -> Result<bool, TypeInferenceError> {
     let mut overall_changed = false;
     loop {
@@ -475,7 +475,7 @@ fn ok_or_bound_conflict(
     refined: Option<Type>,
     other: &Type,
     bounds: &mut TypeBoundsMap,
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
 ) -> Result<Type, TypeInferenceError> {
     match refined {
         Some(refined) => Ok(refined),
@@ -509,7 +509,7 @@ fn process_constraint(
     model: &ProgramModel,
     constraint: &Constraint,
     bounds: &mut TypeBoundsMap,
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
 ) -> Result<(bool, Vec<Constraint>), TypeInferenceError> {
     let mut result = vec![];
     let mut changed = false;
@@ -603,7 +603,7 @@ fn update_variable_lower_bound(
     v: &VariableKind,
     x: &Type,
     constraint: &Constraint,
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
     changed: &mut bool,
     model: &ProgramModel,
     result: &mut Vec<Constraint>,
@@ -639,7 +639,7 @@ fn update_variable_upper_bound(
     v: &VariableKind,
     x: &Type,
     constraint: &Constraint,
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
     changed: &mut bool,
     model: &ProgramModel,
     result: &mut Vec<Constraint>,
@@ -724,6 +724,7 @@ fn add_function_pointer_constraints(
     upper: &Type,
     result: &mut Vec<Constraint>,
 ) {
+    /*
     let VariableKind::SsaVar(SsaVar {
         kind: SsaVarKind::Immediate(addr),
         ..
@@ -787,7 +788,6 @@ fn add_function_pointer_constraints(
         });
     }
 
-    /*
     result.push(Constraint {
         left: rets.clone(),
         right: Type::Nothing,
@@ -823,7 +823,7 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
 /// Create a TypeInferenceResult from the current state of bounds
 pub(crate) fn create_partial_result(
     bounds: &TypeBoundsMap,
-    debug_markers: &HashMap<char, SsaVar>,
+    debug_markers: &HashMap<char, SsaOperand>,
 ) -> TypeInferenceResult {
     let inferred_types = bounds
         .iter()
