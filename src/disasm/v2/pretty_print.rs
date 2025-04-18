@@ -5,8 +5,8 @@ use super::{
     control_flow::PredecessorKind,
     instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
-    // Import SsaOperand as well
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaVarKind},
+    // Import SsaOperand and related types
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind},
 };
 
 struct PrettyPrinter<'a> {
@@ -15,12 +15,12 @@ struct PrettyPrinter<'a> {
 }
 
 impl<'a> PrettyPrinter<'a> {
-    // Renamed to format_ssa_operand as it now handles both Constants and Variables
+    // Format SsaOperand which now has kind and origin_info
     fn format_ssa_operand(&self, ssa_op: &SsaOperand) -> String {
-        match ssa_op {
-            SsaOperand::Constant(val) => format!("{}", val).green().to_string(),
-            SsaOperand::Variable(var) => {
-                // Formatting logic for SsaVar moved here
+        match ssa_op.kind {
+            SsaOperandKind::Constant(val) => format!("{}", val).green().to_string(),
+            SsaOperandKind::Variable(ref var) => {
+                // Formatting logic for SsaVar
                 let typ = if let Some(type_info) = self.model.get_type_inference_result() {
                     if self.show_types {
                         type_info.get_type_for_ssavar(var) // Type info is per-variable
@@ -36,9 +36,9 @@ impl<'a> PrettyPrinter<'a> {
                     None => "".to_string(),
                 };
 
-                // Use SsaVar::to_operand() to get debug marker
+                // Debug marker is now in origin_info
                 let debug_marker = var
-                    .to_operand() // Use the correct method
+                    .origin_info
                     .debug_marker
                     .as_ref()
                     .map(|m| format!("'{} ", m).yellow())
@@ -90,19 +90,27 @@ impl<'a> PrettyPrinter<'a> {
                 } else {
                     ""
                 };
-                // Format the SsaOperand (Constant or Variable)
+                // Create a new SsaOperand with the SSA var
+                let ssa_operand = SsaOperand {
+                    kind: SsaOperandKind::Variable(*ssa_op),
+                    origin_info: ssa_op.origin_info,
+                };
+                
                 format!(
                     "{}{}: {}",
                     source_id,
                     call_marker,
-                    self.format_ssa_operand(&SsaOperand::Variable(*ssa_op))
+                    self.format_ssa_operand(&ssa_operand)
                 )
             })
             .join(", ");
         // Phi result is always an SsaVar, wrap it for formatting
         format!(
             "{} = φ({})",
-            self.format_ssa_operand(&SsaOperand::Variable(phi.result)),
+            self.format_ssa_operand(&SsaOperand {
+                kind: SsaOperandKind::Variable(phi.result),
+                origin_info: phi.result.origin_info,
+            }),
             inputs
         )
     }
@@ -233,14 +241,20 @@ impl<'a> PrettyPrinter<'a> {
                         return_values
                             .iter()
                             // Return values are SsaVar, wrap for formatting
-                            .map(|v| self.format_ssa_operand(&SsaOperand::Variable(*v)))
+                            .map(|v| self.format_ssa_operand(&SsaOperand {
+                                kind: SsaOperandKind::Variable(*v),
+                                origin_info: v.origin_info,
+                            }))
                             .join(", "),
                     )
                 }
                 Some(return_values) if return_values.len() == 1 => return_values
                     .iter()
                     // Return values are SsaVar, wrap for formatting
-                    .map(|v| self.format_ssa_operand(&SsaOperand::Variable(*v)))
+                    .map(|v| self.format_ssa_operand(&SsaOperand {
+                        kind: SsaOperandKind::Variable(*v),
+                        origin_info: v.origin_info,
+                    }))
                     .join(", ")
                     .to_string(),
                 Some(_) => "void".to_string().red().to_string(), // Empty return_values vec
@@ -252,7 +266,10 @@ impl<'a> PrettyPrinter<'a> {
                     .values()
                     .sorted()
                     // Parameter entry vars are SsaVar, wrap for formatting
-                    .map(|v| self.format_ssa_operand(&SsaOperand::Variable(*v)))
+                    .map(|v| self.format_ssa_operand(&SsaOperand {
+                        kind: SsaOperandKind::Variable(*v),
+                        origin_info: v.origin_info,
+                    }))
                     .join(", "),
                 rets // Already formatted string
             )

@@ -232,20 +232,20 @@ mod type_inference_tests {
 
         let function_id = FunctionId::from(0);
 
-        // Create some SSA variables to infer types for
-        let int_var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
-        let bool_var = SsaVar::from_operand(&memory_operand(101), 1, function_id);
-        let char_var = SsaVar::from_operand(&memory_operand(102), 1, function_id);
+        // Create some SSA operands to infer types for
+        let int_var = SsaOperand::from_operand(&memory_operand(100), 1, function_id);
+        let bool_var = SsaOperand::from_operand(&memory_operand(101), 1, function_id);
+        let char_var = SsaOperand::from_operand(&memory_operand(102), 1, function_id);
 
         // Mark variables for easier identification in tests
-        type_inference.mark_var(SsaOperand::Variable(int_var), 'a');
-        type_inference.mark_var(SsaOperand::Variable(bool_var), 'b');
-        type_inference.mark_var(SsaOperand::Variable(char_var), 'c');
+        type_inference.mark_var(int_var, 'a');
+        type_inference.mark_var(bool_var, 'b');
+        type_inference.mark_var(char_var, 'c');
 
-        // Get type variables for these SSA variables
-        let int_type = Type::from_ssavar(&int_var);
-        let bool_type = Type::from_ssavar(&bool_var);
-        let char_type = Type::from_ssavar(&char_var);
+        // Get type variables for these SSA operands
+        let int_type = Type::from_ssaoperand(&int_var);
+        let bool_type = Type::from_ssaoperand(&bool_var);
+        let char_type = Type::from_ssaoperand(&char_var);
 
         // Add constraints
         type_inference.add_constraint(
@@ -320,7 +320,7 @@ mod type_inference_tests {
         type_inference.mark_var(func_ptr_var, 'a');
 
         // Get type variable
-        let func_ptr_type = Type::from_ssavar(&func_ptr_var.as_variable().unwrap());
+        let func_ptr_type = Type::from_ssaoperand(&func_ptr_var);
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -363,23 +363,23 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create variables for testing pointer relationships
-        let int_var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
+        let int_var = SsaOperand::from_operand(&memory_operand(100), 1, function_id);
 
         // For a pointer variable, we use Memory kind in SSA
-        let ptr_var = SsaVar::from_operand(&memory_operand(101), 1, function_id);
+        let ptr_var = SsaOperand::from_operand(&memory_operand(101), 1, function_id);
 
         // For dereferenced variables, we use the Deref kind
-        let deref_var = SsaVar::from_operand(&deref_operand(101), 1, function_id);
+        let deref_var = SsaOperand::from_operand(&deref_operand(101), 1, function_id);
 
         // Mark variables
-        type_inference.mark_var(SsaOperand::Variable(int_var), 'a');
-        type_inference.mark_var(SsaOperand::Variable(ptr_var), 'b');
-        type_inference.mark_var(SsaOperand::Variable(deref_var), 'c');
+        type_inference.mark_var(int_var, 'a');
+        type_inference.mark_var(ptr_var, 'b');
+        type_inference.mark_var(deref_var, 'c');
 
         // Get type variables
-        let int_type = Type::from_ssavar(&int_var);
-        let ptr_type = Type::from_ssavar(&ptr_var);
-        let deref_type = Type::from_ssavar(&deref_var);
+        let int_type = Type::from_ssaoperand(&int_var);
+        let ptr_type = Type::from_ssaoperand(&ptr_var);
+        let deref_type = Type::from_ssaoperand(&deref_var);
 
         // Add constraints
         // int_var is an integer

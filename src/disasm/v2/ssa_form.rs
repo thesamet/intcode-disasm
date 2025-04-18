@@ -32,14 +32,28 @@ impl SsaVarKind {
 }
 
 // Represents a versioned SSA variable
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SsaOriginInfo {
+    pub function_id: FunctionId,
+    pub offset: usize,
+    pub debug_marker: Option<char>,
+}
+
+impl SsaOriginInfo {
+    pub fn new(function_id: FunctionId, offset: usize, debug_marker: Option<char>) -> Self {
+        Self {
+            function_id,
+            offset,
+            debug_marker,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialOrd, Ord)]
 pub struct SsaVar {
     pub kind: SsaVarKind,
     pub version: usize,
-    pub function_id: FunctionId,
-    // Store offset/marker here for convenience when converting back to Operand
-    pub offset: usize,
-    pub debug_marker: Option<char>,
+    pub origin_info: SsaOriginInfo,
 }
 
 impl SsaVar {
@@ -47,9 +61,7 @@ impl SsaVar {
         Self {
             kind,
             version,
-            function_id,
-            offset: 0,
-            debug_marker: None,
+            origin_info: SsaOriginInfo::new(function_id, 0, None),
         }
     }
 
@@ -67,9 +79,7 @@ impl SsaVar {
                 },
             },
             version,
-            function_id,
-            offset: operand.offset,
-            debug_marker: operand.debug_marker,
+            origin_info: SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker),
         }
     }
 
@@ -81,8 +91,8 @@ impl SsaVar {
                 SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
                 SsaVarKind::Deref { address, .. } => OperandKind::Deref(address),
             },
-            offset: self.offset,
-            debug_marker: self.debug_marker,
+            offset: self.origin_info.offset,
+            debug_marker: self.origin_info.debug_marker,
         }
     }
 }
@@ -91,7 +101,7 @@ impl PartialEq for SsaVar {
     fn eq(&self, other: &Self) -> bool {
         self.kind == other.kind
             && self.version == other.version
-            && self.function_id == other.function_id
+            && self.origin_info.function_id == other.origin_info.function_id
     }
 }
 impl Eq for SsaVar {}
@@ -100,15 +110,21 @@ impl std::hash::Hash for SsaVar {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.kind.hash(state);
         self.version.hash(state);
-        self.function_id.hash(state);
+        self.origin_info.function_id.hash(state);
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SsaOperandKind {
+    Constant(i128),
+    Variable(SsaVar),
 }
 
 // Represents either a constant or a versioned SSA variable in an instruction
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum SsaOperand {
-    Constant(i128),
-    Variable(SsaVar),
+pub struct SsaOperand {
+    pub kind: SsaOperandKind,
+    pub origin_info: SsaOriginInfo,
 }
 
 // Implement From<SsaOperand> for Operand to satisfy trait bounds
@@ -121,62 +137,74 @@ impl From<SsaOperand> for Operand {
 // Helper methods on SsaOperand
 impl SsaOperand {
     pub fn to_operand(&self) -> Operand {
-        match self {
-            SsaOperand::Constant(val) => Operand {
-                kind: OperandKind::Immediate(*val),
-                offset: 0,          // Constants don't have offset
-                debug_marker: None, // Constants don't have debug marker
+        match self.kind {
+            SsaOperandKind::Constant(val) => Operand {
+                kind: OperandKind::Immediate(val),
+                offset: self.origin_info.offset,
+                debug_marker: self.origin_info.debug_marker,
             },
-            SsaOperand::Variable(var) => Operand {
+            SsaOperandKind::Variable(var) => Operand {
                 kind: match var.kind {
                     SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
                     SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
                     SsaVarKind::Deref { address, .. } => OperandKind::Deref(address),
                 },
-                offset: var.offset,
-                debug_marker: var.debug_marker,
+                offset: var.origin_info.offset,
+                debug_marker: var.origin_info.debug_marker,
             },
         }
     }
 
     pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> SsaOperand {
-        let kind = match operand.kind {
-            OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
-            OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+        let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
+        
+        match operand.kind {
             OperandKind::Immediate(val) => {
-                return SsaOperand::Constant(val);
+                SsaOperand {
+                    kind: SsaOperandKind::Constant(val),
+                    origin_info,
+                }
             }
-            OperandKind::Deref(address) => SsaVarKind::Deref {
-                address,
-                address_version: 0,
-            },
-        };
-        SsaOperand::Variable(SsaVar {
-            kind,
-            version,
-            function_id,
-            offset: operand.offset,
-            debug_marker: operand.debug_marker,
-        })
+            _ => {
+                let kind = match operand.kind {
+                    OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
+                    OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+                    OperandKind::Deref(address) => SsaVarKind::Deref {
+                        address,
+                        address_version: 0,
+                    },
+                    OperandKind::Immediate(_) => unreachable!(), // We handled this above
+                };
+                
+                SsaOperand {
+                    kind: SsaOperandKind::Variable(SsaVar {
+                        kind,
+                        version,
+                        origin_info,
+                    }),
+                    origin_info,
+                }
+            }
+        }
     }
 
     pub fn get_immediate(&self) -> Option<i128> {
-        match self {
-            SsaOperand::Constant(val) => Some(*val),
-            SsaOperand::Variable(_) => None,
+        match self.kind {
+            SsaOperandKind::Constant(val) => Some(val),
+            SsaOperandKind::Variable(_) => None,
         }
     }
 
     pub fn as_variable(&self) -> Option<&SsaVar> {
-        match self {
-            SsaOperand::Variable(var) => Some(var),
+        match self.kind {
+            SsaOperandKind::Variable(ref var) => Some(var),
             _ => None,
         }
     }
 
     pub fn variable_kind(&self) -> Option<SsaVarKind> {
-        match self {
-            SsaOperand::Variable(var) => Some(var.kind),
+        match self.kind {
+            SsaOperandKind::Variable(var) => Some(var.kind),
             _ => None,
         }
     }
@@ -207,9 +235,9 @@ impl fmt::Display for SsaVar {
 
 impl fmt::Display for SsaOperand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SsaOperand::Constant(val) => write!(f, "{}", val),
-            SsaOperand::Variable(var) => write!(f, "{}", var), // Uses SsaVar Display
+        match self.kind {
+            SsaOperandKind::Constant(val) => write!(f, "{}", val),
+            SsaOperandKind::Variable(ref var) => write!(f, "{}", var), // Uses SsaVar Display
         }
     }
 }
@@ -264,14 +292,11 @@ impl SsaFunction {
                 // or just iterate over references.
                 // Assuming reads/writes return Vec<SsaOperand> or similar collection
                 for ssa_operand in instr.reads().into_iter().chain(instr.writes().into_iter()) {
-                    // Check if it's a variable and has the marker
-                    if let SsaOperand::Variable(var) = ssa_operand {
-                        if var.debug_marker == Some(marker) {
-                            // Return the SsaOperand (it's Copy)
-                            return Some(ssa_operand);
-                        }
+                    // Check if the operand has the marker in its origin info
+                    if ssa_operand.origin_info.debug_marker == Some(marker) {
+                        // Return the SsaOperand (it's Copy)
+                        return Some(ssa_operand);
                     }
-                    // Note: Constants don't have debug markers in this model
                 }
             }
         }
@@ -342,9 +367,7 @@ impl<'a> SSAConversionState<'a> {
         let new_version = SsaVar {
             kind,
             version,
-            function_id,
-            offset: var_operand.offset,
-            debug_marker: var_operand.debug_marker,
+            origin_info: SsaOriginInfo::new(function_id, var_operand.offset, var_operand.debug_marker),
         };
         current_versions.insert(kind, new_version);
         new_version
@@ -356,8 +379,13 @@ impl<'a> SSAConversionState<'a> {
         op: Operand,
         function_id: FunctionId,
     ) -> SsaOperand {
+        let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker);
+        
         match op.kind {
-            OperandKind::Immediate(val) => SsaOperand::Constant(val),
+            OperandKind::Immediate(val) => SsaOperand {
+                kind: SsaOperandKind::Constant(val),
+                origin_info,
+            },
             _ => {
                 // It's a variable kind
                 let ssa_var_kind = operand_to_ssa_var_kind(op, current_versions)
@@ -369,25 +397,23 @@ impl<'a> SSAConversionState<'a> {
                     .copied() // Get a copy of the SsaVar
                     .unwrap_or_else(|| {
                         // If not found, it's version 0.
-                        // The marker from the operand `op` is used here.
                         SsaVar {
                             kind: ssa_var_kind,
                             version: 0,
-                            function_id,
-                            offset: op.offset,
-                            debug_marker: op.debug_marker, // Use marker from op
+                            origin_info,
                         }
                     });
 
-                // Create the final SsaOperand::Variable, always using the marker
+                // Create the final SsaOperand::Variable, always using the origin_info
                 // from the operand `op` being read, but the version from base_var.
-                SsaOperand::Variable(SsaVar {
-                    kind: base_var.kind,
-                    version: base_var.version,
-                    function_id: base_var.function_id,
-                    offset: op.offset, // Use offset from the specific operand `op`
-                    debug_marker: op.debug_marker, // Always use marker from the specific operand `op`
-                })
+                SsaOperand {
+                    kind: SsaOperandKind::Variable(SsaVar {
+                        kind: base_var.kind,
+                        version: base_var.version,
+                        origin_info,
+                    }),
+                    origin_info,
+                }
             }
         }
     }
@@ -461,7 +487,7 @@ impl<'a> SSAConversionState<'a> {
                 let phi_result_var = Self::create_next_version(
                     current_versions,
                     phi_template.result.to_operand(), // Use the new method
-                    phi_template.result.function_id,
+                    phi_template.result.origin_info.function_id,
                 );
 
                 // Create the actual phi function for this block
@@ -499,7 +525,10 @@ impl<'a> SSAConversionState<'a> {
                 if op.kind.is_variable() {
                     let next_var = Self::create_next_version(cv, *op, function_id);
                     current_block_end_state.insert(next_var.kind, next_var); // Capture current_block_end_state mutably
-                    Ok(SsaOperand::Variable(next_var))
+                    Ok(SsaOperand {
+                        kind: SsaOperandKind::Variable(next_var),
+                        origin_info: next_var.origin_info,
+                    })
                 } else {
                     panic!("Attempted to write to a non-variable operand: {:?}", op);
                 }
@@ -648,9 +677,7 @@ impl<'a> SSAConversionState<'a> {
                 let result_template = SsaVar {
                     kind: template_kind,
                     version: 0, // Placeholder
-                    function_id,
-                    offset: 0,          // Phi results don't have a direct operand offset
-                    debug_marker: None, // Phi results don't have debug markers directly
+                    origin_info: SsaOriginInfo::new(function_id, 0, None),
                 };
 
                 // Create a dummy phi function template
@@ -769,9 +796,7 @@ impl<'a> SSAConversionState<'a> {
                                 let version_zero_var = SsaVar {
                                     kind: var_kind,
                                     version: 0,
-                                    function_id: phi.result.function_id, // Use function_id from phi result
-                                    offset: phi.result.offset, // Use offset from phi result template
-                                    debug_marker: phi.result.debug_marker, // Use marker from phi result template
+                                    origin_info: phi.result.origin_info, // Use origin_info from phi result
                                 };
                                 phi.inputs.insert(pred_kind.clone(), version_zero_var);
                                 // log::trace!("Phi input for {:?} in block {} from pred {:?} not found in end state, using version 0.", var_kind, block_id, pred_kind);
@@ -830,28 +855,30 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
 
-    // Define SSA macros for creating expected SsaOperand::Variable values
+    // Define SSA macros for creating expected SsaOperand values with Variable kinds
     macro_rules! ssa_var_rel {
         ($offset:expr, $version:expr) => {
-            SsaOperand::Variable(SsaVar {
-                kind: SsaVarKind::RelativeMemory($offset),
-                offset: 0,
-                debug_marker: None,
-                version: $version,
-                function_id: FunctionId::from(0),
-            })
+            SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::RelativeMemory($offset),
+                    version: $version,
+                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+                }),
+                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+            }
         };
     }
 
     macro_rules! ssa_var_mem {
         ($addr:expr, $version:expr) => {
-            SsaOperand::Variable(SsaVar {
-                kind: SsaVarKind::Memory($addr as i128),
-                offset: 0,
-                debug_marker: None,
-                version: $version,
-                function_id: FunctionId::from(0),
-            })
+            SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::Memory($addr as i128),
+                    version: $version,
+                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+                }),
+                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+            }
         };
     }
 
@@ -859,16 +886,17 @@ mod tests {
     macro_rules! ssa_var_deref {
         ($addr:expr, $addr_ver: expr, $deref_version:expr) => {
             // Added addr_ver
-            SsaOperand::Variable(SsaVar {
-                kind: SsaVarKind::Deref {
-                    address: $addr,
-                    address_version: $addr_ver, // Use provided address version
-                },
-                offset: 0,
-                debug_marker: None,
-                version: $deref_version,
-                function_id: FunctionId::from(0),
-            })
+            SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::Deref {
+                        address: $addr,
+                        address_version: $addr_ver, // Use provided address version
+                    },
+                    version: $deref_version,
+                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+                }),
+                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+            }
         };
     }
 
@@ -880,19 +908,19 @@ mod tests {
                 .find_ssa_operand_by_marker($marker) // Use the new function name
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
-            // Extract the expected SsaVar if the expected operand is Variable
-            let expected_var = match $expected_operand {
-                SsaOperand::Variable(v) => v,
-                SsaOperand::Constant(_) => {
-                    panic!("Expected SsaOperand::Variable for marker assertion, got Constant")
+            // Extract the expected SsaVar if the expected operand's kind is Variable
+            let expected_var = match $expected_operand.kind {
+                SsaOperandKind::Variable(v) => v,
+                SsaOperandKind::Constant(_) => {
+                    panic!("Expected SsaOperandKind::Variable for marker assertion, got Constant")
                 }
             };
 
-            // Assert that the found operand is also a Variable
-            let found_var = match found_operand {
-                SsaOperand::Variable(v) => v,
-                SsaOperand::Constant(_) => panic!(
-                    "Found SsaOperand::Constant for marker '{}', expected Variable",
+            // Assert that the found operand's kind is also Variable
+            let found_var = match found_operand.kind {
+                SsaOperandKind::Variable(v) => v,
+                SsaOperandKind::Constant(_) => panic!(
+                    "Found SsaOperandKind::Constant for marker '{}', expected Variable",
                     $marker
                 ),
             };
@@ -1107,8 +1135,8 @@ mod tests {
         );
 
         // Verify the output operand is a variable and has a non-zero version
-        match output_ssa_operand {
-            SsaOperand::Variable(var) => {
+        match output_ssa_operand.kind {
+            SsaOperandKind::Variable(var) => {
                 assert!(
                     var.version > 0,
                     "Output variable should have a non-zero version, got: {}",
@@ -1116,7 +1144,7 @@ mod tests {
                 );
                 println!("Output operand version: {}", var.version);
             }
-            SsaOperand::Constant(_) => {
+            SsaOperandKind::Constant(_) => {
                 panic!("Output operand should be a Variable, but found Constant");
             }
         }
@@ -1190,15 +1218,15 @@ mod tests {
         // Simply check that the conversion runs without errors. In the future, we may want to
         // enhance this test to verify other aspects of the conversion.
         if let InstructionKind::Output(ssa_op) = &output_instr.kind {
-            match ssa_op {
-                SsaOperand::Variable(var) => {
+            match ssa_op.kind {
+                SsaOperandKind::Variable(var) => {
                     assert!(
                         var.version > 0,
                         "Output variable should have a valid version number, got {}",
                         var.version
                     );
                 }
-                SsaOperand::Constant(_) => {
+                SsaOperandKind::Constant(_) => {
                     panic!("Output operand in function call test should be Variable");
                 }
             }

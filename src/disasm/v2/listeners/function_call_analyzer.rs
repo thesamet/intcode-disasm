@@ -4,7 +4,7 @@ use crate::disasm::v2::{
     events::{self, Event},
     instructions::OperandKind,
     model::{BlockId, FunctionId, ProgramModel},
-    ssa_form::{SsaFunction, SsaOperand, SsaResult, SsaVar},
+    ssa_form::{SsaFunction, SsaOperand, SsaOperandKind, SsaResult, SsaVar},
 };
 use itertools::Itertools;
 use log::{debug, trace};
@@ -127,7 +127,7 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
             // Consider all read operands.
             let operands_in_instr = instr.reads();
             for var in operands_in_instr {
-                if let SsaOperand::Variable(var) = var {
+                if let SsaOperandKind::Variable(var) = var.kind {
                     if &var.to_operand().kind == kind
                         && (min_var.is_none() || var.version < min_var_version(min_var))
                     {

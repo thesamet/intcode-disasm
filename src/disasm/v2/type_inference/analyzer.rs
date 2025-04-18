@@ -7,8 +7,8 @@ use crate::disasm::v2::{
     instructions::{InstructionId, InstructionKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{
-        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaResult, SsaVar,
-        SsaVarKind,
+        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind,
+        SsaResult, SsaVar, SsaVarKind,
     },
 };
 
@@ -94,7 +94,7 @@ impl TypeInferenceAnalyzer {
                                     callee_ret_write_type,
                                     caller_ret_read_type,
                                     result_addr, // Location in the caller (phi function)
-                                    phi.result.function_id,
+                                    phi.result.origin_info.function_id,
                                     ConstraintReason::FunctionReturnBinding,
                                 );
                             }
@@ -115,7 +115,7 @@ impl TypeInferenceAnalyzer {
                         input_type,
                         result_type.clone(),
                         result_addr, // Use address of the result variable definition
-                        phi.result.function_id,
+                        phi.result.origin_info.function_id,
                         ConstraintReason::PhiAssignment,
                     );
                 }
@@ -287,30 +287,29 @@ impl TypeInferenceAnalyzer {
             }
         }
         instruction.reads().iter().for_each(|operand| {
-            if let SsaOperand::Variable(SsaVar {
+            if let SsaOperandKind::Variable(SsaVar {
                 kind:
                     SsaVarKind::Deref {
                         address,
                         address_version,
                     },
-                offset,
                 version,
-                function_id,
-                ..
-            }) = operand
+                origin_info,
+            }) = operand.kind
             {
-                let mem_ssa_var = SsaOperand::Variable(SsaVar {
-                    kind: SsaVarKind::Memory(*address as i128),
-                    offset: *offset,
-                    version: *address_version,
-                    function_id: *function_id,
-                    debug_marker: None,
-                });
+                let mem_ssa_var = SsaOperand {
+                    kind: SsaOperandKind::Variable(SsaVar {
+                        kind: SsaVarKind::Memory(address as i128),
+                        version: address_version,
+                        origin_info: origin_info,
+                    }),
+                    origin_info: origin_info,
+                };
                 self.add_constraint(
                     Type::from_ssaoperand(&mem_ssa_var),
                     Type::Pointer(Box::new(Type::from_ssaoperand(operand))),
                     instruction.id,
-                    *function_id,
+                    origin_info.function_id,
                     ConstraintReason::Deref,
                 );
             }
