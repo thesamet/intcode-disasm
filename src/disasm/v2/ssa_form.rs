@@ -32,7 +32,7 @@ impl SsaVarKind {
 }
 
 // Represents a versioned SSA variable
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialOrd, Ord)]
 pub struct SsaVar {
     pub kind: SsaVarKind,
     pub version: usize,
@@ -84,6 +84,23 @@ impl SsaVar {
             offset: self.offset,
             debug_marker: self.debug_marker,
         }
+    }
+}
+
+impl PartialEq for SsaVar {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.version == other.version
+            && self.function_id == other.function_id
+    }
+}
+impl Eq for SsaVar {}
+
+impl std::hash::Hash for SsaVar {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+        self.version.hash(state);
+        self.function_id.hash(state);
     }
 }
 

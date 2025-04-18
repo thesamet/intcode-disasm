@@ -11,6 +11,7 @@ use crate::disasm::v2::ssa_form::{SsaOperand, SsaVar};
 pub enum VariableKind {
     SsaVar(SsaVar),
     TypeVar(usize),
+    Const { value: i128, offset: usize },
 }
 
 impl Display for VariableKind {
@@ -18,6 +19,7 @@ impl Display for VariableKind {
         match self {
             VariableKind::SsaVar(var) => write!(f, "{}", var),
             VariableKind::TypeVar(id) => write!(f, "T{}", id),
+            VariableKind::Const { value, .. } => write!(f, "{}", value),
         }
     }
 }
@@ -98,9 +100,10 @@ impl Type {
 
     pub fn from_ssaoperand(ssa_op: &SsaOperand) -> Type {
         match ssa_op {
-            SsaOperand::Constant(val) => {
-                unreachable!("TODO!");
-            } //Type::from_constant(*val),
+            SsaOperand::Constant(val) => Type::Variable(VariableKind::Const {
+                value: *val,
+                offset: 0,
+            }),
             SsaOperand::Variable(var) => Type::from_ssavar(var),
         }
     }
@@ -204,6 +207,7 @@ impl fmt::Display for Type {
             Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{}", t)).join(", ")),
             Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{}", id),
             Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{}", var),
+            Type::Variable(VariableKind::Const { value, .. }) => write!(f, "{}", value),
             Type::Truthy => write!(f, "Truthy"),
             Type::Callable => write!(f, "Callable"),
             Type::Function { args, returns } => {
