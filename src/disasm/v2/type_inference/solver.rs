@@ -8,6 +8,7 @@ use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
 use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
+use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::SsaOperand;
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
@@ -629,7 +630,6 @@ fn update_variable_lower_bound(
         );
         *changed = true;
     }
-    add_function_pointer_constraints(model, bounds, &v, &v_lower, result);
     Ok(())
 }
 
@@ -665,7 +665,7 @@ fn update_variable_upper_bound(
         );
         *changed = true;
     }
-    add_function_pointer_constraints(model, bounds, &v, &v_upper, result);
+    add_function_pointer_constraints(model, bounds, &v, &new_v_upper, result);
     Ok(())
 }
 
@@ -723,11 +723,10 @@ fn add_function_pointer_constraints(
     upper: &Type,
     result: &mut Vec<Constraint>,
 ) {
-    /*
-    let VariableKind::SsaVar(SsaVar {
-        kind: SsaVarKind::Immediate(addr),
-        ..
-    }) = lower
+    let VariableKind::Const {
+        value: addr,
+        origin_info,
+    } = lower
     else {
         return;
     };
@@ -740,19 +739,12 @@ fn add_function_pointer_constraints(
     else {
         return;
     };
-
-    let Some((args, rets)) = Type::extract_function_from_pointer(upper) else {
-        return;
-    };
-    let Type::Variable(args_kind @ VariableKind::TypeVar(_)) = args else {
-        return;
-    };
-    assert!(matches!(args, Type::Variable(VariableKind::TypeVar(_))));
-    let args_upper = effective_upper_bound(args, bounds);
-    let args_upper = if args_upper == Type::Any {
+    println!("Upper={}", upper);
+    if upper == &Type::Pointer(Box::new(Type::Callable)) {
         // We have not processed this function pointer yet. Processing
         // ensures that the type variable of args is a subtype of a tuple
         // that corresponds to the callee's parameter SSA vars.
+        /*
         let mut t_vars = vec![];
         for _ in 0..callee_info.parameter_entry_vars.len() {
             let v = Type::new_var();
@@ -766,6 +758,20 @@ fn add_function_pointer_constraints(
             ChangeReason::IndirectFuctionParameterBinding(function_id),
         );
         t
+        0
+        */
+    }
+
+    /*
+    let Some((args, rets)) = Type::extract_function_from_pointer(upper) else {
+        return;
+    };
+    let Type::Variable(args_kind @ VariableKind::TypeVar(_)) = args else {
+        return;
+    };
+    assert!(matches!(args, Type::Variable(VariableKind::TypeVar(_))));
+    let args_upper = effective_upper_bound(args, bounds);
+    let args_upper = if args_upper == Type::Any {
     } else {
         args_upper
     };
@@ -786,12 +792,14 @@ fn add_function_pointer_constraints(
             reason: ConstraintReason::FunctionParameterBinding,
         });
     }
+    */
 
+    /*
     result.push(Constraint {
         left: rets.clone(),
         right: Type::Nothing,
-        addr: callee_info.return_var,
-        function_id: FunctionId::from(addr as usize),
+        addr: lower.
+        function_id: lower.
         reason: ConstraintReason::FunctionReturnBinding,
     });
     */

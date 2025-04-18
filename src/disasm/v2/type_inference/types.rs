@@ -5,13 +5,16 @@ use std::{
 
 use itertools::Itertools;
 
-use crate::disasm::v2::ssa_form::{SsaOperand, SsaOperandKind, SsaVar};
+use crate::disasm::v2::ssa_form::{SsaOperand, SsaOperandKind, SsaOriginInfo, SsaVar};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableKind {
     SsaVar(SsaVar),
     TypeVar(usize),
-    Const { value: i128, offset: usize },
+    Const {
+        value: i128,
+        origin_info: SsaOriginInfo,
+    },
 }
 
 impl Display for VariableKind {
@@ -102,7 +105,7 @@ impl Type {
         match ssa_op.kind {
             SsaOperandKind::Constant(val) => Type::Variable(VariableKind::Const {
                 value: val,
-                offset: ssa_op.origin_info.offset,
+                origin_info: ssa_op.origin_info,
             }),
             SsaOperandKind::Variable(ref var) => Type::from_ssavar(var),
         }
