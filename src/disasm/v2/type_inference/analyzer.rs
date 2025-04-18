@@ -480,8 +480,8 @@ impl ModelEventListener for TypeInferenceAnalyzer {
             Err(error) => {
                 // If this is a type conflict with an SsaVar, output the trace history
                 if let TypeInferenceError::TypeConflict {
-                    ref partial_result,
-                    key, other,
+                    
+                     
                     .. // ignore other fields
                 } = &error
                 {

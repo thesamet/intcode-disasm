@@ -8,9 +8,8 @@ use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
 use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
-use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
-use crate::disasm::v2::ssa_form::{SsaOperand, SsaVar, SsaVarKind};
+use crate::disasm::v2::ssa_form::SsaOperand;
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
 
 /// Enum to distinguish between upper and lower bound conflicts

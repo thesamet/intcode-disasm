@@ -6,7 +6,7 @@ use super::{
     instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
     // Import SsaOperand as well
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaVar, SsaVarKind},
+    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaVarKind},
 };
 
 struct PrettyPrinter<'a> {
