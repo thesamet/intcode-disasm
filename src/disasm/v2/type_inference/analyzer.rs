@@ -367,10 +367,9 @@ impl TypeInferenceAnalyzer {
                     }
                 } else {
                     let fn_type = Type::from_ssavar(&call.function_addr);
-                    let new_fp = Type::new_function_pointer();
                     self.add_constraint(
                         fn_type,
-                        new_fp,
+                        Type::Pointer(Box::new(Type::Callable)),
                         location_addr,
                         function_id,
                         ConstraintReason::IndirectFunctionCall,
@@ -453,6 +452,7 @@ impl ModelEventListener for TypeInferenceAnalyzer {
         let Some(ssa_result) = model.get_ssa_result() else {
             panic!("SSA program not available");
         };
+        self.generate_constraints_for_program(model, ssa_result);
 
         // Solve the constraints through unification
         let solve_result = solver::unify(model, &self.constraints, &self.debug_markers);

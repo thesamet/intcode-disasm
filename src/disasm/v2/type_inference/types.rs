@@ -30,7 +30,8 @@ pub enum Type {
     Bool,
     Char,
     Pointer(Box<Type>),
-    Function { args: Box<Type>, returns: Box<Type> }, // Box<Type> }, // Both types are always tuples.
+    Callable, // Represents a function which we do not know the type of.
+    Function { args: Box<Type>, returns: Box<Type> }, //Both types are always tuples.
     Variable(VariableKind),
     Tuple(Vec<Type>),
     Truthy, // a marker type for truthy types
@@ -56,7 +57,9 @@ impl Type {
             (Type::Bool, Type::Int) => true,
             (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(_), Type::Truthy) => true,
+            (Type::Function { .. }, Type::Callable) => true,
             (Type::Function { .. }, Type::Truthy) => true,
+            (Type::Callable, Type::Truthy) => true,
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
@@ -114,6 +117,7 @@ impl Type {
             Type::Pointer(x) => x.get_types_recursive(),
             Type::Variable(_) => vec![self.clone()],
             Type::Tuple(x) => x.iter().flat_map(|x| x.get_types_recursive()).collect(),
+            Type::Callable => vec![],
             Type::Function { args, returns } => args
                 .get_types_recursive()
                 .into_iter()
@@ -167,13 +171,14 @@ impl Type {
 pub fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
+        Type::Callable => true,
         Type::Function { args, returns } => is_concrete_type(args) && is_concrete_type(returns),
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
-        Type::Truthy => false,
+        Type::Truthy => true,
         Type::Conflict => false,
-        Type::Any => false,
-        Type::Nothing => false,
+        Type::Any => true,
+        Type::Nothing => true,
         Type::Variable(_) => false,
     }
 }
@@ -191,6 +196,7 @@ impl fmt::Display for Type {
             Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{}", id),
             Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{}", var),
             Type::Truthy => write!(f, "Truthy"),
+            Type::Callable => write!(f, "Callable"),
             Type::Function { args, returns } => {
                 write!(f, "fn(")?;
                 write!(f, "{}", args)?;

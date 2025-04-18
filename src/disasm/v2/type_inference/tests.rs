@@ -67,6 +67,32 @@ mod type_inference_tests {
         };
     }
 
+    macro_rules! assert_callable_pointer {
+        ($typ: expr) => {
+            let Type::Pointer(ptr_type) = $typ else {
+                panic!("Not a callable pointer, got {:?}", $typ);
+            };
+            let Type::Callable = &**ptr_type else {
+                panic!("Not a callable pointer, got {:?}", $typ);
+            };
+        };
+    }
+
+    macro_rules! assert_marker_is_callable_pointer {
+        ($ctx:expr, $marker:expr) => {
+            let actual_type = $ctx.get_marker_type($marker);
+            let Type::Pointer(ptr_type) = &actual_type else {
+                panic!("Marker {} is not a pointer, got {:?}", $marker, actual_type);
+            };
+            let Type::Callable = &**ptr_type else {
+                panic!(
+                    "Marker {} is not a callable pointer, got {:?}",
+                    $marker, actual_type
+                );
+            };
+        };
+    }
+
     /// TestContext for type inference tests
     struct TestContext {
         model: ProgramModel,
@@ -605,7 +631,8 @@ f1:
 
             "#,
         );
-        assert_function_pointer!(ctx.get_type_at_addr(1001).unwrap());
+        let typ = ctx.get_type_at_addr(1001).unwrap();
+        assert_callable_pointer!(typ);
     }
 
     #[test]
@@ -614,7 +641,7 @@ f1:
         let ctx = TestContext::new(
             r#"
                     R += 1000
-                    'a [R+2] = [R-2]
+                    'd [R+2] = 'a [R-2]
                     'b [R+2] = 15
                     'c [R+2] = [R+2] + 5
                     [R] = @ret
@@ -625,7 +652,8 @@ f1:
         );
         pretty_print_with_types(&ctx.model);
         ctx.print_traces_for_marker('a');
-        assert_marker_is_function_pointer!(ctx, 'a');
+        assert_marker_is_callable_pointer!(ctx, 'a');
+        assert_marker_is_callable_pointer!(ctx, 'd');
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
     }
@@ -689,7 +717,7 @@ f1:
         assert_marker_type!(ctx, 'a', Type::Char);
         ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Int);
-        assert_marker_is_function_pointer!(ctx, 'c');
+        assert_marker_is_callable_pointer!(ctx, 'c');
         assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
     }
 
@@ -708,11 +736,13 @@ f1:
             "#,
         );
         pretty_print_with_types(&ctx.model);
-        assert_marker_is_function_pointer!(ctx, 'a');
+        assert_marker_is_callable_pointer!(ctx, 'a');
     }
 
     #[test]
     fn test_link_function_return_type_single() {
+        // This test also happens to use the same constant (65) for multiple variables
+        // testing that each copy can have a different type.
         let ctx = TestContext::new(
             r#"
                 R += 1000
@@ -734,6 +764,7 @@ f1:
             "#,
         );
         pretty_print_with_types(&ctx.model);
+        ctx.print_traces_for_marker('b');
 
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
