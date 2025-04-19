@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 use crate::disasm::v2::ssa_form::{SsaOperand, SsaOperandKind, SsaOriginInfo, SsaVar};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableKind {
     SsaVar(SsaVar),
     TypeVar(usize),
@@ -192,8 +192,8 @@ pub fn is_concrete_type(typ: &Type) -> bool {
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => true,
         Type::Conflict => false,
-        Type::Any => true,
-        Type::Nothing => true,
+        Type::Any => false,
+        Type::Nothing => false,
         Type::Variable(_) => false,
     }
 }
