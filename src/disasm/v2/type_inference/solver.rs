@@ -1,6 +1,7 @@
 use colored::Colorize;
 use itertools::Itertools;
 use log::trace;
+use pathfinding::utils::constrain;
 use std::collections::HashMap;
 use std::fmt;
 use thiserror::Error;
@@ -340,6 +341,7 @@ impl Solver {
                     other: constraint.right.clone(),
                 },
             );
+            self.add_function_pointer_constraints(u, &constraint.right, &mut result);
         }
         if let Type::Variable(v) = &constraint.right {
             let current_lower = self.bounds_map.lower_bound(v).unwrap();
@@ -398,14 +400,14 @@ impl Solver {
 
     fn add_function_pointer_constraints(
         &mut self,
-        lower: &VariableKind,
-        upper: &Type,
+        addr_const: &VariableKind,
+        callable: &Type,
         result: &mut Vec<Constraint>,
     ) {
         let VariableKind::Const {
             value: addr,
             origin_info,
-        } = lower
+        } = addr_const
         else {
             return;
         };
@@ -419,7 +421,7 @@ impl Solver {
         else {
             return;
         };
-        if upper == &Type::Pointer(Box::new(Type::Callable)) {
+        if callable == &Type::Pointer(Box::new(Type::Callable)) {
             let args = self
                 .indirect_function_types
                 .entry(function_id)
@@ -427,7 +429,7 @@ impl Solver {
                     // We have not processed this function pointer yet. Processing
                     // ensures that the type variable of args is a subtype of a tuple
                     // that corresponds to the callee's parameter SSA vars.
-                    println!("Processing function pointer {}", lower);
+                    println!("Processing function pointer {}", addr_const);
                     let mut t_vars = vec![];
                     for _ in 0..callee_info.parameter_entry_vars.len() {
                         let v = Type::new_var();
@@ -438,7 +440,7 @@ impl Solver {
                     t
                 });
             result.push(Constraint {
-                right: Type::Variable(lower.clone()),
+                right: Type::Variable(addr_const.clone()),
                 left: Type::Pointer(Box::new(Type::Function {
                     args: Box::new(args.clone()),
                     returns: Box::new(Type::Int),
@@ -533,18 +535,18 @@ impl Solver {
         match refined {
             Some(refined) => Ok(refined),
             None => {
-                let current_bound = match bound_type {
-                    BoundType::Lower => self.bounds_map.lower_bound(key),
-                    BoundType::Upper => self.bounds_map.upper_bound(key),
-                }
-                .unwrap()
-                .clone();
                 if constraint.reason == ConstraintReason::PhiAssignment {
                     // Phi assignments may not be a live variable. For now,
                     // return a "Conflict" type and not fail the unification.
                     Ok(Type::Conflict)
                 } else {
                     // Extract SSA var from the type if possible for better error reporting
+                    let current_bound = match bound_type {
+                        BoundType::Lower => self.bounds_map.lower_bound(key),
+                        BoundType::Upper => self.bounds_map.upper_bound(key),
+                    }
+                    .unwrap()
+                    .clone();
                     Err(TypeInferenceError::TypeConflict {
                         key: key.clone(),
                         bound_type,
