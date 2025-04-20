@@ -1,7 +1,6 @@
 use colored::Colorize;
 use itertools::Itertools;
 use log::{info, trace};
-use pathfinding::utils::constrain;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -11,7 +10,6 @@ use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
 use crate::disasm;
 use crate::disasm::v2::instructions::InstructionId;
-use crate::disasm::v2::listeners::function_call_analyzer::{CallSiteInfo, FunctionCallAnalysis};
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::SsaOperand;
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
@@ -348,7 +346,7 @@ impl Solver {
                     other: constraint.right.clone(),
                 },
             )?;
-            if glb.is_callable_pointer() || glb.is_function_pointer() {
+            if glb.is_function_pointer() {
                 let fpi = self
                     .function_pointer_variables
                     .entry(*u)
@@ -543,7 +541,7 @@ impl Solver {
             return Ok(false);
         };
         if let ConstraintReason::IndirectFunctionCall { calling_block } = &constraint.reason {
-            // The constraint is left_var < Pointer(Callable))
+            // The constraint is left_var < Pointer(Function(..)))
             let left_var = left_var.expect("Left side must be a variable missing");
             if let Some(FunctionPointerInfo {
                 args: ptr_args,
@@ -920,7 +918,7 @@ fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::
 fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
     match typ {
         Type::Int | Type::Bool | Type::Char => typ.clone(),
-        Type::Truthy | Type::Callable | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
         Type::Pointer(x) => Type::Pointer(Box::new(effective_upper_bound(x, bounds))),
         Type::Function { args, returns } => {
             let args = effective_lower_bound(args, bounds);
@@ -942,7 +940,7 @@ fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
 fn effective_lower_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
     match typ {
         Type::Int | Type::Bool | Type::Char => typ.clone(),
-        Type::Truthy | Type::Callable | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
         Type::Pointer(x) => Type::Pointer(Box::new(effective_lower_bound(x, bounds))),
         Type::Function { args, returns } => {
             let args = effective_upper_bound(args, bounds);
@@ -967,7 +965,7 @@ fn effective_lower_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
 pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
     match typ {
         Type::Int | Type::Bool | Type::Char => {}
-        Type::Truthy | Type::Callable | Type::Conflict | Type::Nothing | Type::Any => {}
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => {}
         Type::Pointer(x) => {
             init_bounds_for_type(x, bounds);
         }
@@ -991,7 +989,7 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
 fn specifity(typ: &Type) -> u32 {
     match typ {
         Type::Int | Type::Bool | Type::Char => 1,
-        Type::Truthy | Type::Callable | Type::Conflict | Type::Nothing | Type::Any => 0,
+        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => 0,
         Type::Pointer(x) => 1 + specifity(x),
         Type::Function { args, returns } => {
             let args = specifity(args);

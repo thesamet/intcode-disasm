@@ -385,7 +385,7 @@ impl TypeInferenceAnalyzer {
                     let fn_type = Type::from_ssaoperand(&call.function_addr);
                     self.add_constraint(
                         fn_type,
-                        Type::Pointer(Box::new(Type::Callable)),
+                        Type::callable(),
                         location_addr,
                         function_id,
                         ConstraintReason::IndirectFunctionCall {

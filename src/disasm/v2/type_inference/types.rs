@@ -45,7 +45,6 @@ pub enum Type {
     Bool,
     Char,
     Pointer(Box<Type>),
-    Callable, // Represents a function which we do not know the type of.
     Function { args: Box<Type>, returns: Box<Type> }, //Both types are always tuples.
     Variable(VariableKind),
     Tuple(Vec<Type>),
@@ -72,9 +71,7 @@ impl Type {
             (Type::Bool, Type::Int) => true,
             (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(_), Type::Truthy) => true,
-            (Type::Function { .. }, Type::Callable) => true,
             (Type::Function { .. }, Type::Truthy) => true,
-            (Type::Callable, Type::Truthy) => true,
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
@@ -156,7 +153,6 @@ impl Type {
             Type::Pointer(x) => x.get_types_recursive(),
             Type::Variable(_) => vec![self.clone()],
             Type::Tuple(x) => x.iter().flat_map(|x| x.get_types_recursive()).collect(),
-            Type::Callable => vec![],
             Type::Function { args, returns } => args
                 .get_types_recursive()
                 .into_iter()
@@ -183,13 +179,6 @@ impl Type {
         }))
     }
 
-    pub fn new_function_pointer() -> Type {
-        Type::Pointer(Box::new(Type::Function {
-            args: Box::new(Type::new_var()),
-            returns: Box::new(Type::new_var()),
-        }))
-    }
-
     pub fn is_function_pointer(&self) -> bool {
         match self {
             Type::Pointer(p) => {
@@ -199,29 +188,6 @@ impl Type {
                 true
             }
             _ => false,
-        }
-    }
-
-    pub fn is_callable_pointer(&self) -> bool {
-        match self {
-            Type::Pointer(p) => {
-                let Type::Callable = p.as_ref() else {
-                    return false;
-                };
-                true
-            }
-            _ => false,
-        }
-    }
-
-    pub fn extract_function_from_pointer(typ: &Type) -> Option<(&Type, &Type)> {
-        // if !is_func
-        match typ {
-            Type::Pointer(p) => match p.as_ref() {
-                Type::Function { args, returns } => Some((args, returns)),
-                _ => None,
-            },
-            _ => None,
         }
     }
 
@@ -235,13 +201,19 @@ impl Type {
             _ => None,
         }
     }
+
+    pub fn callable() -> Type {
+        Type::function_pointer(Type::Nothing, Type::Any)
+    }
 }
 
 pub fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
-        Type::Callable => true,
-        Type::Function { args, returns } => is_concrete_type(args) && is_concrete_type(returns),
+        Type::Function { args, returns } => {
+            (is_concrete_type(args) || **args == Type::Nothing)
+                && (is_concrete_type(returns) || **returns == Type::Any)
+        }
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => false,
@@ -266,7 +238,6 @@ impl fmt::Display for Type {
             Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{}", var),
             Type::Variable(VariableKind::Const { value, .. }) => write!(f, "{}", value),
             Type::Truthy => write!(f, "Truthy"),
-            Type::Callable => write!(f, "Callable"),
             Type::Function { args, returns } => {
                 write!(f, "fn(")?;
                 write!(f, "{}", args)?;
