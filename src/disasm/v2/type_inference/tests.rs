@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod type_inference_tests {
 
+    use log::error;
+
     use crate::disasm::parser;
-    use crate::disasm::v2::pretty_print::pretty_print_with_types;
+    use crate::disasm::v2::pretty_print::{pretty_print_ssa, pretty_print_with_types};
     use crate::disasm::v2::ssa_form::SsaOperand;
     use crate::disasm::v2::type_inference::solver;
     use crate::disasm::v2::type_inference::types::VariableKind;
@@ -145,8 +147,15 @@ mod type_inference_tests {
             // The specific mapping depends on the definition of disasm::Error.
             // Here we assume a generic way to represent the error, e.g., via String.
             // Replace this with the actual conversion mechanism (e.g., `From` trait).
-            publisher.process_events(&mut model)?;
-            Ok(Self { model })
+            let result = publisher.process_events(&mut model);
+            match result {
+                Ok(_) => Ok(Self { model }),
+                Err(e) => {
+                    pretty_print_ssa(&model);
+                    error!("{}", e);
+                    Err(e)
+                }
+            }
         }
 
         fn new(assembly: &str) -> Self {

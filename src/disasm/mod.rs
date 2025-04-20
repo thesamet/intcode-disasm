@@ -16,12 +16,12 @@ pub enum Error {
     #[error("Disassembly operation failed")]
     DisassemblyFailed,
 
-    #[error("Type conflict for {key}: type conflict between existing {bound_type} bound {current_bound} and {other} at {constraint}")]
+    #[error("Type conflict for {key}: existing {bound_type} bound {current_value} and {other} at {constraint}")]
     TypeConflict {
         key: VariableKind,
         bound_type: BoundType,
+        current_value: Type,
         other: Type,
-        current_bound: Type,
         constraint: Constraint,
         partial_result: Box<TypeInferenceResult>,
     },

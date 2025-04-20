@@ -190,7 +190,7 @@ impl Type {
 pub fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
-        Type::Callable => false,
+        Type::Callable => true,
         Type::Function { args, returns } => is_concrete_type(args) && is_concrete_type(returns),
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),

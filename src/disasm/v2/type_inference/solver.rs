@@ -261,15 +261,13 @@ impl Solver {
         }
         loop {
             while self.reach_constraint_fixed_point()? {}
-            /*
+            if refine_concrete_types(&mut self.bounds_map)? {
+                continue;
+            }
             if replace_truthy_with_bool(&mut self.bounds_map)? {
                 trace!("Replaced truthy with bool changed");
                 continue;
             }
-            if refine_concrete_types(&mut self.bounds_map)? {
-                continue;
-            }
-            */
             break;
         }
         info!("{}", "Type inference completed successfully".bold());
@@ -322,12 +320,16 @@ impl Solver {
         let mut changed = false;
         if let Type::Variable(u) = &constraint.left {
             let current_upper = self.bounds_map.upper_bound(u).unwrap();
-            let glb = glb(
-                &current_upper,
-                &effective_upper_bound(&constraint.right, &self.bounds_map),
-            );
-            let glb =
-                self.ok_or_bound_conflict(u, glb, BoundType::Upper, constraint, &constraint.right)?;
+            let eub = effective_upper_bound(&constraint.right, &self.bounds_map);
+            let glb = glb(&current_upper, &eub);
+            let glb = self.ok_or_bound_conflict(
+                u,
+                glb,
+                BoundType::Upper,
+                current_upper.clone(),
+                eub,
+                &constraint,
+            )?;
             changed |= self.bounds_map.update_bound(
                 u.clone(),
                 BoundType::Upper,
@@ -341,12 +343,16 @@ impl Solver {
         }
         if let Type::Variable(v) = &constraint.right {
             let current_lower = self.bounds_map.lower_bound(v).unwrap();
-            let lub = lub(
-                &current_lower,
-                &effective_lower_bound(&constraint.left, &self.bounds_map),
-            );
-            let lub =
-                self.ok_or_bound_conflict(v, lub, BoundType::Lower, constraint, &constraint.left)?;
+            let elb = effective_lower_bound(&constraint.left, &self.bounds_map);
+            let lub = lub(&current_lower, &elb);
+            let lub = self.ok_or_bound_conflict(
+                v,
+                lub,
+                BoundType::Lower,
+                current_lower.clone(),
+                elb,
+                &constraint,
+            )?;
             changed |= self.bounds_map.update_bound(
                 v.clone(),
                 BoundType::Lower,
@@ -522,8 +528,9 @@ impl Solver {
         key: &VariableKind,
         refined: Option<Type>,
         bound_type: BoundType,
+        current_value: Type,
+        other: Type,
         constraint: &Constraint,
-        other: &Type,
     ) -> Result<Type, disasm::Error> {
         match refined {
             Some(refined) => Ok(refined),
@@ -543,8 +550,8 @@ impl Solver {
                     Err(disasm::Error::TypeConflict {
                         key: key.clone(),
                         bound_type,
-                        other: other.clone(),
-                        current_bound,
+                        current_value,
+                        other,
                         constraint: constraint.clone(),
                         partial_result: Box::new(self.build_result()),
                     })
@@ -641,6 +648,7 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Err
     for key in bounds.all_keys() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
+        /*
         if upper == Type::Truthy && lower == Type::Nothing {
             bounds.update_bound(
                 key,
@@ -656,6 +664,7 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Err
             );
             return Ok(true);
         }
+        */
         if specifity(&lower) > specifity(&upper) && is_concrete_type(&lower) {
             bounds.update_bound(
                 key,
@@ -678,13 +687,10 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Err
 }
 
 fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
-    let mut changed = false;
     for key in bounds.all_keys() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
-        if lower == Type::Truthy && upper == Type::Any
-            || upper == Type::Truthy && lower == Type::Nothing
-        {
+        if upper == Type::Truthy && lower == Type::Nothing {
             bounds.update_bound(
                 key,
                 BoundType::Upper,
@@ -697,10 +703,10 @@ fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::
                 Type::Bool,
                 ChangeReason::TruthyToBoolHeuristic,
             );
-            changed = true;
+            return Ok(true);
         }
     }
-    Ok(changed)
+    Ok(false)
 }
 
 fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
