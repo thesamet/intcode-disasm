@@ -181,16 +181,20 @@ impl Type {
             _ => None,
         }
     }
+
+    pub fn pointer(typ: Type) -> Type {
+        Type::Pointer(Box::new(typ))
+    }
 }
 
 pub fn is_concrete_type(typ: &Type) -> bool {
     match typ {
         Type::Int | Type::Bool | Type::Char => true,
-        Type::Callable => true,
+        Type::Callable => false,
         Type::Function { args, returns } => is_concrete_type(args) && is_concrete_type(returns),
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
-        Type::Truthy => true,
+        Type::Truthy => false,
         Type::Conflict => false,
         Type::Any => false,
         Type::Nothing => false,
@@ -238,7 +242,12 @@ pub fn lub(a: &Type, b: &Type) -> Option<Type> {
     } else if b.is_subtype_of(a) {
         Some(a.clone()) // a is the supertype
     } else {
-        None
+        match (a, b) {
+            (Type::Pointer(a), Type::Pointer(b)) => lub(a, b).map(Type::pointer),
+            (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Truthy),
+            (Type::Bool, Type::Pointer(_)) => Some(Type::Truthy),
+            _ => None,
+        }
     }
 }
 
@@ -254,6 +263,64 @@ pub fn glb(a: &Type, b: &Type) -> Option<Type> {
     } else if b.is_subtype_of(a) {
         Some(b.clone()) // b is the subtype (more specific)
     } else {
-        None
+        match (a, b) {
+            (Type::Pointer(a), Type::Pointer(b)) => glb(a, b).map(Type::pointer),
+            (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Nothing),
+            (Type::Bool, Type::Pointer(_)) => Some(Type::Nothing),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lub() {
+        assert_eq!(lub(&Type::Int, &Type::Int), Some(Type::Int));
+        assert_eq!(lub(&Type::Int, &Type::Bool), Some(Type::Int));
+        assert_eq!(lub(&Type::Bool, &Type::Int), Some(Type::Int));
+        assert_eq!(lub(&Type::Bool, &Type::Bool), Some(Type::Bool));
+        assert_eq!(lub(&Type::Char, &Type::Int), Some(Type::Int));
+        assert_eq!(lub(&Type::Char, &Type::Bool), Some(Type::Truthy));
+        assert_eq!(lub(&Type::Char, &Type::Char), Some(Type::Char));
+        assert_eq!(lub(&Type::Nothing, &Type::Int), Some(Type::Int));
+        assert_eq!(lub(&Type::Nothing, &Type::Bool), Some(Type::Bool));
+        assert_eq!(lub(&Type::Nothing, &Type::Char), Some(Type::Char));
+        assert_eq!(lub(&Type::Any, &Type::Int), Some(Type::Any));
+        assert_eq!(lub(&Type::Truthy, &Type::Bool), Some(Type::Truthy));
+        assert_eq!(
+            lub(&Type::Truthy, &Type::pointer(Type::Int)),
+            Some(Type::Truthy)
+        );
+        assert_eq!(
+            lub(&Type::pointer(Type::Bool), &Type::pointer(Type::Int)),
+            Some(Type::pointer(Type::Int))
+        );
+    }
+
+    #[test]
+    fn test_glb() {
+        assert_eq!(glb(&Type::Int, &Type::Int), Some(Type::Int));
+        assert_eq!(glb(&Type::Int, &Type::Bool), Some(Type::Bool));
+        assert_eq!(glb(&Type::Bool, &Type::Int), Some(Type::Bool));
+        assert_eq!(glb(&Type::Bool, &Type::Bool), Some(Type::Bool));
+        assert_eq!(glb(&Type::Char, &Type::Int), Some(Type::Char));
+        assert_eq!(glb(&Type::Char, &Type::Bool), Some(Type::Nothing));
+        assert_eq!(glb(&Type::Char, &Type::Char), Some(Type::Char));
+        assert_eq!(glb(&Type::Nothing, &Type::Int), Some(Type::Nothing));
+        assert_eq!(glb(&Type::Nothing, &Type::Bool), Some(Type::Nothing));
+        assert_eq!(glb(&Type::Nothing, &Type::Char), Some(Type::Nothing));
+        assert_eq!(glb(&Type::Any, &Type::Int), Some(Type::Int));
+        assert_eq!(glb(&Type::Truthy, &Type::Bool), Some(Type::Bool));
+        assert_eq!(
+            glb(&Type::Truthy, &Type::pointer(Type::Int)),
+            Some(Type::pointer(Type::Int))
+        );
+        assert_eq!(
+            glb(&Type::pointer(Type::Bool), &Type::pointer(Type::Int)),
+            Some(Type::pointer(Type::Bool))
+        );
     }
 }

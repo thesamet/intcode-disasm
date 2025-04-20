@@ -7,8 +7,8 @@ use crate::disasm::v2::{
     instructions::{InstructionId, InstructionKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{
-        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind,
-        SsaResult, SsaVar, SsaVarKind,
+        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
+        SsaVar, SsaVarKind,
     },
 };
 
@@ -208,8 +208,8 @@ impl TypeInferenceAnalyzer {
                 let dst_type = Type::from_ssaoperand(dst);
 
                 self.add_constraint(
-                    dst_type,
                     Type::Bool,
+                    dst_type,
                     instr_id,
                     function_id,
                     ConstraintReason::CompareDstImpliesBool,
@@ -479,8 +479,8 @@ impl ModelEventListener for TypeInferenceAnalyzer {
             Err(error) => {
                 // If this is a type conflict with an SsaVar, output the trace history
                 if let TypeInferenceError::TypeConflict {
-                    
-                     
+
+
                     .. // ignore other fields
                 } = &error
                 {

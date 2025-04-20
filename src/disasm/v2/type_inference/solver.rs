@@ -1,7 +1,6 @@
 use colored::Colorize;
 use itertools::Itertools;
 use log::trace;
-use pathfinding::utils::constrain;
 use std::collections::HashMap;
 use std::fmt;
 use thiserror::Error;
@@ -285,15 +284,12 @@ impl Solver {
         loop {
             while self.reach_constraint_fixed_point()? {}
             /*
-            if refine_function_pointers(&mut self.bounds_map)? {
+            if replace_truthy_with_bool(&mut self.bounds_map)? {
+                trace!("Replaced truthy with bool changed");
                 continue;
             }
             */
             if refine_concrete_types(&mut self.bounds_map)? {
-                continue;
-            }
-            if replace_truthy_with_bool(&mut self.bounds_map)? {
-                trace!("Replaced truthy with bool changed");
                 continue;
             }
             break;
@@ -400,15 +396,11 @@ impl Solver {
 
     fn add_function_pointer_constraints(
         &mut self,
-        addr_const: &VariableKind,
-        callable: &Type,
+        function_address: &VariableKind,
+        function_type_receiver: &Type,
         result: &mut Vec<Constraint>,
     ) {
-        let VariableKind::Const {
-            value: addr,
-            origin_info,
-        } = addr_const
-        else {
+        let VariableKind::Const { value: addr, .. } = function_address else {
             return;
         };
         let function_id = FunctionId::from(*addr as usize);
@@ -421,87 +413,81 @@ impl Solver {
         else {
             return;
         };
-        if callable == &Type::Pointer(Box::new(Type::Callable)) {
-            let args = self
-                .indirect_function_types
-                .entry(function_id)
-                .or_insert_with(|| {
-                    // We have not processed this function pointer yet. Processing
-                    // ensures that the type variable of args is a subtype of a tuple
-                    // that corresponds to the callee's parameter SSA vars.
-                    println!("Processing function pointer {}", addr_const);
-                    let mut t_vars = vec![];
-                    for _ in 0..callee_info.parameter_entry_vars.len() {
-                        let v = Type::new_var();
-                        t_vars.push(v.clone());
-                    }
-                    let t = Type::Tuple(t_vars);
-                    init_bounds_for_type(&t, &mut self.bounds_map);
-                    t
-                });
+        let callable_ub = effective_upper_bound(&function_type_receiver, &self.bounds_map);
+        if callable_ub != Type::Pointer(Box::new(Type::Callable)) {
+            return;
+        };
+
+        let args = self
+            .indirect_function_types
+            .entry(function_id)
+            .or_insert_with(|| {
+                // We have not processed this function pointer yet. Processing
+                // ensures that the type variable of args is a subtype of a tuple
+                // that corresponds to the callee's parameter SSA vars.
+                trace!(
+                    "Processing new function pointer {} <: {} <: {}",
+                    function_address,
+                    function_type_receiver,
+                    callable_ub
+                );
+                let mut x_vars = vec![];
+                for _ in 0..callee_info.parameter_entry_vars.len() {
+                    let v = Type::new_var();
+                    x_vars.push(v.clone());
+                }
+                let x = Type::Tuple(x_vars);
+                init_bounds_for_type(&x, &mut self.bounds_map);
+                x
+            });
+        let fp = Type::Pointer(Box::new(Type::Function {
+            args: Box::new(args.clone()),
+            returns: Box::new(Type::Int), // Placeholder return type
+        }));
+        // Let f be the function at the given address. We have an assignment of
+        // the form "receiver = f". This means the receiver is of a type that
+        // is a supertype of f. We add a constraint on a new function-pointer type fp
+        // fp(X_1, X_2, ..) such that type(f) <: fp <: type(receiver) and type(addr) <: fp
+        // We introduce a new function pointer variable F(X_1, X,_2, ..) with
+        // the constraints that type(f) <: F <: functin_receiver
+        result.push(Constraint {
+            left: fp.clone(),
+            right: function_type_receiver.clone(),
+            addr: InstructionId::from(function_id.index()),
+            function_id,
+            reason: ConstraintReason::Assignment,
+        });
+        // Add type(addr) <: fp
+        result.push(Constraint {
+            left: Type::Variable(*function_address),
+            right: fp,
+            addr: InstructionId::from(function_id.index()),
+            function_id,
+            reason: ConstraintReason::Assignment,
+        });
+
+        // Ensure the args tuple type variable is correctly initialized
+        let Type::Tuple(ts) = args else {
+            // This should be unreachable as `args` is created as a Tuple above.
+            unreachable!("args type should be a Tuple for indirect function call binding");
+        };
+
+        // For each X_i (arg of fp), add X_i <: A_i where A_i are the caller side parameters.
+        // Which implies f <: fp(X_1, X_2, ...) due to contravariance.
+        for (xi, (_, callee_ssa_var)) in ts.iter().zip(
+            callee_info
+                .parameter_entry_vars
+                .iter()
+                .sorted_by_key(|(k, _)| *k), // Ensure consistent parameter order
+        ) {
             result.push(Constraint {
-                right: Type::Variable(addr_const.clone()),
-                left: Type::Pointer(Box::new(Type::Function {
-                    args: Box::new(args.clone()),
-                    returns: Box::new(Type::Int),
-                })),
+                left: xi.clone(),                         // Caller's view of the argument type
+                right: Type::from_ssavar(callee_ssa_var), // Callee's view of the parameter type
                 addr: InstructionId::from(function_id.index()),
                 function_id,
                 reason: ConstraintReason::FunctionParameterBinding,
             });
-            let Type::Tuple(ts) = args else {
-                unreachable!();
-            };
-            for (ti, (_, callee_ssa_var)) in ts.iter().zip(
-                callee_info
-                    .parameter_entry_vars
-                    .iter()
-                    .sorted_by_key(|(k, _)| *k),
-            ) {
-                result.push(Constraint {
-                    right: ti.clone(),
-                    left: Type::from_ssavar(callee_ssa_var),
-                    addr: InstructionId::from(function_id.index()),
-                    function_id,
-                    reason: ConstraintReason::FunctionParameterBinding,
-                });
-                // println!("Added constraint: {} <: {}", &callee_ssa_var, ti.clone());
-            }
-            /*
-            bounds.register_new_upper(
-                lower,
-                t.clone(),
-                ChangeReason::IndirectFuctionParameterBinding(function_id),
-            );
-            */
         }
-        /*
-        let Some((args, rets)) = Type::extract_function_from_pointer(upper) else {
-            return;
-        };
-        let Type::Variable(args_kind @ VariableKind::TypeVar(_)) = args else {
-            return;
-        };
-        assert!(matches!(args, Type::Variable(VariableKind::TypeVar(_))));
-        let args_upper = effective_upper_bound(args, bounds);
-        let args_upper = if args_upper == Type::Any {
-        } else {
-            args_upper
-        };
-        let Type::Tuple(ts) = args_upper else {
-            unreachable!();
-        };
-        */
-
-        /*
-        result.push(Constraint {
-            left: rets.clone(),
-            right: Type::Nothing,
-            addr: lower.
-            function_id: lower.
-            reason: ConstraintReason::FunctionReturnBinding,
-        });
-        */
     }
 
     /// Create a TypeInferenceResult from the current state of bounds
@@ -511,7 +497,14 @@ impl Solver {
             .iter()
             .filter_map({
                 |(k, v)| match k {
-                    VariableKind::SsaVar(var) => Some((*var, v.upper.clone())), // Use upper bound as the inferred type for now
+                    VariableKind::SsaVar(var) => {
+                        let typ = if specifity(&v.upper) >= specifity(&v.lower) {
+                            &v.upper
+                        } else {
+                            &v.lower
+                        };
+                        Some((*var, typ.clone()))
+                    }
                     _ => None,
                 }
             })
@@ -645,30 +638,43 @@ fn refine_function_pointers(
 */
 
 fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
-    let mut changed = false;
     for key in bounds.all_keys() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
-        if is_concrete_type(&lower) && !is_concrete_type(&upper) {
+        if upper == Type::Truthy && lower == Type::Nothing {
+            bounds.update_bound(
+                key,
+                BoundType::Upper,
+                Type::Bool,
+                ChangeReason::TruthyToBoolHeuristic,
+            );
+            bounds.update_bound(
+                key,
+                BoundType::Lower,
+                Type::Bool,
+                ChangeReason::TruthyToBoolHeuristic,
+            );
+            return Ok(true);
+        }
+        if specifity(&lower) > specifity(&upper) && is_concrete_type(&lower) {
             bounds.update_bound(
                 key,
                 BoundType::Upper,
                 lower.clone(),
                 ChangeReason::ConcreteRefinement,
             );
-            changed = true;
-        }
-        if is_concrete_type(&upper) && !is_concrete_type(&lower) {
+            return Ok(true);
+        } else if specifity(&upper) > specifity(&lower) && is_concrete_type(&upper) {
             bounds.update_bound(
                 key,
                 BoundType::Lower,
                 upper.clone(),
                 ChangeReason::ConcreteRefinement,
             );
-            changed = true;
+            return Ok(true);
         }
     }
-    Ok(changed)
+    Ok(false)
 }
 
 fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
@@ -765,5 +771,20 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
                 bounds.create_key(v.clone(), Type::Nothing, Type::Any);
             }
         }
+    }
+}
+
+fn specifity(typ: &Type) -> u32 {
+    match typ {
+        Type::Int | Type::Bool | Type::Char => 1,
+        Type::Truthy | Type::Callable | Type::Conflict | Type::Nothing | Type::Any => 0,
+        Type::Pointer(x) => 1 + specifity(x),
+        Type::Function { args, returns } => {
+            let args = specifity(args);
+            let returns = specifity(returns);
+            1 + args.max(returns)
+        }
+        Type::Tuple(ts) => 1 + ts.iter().map(specifity).sum::<u32>(),
+        Type::Variable(_) => 1,
     }
 }
