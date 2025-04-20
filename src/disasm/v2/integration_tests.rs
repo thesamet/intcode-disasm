@@ -13,6 +13,7 @@ use crate::disasm::v2::model::ProgramModel;
 mod tests {
     use crate::disasm::v2::{
         instructions::{InstructionId, Operand},
+        model::BlockId,
         ssa_form::{SsaOperand, SsaOperandKind},
     };
 
@@ -148,10 +149,13 @@ mod tests {
         let func_ptr_type = Type::from_ssavar(&func_ptr_var);
 
         // Mark variable for testing
-        type_inference.mark_var(SsaOperand {
-            kind: SsaOperandKind::Variable(func_ptr_var),
-            origin_info: func_ptr_var.origin_info,
-        }, 'f');
+        type_inference.mark_var(
+            SsaOperand {
+                kind: SsaOperandKind::Variable(func_ptr_var),
+                origin_info: func_ptr_var.origin_info,
+            },
+            'f',
+        );
 
         // Add constraint for function pointer
         type_inference.add_constraint(
@@ -162,7 +166,9 @@ mod tests {
             },
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::IndirectFunctionCall,
+            ConstraintReason::IndirectFunctionCall {
+                calling_block: BlockId::from(0),
+            },
         );
 
         // Solve constraints using solver::unify

@@ -1,11 +1,15 @@
 use std::fmt;
 
-use crate::disasm::v2::{instructions::InstructionId, model::FunctionId};
+use crate::disasm::v2::{
+    data_flow::CallSiteInfo,
+    instructions::InstructionId,
+    model::{BlockId, FunctionId},
+};
 
 use super::{types::Type, visuals::TraceColors};
 
 /// Reason for a constraint between types
-#[derive(Debug, Clone, Copy, PartialEq, Ord, PartialOrd, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Ord, PartialOrd, Eq)]
 pub enum ConstraintReason {
     /// Addition operations imply integer types
     AddSecondParameterImpliesInt,
@@ -51,11 +55,15 @@ pub enum ConstraintReason {
     PhiAssignment,
 
     /// Indirect function calls imply function pointer type
-    IndirectFunctionCall,
+    IndirectFunctionCall {
+        calling_block: BlockId,
+    },
     ImmediateIsSubtypeOfInt,
     PointerSubtype,
     FunctionTypeParameter,
     TupleSubtype,
+    FunctionPointerSubtype,
+    FunctionPointerSignature,
 }
 
 impl fmt::Display for ConstraintReason {
@@ -82,34 +90,6 @@ pub struct Constraint {
 
 impl fmt::Display for Constraint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Format the left side with appropriate color
-        let left_str = if let Type::Variable(var) = &self.left {
-            TraceColors::format_var(var)
-        } else {
-            TraceColors::format_type(&self.left)
-        };
-
-        // Format the right side with appropriate color
-        let right_str = if let Type::Variable(var) = &self.right {
-            TraceColors::format_var(var)
-        } else {
-            TraceColors::format_type(&self.right)
-        };
-
-        // Format the location and reason
-        let location = TraceColors::format_location(format!("{}:{}", self.function_id, self.addr));
-        let reason = TraceColors::format_constraint(self.reason);
-
-        write!(
-            f,
-            "{} {} {} {} {} {} {}",
-            left_str,
-            TraceColors::format_relation("<:"),
-            right_str,
-            TraceColors::format_location("at"),
-            location,
-            TraceColors::format_location("because"),
-            reason
-        )
+        TraceColors::format_constraint(self).fmt(f)
     }
 }

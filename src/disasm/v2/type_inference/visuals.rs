@@ -1,7 +1,11 @@
 use colored::{Color, ColoredString, Colorize};
+use itertools::{Itertools, Position};
 use std::fmt;
 
-use super::types::VariableKind;
+use super::{
+    constraints::{Constraint, ConstraintReason},
+    types::{Type, VariableKind},
+};
 
 /// Color scheme for trace and type inference visualization
 pub struct TraceColors;
@@ -36,12 +40,63 @@ impl TraceColors {
         format!("{}{}", function_id, var).color(Self::var()).bold()
     }
 
-    pub fn format_type<T: fmt::Display>(typ: T) -> ColoredString {
+    pub fn format_type(typ: &Type) -> ColoredString {
+        match typ {
+            Type::Variable(var) => Self::format_var(var),
+            Type::Tuple(ts) => {
+                let mut s = format!("(");
+                for (p, t) in ts.iter().with_position() {
+                    s.push_str(&Self::format_type(t));
+                    if p == Position::Last || p == Position::Only {
+                        s.push_str(")");
+                    } else {
+                        s.push_str(", ");
+                    }
+                }
+                s.color(Self::type_name()).bold()
+            }
+            _ => format!("{}", typ).color(Self::type_name()).bold(),
+        }
+    }
+
+    /// Format a type for display in a trace
+    pub fn format_trace(typ: &Type) -> ColoredString {
         format!("{}", typ).color(Self::type_name()).bold()
     }
 
-    pub fn format_constraint<T: fmt::Display>(constraint: T) -> ColoredString {
-        format!("{}", constraint).color(Self::constraint()).bold()
+    pub fn format_reason(reason: &ConstraintReason) -> ColoredString {
+        format!("{}", reason.to_string())
+            .color(Self::constraint())
+            .bold()
+    }
+
+    pub fn format_constraint(c: &Constraint) -> String {
+        // Format the left side with appropriate color
+        let left_str = if let Type::Variable(var) = &c.left {
+            TraceColors::format_var(var)
+        } else {
+            TraceColors::format_type(&c.left)
+        };
+
+        // Format the right side with appropriate color
+        let right_str = if let Type::Variable(var) = &c.right {
+            TraceColors::format_var(var)
+        } else {
+            TraceColors::format_type(&c.right)
+        };
+
+        // Format the location and reason
+        let location = TraceColors::format_location(format!("{}:{}", c.function_id, c.addr));
+        let reason = c.reason.to_string();
+
+        format!(
+            "{left_str} {} {right_str} {}{} {} {}",
+            TraceColors::format_relation("<:"),
+            TraceColors::format_location("@"),
+            location,
+            TraceColors::format_location(":"),
+            reason
+        )
     }
 
     pub fn format_location<T: fmt::Display>(location: T) -> ColoredString {

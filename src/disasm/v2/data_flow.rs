@@ -82,7 +82,7 @@ pub struct BlockDataFlow {
 }
 
 /// Contains flow data about call sites.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallSiteInfo {
     // The set of positive offsets `n` identifying return value locations `[R+n]`
     // that are read by subsequent blocks having access to the function's return state.

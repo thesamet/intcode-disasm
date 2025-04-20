@@ -4,6 +4,7 @@ mod type_inference_tests {
     use log::error;
 
     use crate::disasm::parser;
+    use crate::disasm::v2::model::BlockId;
     use crate::disasm::v2::pretty_print::{pretty_print_ssa, pretty_print_with_types};
     use crate::disasm::v2::ssa_form::SsaOperand;
     use crate::disasm::v2::type_inference::solver;
@@ -347,7 +348,9 @@ mod type_inference_tests {
             function_pointer(&vec![], &vec![]),
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::IndirectFunctionCall,
+            ConstraintReason::IndirectFunctionCall {
+                calling_block: BlockId::from(0),
+            },
         );
 
         // Solve constraints
@@ -673,7 +676,7 @@ f1:
                 R += 1000
                 'a [R+1] = 65
                 'b [R+2] = 66
-                'c [R+3] = 67
+                'c [R+3] = @somefunc
                 'd [R+4] = 68
                 [R] = @ret
                 goto @print
@@ -693,6 +696,11 @@ f1:
                 if [R-2] goto @done
     done:
                 R -= 10
+                goto [R]
+
+    somefunc:
+                R += 1
+                R -= 1
                 goto [R]
             "#,
         );

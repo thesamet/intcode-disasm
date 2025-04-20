@@ -128,6 +128,20 @@ impl Type {
         }
     }
 
+    pub fn as_variable(&self) -> Option<&VariableKind> {
+        match self {
+            Type::Variable(var) => Some(var),
+            _ => None,
+        }
+    }
+
+    pub fn as_const(&self) -> Option<&i128> {
+        match self {
+            Type::Variable(VariableKind::Const { value, .. }) => Some(value),
+            _ => None,
+        }
+    }
+
     pub fn is_strict_subtype_of(&self, other: &Type) -> bool {
         self != other && self.is_subtype_of(other)
     }
@@ -162,6 +176,13 @@ impl Type {
         Type::Variable(VariableKind::TypeVar(id))
     }
 
+    pub fn function_pointer(args: Type, returns: Type) -> Type {
+        Type::Pointer(Box::new(Type::Function {
+            args: Box::new(args),
+            returns: Box::new(returns),
+        }))
+    }
+
     pub fn new_function_pointer() -> Type {
         Type::Pointer(Box::new(Type::Function {
             args: Box::new(Type::new_var()),
@@ -169,10 +190,22 @@ impl Type {
         }))
     }
 
-    pub fn is_function_pointer(typ: &Type) -> bool {
-        match typ {
+    pub fn is_function_pointer(&self) -> bool {
+        match self {
             Type::Pointer(p) => {
                 let Type::Function { .. } = p.as_ref() else {
+                    return false;
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn is_callable_pointer(&self) -> bool {
+        match self {
+            Type::Pointer(p) => {
+                let Type::Callable = p.as_ref() else {
                     return false;
                 };
                 true
@@ -194,6 +227,13 @@ impl Type {
 
     pub fn pointer(typ: Type) -> Type {
         Type::Pointer(Box::new(typ))
+    }
+
+    pub fn as_tuple(&self) -> Option<&Vec<Type>> {
+        match self {
+            Type::Tuple(ts) => Some(ts),
+            _ => None,
+        }
     }
 }
 

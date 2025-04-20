@@ -302,3 +302,12 @@ The code has automatic simplification logic that converts certain patterns to mo
 # Some notes
 
 - Debug markers bind to operators, not statements. So `'a output [R+1]` is invalid, but `output 'a [R+1]` is valid.
+
+# Some facts about functions
+We can tell what parameters a function takes by looking at the stack reads within the function for [R-n] slots that are not initialized. That means we can only infer the parameter types by looking at the callee itself. To determine the return arguments, we see what is read from [R+n] at the caller:
+
+*   `CalleeInfo` (`return_writes`) only tells us which `SsaVar`s the function `f` *writes* to potential return slots (`[R-n]`, n < 0, adjusted for stack offset) before returning.
+*   `CallSiteInfo` (`return_reads`) tells us which slots the *caller reads* after a specific call returns.
+*   A function `f` might write to `[R-1]` and `[R-2]`, but a particular indirect call might only read `[R-1]`.
+
+Therefore, we cannot reliably determine a single, definitive `callee_returns_tuple` for function `f` just by looking at `f` itself (`CalleeInfo`). The return type expectation is primarily defined by the *caller* at the point of use.

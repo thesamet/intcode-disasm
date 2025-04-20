@@ -1,17 +1,16 @@
 use log::{debug, info};
 
-use crate::disasm::{
-    v2::{
-        control_flow::{NextKind, PredecessorKind},
-        dispatching::EventCollector,
-        events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
-        instructions::{InstructionId, InstructionKind},
-        model::{BlockId, FunctionId, ProgramModel},
-        ssa_form::{
-            PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind,
-            SsaResult, SsaVar, SsaVarKind,
-        },
+use crate::disasm::v2::{
+    control_flow::{NextKind, PredecessorKind},
+    dispatching::EventCollector,
+    events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
+    instructions::{InstructionId, InstructionKind},
+    model::{BlockId, FunctionId, ProgramModel},
+    ssa_form::{
+        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
+        SsaVar, SsaVarKind,
     },
+    type_inference::visuals::TraceColors,
 };
 
 use super::{
@@ -48,17 +47,15 @@ impl TypeInferenceAnalyzer {
         function_id: FunctionId,
         reason: ConstraintReason,
     ) {
-        debug!(
-            "Adding constraint: {} <: {} ({:?} at {})",
-            left, right, reason, addr
-        );
-        self.constraints.push(Constraint {
+        let c = Constraint {
             left,
             right,
             addr,
             function_id,
             reason,
-        });
+        };
+        debug!("Adding constraint: {}", TraceColors::format_constraint(&c));
+        self.constraints.push(c);
     }
 
     /// Generate constraints for a phi function
@@ -384,13 +381,16 @@ impl TypeInferenceAnalyzer {
                         }
                     }
                 } else {
+                    // --- Indirect Call ---
                     let fn_type = Type::from_ssaoperand(&call.function_addr);
                     self.add_constraint(
                         fn_type,
                         Type::Pointer(Box::new(Type::Callable)),
                         location_addr,
                         function_id,
-                        ConstraintReason::IndirectFunctionCall,
+                        ConstraintReason::IndirectFunctionCall {
+                            calling_block: call.calling_block,
+                        },
                     );
                 }
             }

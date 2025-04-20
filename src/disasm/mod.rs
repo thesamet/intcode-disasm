@@ -7,6 +7,7 @@ use v2::type_inference::{
     constraints::Constraint,
     solver::BoundType,
     types::{Type, VariableKind},
+    visuals::TraceColors,
     TypeInferenceResult,
 };
 
@@ -41,4 +42,6 @@ pub enum Error {
         lower: Type,
         upper: Type,
     },
+    #[error("Invalid function pointer value {addr} for {}", TraceColors::format_constraint(.constraint))]
+    InvalidFunctionPointerValue { addr: usize, constraint: Constraint },
 }

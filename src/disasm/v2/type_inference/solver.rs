@@ -1,6 +1,7 @@
 use colored::Colorize;
 use itertools::Itertools;
 use log::{info, trace};
+use pathfinding::utils::constrain;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -10,7 +11,7 @@ use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
 use crate::disasm;
 use crate::disasm::v2::instructions::InstructionId;
-use crate::disasm::v2::listeners::function_call_analyzer::CallSiteInfo;
+use crate::disasm::v2::listeners::function_call_analyzer::{CallSiteInfo, FunctionCallAnalysis};
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::SsaOperand;
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
@@ -160,7 +161,6 @@ pub enum ChangeReason {
     IncreaseLowerBoundFromConstraint { constraint: Constraint, other: Type },
     ConcreteRefinement,
     TruthyToBoolHeuristic,
-    IndirectFuctionParameterBinding(FunctionId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,12 +206,7 @@ impl fmt::Display for AnalysisTrace {
                     TraceColors::format_type(other)
                 };
 
-                let constraint_str = format!(
-                    "{} @ {}:{}",
-                    TraceColors::format_constraint(constraint.reason),
-                    TraceColors::format_location(constraint.function_id),
-                    TraceColors::format_location(constraint.addr)
-                );
+                let constraint_str = format!("{}", TraceColors::format_constraint(constraint),);
 
                 write!(f, "  {} caused by {}", constraint_str, other_str)
             }
@@ -221,23 +216,8 @@ impl fmt::Display for AnalysisTrace {
                 } else {
                     TraceColors::format_type(other)
                 };
-
-                let constraint_str = format!(
-                    "{} @ {}:{}",
-                    TraceColors::format_constraint(constraint.reason),
-                    TraceColors::format_location(constraint.function_id),
-                    TraceColors::format_location(constraint.addr)
-                );
-
+                let constraint_str = format!("{}", TraceColors::format_constraint(constraint),);
                 write!(f, "  {} caused by {}", constraint_str, other_str)
-            }
-            ChangeReason::IndirectFuctionParameterBinding(function_id) => {
-                write!(
-                    f,
-                    "  {} {}",
-                    TraceColors::format_bound("Indirect function parameter binding with function"),
-                    TraceColors::format_location(format!("{}", function_id),)
-                )
             }
             ChangeReason::ConcreteRefinement => {
                 write!(
@@ -257,12 +237,20 @@ impl fmt::Display for AnalysisTrace {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FunctionPointerInfo {
+    args: Type,               // tuple of argument types
+    returns: Type,            // tuple of return types
+    arg_count: Option<usize>, // number of arguments
+    ret_count: Option<usize>, // number of return arguments
+}
+
 struct Solver {
     model: ProgramModel,
     debug_markers: HashMap<char, SsaOperand>,
     constraints: Vec<Constraint>,
     bounds_map: TypeBoundsMap,
-    indirect_function_types: HashMap<FunctionId, (Type, Type)>,
+    function_pointer_variables: HashMap<VariableKind, FunctionPointerInfo>,
 }
 
 impl Solver {
@@ -276,7 +264,7 @@ impl Solver {
             debug_markers,
             constraints: constraints.to_vec(),
             bounds_map: TypeBoundsMap::new(),
-            indirect_function_types: HashMap::new(),
+            function_pointer_variables: HashMap::new(),
         }
     }
 
@@ -320,7 +308,7 @@ impl Solver {
         loop {
             let mut changed_in_iteration = false;
             let mut worklist = self.constraints.to_vec(); // Clone constraints into a worklist
-            self.add_indirect_function_call_constraints(&mut worklist);
+                                                          // self.add_indirect_function_call_constraints(&mut worklist);
             while let Some(c) = worklist.pop() {
                 let (changed, constraints) = self.process_constraint(&c)?;
                 changed_in_iteration |= changed;
@@ -330,79 +318,6 @@ impl Solver {
             if !changed_in_iteration {
                 return Ok(overall_changed);
             }
-        }
-    }
-
-    fn add_indirect_function_call_constraints(&mut self, worklist: &mut Vec<Constraint>) {
-        let Some(fca) = self.model.get_function_call_analysis() else {
-            return;
-        };
-        for (_, call_site) in fca.call_site_info.iter() {
-            // We want only indirect function calls.
-            let Some(b) = call_site.target_address_var else {
-                continue;
-            };
-            let Type::Variable(typ) = Type::from_ssaoperand(&b) else {
-                unreachable!()
-            };
-            let lower = self.bounds_map.lower_bound(&typ).unwrap();
-            let upper = self.bounds_map.upper_bound(&typ).unwrap();
-            add_for_bound(lower, BoundType::Lower, call_site, worklist);
-            add_for_bound(upper, BoundType::Upper, call_site, worklist);
-        }
-
-        fn add_for_bound(
-            fp: &Type,
-            bound_type: BoundType,
-            call_site: &CallSiteInfo,
-            worklist: &mut Vec<Constraint>,
-        ) {
-            let Type::Pointer(ptr) = fp else {
-                return;
-            };
-            let Type::Function {
-                ref args,
-                ref returns,
-            } = **ptr
-            else {
-                return;
-            };
-            let Type::Tuple(ref args) = **args else {
-                unreachable!();
-            };
-            for (i, v) in args.iter().enumerate() {
-                let caller_var = Type::from_ssavar(&call_site.argument_writes[&((i + 1) as i128)]);
-                let (left, right) = if bound_type.is_lower() {
-                    (caller_var.clone(), v.clone())
-                } else {
-                    (v.clone(), caller_var.clone())
-                };
-                worklist.push(Constraint {
-                    left,
-                    right,
-                    addr: InstructionId::from(call_site.return_block_id.index()),
-                    function_id: call_site.calling_function_id,
-                    reason: ConstraintReason::FunctionParameterBinding,
-                });
-            }
-            let mut return_types = vec![];
-            for (_, v) in call_site.return_reads.iter().sorted() {
-                let caller_var = Type::from_ssavar(&v);
-                return_types.push(caller_var);
-            }
-            let return_tuple = Type::Tuple(return_types);
-            let (left, right) = if bound_type.is_lower() {
-                (return_tuple, (**returns).clone())
-            } else {
-                ((**returns).clone(), return_tuple)
-            };
-            worklist.push(Constraint {
-                left,
-                right,
-                addr: InstructionId::from(call_site.return_block_id.index()),
-                function_id: call_site.calling_function_id,
-                reason: ConstraintReason::FunctionReturnBinding,
-            });
         }
     }
 
@@ -427,13 +342,47 @@ impl Solver {
             changed |= self.bounds_map.update_bound(
                 u.clone(),
                 BoundType::Upper,
-                glb,
+                glb.clone(),
                 ChangeReason::DecreaseUpperBoundFromConstraint {
                     constraint: constraint.clone(),
                     other: constraint.right.clone(),
                 },
             )?;
-            self.add_function_pointer_constraints(u, &constraint.right, &mut result);
+            if glb.is_callable_pointer() || glb.is_function_pointer() {
+                let fpi = self
+                    .function_pointer_variables
+                    .entry(*u)
+                    .or_insert_with(|| {
+                        let args = Type::new_var();
+                        let returns = Type::new_var();
+                        init_bounds_for_type(&args, &mut self.bounds_map);
+                        init_bounds_for_type(&returns, &mut self.bounds_map);
+                        trace!(
+                            "Identified {} as a function pointer {} -> {}",
+                            TraceColors::format_var(u),
+                            TraceColors::format_type(&args),
+                            TraceColors::format_type(&returns)
+                        );
+                        changed = true;
+                        FunctionPointerInfo {
+                            args,
+                            returns,
+                            arg_count: None,
+                            ret_count: None,
+                        }
+                    });
+                let fp = Type::function_pointer(fpi.args.clone(), fpi.returns.clone());
+                if constraint.right != fp {
+                    // prevents adding a copy of the current constraint.
+                    result.push(Constraint {
+                        left: constraint.left.clone(),
+                        right: fp,
+                        addr: constraint.addr,
+                        function_id: constraint.function_id,
+                        reason: ConstraintReason::FunctionPointerSignature,
+                    });
+                }
+            }
         }
         if let Type::Variable(v) = &constraint.right {
             let current_lower = self.bounds_map.lower_bound(v).unwrap();
@@ -457,6 +406,7 @@ impl Solver {
                 },
             )?;
         }
+        changed |= self.handle_function_pointer_constraints(constraint, &mut result)?;
         match (&constraint.left, &constraint.right) {
             (Type::Pointer(x), Type::Pointer(y)) => {
                 result.push(Constraint {
@@ -480,6 +430,26 @@ impl Solver {
                     });
                 }
             }
+            (Type::Tuple(ts), right)
+                if effective_upper_bound(right, &self.bounds_map)
+                    .as_tuple()
+                    .is_some() =>
+            {
+                let us = effective_upper_bound(right, &self.bounds_map)
+                    .as_tuple()
+                    .cloned()
+                    .unwrap();
+                assert!(ts.len() == us.len());
+                for (t, u) in ts.iter().zip(us) {
+                    result.push(Constraint {
+                        left: t.clone(),
+                        right: u.clone(),
+                        addr: constraint.addr,
+                        function_id: constraint.function_id,
+                        reason: ConstraintReason::TupleSubtype,
+                    });
+                }
+            }
             (Type::Function { args: a1, .. }, Type::Function { args: a2, .. }) => {
                 result.push(Constraint {
                     left: *a2.clone(),
@@ -492,104 +462,6 @@ impl Solver {
             _ => {}
         };
         Ok((changed, result))
-    }
-
-    fn add_function_pointer_constraints(
-        &mut self,
-        function_address: &VariableKind,
-        function_type_receiver: &Type,
-        result: &mut Vec<Constraint>,
-    ) {
-        let VariableKind::Const { value: addr, .. } = function_address else {
-            return;
-        };
-        let function_id = FunctionId::from(*addr as usize);
-        let Some(callee_info) = self
-            .model
-            .get_function_call_analysis()
-            .unwrap()
-            .callee_info
-            .get(&function_id)
-        else {
-            return;
-        };
-        let callable_ub = effective_upper_bound(&function_type_receiver, &self.bounds_map);
-        if callable_ub != Type::Pointer(Box::new(Type::Callable)) {
-            return;
-        };
-
-        let (args, returns) = self
-            .indirect_function_types
-            .entry(function_id)
-            .or_insert_with(|| {
-                // We have not processed this function pointer yet. Processing
-                // ensures that the type variable of args is a subtype of a tuple
-                // that corresponds to the callee's parameter SSA vars.
-                trace!(
-                    "Processing new function pointer {} <: {} <: {}",
-                    function_address,
-                    function_type_receiver,
-                    callable_ub
-                );
-                let mut x_vars = vec![];
-                for _ in 0..callee_info.parameter_entry_vars.len() {
-                    let v = Type::new_var();
-                    x_vars.push(v.clone());
-                }
-                let x = Type::Tuple(x_vars);
-                init_bounds_for_type(&x, &mut self.bounds_map);
-                let returns = Type::new_var(); // Placeholder return type
-                (x, returns)
-            });
-        init_bounds_for_type(&returns, &mut self.bounds_map);
-        let fp = Type::Pointer(Box::new(Type::Function {
-            args: Box::new(args.clone()),
-            returns: Box::new((*returns).clone()), // Placeholder return type
-        }));
-        // Let f be the function at the given address. We have an assignment of
-        // the form "receiver = f". This means the receiver is of a type that
-        // is a supertype of f. We add a constraint on a new function-pointer type fp
-        // fp(X_1, X_2, ..) such that type(f) <: fp <: type(receiver) and type(addr) <: fp
-        // We introduce a new function pointer variable F(X_1, X,_2, ..) with
-        // the constraints that type(f) <: F <: functin_receiver
-        result.push(Constraint {
-            left: fp.clone(),
-            right: function_type_receiver.clone(),
-            addr: InstructionId::from(function_id.index()),
-            function_id,
-            reason: ConstraintReason::Assignment,
-        });
-        // Add type(addr) <: fp
-        result.push(Constraint {
-            left: Type::Variable(*function_address),
-            right: fp,
-            addr: InstructionId::from(function_id.index()),
-            function_id,
-            reason: ConstraintReason::Assignment,
-        });
-
-        // Ensure the args tuple type variable is correctly initialized
-        let Type::Tuple(ts) = args else {
-            // This should be unreachable as `args` is created as a Tuple above.
-            unreachable!("args type should be a Tuple for indirect function call binding");
-        };
-
-        // For each X_i (arg of fp), add X_i <: A_i where A_i are the callee side parameters.
-        // Which implies f <: fp(X_1, X_2, ...) due to contravariance.
-        for (xi, (_, callee_ssa_var)) in ts.iter().zip(
-            callee_info
-                .parameter_entry_vars
-                .iter()
-                .sorted_by_key(|(k, _)| *k), // Ensure consistent parameter order
-        ) {
-            result.push(Constraint {
-                left: xi.clone(),                         // Caller's view of the argument type
-                right: Type::from_ssavar(callee_ssa_var), // Callee's view of the parameter type
-                addr: InstructionId::from(function_id.index()),
-                function_id,
-                reason: ConstraintReason::FunctionParameterBinding,
-            });
-        }
     }
 
     /// Create a TypeInferenceResult from the current state of bounds
@@ -655,6 +527,263 @@ impl Solver {
             }
         }
     }
+
+    fn handle_function_pointer_constraints(
+        &mut self,
+        constraint: &Constraint,
+        result: &mut Vec<Constraint>,
+    ) -> Result<bool, disasm::Error> {
+        let left_var = constraint.left.as_variable();
+        let right_var = constraint.right.as_variable();
+        let left_fp = left_var.and_then(|x| self.function_pointer_variables.get(x).cloned());
+        let right_fp = right_var.and_then(|x| self.function_pointer_variables.get(x).cloned());
+        let left_const = constraint.left.as_const();
+        let right_const = constraint.right.as_const();
+        let Some(fca) = self.model.get_function_call_analysis() else {
+            return Ok(false);
+        };
+        if let ConstraintReason::IndirectFunctionCall { calling_block } = &constraint.reason {
+            // The constraint is left_var < Pointer(Callable))
+            let left_var = left_var.expect("Left side must be a variable missing");
+            if let Some(FunctionPointerInfo {
+                args: ptr_args,
+                returns: ptr_rets,
+                arg_count: Some(arg_count),
+                ret_count,
+            }) = &left_fp
+            {
+                // Case: Function Pointer Variable <: Constant (e.g., `some_func_ptr = fp_var;` where some_func_ptr is known)
+                // This implies the function pointer variable's type must be a subtype
+                // of the constant function's type.
+                let csi = fca
+                    .call_site_info
+                    .get(calling_block)
+                    .expect("Call site info missing");
+                let mut caller_args_vec = vec![];
+                for i in 0..*arg_count {
+                    caller_args_vec.push(Type::from_ssavar(&csi.argument_writes[&(i as i128 + 1)]));
+                }
+                let caller_args_tuple = Type::Tuple(caller_args_vec);
+                let mut caller_rets_vec = vec![];
+                for (_, caller_ssa_var) in csi.return_reads.iter().sorted() {
+                    caller_rets_vec.push(Type::from_ssavar(caller_ssa_var));
+                }
+                let caller_ret_count = Some(caller_rets_vec.len());
+                let caller_rets_tuple = Type::Tuple(caller_rets_vec);
+                assert!(ret_count.is_none() || *ret_count == caller_ret_count);
+                if *ret_count != caller_ret_count {
+                    self.function_pointer_variables
+                        .get_mut(left_var)
+                        .unwrap()
+                        .ret_count = caller_ret_count;
+                }
+
+                let c = Constraint {
+                    left: caller_args_tuple,
+                    right: ptr_args.clone(),
+                    addr: InstructionId::from(calling_block.index()),
+                    function_id: csi.calling_function_id,
+                    reason: ConstraintReason::FunctionParameterBinding,
+                };
+                result.push(c);
+                let c = Constraint {
+                    left: ptr_rets.clone(),
+                    right: caller_rets_tuple,
+                    addr: InstructionId::from(csi.return_block_id.index()),
+                    function_id: csi.calling_function_id,
+                    reason: ConstraintReason::FunctionReturnBinding,
+                };
+                trace!("Added rets constraint: {}", c);
+                result.push(c);
+            }
+        }
+        if let (Some(left_const), Some(right_fp_info)) = (left_const, right_fp.clone()) {
+            // Case: Constant <: Function Pointer Variable (e.g., `fp_var = &my_func;`)
+            // This implies the function pointer variable's type must be a supertype
+            // of the constant function's type.
+            add_function_parameter_binding_constraint(
+                self,
+                *left_const,
+                right_var.unwrap(),
+                &right_fp_info,
+                BoundType::Lower, // const is lower bound
+                constraint,
+                result,
+            )?;
+        } else if let (Some(left_fp_info), Some(right_const)) = (left_fp.clone(), right_const) {
+            // Case: Function Pointer Variable <: Constant (e.g., `some_func_ptr = fp_var;` where some_func_ptr is known)
+            // This implies the function pointer variable's type must be a subtype
+            // of the constant function's type.
+            add_function_parameter_binding_constraint(
+                self,
+                *right_const,
+                left_var.unwrap(),
+                &left_fp_info,
+                BoundType::Upper, // const is upper bound
+                constraint,
+                result,
+            )?;
+        } else if let (Some(left_fp), Some(right_fp)) = (left_fp, right_fp) {
+            // Case: Function Pointer Variable <: Function Pointer Variable.
+            let FunctionPointerInfo {
+                args: args1,
+                returns: rets1,
+                arg_count: arg_count1,
+                ret_count: ret_count1,
+            } = left_fp;
+            let FunctionPointerInfo {
+                args: args2,
+                returns: rets2,
+                arg_count: arg_count2,
+                ret_count: ret_count2,
+            } = right_fp;
+            result.push(Constraint {
+                left: args2.clone(),
+                right: args1.clone(),
+                addr: constraint.addr,
+                function_id: constraint.function_id,
+                reason: ConstraintReason::FunctionPointerSubtype,
+            });
+            result.push(Constraint {
+                left: rets1.clone(),
+                right: rets2.clone(),
+                addr: constraint.addr,
+                function_id: constraint.function_id,
+                reason: ConstraintReason::FunctionPointerSubtype,
+            });
+            assert!(arg_count1.is_none() || arg_count2.is_none() || arg_count1 == arg_count2);
+            if let Some(arg_count) = arg_count1.or(arg_count2) {
+                self.function_pointer_variables
+                    .get_mut(left_var.unwrap())
+                    .unwrap()
+                    .arg_count = Some(arg_count);
+                self.function_pointer_variables
+                    .get_mut(right_var.unwrap())
+                    .unwrap()
+                    .arg_count = Some(arg_count);
+            }
+            assert!(ret_count1.is_none() || ret_count2.is_none() || ret_count1 == ret_count2);
+            if let Some(ret_count) = ret_count1.or(ret_count2) {
+                self.function_pointer_variables
+                    .get_mut(left_var.unwrap())
+                    .unwrap()
+                    .ret_count = Some(ret_count);
+                self.function_pointer_variables
+                    .get_mut(right_var.unwrap())
+                    .unwrap()
+                    .ret_count = Some(ret_count);
+            }
+        }
+
+        Ok(false)
+    }
+}
+
+fn add_function_parameter_binding_constraint(
+    solver: &mut Solver,
+    func_addr: i128,
+    func_key: &VariableKind,
+    func_ptr_info: &FunctionPointerInfo,
+    bound_type: BoundType,
+    constraint: &Constraint,
+    result: &mut Vec<Constraint>,
+) -> Result<(), disasm::Error> {
+    let callee_function_id = FunctionId::from(func_addr as usize);
+    let fca = solver.model.get_function_call_analysis().unwrap();
+    let Some(callee_info) = fca.callee_info.get(&callee_function_id) else {
+        trace!(
+            "Function address {} not found in callee info for constraint: {}",
+            func_addr,
+            constraint
+        );
+        return Err(disasm::Error::InvalidFunctionPointerValue {
+            addr: callee_function_id.index(),
+            constraint: constraint.clone(),
+        });
+    };
+
+    let FunctionPointerInfo {
+        args: arg_type,
+        returns: ret_type,
+        ..
+    } = func_ptr_info;
+
+    // Construct the tuple type from the callee's parameters
+    let mut tuple_elems = vec![];
+    for (_, callee_ssa_var) in callee_info
+        .parameter_entry_vars
+        .iter()
+        .sorted_by_key(|(k, _)| *k)
+    {
+        tuple_elems.push(Type::from_ssavar(callee_ssa_var));
+    }
+    let actual_param_tuple_type = Type::Tuple(tuple_elems);
+    let arg_count = Some(callee_info.parameter_entry_vars.len());
+    assert!(func_ptr_info.arg_count.is_none() || func_ptr_info.arg_count == arg_count);
+    solver
+        .function_pointer_variables
+        .get_mut(func_key)
+        .expect(format!("Function pointer variable {} is untracked", arg_type).as_str())
+        .arg_count = arg_count;
+
+    // Determine the direction of the constraint based on the original constraint
+    // and which side held the constant function address.
+    let (arg_left, arg_right) = match bound_type {
+        BoundType::Lower => {
+            // Original case: const_addr <: func_ptr_var
+            // By contravariance of args: func_ptr_arg_type <: actual_param_tuple_type
+            (arg_type.clone(), actual_param_tuple_type)
+        }
+        BoundType::Upper => {
+            // New case: func_ptr_var <: const_addr
+            // By contravariance of args: actual_param_tuple_type <: func_ptr_arg_type
+            (actual_param_tuple_type, arg_type.clone())
+        }
+    };
+
+    result.push(Constraint {
+        left: arg_left,
+        right: arg_right,
+        addr: constraint.addr,
+        function_id: constraint.function_id,
+        reason: ConstraintReason::FunctionParameterBinding,
+    });
+
+    if let Some(ret_count) = func_ptr_info.ret_count {
+        let mut tuple_elems = vec![];
+        let stack_size = solver.model.get_function(callee_function_id).stack_size as i128;
+        for i in 1..=ret_count {
+            let callee_ssa_var = callee_info
+                .return_writes
+                .get(&((i as i128) - stack_size))
+                .expect(format!("Return write not found not found for {}", i).as_str());
+            tuple_elems.push(Type::from_ssavar(&callee_ssa_var));
+        }
+        let actual_return_type = Type::Tuple(tuple_elems);
+
+        let (ret_left, ret_right) = match bound_type {
+            BoundType::Lower => {
+                // New case: func_ptr_var <: const_addr
+                // By contravariance of args: actual_param_tuple_type <: func_ptr_arg_type
+                (actual_return_type, ret_type.clone())
+            }
+            BoundType::Upper => {
+                // Original case: const_addr <: func_ptr_var
+                // By contravariance of args: func_ptr_arg_type <: actual_param_tuple_type
+                (ret_type.clone(), actual_return_type)
+            }
+        };
+
+        result.push(Constraint {
+            left: ret_left,
+            right: ret_right,
+            addr: constraint.addr,
+            function_id: constraint.function_id,
+            reason: ConstraintReason::FunctionParameterBinding,
+        });
+    }
+
+    Ok(())
 }
 
 pub fn unify(
