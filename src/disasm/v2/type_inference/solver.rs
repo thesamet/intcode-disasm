@@ -334,13 +334,10 @@ impl Solver {
     }
 
     fn add_indirect_function_call_constraints(&mut self, worklist: &mut Vec<Constraint>) {
-        for (_, call_site) in self
-            .model
-            .get_function_call_analysis()
-            .unwrap()
-            .call_site_info
-            .iter()
-        {
+        let Some(fca) = self.model.get_function_call_analysis() else {
+            return;
+        };
+        for (_, call_site) in fca.call_site_info.iter() {
             // We want only indirect function calls.
             let Some(b) = call_site.target_address_var else {
                 continue;
