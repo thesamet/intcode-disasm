@@ -4,6 +4,7 @@ mod type_inference_tests {
     use crate::disasm::parser;
     use crate::disasm::v2::pretty_print::pretty_print_with_types;
     use crate::disasm::v2::ssa_form::SsaOperand;
+    use crate::disasm::v2::type_inference::solver;
     use crate::disasm::v2::type_inference::types::VariableKind;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
@@ -23,7 +24,6 @@ mod type_inference_tests {
     use crate::disasm::v2::type_inference::{
         analyzer::TypeInferenceAnalyzer, // Import the analyzer
         constraints::ConstraintReason,
-        solver::{self, TypeInferenceError}, // Import solver module itself
         types::Type,
     };
 
@@ -108,10 +108,11 @@ mod type_inference_tests {
     }
 
     impl TestContext {
-        /// Create a new test context with the given assembly code
-        fn new(assembly: &str) -> Self {
+        /// Try to create a new test context with the given assembly code, returning errors.
+        fn try_new(assembly: &str) -> Result<Self, crate::disasm::Error> {
             // Parse the assembly code
             init();
+            // Assuming parser::compile returns Result<Vec<u8>, crate::disasm::Error> or compatible
             let binary = parser::compile(assembly);
 
             // Create model and event system
@@ -137,10 +138,19 @@ mod type_inference_tests {
             publisher.add_listener(Box::new(type_inference));
 
             // Run the pipeline
+            // Assuming model.load_image doesn't return Result or its error is handled implicitly
             model.load_image(&binary, &mut publisher);
-            publisher.process_events(&mut model);
 
-            Self { model }
+            // Process events, mapping the v2::Error to the required disasm::Error
+            // The specific mapping depends on the definition of disasm::Error.
+            // Here we assume a generic way to represent the error, e.g., via String.
+            // Replace this with the actual conversion mechanism (e.g., `From` trait).
+            publisher.process_events(&mut model)?;
+            Ok(Self { model })
+        }
+
+        fn new(assembly: &str) -> Self {
+            Self::try_new(assembly).unwrap()
         }
 
         fn get_marker_type(&self, marker: char) -> Type {
@@ -470,33 +480,10 @@ mod type_inference_tests {
         "#;
 
         // Create the TestContext, which runs the full analysis pipeline
-        let ctx = TestContext::new(assembly);
-
-        pretty_print_with_types(&ctx.model);
-        /*
-        // Check if the type inference process recorded an error in the model
-        let error = ctx.model.get_type_inference_error();
-
-        assert!(
-            error.is_some(),
-            "Expected type inference to fail with a conflict"
-        );
-
-        // Verify that the error is specifically a TypeConflict
-        match error {
-            Some(TypeInferenceError::TypeConflict { .. }) => {
-                // Test passes - expected error type
-            }
-            Some(other_error) => {
-                panic!("Expected TypeConflict error, but got: {:?}", other_error);
-            }
-            None => {
-                // This case is already covered by the assert! above,
-                // but included for completeness.
-                panic!("Type inference succeeded unexpectedly");
-            }
-        }
-        */
+        let Err(e) = TestContext::try_new(assembly) else {
+            panic!("Expected try_new to fail.");
+        };
+        assert!(e.to_string().contains("Type conflict for [R-1]_0"));
     }
 
     #[test]

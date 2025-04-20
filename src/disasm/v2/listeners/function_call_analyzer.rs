@@ -364,7 +364,7 @@ impl EventListener<Event, ProgramModel> for FunctionCallAnalyzer {
         model: &mut ProgramModel,
         event: Event,
         collector: &mut EventCollector<Event>,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         if let Event::SsaConversionComplete(_) = event {
             debug!("Starting function call analysis...");
             if let Some(ssa_result) = model.get_ssa_result() {
@@ -378,5 +378,6 @@ impl EventListener<Event, ProgramModel> for FunctionCallAnalyzer {
                 );
             }
         }
+        Ok(())
     }
 }

@@ -23,10 +23,11 @@ impl ModelEventListener for SsaConverter {
         model: &mut ProgramModel,
         _event: DataFlowAnalysisPhaseComplete,
         collector: &mut EventCollector<Event>,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         let ssa_result = SsaResult::from_program_model(model);
         model.set_ssa_result(ssa_result);
         info!("SSA conversion complete");
         collector.publish(SsaConversionComplete {});
+        Ok(())
     }
 }

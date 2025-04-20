@@ -23,7 +23,7 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     model.load_image(&image, &mut publisher);
-    publisher.process_events(&mut model);
+    publisher.process_events(&mut model).expect("Failed to process events");
     pretty_print_with_types(&model);
 }
 
@@ -32,7 +32,7 @@ pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner::new()));
     model.load_image(&image, &mut publisher);
-    publisher.process_events(&mut model);
+    publisher.process_events(&mut model).expect("Failed to process events");
     model.get_image_scanner_result().clone()
 }
 
@@ -49,7 +49,7 @@ pub fn run_analysis_ssa(image: Vec<i128>) {
 
     // Process the image
     model.load_image(&image, &mut publisher);
-    publisher.process_events(&mut model);
+    publisher.process_events(&mut model).expect("Failed to process events");
 
     // Check if data flow analysis was completed
     if model.get_data_flow_result().is_none() {

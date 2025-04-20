@@ -58,7 +58,7 @@ impl ModelEventListener for ImageScanner {
         model: &mut ProgramModel,
         _event: ImageAdded,
         sender: &mut events::Sender,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         let mut i = 0;
         let image = &model.get_image();
         let mut data_offsets = vec![];
@@ -94,6 +94,7 @@ impl ModelEventListener for ImageScanner {
             data_segments,
         };
         model.set_image_scanner_result(result, sender);
+        Ok(())
     }
 }
 
@@ -239,7 +240,7 @@ mod tests {
         let mut publisher = EventPublisher::<Event, ProgramModel>::new();
         publisher.add_listener(Box::new(scanner));
         model.load_image(&binary, &mut publisher);
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
         model.get_image_scanner_result().clone()
     }
 

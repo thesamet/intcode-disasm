@@ -1,20 +1,23 @@
 use log::{debug, info};
 
-use crate::disasm::v2::{
-    control_flow::{NextKind, PredecessorKind},
-    dispatching::EventCollector,
-    events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
-    instructions::{InstructionId, InstructionKind},
-    model::{BlockId, FunctionId, ProgramModel},
-    ssa_form::{
-        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
-        SsaVar, SsaVarKind,
+use crate::disasm::{
+    self,
+    v2::{
+        control_flow::{NextKind, PredecessorKind},
+        dispatching::EventCollector,
+        events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
+        instructions::{InstructionId, InstructionKind},
+        model::{BlockId, FunctionId, ProgramModel},
+        ssa_form::{
+            PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind,
+            SsaResult, SsaVar, SsaVarKind,
+        },
     },
 };
 
 use super::{
     constraints::{Constraint, ConstraintReason},
-    solver::{self, TypeInferenceError},
+    solver,
     types::Type,
 };
 
@@ -455,7 +458,7 @@ impl ModelEventListener for TypeInferenceAnalyzer {
         model: &mut ProgramModel,
         _: FunctionCallAnalysisComplete,
         collector: &mut EventCollector<Event>,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         self.constraints.clear();
         info!("Starting type inference analysis");
         let Some(ssa_result) = model.get_ssa_result() else {
@@ -464,43 +467,10 @@ impl ModelEventListener for TypeInferenceAnalyzer {
         self.generate_constraints_for_program(model, ssa_result);
 
         // Solve the constraints through unification
-        let solve_result = solver::unify(model, &self.constraints, &self.debug_markers);
-
-        match solve_result {
-            Ok(result) => {
-                log::info!("Type inference completed successfully");
-
-                // Ensure the final substitution map is fully resolved
-                model.set_type_inference_result(result);
-
-                // Signal that type inference is complete
-                collector.publish(TypeInferenceComplete { completed: true });
-            }
-            Err(error) => {
-                // If this is a type conflict with an SsaVar, output the trace history
-                if let TypeInferenceError::TypeConflict {
-
-
-                    .. // ignore other fields
-                } = &error
-                {
-                    log::error!("Type conflict: {}", error);
-                    /*
-                    // Format the trace history for the variable
-                    let trace_history_var = partial_result.format_traces_for_type(key.clone());
-                    let trace_history_other = partial_result.format_traces_for_type(other.clone());
-                    log::error!(
-                        "Type conflict trace history for var: {}:\n{}\nType conflict trace history for other: {}:\n{}",
-                        var,
-                        trace_history_var,
-                        other:
-                        trace_history_other,,
-                    );
-                    */
-                }
-
-                panic!("Type inference failed: {}", error);
-            }
-        }
+        let solve_result = solver::unify(model, &self.constraints, &self.debug_markers)?;
+        model.set_type_inference_result(solve_result);
+        // Signal that type inference is complete
+        collector.publish(TypeInferenceComplete { completed: true });
+        Ok(())
     }
 }

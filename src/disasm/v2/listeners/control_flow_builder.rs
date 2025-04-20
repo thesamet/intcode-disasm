@@ -263,7 +263,7 @@ impl ModelEventListener for ControlFlowGraphBuilder {
         model: &mut ProgramModel,
         _event: ImageScannerComplete,
         sender: &mut events::Sender,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         let image_scan_result = model.get_image_scanner_result().clone(); // Clone to avoid borrow issues
 
         for rec_func in &image_scan_result.recognized_functions {
@@ -281,6 +281,7 @@ impl ModelEventListener for ControlFlowGraphBuilder {
             self.build_cfg_for_function(model, func_id, rec_func, sender);
         }
         sender.publish(ControlFlowAnalysisPhaseComplete {});
+        Ok(())
     }
 }
 

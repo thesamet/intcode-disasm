@@ -42,13 +42,14 @@ macro_rules! event_types_enum {
 
                 $(
                     // Default implementation for specific event handlers
-                    fn [<on_ $name:snake>](&mut self, _model: &mut $model, _event: $name, _sender: &mut Sender) {
+                    fn [<on_ $name:snake>](&mut self, _model: &mut $model, _event: $name, _sender: &mut Sender) -> Result<(), crate::disasm::Error> {
                         // Default is no-op
+                        Ok(())
                     }
                 )*
 
                 /// Dispatches the generic event to the specific typed handler.
-                fn on_event(&mut self, model: &mut $model, event: $enum_name, sender: &mut Sender) {
+                fn on_event(&mut self, model: &mut $model, event: $enum_name, sender: &mut Sender) -> Result<(), crate::disasm::Error> {
                     match event {
                         $($enum_name::$name(e) => self.[<on_ $name:snake>](model, e, sender),)*
                     }
@@ -57,8 +58,8 @@ macro_rules! event_types_enum {
 
              // Blanket implementation to connect ModelEventListener to EventListener
             impl<T: ModelEventListener + ?Sized> $crate::disasm::v2::dispatching::EventListener<$enum_name, $model> for T {
-                fn on_event(&mut self, model: &mut $model, event: $enum_name, sender: &mut Sender) {
-                     <Self as ModelEventListener>::on_event(self, model, event, sender);
+                fn on_event(&mut self, model: &mut $model, event: $enum_name, sender: &mut Sender) -> Result<(), crate::disasm::Error> {
+                     <Self as ModelEventListener>::on_event(self, model, event, sender)
                 }
             }
         }
@@ -95,7 +96,7 @@ pub trait EventListener<E, M> {
     /// * `model` - A mutable reference to the shared model.
     /// * `event` - The event that occurred.
     /// * `collector` - An `EventCollector` to publish new events triggered by this one.
-    fn on_event(&mut self, model: &mut M, event: E, collector: &mut EventCollector<E>);
+    fn on_event(&mut self, model: &mut M, event: E, collector: &mut EventCollector<E>) -> Result<(), crate::disasm::Error>;
 }
 
 /// Manages listeners and dispatches events.
@@ -131,7 +132,7 @@ impl<E: Copy + std::fmt::Debug, M> EventPublisher<E, M> {
     /// during this process are collected and added to the queue *after*
     /// the current batch is processed, ensuring they are handled in a
     /// subsequent call to `process_events` or a later iteration if looped.
-    pub fn process_events(&mut self, model: &mut M) {
+    pub fn process_events(&mut self, model: &mut M) -> Result<(), crate::disasm::Error> {
         let mut added_events = Vec::new();
         // Process only the events currently in the queue.
         // New events published by listeners go into `added_events`.
@@ -139,12 +140,13 @@ impl<E: Copy + std::fmt::Debug, M> EventPublisher<E, M> {
             // Create a collector for events generated during this event's processing.
             let mut collector = EventCollector::new(&mut added_events);
             for listener in &mut self.listeners {
-                listener.on_event(model, event, &mut collector);
+                listener.on_event(model, event, &mut collector)?;
             }
             // Add the newly generated events to the main work list for the next processing cycle.
             self.work_list.extend(&added_events);
             added_events.clear();
         }
+        Ok(())
     }
 }
 use std::collections::VecDeque;
@@ -203,7 +205,7 @@ mod tests {
     impl ModelEventListener for TestListener {
         // Note: on_event is handled by the blanket impl using the specific handlers below
 
-        fn on_event_a(&mut self, model: &mut TestModelData, event: EventA, collector: &mut Sender) {
+        fn on_event_a(&mut self, model: &mut TestModelData, event: EventA, collector: &mut Sender) -> Result<(), crate::disasm::Error> {
             // Record the received event (specific type)
             self.received_events.borrow_mut().push(event.into()); // Convert to enum type
 
@@ -214,13 +216,17 @@ mod tests {
             if let Some(event_to_publish) = self.publish_on_a {
                 collector.publish(event_to_publish);
             }
+            
+            Ok(())
         }
 
-        fn on_event_b(&mut self, model: &mut TestModelData, event: EventB, _sender: &mut Sender) {
+        fn on_event_b(&mut self, model: &mut TestModelData, event: EventB, _sender: &mut Sender) -> Result<(), crate::disasm::Error> {
             // Record the received event (specific type)
             self.received_events.borrow_mut().push(event.into()); // Convert to enum type
                                                                   // Mutate the model
             model.counter += 1;
+            
+            Ok(())
         }
     }
 
@@ -234,7 +240,7 @@ mod tests {
         let event_a = EventA { val_a: 42 };
         publisher.publish(event_a);
 
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
 
         let received = listener.received_events();
         assert_eq!(received.len(), 1);
@@ -255,7 +261,7 @@ mod tests {
         let event_b = EventB { val_b: 57 };
         publisher.publish(event_b); // Clone event_b data for assertion
 
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
 
         let received1 = listener1.received_events();
         let received2 = listener2.received_events();
@@ -285,7 +291,7 @@ mod tests {
 
         // Process events. This should process EventA, which publishes EventB,
         // which should then also be processed in the *same* call.
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
 
         // Check that both EventA and EventB were received
         let received = listener.received_events();
@@ -316,7 +322,7 @@ mod tests {
 
         // --- Single processing cycle ---
         // This call should process EventA, see EventB published, and then process EventB.
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
 
         // Verify both EventA and EventB were processed
         let received = listener.received_events();
@@ -337,7 +343,7 @@ mod tests {
 
         // No events published
 
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
 
         let received = listener.received_events();
         assert!(received.is_empty());

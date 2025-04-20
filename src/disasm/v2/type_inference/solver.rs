@@ -1,14 +1,14 @@
 use colored::Colorize;
 use itertools::Itertools;
-use log::trace;
+use log::{info, trace};
 use std::collections::HashMap;
 use std::fmt;
-use thiserror::Error;
 
 use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
 use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
+use crate::disasm;
 use crate::disasm::v2::instructions::InstructionId;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::SsaOperand;
@@ -30,29 +30,7 @@ impl fmt::Display for BoundType {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum TypeInferenceError {
-    #[error("Type conflict for {key}: type conflict between existing {bound_type} bound {current_bound} and {other} at {constraint}")]
-    TypeConflict {
-        key: VariableKind,
-        bound_type: BoundType,
-        other: Type,
-        current_bound: Type,
-        constraint: Constraint,
-        partial_result: Box<TypeInferenceResult>,
-    },
-
-    #[error("{bound_type} bound conflict: type conflict between {left} and {right} for {var_type} at {constraint}")]
-    BoundConflict {
-        bound_type: BoundType,
-        left: Type,
-        right: Type,
-        var_type: Type,
-        constraint: Constraint,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeBounds {
     pub lower: Type,
     pub upper: Type,
@@ -275,7 +253,7 @@ impl Solver {
         }
     }
 
-    fn unify(&mut self) -> Result<TypeInferenceResult, TypeInferenceError> {
+    fn unify(&mut self) -> Result<TypeInferenceResult, disasm::Error> {
         let constraints = self.constraints.to_vec();
         for c in &constraints {
             init_bounds_for_type(&c.left, &mut self.bounds_map);
@@ -288,16 +266,38 @@ impl Solver {
                 trace!("Replaced truthy with bool changed");
                 continue;
             }
-            */
             if refine_concrete_types(&mut self.bounds_map)? {
                 continue;
             }
+            */
             break;
         }
+        info!("{}", "Type inference completed successfully".bold());
+        let function_id_for_key = |&key| match key {
+            VariableKind::SsaVar(var) => Some(var.origin_info.function_id),
+            VariableKind::Const { origin_info, .. } => Some(origin_info.function_id),
+            VariableKind::TypeVar(_) => None,
+        };
+        for (function_id, key, value) in self
+            .bounds_map
+            .iter()
+            .filter_map(|(key, value)| {
+                function_id_for_key(key).map(|function_id| (function_id, key, value))
+            })
+            .sorted()
+        {
+            log::debug!(
+                "Type for {:>15} <: {:<15} <: {}",
+                value.lower.to_string().purple(),
+                format!("{}:{}", function_id, key).blue(),
+                value.upper.to_string().green()
+            );
+        }
+
         Ok(self.build_result())
     }
 
-    fn reach_constraint_fixed_point(&mut self) -> Result<bool, TypeInferenceError> {
+    fn reach_constraint_fixed_point(&mut self) -> Result<bool, disasm::Error> {
         let mut overall_changed = false;
         loop {
             let mut changed_in_iteration = false;
@@ -317,7 +317,7 @@ impl Solver {
     fn process_constraint(
         &mut self,
         constraint: &Constraint,
-    ) -> Result<(bool, Vec<Constraint>), TypeInferenceError> {
+    ) -> Result<(bool, Vec<Constraint>), disasm::Error> {
         let mut result = vec![];
         let mut changed = false;
         if let Type::Variable(u) = &constraint.left {
@@ -524,7 +524,7 @@ impl Solver {
         bound_type: BoundType,
         constraint: &Constraint,
         other: &Type,
-    ) -> Result<Type, TypeInferenceError> {
+    ) -> Result<Type, disasm::Error> {
         match refined {
             Some(refined) => Ok(refined),
             None => {
@@ -540,7 +540,7 @@ impl Solver {
                     }
                     .unwrap()
                     .clone();
-                    Err(TypeInferenceError::TypeConflict {
+                    Err(disasm::Error::TypeConflict {
                         key: key.clone(),
                         bound_type,
                         other: other.clone(),
@@ -558,7 +558,7 @@ pub fn unify(
     model: &ProgramModel,
     constraints: &[Constraint],
     debug_markers: &HashMap<char, SsaOperand>,
-) -> Result<TypeInferenceResult, TypeInferenceError> {
+) -> Result<TypeInferenceResult, disasm::Error> {
     let mut solver = Solver::new(model.clone(), constraints, debug_markers.clone());
     solver.unify()
 }
@@ -637,7 +637,7 @@ fn refine_function_pointers(
 }
 */
 
-fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
+fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
     for key in bounds.all_keys() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
@@ -677,7 +677,7 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferen
     Ok(false)
 }
 
-fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, TypeInferenceError> {
+fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
     let mut changed = false;
     for key in bounds.all_keys() {
         let lower = bounds.lower_bound(&key).unwrap().clone();

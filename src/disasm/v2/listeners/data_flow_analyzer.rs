@@ -326,7 +326,7 @@ impl ModelEventListener for DataFlowAnalyzer {
         model: &mut ProgramModel,
         event: FunctionCfgBuilt,
         sender: &mut events::Sender,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         debug!("Starting Data Flow Analysis for {:?}", event.function_id);
 
         // Create a temporary result container for this function's analysis
@@ -393,6 +393,7 @@ impl ModelEventListener for DataFlowAnalyzer {
             function_id: event.function_id,
         });
         debug!("Data Flow Analysis committed for {}", event.function_id);
+        Ok(())
     }
 
     fn on_control_flow_analysis_phase_complete(
@@ -400,8 +401,9 @@ impl ModelEventListener for DataFlowAnalyzer {
         _model: &mut ProgramModel,
         _event: events::ControlFlowAnalysisPhaseComplete,
         sender: &mut events::Sender,
-    ) {
+    ) -> Result<(), crate::disasm::Error> {
         sender.publish(DataFlowAnalysisPhaseComplete {});
+        Ok(())
     }
 }
 // TODO: Add tests
