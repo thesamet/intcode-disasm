@@ -10,6 +10,7 @@ use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
 use crate::disasm;
 use crate::disasm::v2::instructions::InstructionId;
+use crate::disasm::v2::listeners::function_call_analyzer::CallSiteInfo;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::ssa_form::SsaOperand;
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
@@ -26,6 +27,23 @@ impl fmt::Display for BoundType {
         match self {
             BoundType::Upper => write!(f, "Upper"),
             BoundType::Lower => write!(f, "Lower"),
+        }
+    }
+}
+
+impl BoundType {
+    pub fn is_upper(&self) -> bool {
+        matches!(self, BoundType::Upper)
+    }
+
+    pub fn is_lower(&self) -> bool {
+        matches!(self, BoundType::Lower)
+    }
+
+    pub fn other(&self) -> Self {
+        match self {
+            BoundType::Upper => BoundType::Lower,
+            BoundType::Lower => BoundType::Upper,
         }
     }
 }
@@ -302,6 +320,7 @@ impl Solver {
         loop {
             let mut changed_in_iteration = false;
             let mut worklist = self.constraints.to_vec(); // Clone constraints into a worklist
+            self.add_indirect_function_call_constraints(&mut worklist);
             while let Some(c) = worklist.pop() {
                 let (changed, constraints) = self.process_constraint(&c)?;
                 changed_in_iteration |= changed;
@@ -310,6 +329,64 @@ impl Solver {
             }
             if !changed_in_iteration {
                 return Ok(overall_changed);
+            }
+        }
+    }
+
+    fn add_indirect_function_call_constraints(&mut self, worklist: &mut Vec<Constraint>) {
+        for (_, call_site) in self
+            .model
+            .get_function_call_analysis()
+            .unwrap()
+            .call_site_info
+            .iter()
+        {
+            // We want only indirect function calls.
+            let Some(b) = call_site.target_address_var else {
+                continue;
+            };
+            let Type::Variable(typ) = Type::from_ssaoperand(&b) else {
+                unreachable!()
+            };
+            let lower = self.bounds_map.lower_bound(&typ).unwrap();
+            let upper = self.bounds_map.upper_bound(&typ).unwrap();
+            add_for_bound(lower, BoundType::Lower, call_site, worklist);
+            add_for_bound(upper, BoundType::Upper, call_site, worklist);
+        }
+
+        fn add_for_bound(
+            fp: &Type,
+            bound_type: BoundType,
+            call_site: &CallSiteInfo,
+            worklist: &mut Vec<Constraint>,
+        ) {
+            let Type::Pointer(ptr) = fp else {
+                return;
+            };
+            let Type::Function {
+                ref args,
+                ref returns,
+            } = **ptr
+            else {
+                return;
+            };
+            let Type::Tuple(ref args) = **args else {
+                unreachable!();
+            };
+            for (i, v) in args.iter().enumerate() {
+                let caller_var = Type::from_ssavar(&call_site.argument_writes[&((i + 1) as i128)]);
+                let (left, right) = if bound_type.is_lower() {
+                    (caller_var.clone(), v.clone())
+                } else {
+                    (v.clone(), caller_var.clone())
+                };
+                worklist.push(Constraint {
+                    left,
+                    right,
+                    addr: InstructionId::from(call_site.return_block_id.index()),
+                    function_id: call_site.calling_function_id,
+                    reason: ConstraintReason::FunctionParameterBinding,
+                });
             }
         }
     }
