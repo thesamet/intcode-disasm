@@ -262,7 +262,7 @@ struct Solver {
     debug_markers: HashMap<char, SsaOperand>,
     constraints: Vec<Constraint>,
     bounds_map: TypeBoundsMap,
-    indirect_function_types: HashMap<FunctionId, Type>,
+    indirect_function_types: HashMap<FunctionId, (Type, Type)>,
 }
 
 impl Solver {
@@ -385,6 +385,24 @@ impl Solver {
                     reason: ConstraintReason::FunctionParameterBinding,
                 });
             }
+            let mut return_types = vec![];
+            for (_, v) in call_site.return_reads.iter().sorted() {
+                let caller_var = Type::from_ssavar(&v);
+                return_types.push(caller_var);
+            }
+            let return_tuple = Type::Tuple(return_types);
+            let (left, right) = if bound_type.is_lower() {
+                (return_tuple, (**returns).clone())
+            } else {
+                ((**returns).clone(), return_tuple)
+            };
+            worklist.push(Constraint {
+                left,
+                right,
+                addr: InstructionId::from(call_site.return_block_id.index()),
+                function_id: call_site.calling_function_id,
+                reason: ConstraintReason::FunctionReturnBinding,
+            });
         }
     }
 
@@ -439,7 +457,7 @@ impl Solver {
                 },
             )?;
         }
-        match (constraint.left.clone(), constraint.right.clone()) {
+        match (&constraint.left, &constraint.right) {
             (Type::Pointer(x), Type::Pointer(y)) => {
                 result.push(Constraint {
                     left: *x.clone(),
@@ -500,7 +518,7 @@ impl Solver {
             return;
         };
 
-        let args = self
+        let (args, returns) = self
             .indirect_function_types
             .entry(function_id)
             .or_insert_with(|| {
@@ -520,11 +538,13 @@ impl Solver {
                 }
                 let x = Type::Tuple(x_vars);
                 init_bounds_for_type(&x, &mut self.bounds_map);
-                x
+                let returns = Type::new_var(); // Placeholder return type
+                (x, returns)
             });
+        init_bounds_for_type(&returns, &mut self.bounds_map);
         let fp = Type::Pointer(Box::new(Type::Function {
             args: Box::new(args.clone()),
-            returns: Box::new(Type::Int), // Placeholder return type
+            returns: Box::new((*returns).clone()), // Placeholder return type
         }));
         // Let f be the function at the given address. We have an assignment of
         // the form "receiver = f". This means the receiver is of a type that
@@ -554,7 +574,7 @@ impl Solver {
             unreachable!("args type should be a Tuple for indirect function call binding");
         };
 
-        // For each X_i (arg of fp), add X_i <: A_i where A_i are the caller side parameters.
+        // For each X_i (arg of fp), add X_i <: A_i where A_i are the callee side parameters.
         // Which implies f <: fp(X_1, X_2, ...) due to contravariance.
         for (xi, (_, callee_ssa_var)) in ts.iter().zip(
             callee_info
