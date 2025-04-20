@@ -669,7 +669,10 @@ impl Solver {
                 function_id: constraint.function_id,
                 reason: ConstraintReason::FunctionPointerSubtype,
             });
-            assert!(arg_count1.is_none() || arg_count2.is_none() || arg_count1 == arg_count2);
+            assert!(
+                arg_count1.is_none() || arg_count2.is_none() || arg_count1 == arg_count2,
+                "Got different arg counts: {arg_count1:?} and {arg_count2:?} for {constraint}"
+            );
             if let Some(arg_count) = arg_count1.or(arg_count2) {
                 self.function_pointer_variables
                     .get_mut(left_var.unwrap())
