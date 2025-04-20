@@ -482,10 +482,30 @@ impl Solver {
             })
             .collect();
 
+        // Collect inferred function signatures from function pointer variables
+        let mut function_signatures = HashMap::new();
+
+        for (var_kind, fp_info) in &self.function_pointer_variables {
+            if let VariableKind::Const { value, .. } = var_kind {
+                let function_id = FunctionId::from(*value as usize);
+
+                let args = effective_lower_bound(&fp_info.args, &self.bounds_map);
+                let returns = effective_upper_bound(&fp_info.returns, &self.bounds_map);
+
+                let signature = Type::Function {
+                    args: Box::new(args),
+                    returns: Box::new(returns),
+                };
+
+                function_signatures.insert(function_id, signature);
+            }
+        }
+
         TypeInferenceResult {
             inferred_types,
             traces: self.bounds_map.traces.clone(),
             debug_markers: self.debug_markers.clone(),
+            function_signatures,
         }
     }
 

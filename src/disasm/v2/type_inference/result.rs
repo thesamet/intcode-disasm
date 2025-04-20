@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::v2::ssa_form::{SsaOperand, SsaVar};
+use crate::disasm::v2::{
+    model::FunctionId,
+    ssa_form::{SsaOperand, SsaVar},
+};
 
 use super::solver::{AnalysisTrace, ChangeReason};
 use super::types::{Type, VariableKind};
@@ -10,11 +13,17 @@ pub struct TypeInferenceResult {
     pub inferred_types: HashMap<SsaVar, Type>,
     pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
+    /// Inferred function signatures, including those discovered through indirect calls
+    pub function_signatures: HashMap<FunctionId, Type>,
 }
 
 impl TypeInferenceResult {
     pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
         self.inferred_types.get(var)
+    }
+
+    pub fn get_function_signature(&self, function_id: &FunctionId) -> Option<&Type> {
+        self.function_signatures.get(function_id)
     }
 
     /// Get the variable associated with a debug marker
