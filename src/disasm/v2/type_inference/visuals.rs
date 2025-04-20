@@ -1,6 +1,8 @@
 use colored::{Color, ColoredString, Colorize};
 use std::fmt;
 
+use super::types::VariableKind;
+
 /// Color scheme for trace and type inference visualization
 pub struct TraceColors;
 
@@ -26,8 +28,12 @@ impl TraceColors {
     }
 
     // Apply colors to different elements
-    pub fn format_var<T: fmt::Display>(var: T) -> ColoredString {
-        format!("{}", var).color(Self::var()).bold()
+    pub fn format_var(var: &VariableKind) -> ColoredString {
+        let function_id = match var.origin_info() {
+            Some(oi) => format!("{}:", oi.function_id),
+            None => "".to_string(),
+        };
+        format!("{}{}", function_id, var).color(Self::var()).bold()
     }
 
     pub fn format_type<T: fmt::Display>(typ: T) -> ColoredString {

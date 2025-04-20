@@ -91,7 +91,7 @@ impl TypeBoundsMap {
         bound_type: BoundType,
         new_value: Type,
         reason: ChangeReason,
-    ) -> bool {
+    ) -> Result<bool, disasm::Error> {
         let old_bounds = self
             .bounds
             .get(&key)
@@ -103,7 +103,15 @@ impl TypeBoundsMap {
             BoundType::Upper => new_bounds.upper = new_value,
         }
         if old_bounds == new_bounds {
-            return false;
+            return Ok(false);
+        }
+        if !new_bounds.lower.is_subtype_of(&new_bounds.upper) {
+            return Err(disasm::Error::TypeInconsistency {
+                key: key.clone(),
+                bound_type,
+                lower: new_bounds.lower,
+                upper: new_bounds.upper,
+            });
         }
         let trace = AnalysisTrace {
             key: key.clone(),
@@ -117,7 +125,7 @@ impl TypeBoundsMap {
         trace!("{}", trace);
         self.bounds.insert(key, new_bounds);
         self.traces.push(trace);
-        true
+        Ok(true)
     }
 }
 
@@ -147,12 +155,13 @@ pub struct AnalysisTrace {
 impl fmt::Display for AnalysisTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Colorize the key type
+
         let key_str = TraceColors::format_var(&self.key);
 
         if self.change.bound_type == BoundType::Upper {
             write!(
                 f,
-                "{} {:>7} {} {:<18} was {:<8}",
+                "{} {:>14} {} {:<18} was {:<8}",
                 TraceColors::format_header("Type"),
                 key_str,
                 ":<".blue(),
@@ -162,7 +171,7 @@ impl fmt::Display for AnalysisTrace {
         } else {
             write!(
                 f,
-                "{} {:>7} {} {:<18} was {:<8}",
+                "{} {:>14} {} {:<18} was {:<8}",
                 TraceColors::format_header("Type"),
                 key_str,
                 ":>".green(),
@@ -271,17 +280,10 @@ impl Solver {
             break;
         }
         info!("{}", "Type inference completed successfully".bold());
-        let function_id_for_key = |&key| match key {
-            VariableKind::SsaVar(var) => Some(var.origin_info.function_id),
-            VariableKind::Const { origin_info, .. } => Some(origin_info.function_id),
-            VariableKind::TypeVar(_) => None,
-        };
         for (function_id, key, value) in self
             .bounds_map
             .iter()
-            .filter_map(|(key, value)| {
-                function_id_for_key(key).map(|function_id| (function_id, key, value))
-            })
+            .filter_map(|(key, value)| key.origin_info().map(|oi| (oi.function_id, key, value)))
             .sorted()
         {
             log::debug!(
@@ -338,7 +340,7 @@ impl Solver {
                     constraint: constraint.clone(),
                     other: constraint.right.clone(),
                 },
-            );
+            )?;
             self.add_function_pointer_constraints(u, &constraint.right, &mut result);
         }
         if let Type::Variable(v) = &constraint.right {
@@ -361,7 +363,7 @@ impl Solver {
                     constraint: constraint.clone(),
                     other: constraint.left.clone(),
                 },
-            );
+            )?;
         }
         match (constraint.left.clone(), constraint.right.clone()) {
             (Type::Pointer(x), Type::Pointer(y)) => {
@@ -648,30 +650,13 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Err
     for key in bounds.all_keys() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
-        /*
-        if upper == Type::Truthy && lower == Type::Nothing {
-            bounds.update_bound(
-                key,
-                BoundType::Upper,
-                Type::Bool,
-                ChangeReason::TruthyToBoolHeuristic,
-            );
-            bounds.update_bound(
-                key,
-                BoundType::Lower,
-                Type::Bool,
-                ChangeReason::TruthyToBoolHeuristic,
-            );
-            return Ok(true);
-        }
-        */
         if specifity(&lower) > specifity(&upper) && is_concrete_type(&lower) {
             bounds.update_bound(
                 key,
                 BoundType::Upper,
                 lower.clone(),
                 ChangeReason::ConcreteRefinement,
-            );
+            )?;
             return Ok(true);
         } else if specifity(&upper) > specifity(&lower) && is_concrete_type(&upper) {
             bounds.update_bound(
@@ -679,7 +664,7 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Err
                 BoundType::Lower,
                 upper.clone(),
                 ChangeReason::ConcreteRefinement,
-            );
+            )?;
             return Ok(true);
         }
     }
@@ -696,13 +681,13 @@ fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::
                 BoundType::Upper,
                 Type::Bool,
                 ChangeReason::TruthyToBoolHeuristic,
-            );
+            )?;
             bounds.update_bound(
                 key,
                 BoundType::Lower,
                 Type::Bool,
                 ChangeReason::TruthyToBoolHeuristic,
-            );
+            )?;
             return Ok(true);
         }
     }

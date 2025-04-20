@@ -34,4 +34,11 @@ pub enum Error {
         var_type: Type,
         constraint: Constraint,
     },
+    #[error("Type inconsistency for {key}: {bound_type} bound {lower} not a subtype of {upper}")]
+    TypeInconsistency {
+        key: VariableKind,
+        bound_type: BoundType,
+        lower: Type,
+        upper: Type,
+    },
 }

@@ -1,7 +1,6 @@
 use log::{debug, info};
 
 use crate::disasm::{
-    self,
     v2::{
         control_flow::{NextKind, PredecessorKind},
         dispatching::EventCollector,
@@ -310,7 +309,14 @@ impl TypeInferenceAnalyzer {
                 };
                 self.add_constraint(
                     Type::from_ssaoperand(&mem_ssa_var),
-                    Type::Pointer(Box::new(Type::from_ssaoperand(operand))),
+                    Type::pointer(Type::from_ssaoperand(operand)),
+                    instruction.id,
+                    origin_info.function_id,
+                    ConstraintReason::Deref,
+                );
+                self.add_constraint(
+                    Type::pointer(Type::from_ssaoperand(operand)),
+                    Type::from_ssaoperand(&mem_ssa_var),
                     instruction.id,
                     origin_info.function_id,
                     ConstraintReason::Deref,

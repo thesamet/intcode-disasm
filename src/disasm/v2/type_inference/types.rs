@@ -17,6 +17,16 @@ pub enum VariableKind {
     },
 }
 
+impl VariableKind {
+    pub fn origin_info(&self) -> Option<SsaOriginInfo> {
+        match self {
+            VariableKind::SsaVar(var) => Some(var.origin_info),
+            VariableKind::Const { origin_info, .. } => Some(*origin_info),
+            VariableKind::TypeVar(_) => None,
+        }
+    }
+}
+
 impl Display for VariableKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
