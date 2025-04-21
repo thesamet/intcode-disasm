@@ -16,7 +16,7 @@ use super::{
     pretty_print::{pretty_print_ssa, pretty_print_with_types},
     ssa_form::SsaVar,
     type_inference::{
-        types::{Type, VariableKind},
+        types::VariableKind,
         TypeInferenceAnalyzer,
     },
 };
