@@ -157,14 +157,12 @@ impl SsaOperand {
 
     pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> SsaOperand {
         let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
-        
+
         match operand.kind {
-            OperandKind::Immediate(val) => {
-                SsaOperand {
-                    kind: SsaOperandKind::Constant(val),
-                    origin_info,
-                }
-            }
+            OperandKind::Immediate(val) => SsaOperand {
+                kind: SsaOperandKind::Constant(val),
+                origin_info,
+            },
             _ => {
                 let kind = match operand.kind {
                     OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
@@ -175,7 +173,7 @@ impl SsaOperand {
                     },
                     OperandKind::Immediate(_) => unreachable!(), // We handled this above
                 };
-                
+
                 SsaOperand {
                     kind: SsaOperandKind::Variable(SsaVar {
                         kind,
@@ -367,7 +365,11 @@ impl<'a> SSAConversionState<'a> {
         let new_version = SsaVar {
             kind,
             version,
-            origin_info: SsaOriginInfo::new(function_id, var_operand.offset, var_operand.debug_marker),
+            origin_info: SsaOriginInfo::new(
+                function_id,
+                var_operand.offset,
+                var_operand.debug_marker,
+            ),
         };
         current_versions.insert(kind, new_version);
         new_version
@@ -380,7 +382,7 @@ impl<'a> SSAConversionState<'a> {
         function_id: FunctionId,
     ) -> SsaOperand {
         let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker);
-        
+
         match op.kind {
             OperandKind::Immediate(val) => SsaOperand {
                 kind: SsaOperandKind::Constant(val),

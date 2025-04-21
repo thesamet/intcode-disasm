@@ -4,6 +4,7 @@ use log::{error, info, trace};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 
+use super::analyzer::AddInstruction;
 use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
 use super::types::{is_concrete_type, VariableKind};
@@ -267,6 +268,7 @@ struct Solver {
     debug_markers: HashMap<char, SsaOperand>,
     constraints: Vec<Constraint>,
     bounds_map: TypeBoundsMap,
+    add_instructions: Vec<AddInstruction>,
     function_pointer_variables: HashMap<VariableKind, FunctionPointerInfo>,
 }
 
@@ -274,6 +276,7 @@ impl Solver {
     fn new(
         model: ProgramModel,
         constraints: &[Constraint],
+        add_instructions: &[AddInstruction],
         debug_markers: HashMap<char, SsaOperand>,
     ) -> Self {
         Self {
@@ -281,6 +284,7 @@ impl Solver {
             debug_markers,
             constraints: constraints.to_vec(),
             bounds_map: TypeBoundsMap::new(),
+            add_instructions: add_instructions.to_vec(),
             function_pointer_variables: HashMap::new(),
         }
     }
@@ -326,6 +330,7 @@ impl Solver {
             let mut changed_in_iteration = false;
             let mut worklist = self.constraints.to_vec(); // Clone constraints into a worklist
                                                           // self.add_indirect_function_call_constraints(&mut worklist);
+            self.append_add_contraints(&mut worklist);
             while let Some(c) = worklist.pop() {
                 let (changed, constraints) = self.process_constraint(&c)?;
                 changed_in_iteration |= changed;
@@ -480,6 +485,56 @@ impl Solver {
             _ => {}
         };
         Ok((changed, result))
+    }
+
+    fn append_add_contraints(&mut self, worklist: &mut Vec<Constraint>) {
+        for instruction @ AddInstruction {
+            op1, op2, result, ..
+        } in &self.add_instructions
+        {
+            init_bounds_for_type(&op1.as_type(), &mut self.bounds_map);
+            init_bounds_for_type(&op2.as_type(), &mut self.bounds_map);
+            init_bounds_for_type(&result.as_type(), &mut self.bounds_map);
+            let op1_lower = self.bounds_map.lower_bound(&op1).unwrap();
+            let op1_upper = self.bounds_map.upper_bound(&op1).unwrap();
+            let op2_lower = self.bounds_map.lower_bound(&op2).unwrap();
+            let op2_upper = self.bounds_map.upper_bound(&op2).unwrap();
+            let result_upper = self.bounds_map.upper_bound(&result).unwrap();
+            let result_lower = self.bounds_map.lower_bound(&result).unwrap();
+            let is_op1_int = matches!(op1_lower, Type::Int);
+            let is_op2_int = matches!(op2_lower, Type::Int);
+            let is_result_int = matches!(result_lower, Type::Int);
+            let is_op1_pointer = op1_upper.is_pointer();
+            let is_op2_pointer = op2_upper.is_pointer();
+            let is_result_pointer = result_upper.is_pointer();
+
+            let constaint = |left, right| Constraint {
+                left,
+                right,
+                addr: instruction.instruction_id,
+                function_id: instruction.function_id,
+                reason: ConstraintReason::AddSecondParameterImpliesInt,
+            };
+
+            if is_op1_int && is_op2_int {
+                worklist.push(constaint(Type::Int, result.as_type()));
+            } else if is_result_int {
+                worklist.push(constaint(Type::Int, op1.as_type()));
+                worklist.push(constaint(Type::Int, op2.as_type()));
+            } else if is_op1_pointer {
+                worklist.push(constaint(Type::Int, op2.as_type()));
+                worklist.push(constaint(op1.as_type(), result.as_type()));
+            } else if is_op2_pointer {
+                worklist.push(constaint(Type::Int, op1.as_type()));
+                worklist.push(constaint(op2.as_type(), result.as_type()));
+            } else if is_result_pointer && is_op1_int {
+                worklist.push(constaint(op2.as_type(), result.as_type()));
+            } else if is_result_pointer && is_op2_int {
+                worklist.push(constaint(op1.as_type(), result.as_type()));
+            } else if is_op1_int || is_op2_int {
+                worklist.push(constaint(result.as_type(), Type::Int));
+            }
+        }
     }
 
     /// Create a TypeInferenceResult from the current state of bounds
@@ -837,85 +892,17 @@ fn add_function_parameter_binding_constraint(
 pub fn unify(
     model: &ProgramModel,
     constraints: &[Constraint],
+    add_instructions: &[AddInstruction],
     debug_markers: &HashMap<char, SsaOperand>,
 ) -> Result<TypeInferenceResult, disasm::Error> {
-    let mut solver = Solver::new(model.clone(), constraints, debug_markers.clone());
+    let mut solver = Solver::new(
+        model.clone(),
+        constraints,
+        add_instructions,
+        debug_markers.clone(),
+    );
     solver.unify()
 }
-
-/*
-fn refine_function_pointers(
-    model: &ProgramModel,
-    bounds: &mut TypeBoundsMap,
-) -> Result<bool, TypeInferenceError> {
-    let mut changed = false;
-    let bounds_keys = bounds.all_keys();
-    for key in bounds_keys {
-        match key {
-            Type::Variable(VariableKind::SsaVar(SsaVar {
-                kind: SsaVarKind::Immediate(func_addr),
-                ..
-            })) => {
-                let upper_bound = bounds.upper_bound(&key).unwrap().clone();
-                let Type::Pointer(ptr_type) = upper_bound else {
-                    continue;
-                };
-                let Type::Function { args, .. } = &(*ptr_type) else {
-                    continue;
-                };
-                let function_id = FunctionId::from(func_addr as usize);
-                if !model.has_function(function_id) {
-                    continue;
-                }
-                let Some(callee_info) = model
-                    .get_function_call_analysis()
-                    .unwrap()
-                    .callee_info
-                    .get(&function_id)
-                else {
-                    continue;
-                };
-                if **args != Type::Any {
-                    let args_upper = bounds.upper_bound(&args).unwrap();
-                    if matches!(args_upper, Type::Tuple(_)) {
-                        // already unified this call.
-                        continue;
-                    }
-                }
-                let mut tuple_elems = vec![];
-
-                for (_, callee_ssa_var) in callee_info
-                    .parameter_entry_vars
-                    .iter()
-                    .sorted_by_key(|(k, _)| *k)
-                {
-                    let v = Type::new_var();
-                    tuple_elems.push(v.clone());
-                    bounds.insert_key(v, Type::Nothing, Type::from_ssavar(callee_ssa_var));
-                }
-                let tuple_type = Type::Tuple(tuple_elems);
-                let fp = Type::new_function_pointer();
-                let Some((func_args, _)) = Type::extract_function_from_pointer(&fp) else {
-                    panic!("Failed to extract function from pointer");
-                };
-
-                // bounds.insert_key(func_args.clone(), Type::Nothing, tuple_type);
-                trace!("I AM HER!");
-                init_bounds_for_type(func_args, bounds);
-
-                bounds.register_new_upper(
-                    *args.clone(),
-                    tuple_type,
-                    ChangeReason::IndirectFuctionParameterBinding(function_id),
-                );
-                changed = true;
-            }
-            _ => {}
-        }
-    }
-    Ok(changed)
-}
-*/
 
 fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
     for key in bounds.all_keys() {

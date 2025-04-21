@@ -25,6 +25,24 @@ impl VariableKind {
             VariableKind::TypeVar(_) => None,
         }
     }
+
+    pub fn from_ssavar(var: &SsaVar) -> VariableKind {
+        Self::SsaVar(*var)
+    }
+
+    pub fn from_ssaoperand(ssa_op: &SsaOperand) -> VariableKind {
+        match ssa_op.kind {
+            SsaOperandKind::Constant(val) => Self::Const {
+                value: val,
+                origin_info: ssa_op.origin_info,
+            },
+            SsaOperandKind::Variable(ref var) => Self::from_ssavar(var),
+        }
+    }
+
+    pub fn as_type(self) -> Type {
+        Type::Variable(self)
+    }
 }
 
 impl Display for VariableKind {
@@ -123,17 +141,11 @@ impl Type {
     }
 
     pub fn from_ssavar(var: &SsaVar) -> Type {
-        Type::Variable(VariableKind::SsaVar(*var))
+        Type::Variable(VariableKind::from_ssavar(var))
     }
 
     pub fn from_ssaoperand(ssa_op: &SsaOperand) -> Type {
-        match ssa_op.kind {
-            SsaOperandKind::Constant(val) => Type::Variable(VariableKind::Const {
-                value: val,
-                origin_info: ssa_op.origin_info,
-            }),
-            SsaOperandKind::Variable(ref var) => Type::from_ssavar(var),
-        }
+        Type::Variable(VariableKind::from_ssaoperand(ssa_op))
     }
 
     pub fn as_ssavar(&self) -> Option<&SsaVar> {
@@ -215,6 +227,10 @@ impl Type {
         }
     }
 
+    pub fn is_pointer(&self) -> bool {
+        matches!(self, Type::Pointer(_))
+    }
+
     pub fn pointer(typ: Type) -> Type {
         Type::Pointer(Box::new(typ))
     }
@@ -291,6 +307,19 @@ pub fn lub(a: &Type, b: &Type) -> Option<Type> {
             (Type::Pointer(a), Type::Pointer(b)) => lub(a, b).map(Type::pointer),
             (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Truthy),
             (Type::Bool, Type::Pointer(_)) => Some(Type::Truthy),
+            (
+                Type::Function {
+                    args: a1,
+                    returns: r1,
+                },
+                Type::Function {
+                    args: a2,
+                    returns: r2,
+                },
+            ) => Some(Type::Function {
+                args: Box::new(lub(a1, a2)?),
+                returns: Box::new(glb(r1, r2)?),
+            }),
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
                 // For function argument tuples, LUB means taking the shorter tuple
                 // (the supertype, with fewer arguments)
@@ -327,6 +356,19 @@ pub fn glb(a: &Type, b: &Type) -> Option<Type> {
             (Type::Pointer(a), Type::Pointer(b)) => glb(a, b).map(Type::pointer),
             (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Nothing),
             (Type::Bool, Type::Pointer(_)) => Some(Type::Nothing),
+            (
+                Type::Function {
+                    args: a1,
+                    returns: r1,
+                },
+                Type::Function {
+                    args: a2,
+                    returns: r2,
+                },
+            ) => Some(Type::Function {
+                args: Box::new(lub(a1, a2)?),
+                returns: Box::new(glb(r1, r2)?),
+            }),
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
                 // For function argument tuples, GLB means taking the longer tuple
                 // (the subtype, with more arguments)
@@ -400,6 +442,107 @@ mod tests {
     }
 
     #[test]
+    fn test_lub_tuples() {
+        // Tuple tests - LUB should result in shorter tuple (supertype)
+        assert_eq!(
+            lub(
+                &Type::tuple(&[Type::Bool, Type::Int]),
+                &Type::tuple(&[Type::Bool])
+            ),
+            Some(Type::tuple(&[Type::Bool]))
+        );
+        assert_eq!(
+            lub(
+                &Type::tuple(&[Type::Bool]),
+                &Type::tuple(&[Type::Bool, Type::Char])
+            ),
+            Some(Type::tuple(&[Type::Bool]))
+        );
+        assert_eq!(
+            lub(
+                &Type::tuple(&[Type::Int, Type::Bool, Type::Char]),
+                &Type::tuple(&[Type::Int, Type::Int])
+            ),
+            Some(Type::tuple(&[Type::Int, Type::Int]))
+        );
+        assert_eq!(
+            lub(
+                &Type::tuple(&[Type::Bool, Type::Int]),
+                &Type::tuple(&[Type::Int, Type::Bool])
+            ),
+            Some(Type::tuple(&[Type::Int, Type::Int]))
+        );
+        assert_eq!(
+            lub(&Type::tuple(&[Type::Bool, Type::Int]), &Type::tuple(&[])),
+            Some(Type::tuple(&[]))
+        );
+    }
+
+    #[test]
+    fn test_lub_functions() {
+        // Function with identical args and returns
+        let fn1 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+        assert_eq!(lub(&fn1, &fn1), Some(fn1.clone()));
+
+        // Functions with different args (contravariant)
+        let fn2 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int])), // More general args (supertype)
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+
+        // LUB of args should be the more general (Int)
+        // Result should have args with the more general type (shorter tuple)
+        assert_eq!(
+            lub(&fn1, &fn2),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+                returns: Box::new(Type::tuple(&[Type::Int])),
+            })
+        );
+
+        // Functions with different returns (covariant)
+        let fn3 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+            returns: Box::new(Type::tuple(&[Type::Bool])), // Different return
+        };
+
+        assert_eq!(lub(&fn1, &fn3), Some(fn1.clone()));
+
+        // Functions with compatible returns
+        let fn4 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+            returns: Box::new(Type::tuple(&[Type::Char])), // Char is subtype of Int
+        };
+
+        // GLB of returns should be Char (more specific)
+        assert_eq!(
+            lub(&fn1, &fn4),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+                returns: Box::new(Type::tuple(&[Type::Int])),
+            })
+        );
+
+        // Functions with different arg lengths
+        let fn5 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool, Type::Char])),
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+
+        // LUB of args should be the shorter tuple (more general)
+        assert_eq!(
+            lub(&fn1, &fn5),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int, Type::Bool, Type::Char])),
+                returns: Box::new(Type::tuple(&[Type::Int])),
+            })
+        );
+    }
+
+    #[test]
     fn test_glb() {
         assert_eq!(glb(&Type::Int, &Type::Int), Some(Type::Int));
         assert_eq!(glb(&Type::Int, &Type::Bool), Some(Type::Bool));
@@ -421,12 +564,130 @@ mod tests {
             glb(&Type::pointer(Type::Bool), &Type::pointer(Type::Int)),
             Some(Type::pointer(Type::Bool))
         );
+    }
+
+    #[test]
+    fn test_glb_tuples() {
+        // Tuple tests - GLB should result in longer tuple (subtype)
         assert_eq!(
             glb(
                 &Type::tuple(&[Type::Bool, Type::pointer(Type::Int)]),
                 &Type::tuple(&[Type::Bool])
             ),
             Some(Type::tuple(&[Type::Bool, Type::pointer(Type::Int)])),
+        );
+        assert_eq!(
+            glb(
+                &Type::tuple(&[Type::Bool]),
+                &Type::tuple(&[Type::Bool, Type::Int])
+            ),
+            Some(Type::tuple(&[Type::Bool, Type::Int]))
+        );
+        assert_eq!(
+            glb(
+                &Type::tuple(&[Type::Int, Type::Bool]),
+                &Type::tuple(&[Type::Int, Type::Int])
+            ),
+            Some(Type::tuple(&[Type::Int, Type::Bool]))
+        );
+        assert_eq!(
+            glb(&Type::tuple(&[]), &Type::tuple(&[Type::Bool, Type::Int])),
+            Some(Type::tuple(&[Type::Bool, Type::Int]))
+        );
+        assert_eq!(
+            glb(
+                &Type::tuple(&[Type::Int, Type::Int, Type::Bool]),
+                &Type::tuple(&[Type::Int, Type::Bool, Type::Char])
+            ),
+            Some(Type::tuple(&[Type::Int, Type::Bool, Type::Nothing]))
+        );
+    }
+
+    #[test]
+    fn test_glb_functions() {
+        // Function with identical args and returns
+        let fn1 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+        assert_eq!(glb(&fn1, &fn1), Some(fn1.clone()));
+
+        // Functions with different args (contravariant)
+        let fn2 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int])), // More general args (supertype)
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+
+        // GLB of args should be the more specific (longer tuple)
+        assert_eq!(
+            glb(&fn1, &fn2),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int])),
+                returns: Box::new(Type::tuple(&[Type::Int])),
+            })
+        );
+
+        let fn3 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Char])),
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+
+        assert_eq!(
+            glb(&fn1, &fn3),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int, Type::Truthy])),
+                returns: Box::new(Type::tuple(&[Type::Int])),
+            })
+        );
+
+        // Functions with compatible returns
+        let fn4 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+            returns: Box::new(Type::tuple(&[Type::Char])), // Char is subtype of Int
+        };
+
+        // LUB of returns should be Int (more general)
+        assert_eq!(
+            glb(&fn1, &fn4),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+                returns: Box::new(Type::tuple(&[Type::Char])),
+            })
+        );
+
+        // Functions with different arg lengths
+        let fn5 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int, Type::Bool, Type::Char])),
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+
+        // LUB of args should be the shorter tuple [Int, Bool] with GLB returns
+        assert_eq!(
+            glb(&fn1, &fn5),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int, Type::Bool])),
+                returns: Box::new(Type::tuple(&[Type::Int])),
+            })
+        );
+
+        // More complex function types
+        let fn6 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Int])),
+            returns: Box::new(Type::tuple(&[Type::Bool])),
+        };
+
+        let fn7 = Type::Function {
+            args: Box::new(Type::tuple(&[Type::Bool])),
+            returns: Box::new(Type::tuple(&[Type::Int])),
+        };
+
+        // Args: LUB of Int and Bool -> Int; Returns: GLB of Bool and Int -> Bool
+        assert_eq!(
+            glb(&fn6, &fn7),
+            Some(Type::Function {
+                args: Box::new(Type::tuple(&[Type::Int])),
+                returns: Box::new(Type::tuple(&[Type::Bool])),
+            })
         );
     }
 }

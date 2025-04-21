@@ -16,7 +16,7 @@ use crate::disasm::v2::{
 use super::{
     constraints::{Constraint, ConstraintReason},
     solver,
-    types::Type,
+    types::{Type, VariableKind},
 };
 
 /// Type inference engine for SSA form programs
@@ -24,9 +24,20 @@ use super::{
 pub struct TypeInferenceAnalyzer {
     /// List of constraints to solve
     constraints: Vec<Constraint>,
+    add_instructions: Vec<AddInstruction>,
 
     /// Debug markers for variables
     debug_markers: std::collections::HashMap<char, SsaOperand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AddInstruction {
+    /// The instruction ID
+    pub instruction_id: InstructionId,
+    pub function_id: FunctionId,
+    pub op1: VariableKind,
+    pub op2: VariableKind,
+    pub result: VariableKind,
 }
 
 impl TypeInferenceAnalyzer {
@@ -34,6 +45,7 @@ impl TypeInferenceAnalyzer {
     pub fn new() -> Self {
         Self {
             constraints: Vec::new(),
+            add_instructions: Vec::new(),
             debug_markers: std::collections::HashMap::new(),
         }
     }
@@ -151,21 +163,17 @@ impl TypeInferenceAnalyzer {
                     ConstraintReason::Assignment,
                 );
             }
-            InstructionKind::Add(src1, src2, dst) => {
-                let src1_type = Type::from_ssaoperand(src1);
-                let src2_type = Type::from_ssaoperand(src2);
-                let dst_type = Type::from_ssaoperand(dst);
-                let reason = ConstraintReason::AddSecondParameterImpliesInt;
-
-                self.add_constraint(src1_type.clone(), Type::Int, instr_id, function_id, reason);
-                self.add_constraint(src2_type, Type::Int, instr_id, function_id, reason);
-                self.add_constraint(
-                    src1_type,
-                    dst_type,
-                    instr_id,
+            InstructionKind::Add(op1, op2, result) => {
+                let op1 = VariableKind::from_ssaoperand(op1);
+                let op2 = VariableKind::from_ssaoperand(op2);
+                let result = VariableKind::from_ssaoperand(result);
+                self.add_instructions.push(AddInstruction {
+                    instruction_id: instr_id,
                     function_id,
-                    ConstraintReason::AddFirstParameterSubtypeOfDestination,
-                );
+                    op1,
+                    op2,
+                    result,
+                });
             }
             InstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
@@ -174,9 +182,9 @@ impl TypeInferenceAnalyzer {
                 let dst_type = Type::from_ssaoperand(dst);
                 let reason = ConstraintReason::MulImpliesInt;
 
-                self.add_constraint(dst_type, Type::Int, instr_id, function_id, reason);
-                self.add_constraint(src1_type, Type::Int, instr_id, function_id, reason);
-                self.add_constraint(src2_type, Type::Int, instr_id, function_id, reason);
+                self.add_constraint(Type::Int, dst_type, instr_id, function_id, reason);
+                self.add_constraint(Type::Int, src1_type, instr_id, function_id, reason);
+                self.add_constraint(Type::Int, src2_type, instr_id, function_id, reason);
             }
 
             InstructionKind::Input(dst) => {
@@ -451,6 +459,11 @@ impl TypeInferenceAnalyzer {
         &self.constraints
     }
 
+    #[cfg(test)]
+    pub fn get_add_instructions(&self) -> &[AddInstruction] {
+        &self.add_instructions
+    }
+
     /// Get the debug markers map (test only).
     #[cfg(test)]
     pub fn get_debug_markers(&self) -> &std::collections::HashMap<char, SsaOperand> {
@@ -473,7 +486,12 @@ impl ModelEventListener for TypeInferenceAnalyzer {
         self.generate_constraints_for_program(model, ssa_result);
 
         // Solve the constraints through unification
-        let solve_result = solver::unify(model, &self.constraints, &self.debug_markers)?;
+        let solve_result = solver::unify(
+            model,
+            &self.constraints,
+            &self.add_instructions,
+            &self.debug_markers,
+        )?;
         model.set_type_inference_result(solve_result);
         // Signal that type inference is complete
         collector.publish(TypeInferenceComplete { completed: true });

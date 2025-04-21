@@ -109,6 +109,7 @@ mod tests {
         let result = solver::unify(
             &model,
             type_inference.get_constraints(),
+            type_inference.get_add_instructions(),
             type_inference.get_debug_markers(),
         )
         .expect("Unification should succeed");
@@ -175,6 +176,7 @@ mod tests {
         let result = solver::unify(
             &model,
             type_inference.get_constraints(),
+            type_inference.get_add_instructions(),
             type_inference.get_debug_markers(),
         )
         .expect("Unification should succeed");
@@ -238,6 +240,7 @@ mod tests {
         let result = solver::unify(
             &model,
             type_inference.get_constraints(),
+            type_inference.get_add_instructions(),
             type_inference.get_debug_markers(),
         )
         .expect("Unification should succeed");
