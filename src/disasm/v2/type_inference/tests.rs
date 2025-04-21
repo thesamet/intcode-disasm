@@ -879,4 +879,50 @@ f1:
         assert_marker_type!(ctx, 'r', Type::Char);
         assert_marker_type!(ctx, 'm', Type::Int);
     }
+
+    #[test]
+    fn test_function_pointers_different_args() {
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+            'a [R+1] = 'x @op1
+            [R] = @ret1
+            goto @makes_indirect_call
+        ret1:
+            'b [R+1] = @op2
+            [R] = @ret2
+            goto @makes_indirect_call
+        ret2:
+            [R-1] = 'm [R+1] * 17
+        halt
+
+    makes_indirect_call:
+            R += 4
+            's [R+1] = 3
+            'r [R+2] = 54
+            [R] = @fret
+            goto 'x [R-3]
+        fret:
+            [R-3] = [R+1]
+            R -= 4
+            goto [R]
+
+    op1:
+            R += 4
+            [R-1] = [R-3] * 7
+            output([R-2])
+            [R-3] = 35
+            R -= 4
+            goto [R]
+
+    op2:  ; this time op2 only takes one argument
+            R += 4
+            [R-1] = [R-3] * 16
+            ;    output([R-2])
+            [R-3] = 35
+            R -= 4
+            goto [R]
+            "#,
+        );
+    }
 }
