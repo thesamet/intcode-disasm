@@ -1,6 +1,6 @@
 use colored::Colorize;
 use itertools::Itertools;
-use log::{error, info, trace};
+use log::{error, info, trace, warn};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 
@@ -179,7 +179,7 @@ impl Display for ChangeReason {
 
                 let constraint_str = format!("{}", TraceColors::format_constraint(constraint),);
 
-                write!(f, "  {} caused by {}", constraint_str, other_str)
+                write!(f, "  {} with {}", constraint_str, other_str)
             }
             ChangeReason::IncreaseLowerBoundFromConstraint { constraint, other } => {
                 let other_str = if let Type::Variable(var) = other {
@@ -188,7 +188,7 @@ impl Display for ChangeReason {
                     TraceColors::format_type(other)
                 };
                 let constraint_str = format!("{}", TraceColors::format_constraint(constraint),);
-                write!(f, "  {} caused by {}", constraint_str, other_str)
+                write!(f, "  {} with {}", constraint_str, other_str)
             }
             ChangeReason::ConcreteRefinement => {
                 write!(
@@ -599,6 +599,10 @@ impl Solver {
                 if constraint.reason == ConstraintReason::PhiAssignment {
                     // Phi assignments may not be a live variable. For now,
                     // return a "Conflict" type and not fail the unification.
+                    warn!(
+                        "PhiAssignment {bound_type} bound conflict at key={key}, constraint={}\n.Current value={current_value}, other={other}",
+                        TraceColors::format_constraint(constraint),
+                    );
                     Ok(Type::Conflict)
                 } else {
                     // Extract SSA var from the type if possible for better error reporting
@@ -682,7 +686,6 @@ impl Solver {
                     function_id: csi.calling_function_id,
                     reason: ConstraintReason::FunctionReturnBinding,
                 };
-                trace!("Added rets constraint: {}", c);
                 result.push(c);
             }
         }
@@ -905,7 +908,7 @@ pub fn unify(
 }
 
 fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
-    for key in bounds.all_keys() {
+    for key in bounds.all_keys().into_iter().sorted() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
         if specifity(&lower) > specifity(&upper) && is_concrete_type(&lower) {

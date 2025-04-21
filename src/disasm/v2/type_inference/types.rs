@@ -306,7 +306,7 @@ pub fn lub(a: &Type, b: &Type) -> Option<Type> {
         match (a, b) {
             (Type::Pointer(a), Type::Pointer(b)) => lub(a, b).map(Type::pointer),
             (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Truthy),
-            (Type::Bool, Type::Pointer(_)) => Some(Type::Truthy),
+            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => Some(Type::Truthy),
             (
                 Type::Function {
                     args: a1,
@@ -439,6 +439,10 @@ mod tests {
             lub(&Type::pointer(Type::Bool), &Type::pointer(Type::Int)),
             Some(Type::pointer(Type::Int))
         );
+        assert_eq!(
+            lub(&Type::pointer(Type::pointer(Type::Any)), &Type::Bool),
+            Some(Type::Truthy)
+        );
     }
 
     #[test]
@@ -563,6 +567,10 @@ mod tests {
         assert_eq!(
             glb(&Type::pointer(Type::Bool), &Type::pointer(Type::Int)),
             Some(Type::pointer(Type::Bool))
+        );
+        assert_eq!(
+            glb(&Type::pointer(Type::pointer(Type::Any)), &Type::Bool),
+            None
         );
     }
 
