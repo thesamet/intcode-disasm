@@ -1,4 +1,8 @@
-use crate::disasm::v2::{listeners::image_scanner::ImageScanner, model::ProgramModel};
+use crate::disasm::{
+    v2::{listeners::image_scanner::ImageScanner, model::ProgramModel},
+    Error,
+};
+use colored::Colorize;
 
 use super::{
     dispatching::EventPublisher,
@@ -8,8 +12,13 @@ use super::{
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
         ssa_converter::SsaConverter,
     },
+    model::FunctionId,
     pretty_print::{pretty_print_ssa, pretty_print_with_types},
-    type_inference::TypeInferenceAnalyzer,
+    ssa_form::SsaVar,
+    type_inference::{
+        types::{Type, VariableKind},
+        TypeInferenceAnalyzer,
+    },
 };
 
 /// Run the analysis pipeline and print data flow information
@@ -23,8 +32,40 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     model.load_image(&image, &mut publisher);
-    publisher.process_events(&mut model).expect("Failed to process events");
-    pretty_print_with_types(&model);
+    let res = publisher.process_events(&mut model);
+    match res {
+        Ok(r) => {
+            pretty_print_with_types(&model);
+            let fid = FunctionId::from(1174);
+            println!(
+                "{}",
+                model
+                    .get_type_inference_result()
+                    .unwrap()
+                    .format_traces_for_var(VariableKind::SsaVar(SsaVar::new(
+                        super::ssa_form::SsaVarKind::RelativeMemory(-3),
+                        1,
+                        fid,
+                    ))),
+            );
+        }
+        Err(e) => {
+            eprintln!("\nError: {}", e.to_string().red().bold());
+            match e {
+                Error::TypeConflict {
+                    key,
+                    bound_type,
+                    current_value,
+                    other,
+                    constraint,
+                    partial_result,
+                } => {
+                    eprintln!("\n{}", partial_result.format_traces_for_var(key));
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {
@@ -32,7 +73,9 @@ pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner::new()));
     model.load_image(&image, &mut publisher);
-    publisher.process_events(&mut model).expect("Failed to process events");
+    publisher
+        .process_events(&mut model)
+        .expect("Failed to process events");
     model.get_image_scanner_result().clone()
 }
 
@@ -49,7 +92,9 @@ pub fn run_analysis_ssa(image: Vec<i128>) {
 
     // Process the image
     model.load_image(&image, &mut publisher);
-    publisher.process_events(&mut model).expect("Failed to process events");
+    publisher
+        .process_events(&mut model)
+        .expect("Failed to process events");
 
     // Check if data flow analysis was completed
     if model.get_data_flow_result().is_none() {

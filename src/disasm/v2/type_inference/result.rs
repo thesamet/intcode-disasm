@@ -5,8 +5,12 @@ use crate::disasm::v2::{
     ssa_form::{SsaOperand, SsaVar},
 };
 
-use super::solver::{AnalysisTrace, ChangeReason};
 use super::types::{Type, VariableKind};
+use super::{
+    solver::{AnalysisTrace, ChangeReason},
+    visuals::TraceColors,
+};
+use colored::Colorize;
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
@@ -76,15 +80,13 @@ impl TypeInferenceResult {
                 match &trace.reason {
                     ChangeReason::DecreaseUpperBoundFromConstraint {
                         constraint: _,
-                        other,
+                        other: Type::Variable(other),
                     }
                     | ChangeReason::IncreaseLowerBoundFromConstraint {
                         constraint: _,
-                        other,
+                        other: Type::Variable(other),
                     } => {
-                        /*
                         self.collect_related_traces(other.clone(), result, visited);
-                        */
                     }
                     _ => {}
                 }
@@ -99,7 +101,12 @@ impl TypeInferenceResult {
             return format!("No traces found for {}", typ);
         }
 
-        let mut result = format!("Trace history for {}:\n", typ);
+        let mut result = String::new();
+        result.push_str(&format!(
+            "{} {}:\n",
+            "Trace history for: ".yellow().bold(),
+            TraceColors::format_var(&typ)
+        ));
         for (idx, trace) in traces {
             result.push_str(&format!("{}. {}\n", idx + 1, trace));
         }

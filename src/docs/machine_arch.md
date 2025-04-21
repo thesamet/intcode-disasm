@@ -103,6 +103,28 @@ Adjustments of `R` (instruction opcode 9) are written as `R += 123` or `R -= 123
 
 Note that there are no substraction and division syntax. The following statement is not valid `[R] = [R+2] - 5`, however, it is valid to write `[R] = [R+2] + -5`.
 
+## Variables and Pointer Operations
+
+The assembly language has limited support for variables through the indirect memory access mechanism (explained in detail in the "Indirect memory access" section). Variables in this context always represent memory addresses, and operations on them are restricted.
+
+To use a variable:
+1. It must first be assigned a value (typically a memory address)
+2. It must be dereferenced exactly once in the program using the `*var` syntax
+
+The decompiler infers variable types based on how they're used. For example, if a variable is used in pointer arithmetic operations (like `ptr + 4`), it's inferred to be a pointer.
+
+For pointer arithmetic:
+```
+ptr = 1000          ; ptr now contains address 1000
+[R+1] = *ptr        ; Dereferencing ptr to read from address 1000
+[R+2] = [R+1] + 5   ; Regular integer arithmetic with the value read
+
+next_addr = ptr + 4 ; Pointer arithmetic (address 1004)
+[R+3] = *next_addr  ; Dereferencing next_addr to read from address 1004
+```
+
+Note that we can perform pointer arithmetic (address manipulation), but we can only dereference the variable itself (`*ptr`), not expressions like `*(ptr + 4)`. To access address `ptr + 4`, we must first assign that address to another variable and then dereference it.
+
 ## Conditional jumps
 
 If-ture jumps are written as follows:

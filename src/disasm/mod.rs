@@ -44,4 +44,7 @@ pub enum Error {
     },
     #[error("Invalid function pointer value {addr} for {}", TraceColors::format_constraint(.constraint))]
     InvalidFunctionPointerValue { addr: usize, constraint: Constraint },
+    
+    #[error("Invalid operation at {addr}: {message}")]
+    InvalidOperation { message: String, addr: v2::instructions::InstructionId },
 }

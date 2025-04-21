@@ -344,6 +344,7 @@ impl Solver {
     ) -> Result<(bool, Vec<Constraint>), disasm::Error> {
         let mut result = vec![];
         let mut changed = false;
+
         if let Type::Variable(u) = &constraint.left {
             let current_upper = self.bounds_map.upper_bound(u).unwrap();
             let eub = effective_upper_bound(&constraint.right, &self.bounds_map);

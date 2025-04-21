@@ -533,6 +533,7 @@ mod type_inference_tests {
             r#"
         R += 5000
         [3] = 'a [1] + [2]
+        [3] = [3] * 9    ; forces [3] to be an int
         [R] = @res
         goto @f1
 res:
@@ -926,5 +927,126 @@ f1:
             "#,
         );
         pretty_print_with_types(&ctx.model);
+    }
+
+    #[test]
+    fn test_pointer_arithmetic_case1() {
+        init();
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+
+            ; Test case 1: If left operand is a pointer, right operand must be an integer
+            'a [R+100] = 1000
+            ptr_a = [R+100]
+            'b [R+101] = *ptr_a        ; Define [R+100] as a pointer
+            output([R+101])            ; Force [R+101] to be a char
+            'c [R+102] = 5             ; Define right operand
+            'q [R+103] = ptr_a + [R+102]  ; left is pointer, right must be int
+
+            halt
+            "#,
+        );
+        pretty_print_with_types(&ctx.model);
+
+        // Test case 1: [R+100] is a pointer, [R+102] must be an integer, result must be a pointer
+        assert_marker_type!(ctx, 'a', Type::pointer(Type::Char));
+        assert_marker_type!(ctx, 'b', Type::Char);
+        assert_marker_type!(ctx, 'c', Type::Int);
+        assert_marker_type!(ctx, 'q', Type::pointer(Type::Char));
+    }
+
+    #[test]
+    fn test_pointer_arithmetic_case2() {
+        init();
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+
+            ; Test case 2: If right operand is a pointer, left operand must be an integer
+            'd [R+200] = 2000
+            ptr_b = [R+200]
+            'e [R+201] = *ptr_b        ; Define [R+200] as a pointer
+            output([R+201])            ; Force [R+201] to be a char
+            'f [R+202] = 10            ; Define left operand
+            'r [R+203] = [R+202] + ptr_b  ; right is pointer, left must be int
+
+            halt
+            "#,
+        );
+        pretty_print_with_types(&ctx.model);
+
+        // Test case 2: [R+200] is a pointer, [R+202] must be an integer, result must be a pointer
+        assert_marker_type!(ctx, 'd', Type::pointer(Type::Char));
+        assert_marker_type!(ctx, 'e', Type::Char);
+        assert_marker_type!(ctx, 'f', Type::Int);
+        assert_marker_type!(ctx, 'r', Type::pointer(Type::Char));
+    }
+
+    #[test]
+    fn test_pointer_arithmetic_case3() {
+        init();
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+
+            ; Test case 3: When one operand is a known integer and the result is a pointer,
+            ; the other operand must be inferred as a pointer
+            'g [R+300] = 3000          ; Address value, not forced to be pointer yet
+            'h [R+301] = 20            ; Will be established as an integer through its use
+            'i [R+302] = [R+301] * 2   ; Force [R+301] to be an integer through multiplication
+            's [R+303] = [R+300] + [R+301]  ; [R+301] is int, so [R+300] should be inferred as pointer
+            ptr_sum3 = [R+303]
+            'o [R+304] = *ptr_sum3     ; Force result [R+303] to be a pointer via dereferencing
+            output([R+304])            ; Force [R+304] to be a char
+
+            halt
+            "#,
+        );
+        pretty_print_with_types(&ctx.model);
+
+        // Test case 3: [R+301] is an integer, [R+300] must be a pointer, result is pointer
+        assert_marker_type!(ctx, 'g', Type::pointer(Type::Char));
+        assert_marker_type!(ctx, 'h', Type::Int);
+        assert_marker_type!(ctx, 'i', Type::Int);
+        assert_marker_type!(ctx, 's', Type::pointer(Type::Char));
+        assert_marker_type!(ctx, 'o', Type::Char);
+    }
+
+    #[test]
+    fn test_pointer_arithmetic_case4() {
+        init();
+        let ctx = TestContext::new(
+            r#"
+            R += 1000
+
+            ; Test case 4: When the result is a pointer, and one operand is a pointer,
+            ; the other operand must be inferred as an integer
+            'j [R+400] = 4000           ; Just a value that will become a pointer
+            ptr_d = [R+400]             ; Store in ptr_d
+            'k [R+401] = *ptr_d         ; Force ptr_d to be a pointer through dereferencing
+            output([R+401])             ; Force [R+401] to be a char
+
+            ; Define an operand we want to test (with marker to check its inferred type)
+            'l [R+402] = 30             ; This value should be inferred as an integer
+
+            ; Addition where we'll force the result to be a pointer
+            't [R+403] = ptr_d + [R+402]  ; The addition (with marker on result)
+            ptr_sum4 = [R+403]          ; Store for dereferencing
+            'p [R+404] = *ptr_sum4      ; Force result to be a pointer
+            output([R+404])             ; Force [R+404] to be a char
+
+            halt
+            "#,
+        );
+        pretty_print_with_types(&ctx.model);
+
+        // Test case 4: When one operand and result are known to be pointers,
+        // the other operand must be inferred as an integer
+        assert_marker_type!(ctx, 'j', Type::pointer(Type::Char)); // Base address
+        assert_marker_type!(ctx, 'k', Type::Char); // Dereferenced result
+        assert_marker_type!(ctx, 'l', Type::Int); // This should be inferred as an integer
+        assert_marker_type!(ctx, 't', Type::pointer(Type::Char)); // Result is pointer
+        assert_marker_type!(ctx, 'p', Type::Char); // Dereferenced result
     }
 }
