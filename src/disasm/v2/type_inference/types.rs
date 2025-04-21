@@ -179,6 +179,12 @@ impl Type {
         }))
     }
 
+    pub fn function_pointer_types(args: &[Type], returns: &[Type]) -> Type {
+        let args = Type::Tuple(args.to_vec());
+        let returns = Type::Tuple(returns.to_vec());
+        Type::function_pointer(args, returns)
+    }
+
     pub fn is_function_pointer(&self) -> bool {
         match self {
             Type::Pointer(p) => {

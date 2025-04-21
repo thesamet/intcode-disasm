@@ -826,13 +826,13 @@ f1:
             [R] = @ret2
             goto @makes_indirect_call
         ret2:
-            [R-1] = [R+1] * 17
+            [R-1] = 'm [R+1] * 17
         halt
 
     makes_indirect_call:
             R += 4
-            [R+1] = 3
-            [R+2] = 54
+            's [R+1] = 3
+            'r [R+2] = 54
             [R] = @fret
             goto 'x [R-3]
         fret:
@@ -860,6 +860,23 @@ f1:
         pretty_print_with_types(&ctx.model);
         ctx.print_traces_for_marker('a');
         ctx.print_traces_for_marker('x');
-        assert!(false);
+        assert_marker_type!(
+            ctx,
+            'a',
+            Type::function_pointer_types(&[Type::Int, Type::Char], &[Type::Int])
+        );
+        assert_marker_type!(
+            ctx,
+            'b',
+            Type::function_pointer_types(&[Type::Int, Type::Char], &[Type::Int])
+        );
+        assert_marker_type!(
+            ctx,
+            'x',
+            Type::function_pointer_types(&[Type::Int, Type::Char], &[Type::Int])
+        );
+        assert_marker_type!(ctx, 's', Type::Int);
+        assert_marker_type!(ctx, 'r', Type::Char);
+        assert_marker_type!(ctx, 'm', Type::Int);
     }
 }
