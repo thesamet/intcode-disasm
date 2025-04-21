@@ -263,13 +263,17 @@ struct FunctionPointerInfo {
     ret_count: Option<usize>, // number of return arguments
 }
 
+struct SolverState {
+    bounds_map: TypeBoundsMap,
+    add_instructions: Vec<AddInstruction>,
+    function_pointer_variables: HashMap<VariableKind, FunctionPointerInfo>,
+}
+
 struct Solver {
     model: ProgramModel,
     debug_markers: HashMap<char, SsaOperand>,
     constraints: Vec<Constraint>,
-    bounds_map: TypeBoundsMap,
-    add_instructions: Vec<AddInstruction>,
-    function_pointer_variables: HashMap<VariableKind, FunctionPointerInfo>,
+    state: SolverState,
 }
 
 impl Solver {
@@ -283,24 +287,26 @@ impl Solver {
             model,
             debug_markers,
             constraints: constraints.to_vec(),
-            bounds_map: TypeBoundsMap::new(),
-            add_instructions: add_instructions.to_vec(),
-            function_pointer_variables: HashMap::new(),
+            state: SolverState {
+                bounds_map: TypeBoundsMap::new(),
+                add_instructions: add_instructions.to_vec(),
+                function_pointer_variables: HashMap::new(),
+            },
         }
     }
 
     fn unify(&mut self) -> Result<TypeInferenceResult, disasm::Error> {
         let constraints = self.constraints.to_vec();
         for c in &constraints {
-            init_bounds_for_type(&c.left, &mut self.bounds_map);
-            init_bounds_for_type(&c.right, &mut self.bounds_map);
+            init_bounds_for_type(&c.left, &mut self.state.bounds_map);
+            init_bounds_for_type(&c.right, &mut self.state.bounds_map);
         }
         loop {
             while self.reach_constraint_fixed_point()? {}
-            if refine_concrete_types(&mut self.bounds_map)? {
+            if refine_concrete_types(&mut self.state.bounds_map)? {
                 continue;
             }
-            if replace_truthy_with_bool(&mut self.bounds_map)? {
+            if replace_truthy_with_bool(&mut self.state.bounds_map)? {
                 trace!("Replaced truthy with bool changed");
                 continue;
             }
@@ -308,6 +314,7 @@ impl Solver {
         }
         info!("{}", "Type inference completed successfully".bold());
         for (function_id, key, value) in self
+            .state
             .bounds_map
             .iter()
             .filter_map(|(key, value)| key.origin_info().map(|oi| (oi.function_id, key, value)))
@@ -351,8 +358,8 @@ impl Solver {
         let mut changed = false;
 
         if let Type::Variable(u) = &constraint.left {
-            let current_upper = self.bounds_map.upper_bound(u).unwrap();
-            let eub = effective_upper_bound(&constraint.right, &self.bounds_map);
+            let current_upper = self.state.bounds_map.upper_bound(u).unwrap();
+            let eub = effective_upper_bound(&constraint.right, &self.state.bounds_map);
             let glb = glb(&current_upper, &eub);
             let glb = self.ok_or_bound_conflict(
                 u,
@@ -362,7 +369,7 @@ impl Solver {
                 eub,
                 &constraint,
             )?;
-            changed |= self.bounds_map.update_bound(
+            changed |= self.state.bounds_map.update_bound(
                 u.clone(),
                 BoundType::Upper,
                 glb.clone(),
@@ -373,13 +380,14 @@ impl Solver {
             )?;
             if glb.is_function_pointer() {
                 let fpi = self
+                    .state
                     .function_pointer_variables
                     .entry(*u)
                     .or_insert_with(|| {
                         let args = Type::new_var();
                         let returns = Type::new_var();
-                        init_bounds_for_type(&args, &mut self.bounds_map);
-                        init_bounds_for_type(&returns, &mut self.bounds_map);
+                        init_bounds_for_type(&args, &mut self.state.bounds_map);
+                        init_bounds_for_type(&returns, &mut self.state.bounds_map);
                         trace!(
                             "Identified {} as a function pointer {} -> {}",
                             TraceColors::format_var(u),
@@ -408,8 +416,8 @@ impl Solver {
             }
         }
         if let Type::Variable(v) = &constraint.right {
-            let current_lower = self.bounds_map.lower_bound(v).unwrap();
-            let elb = effective_lower_bound(&constraint.left, &self.bounds_map);
+            let current_lower = self.state.bounds_map.lower_bound(v).unwrap();
+            let elb = effective_lower_bound(&constraint.left, &self.state.bounds_map);
             let lub = lub(&current_lower, &elb);
             let lub = self.ok_or_bound_conflict(
                 v,
@@ -419,7 +427,7 @@ impl Solver {
                 elb,
                 &constraint,
             )?;
-            changed |= self.bounds_map.update_bound(
+            changed |= self.state.bounds_map.update_bound(
                 v.clone(),
                 BoundType::Lower,
                 lub,
@@ -454,11 +462,11 @@ impl Solver {
                 }
             }
             (Type::Tuple(ts), right)
-                if effective_upper_bound(right, &self.bounds_map)
+                if effective_upper_bound(right, &self.state.bounds_map)
                     .as_tuple()
                     .is_some() =>
             {
-                let us = effective_upper_bound(right, &self.bounds_map)
+                let us = effective_upper_bound(right, &self.state.bounds_map)
                     .as_tuple()
                     .cloned()
                     .unwrap();
@@ -490,17 +498,17 @@ impl Solver {
     fn append_add_contraints(&mut self, worklist: &mut Vec<Constraint>) {
         for instruction @ AddInstruction {
             op1, op2, result, ..
-        } in &self.add_instructions
+        } in &self.state.add_instructions
         {
-            init_bounds_for_type(&op1.as_type(), &mut self.bounds_map);
-            init_bounds_for_type(&op2.as_type(), &mut self.bounds_map);
-            init_bounds_for_type(&result.as_type(), &mut self.bounds_map);
-            let op1_lower = self.bounds_map.lower_bound(&op1).unwrap();
-            let op1_upper = self.bounds_map.upper_bound(&op1).unwrap();
-            let op2_lower = self.bounds_map.lower_bound(&op2).unwrap();
-            let op2_upper = self.bounds_map.upper_bound(&op2).unwrap();
-            let result_upper = self.bounds_map.upper_bound(&result).unwrap();
-            let result_lower = self.bounds_map.lower_bound(&result).unwrap();
+            init_bounds_for_type(&op1.as_type(), &mut self.state.bounds_map);
+            init_bounds_for_type(&op2.as_type(), &mut self.state.bounds_map);
+            init_bounds_for_type(&result.as_type(), &mut self.state.bounds_map);
+            let op1_lower = self.state.bounds_map.lower_bound(&op1).unwrap();
+            let op1_upper = self.state.bounds_map.upper_bound(&op1).unwrap();
+            let op2_lower = self.state.bounds_map.lower_bound(&op2).unwrap();
+            let op2_upper = self.state.bounds_map.upper_bound(&op2).unwrap();
+            let result_upper = self.state.bounds_map.upper_bound(&result).unwrap();
+            let result_lower = self.state.bounds_map.lower_bound(&result).unwrap();
             let is_op1_int = matches!(op1_lower, Type::Int);
             let is_op2_int = matches!(op2_lower, Type::Int);
             let is_result_int = matches!(result_lower, Type::Int);
@@ -540,6 +548,7 @@ impl Solver {
     /// Create a TypeInferenceResult from the current state of bounds
     fn build_result(&self) -> TypeInferenceResult {
         let inferred_types = self
+            .state
             .bounds_map
             .iter()
             .filter_map({
@@ -560,12 +569,12 @@ impl Solver {
         // Collect inferred function signatures from function pointer variables
         let mut function_signatures = HashMap::new();
 
-        for (var_kind, fp_info) in &self.function_pointer_variables {
+        for (var_kind, fp_info) in &self.state.function_pointer_variables {
             if let VariableKind::Const { value, .. } = var_kind {
                 let function_id = FunctionId::from(*value as usize);
 
-                let args = effective_lower_bound(&fp_info.args, &self.bounds_map);
-                let returns = effective_upper_bound(&fp_info.returns, &self.bounds_map);
+                let args = effective_lower_bound(&fp_info.args, &self.state.bounds_map);
+                let returns = effective_upper_bound(&fp_info.returns, &self.state.bounds_map);
 
                 let signature = Type::Function {
                     args: Box::new(args),
@@ -578,7 +587,7 @@ impl Solver {
 
         TypeInferenceResult {
             inferred_types,
-            traces: self.bounds_map.traces.clone(),
+            traces: self.state.bounds_map.traces.clone(),
             debug_markers: self.debug_markers.clone(),
             function_signatures,
         }
@@ -626,8 +635,9 @@ impl Solver {
     ) -> Result<bool, disasm::Error> {
         let left_var = constraint.left.as_variable();
         let right_var = constraint.right.as_variable();
-        let left_fp = left_var.and_then(|x| self.function_pointer_variables.get(x).cloned());
-        let right_fp = right_var.and_then(|x| self.function_pointer_variables.get(x).cloned());
+        let left_fp = left_var.and_then(|x| self.state.function_pointer_variables.get(x).cloned());
+        let right_fp =
+            right_var.and_then(|x| self.state.function_pointer_variables.get(x).cloned());
         let left_const = constraint.left.as_const();
         let right_const = constraint.right.as_const();
         let mut changed = false;
@@ -665,7 +675,8 @@ impl Solver {
                 let caller_rets_tuple = Type::Tuple(caller_rets_vec);
                 assert!(ret_count.is_none() || *ret_count == caller_ret_count);
                 if *ret_count != caller_ret_count {
-                    self.function_pointer_variables
+                    self.state
+                        .function_pointer_variables
                         .get_mut(left_var)
                         .unwrap()
                         .ret_count = caller_ret_count;
@@ -752,6 +763,7 @@ impl Solver {
             // In this case, we have constraint: left_fp <: right_fp
             // So left_fp should have fewer or equal args than right_fp
             let right_fpi_mut = self
+                .state
                 .function_pointer_variables
                 .get_mut(right_var.unwrap())
                 .unwrap();
@@ -760,11 +772,13 @@ impl Solver {
                 changed = true;
             };
             if let Some(ret_count) = ret_count1.or(ret_count2) {
-                self.function_pointer_variables
+                self.state
+                    .function_pointer_variables
                     .get_mut(left_var.unwrap())
                     .unwrap()
                     .ret_count = Some(ret_count);
-                self.function_pointer_variables
+                self.state
+                    .function_pointer_variables
                     .get_mut(right_var.unwrap())
                     .unwrap()
                     .ret_count = Some(ret_count);
@@ -819,6 +833,7 @@ fn add_function_parameter_binding_constraint(
             // The function pointer is a upper bounder, so it must have at least as many arguments
             // than the callee function. We push up the minimum arg count.
             let fpi = solver
+                .state
                 .function_pointer_variables
                 .get_mut(func_key)
                 .expect(format!("Function pointer variable {} is untracked", func_key).as_str());
