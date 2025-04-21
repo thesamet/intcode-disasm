@@ -75,9 +75,20 @@ impl Type {
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
-                if ts1.len() != ts2.len() {
+                // For regular tuples, ts1 is a subtype of ts2 if each element of ts1
+                // is a subtype of the corresponding element in ts2, and ts1 has at least
+                // as many elements as ts2.
+                //
+                // But for function arguments, it's the opposite - a function with fewer arguments
+                // is a subtype of a function with more arguments. This is handled in the Function
+                // type case, where args2.is_subtype_of(args1) flips the direction.
+
+                // Check that ts1 has at least as many elements as ts2
+                if ts1.len() < ts2.len() {
                     return false;
                 }
+
+                // For each element in common, check subtyping
                 for (t1, t2) in ts1.iter().zip(ts2.iter()) {
                     if !t1.is_subtype_of(t2) {
                         return false;
@@ -96,12 +107,19 @@ impl Type {
                     args: args2,
                     returns: returns2,
                 },
-            ) => args2.is_subtype_of(args1),
+            ) => {
+                // Contravariant in args, covariant in returns
+                args2.is_subtype_of(args1) && returns1.is_subtype_of(returns2)
+            }
             (Type::Function { .. }, Type::Int) => true,
             (_, Type::Variable(_)) => unreachable!(),
             (Type::Variable(_), _) => unreachable!(),
             _ => false,
         }
+    }
+
+    pub fn tuple(v: &[Type]) -> Type {
+        Type::Tuple(v.to_vec())
     }
 
     pub fn from_ssavar(var: &SsaVar) -> Type {
@@ -273,6 +291,21 @@ pub fn lub(a: &Type, b: &Type) -> Option<Type> {
             (Type::Pointer(a), Type::Pointer(b)) => lub(a, b).map(Type::pointer),
             (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Truthy),
             (Type::Bool, Type::Pointer(_)) => Some(Type::Truthy),
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                // For function argument tuples, LUB means taking the shorter tuple
+                // (the supertype, with fewer arguments)
+
+                // Process only the common elements
+                let mut result = Vec::new();
+                for (t1, t2) in ts1.iter().zip(ts2.iter()) {
+                    match lub(t1, t2) {
+                        Some(t) => result.push(t),
+                        None => return None,
+                    }
+                }
+
+                Some(Type::Tuple(result))
+            }
             _ => None,
         }
     }
@@ -294,6 +327,28 @@ pub fn glb(a: &Type, b: &Type) -> Option<Type> {
             (Type::Pointer(a), Type::Pointer(b)) => glb(a, b).map(Type::pointer),
             (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Some(Type::Nothing),
             (Type::Bool, Type::Pointer(_)) => Some(Type::Nothing),
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                // For function argument tuples, GLB means taking the longer tuple
+                // (the subtype, with more arguments)
+                let mut result = Vec::new();
+
+                // Compute GLB for common elements
+                for (t1, t2) in ts1.iter().zip(ts2.iter()) {
+                    match glb(t1, t2) {
+                        Some(t) => result.push(t),
+                        None => return None,
+                    }
+                }
+
+                // Add remaining elements from the longer tuple
+                if ts1.len() > ts2.len() {
+                    result.extend_from_slice(&ts1[ts2.len()..]);
+                } else if ts2.len() > ts1.len() {
+                    result.extend_from_slice(&ts2[ts1.len()..]);
+                }
+
+                Some(Type::Tuple(result))
+            }
             _ => None,
         }
     }
@@ -302,6 +357,23 @@ pub fn glb(a: &Type, b: &Type) -> Option<Type> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_subtype_of() {
+        assert!(Type::Int.is_subtype_of(&Type::Int));
+        assert!(Type::Bool.is_subtype_of(&Type::Int));
+        assert!(Type::Bool.is_subtype_of(&Type::Bool));
+        assert!(Type::Char.is_subtype_of(&Type::Int));
+        assert!(Type::Nothing.is_subtype_of(&Type::Int));
+        assert!(Type::Nothing.is_subtype_of(&Type::Bool));
+        assert!(Type::Nothing.is_subtype_of(&Type::Char));
+        assert!(!Type::Any.is_subtype_of(&Type::Int));
+        assert!(!Type::Truthy.is_subtype_of(&Type::Bool));
+        assert!(Type::pointer(Type::Int).is_subtype_of(&Type::Truthy));
+        assert!(Type::pointer(Type::Bool).is_subtype_of(&Type::pointer(Type::Int)));
+        assert!(Type::tuple(&[Type::Char]).is_subtype_of(&Type::tuple(&[])));
+        assert!(!Type::tuple(&[]).is_subtype_of(&Type::tuple(&[Type::Char])));
+    }
 
     #[test]
     fn test_lub() {
@@ -348,6 +420,13 @@ mod tests {
         assert_eq!(
             glb(&Type::pointer(Type::Bool), &Type::pointer(Type::Int)),
             Some(Type::pointer(Type::Bool))
+        );
+        assert_eq!(
+            glb(
+                &Type::tuple(&[Type::Bool, Type::pointer(Type::Int)]),
+                &Type::tuple(&[Type::Bool])
+            ),
+            Some(Type::tuple(&[Type::Bool, Type::pointer(Type::Int)])),
         );
     }
 }

@@ -449,6 +449,7 @@ mod type_inference_tests {
 
         foo:
             R += 2
+            [R+1] = 66
             [R] = @foo_ret
             goto [R-1]
         foo_ret:
@@ -918,11 +919,12 @@ f1:
     op2:  ; this time op2 only takes one argument
             R += 4
             [R-1] = [R-3] * 16
-            ;    output([R-2])
+            ;    output([R-2])  ; intentionally commented out
             [R-3] = 35
             R -= 4
             goto [R]
             "#,
         );
+        pretty_print_with_types(&ctx.model);
     }
 }

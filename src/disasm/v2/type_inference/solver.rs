@@ -1,8 +1,8 @@
 use colored::Colorize;
 use itertools::Itertools;
-use log::{info, trace};
+use log::{error, info, trace};
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Display};
 
 use super::constraints::{Constraint, ConstraintReason};
 use super::result::TypeInferenceResult;
@@ -123,6 +123,11 @@ impl TypeBoundsMap {
             return Ok(false);
         }
         if !new_bounds.lower.is_subtype_of(&new_bounds.upper) {
+            error!("Type inconsistency detected.");
+            error!(
+                "New bound for {key} is [{}, {}]. Previously: [{}, {}].\nReason: {}",
+                new_bounds.lower, new_bounds.upper, old_bounds.lower, old_bounds.upper, reason
+            );
             return Err(disasm::Error::TypeInconsistency {
                 key: key.clone(),
                 bound_type,
@@ -161,42 +166,9 @@ pub enum ChangeReason {
     TruthyToBoolHeuristic,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnalysisTrace {
-    pub key: VariableKind,
-    pub change: BoundChange,
-    pub reason: ChangeReason,
-}
-
-impl fmt::Display for AnalysisTrace {
+impl Display for ChangeReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Colorize the key type
-
-        let key_str = TraceColors::format_var(&self.key);
-
-        if self.change.bound_type == BoundType::Upper {
-            write!(
-                f,
-                "{} {:>14} {} {:<18} was {:<8}",
-                TraceColors::format_header("Type"),
-                key_str,
-                ":<".blue(),
-                TraceColors::format_type(&self.change.new_bounds.upper),
-                TraceColors::format_type(&self.change.old_bounds.upper)
-            )?;
-        } else {
-            write!(
-                f,
-                "{} {:>14} {} {:<18} was {:<8}",
-                TraceColors::format_header("Type"),
-                key_str,
-                ":>".green(),
-                TraceColors::format_type(&self.change.new_bounds.lower),
-                TraceColors::format_type(&self.change.old_bounds.lower)
-            )?;
-        }
-
-        match &self.reason {
+        match &self {
             ChangeReason::DecreaseUpperBoundFromConstraint { constraint, other } => {
                 let other_str = if let Type::Variable(var) = other {
                     TraceColors::format_var(var)
@@ -235,11 +207,58 @@ impl fmt::Display for AnalysisTrace {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalysisTrace {
+    pub key: VariableKind,
+    pub change: BoundChange,
+    pub reason: ChangeReason,
+}
+
+impl fmt::Display for AnalysisTrace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Colorize the key type
+
+        let key_str = TraceColors::format_var(&self.key);
+
+        if self.change.bound_type == BoundType::Upper {
+            write!(
+                f,
+                "{} {:>14} {} {:<18} was {:<8}",
+                TraceColors::format_header("Type"),
+                key_str,
+                ":<".blue(),
+                TraceColors::format_type(&self.change.new_bounds.upper),
+                TraceColors::format_type(&self.change.old_bounds.upper)
+            )?;
+        } else {
+            write!(
+                f,
+                "{} {:>14} {} {:<18} was {:<8}",
+                TraceColors::format_header("Type"),
+                key_str,
+                ":>".green(),
+                TraceColors::format_type(&self.change.new_bounds.lower),
+                TraceColors::format_type(&self.change.old_bounds.lower)
+            )?;
+        }
+        write!(f, "{}", self.reason)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FunctionPointerInfo {
-    args: Type,               // tuple of argument types
-    returns: Type,            // tuple of return types
-    arg_count: Option<usize>, // number of arguments
+    args: Type,    // tuple of argument types
+    returns: Type, // tuple of return types
+
+    // Functions have a minimum number of arguments, as we can view the rest
+    // of the arguments as being ignored. This allows for FunctionPointers
+    // to see what the different callees require and take the maximum of that
+    // as the minimum number of arguments for the function pointer type.
+    // The min_arg_count is the lower_bound on the function type, and upper bound
+    // on the args tuple itself.  None means we haven't seen any example functions
+    // being passed, so we can't determine the min_arg_count yet.
+    min_arg_count: Option<usize>,
     ret_count: Option<usize>, // number of return arguments
 }
 
@@ -365,7 +384,7 @@ impl Solver {
                         FunctionPointerInfo {
                             args,
                             returns,
-                            arg_count: None,
+                            min_arg_count: None,
                             ret_count: None,
                         }
                     });
@@ -527,12 +546,6 @@ impl Solver {
                     Ok(Type::Conflict)
                 } else {
                     // Extract SSA var from the type if possible for better error reporting
-                    let current_bound = match bound_type {
-                        BoundType::Lower => self.bounds_map.lower_bound(key),
-                        BoundType::Upper => self.bounds_map.upper_bound(key),
-                    }
-                    .unwrap()
-                    .clone();
                     Err(disasm::Error::TypeConflict {
                         key: key.clone(),
                         bound_type,
@@ -557,8 +570,9 @@ impl Solver {
         let right_fp = right_var.and_then(|x| self.function_pointer_variables.get(x).cloned());
         let left_const = constraint.left.as_const();
         let right_const = constraint.right.as_const();
+        let mut changed = false;
         let Some(fca) = self.model.get_function_call_analysis() else {
-            return Ok(false);
+            return Ok(changed);
         };
         if let ConstraintReason::IndirectFunctionCall { calling_block } = &constraint.reason {
             // The constraint is left_var < Pointer(Function(..)))
@@ -566,8 +580,9 @@ impl Solver {
             if let Some(FunctionPointerInfo {
                 args: ptr_args,
                 returns: ptr_rets,
-                arg_count: Some(arg_count),
+                min_arg_count: Some(min_arg_count),
                 ret_count,
+                ..
             }) = &left_fp
             {
                 // Case: Function Pointer Variable <: Constant (e.g., `some_func_ptr = fp_var;` where some_func_ptr is known)
@@ -578,7 +593,7 @@ impl Solver {
                     .get(calling_block)
                     .expect("Call site info missing");
                 let mut caller_args_vec = vec![];
-                for i in 0..*arg_count {
+                for i in 0..*min_arg_count {
                     caller_args_vec.push(Type::from_ssavar(&csi.argument_writes[&(i as i128 + 1)]));
                 }
                 let caller_args_tuple = Type::Tuple(caller_args_vec);
@@ -601,7 +616,7 @@ impl Solver {
                     right: ptr_args.clone(),
                     addr: InstructionId::from(calling_block.index()),
                     function_id: csi.calling_function_id,
-                    reason: ConstraintReason::FunctionParameterBinding,
+                    reason: ConstraintReason::FunctionParameterBindingAtCallSite,
                 };
                 result.push(c);
                 let c = Constraint {
@@ -632,6 +647,7 @@ impl Solver {
             // Case: Function Pointer Variable <: Constant (e.g., `some_func_ptr = fp_var;` where some_func_ptr is known)
             // This implies the function pointer variable's type must be a subtype
             // of the constant function's type.
+            unreachable!("Does this ever happen?");
             add_function_parameter_binding_constraint(
                 self,
                 *right_const,
@@ -646,14 +662,16 @@ impl Solver {
             let FunctionPointerInfo {
                 args: args1,
                 returns: rets1,
-                arg_count: arg_count1,
+                min_arg_count: min_arg_count1,
                 ret_count: ret_count1,
+                ..
             } = left_fp;
             let FunctionPointerInfo {
                 args: args2,
                 returns: rets2,
-                arg_count: arg_count2,
+                min_arg_count: min_arg_count2,
                 ret_count: ret_count2,
+                ..
             } = right_fp;
             result.push(Constraint {
                 left: args2.clone(),
@@ -669,21 +687,19 @@ impl Solver {
                 function_id: constraint.function_id,
                 reason: ConstraintReason::FunctionPointerSubtype,
             });
-            assert!(
-                arg_count1.is_none() || arg_count2.is_none() || arg_count1 == arg_count2,
-                "Got different arg counts: {arg_count1:?} and {arg_count2:?} for {constraint}"
-            );
-            if let Some(arg_count) = arg_count1.or(arg_count2) {
-                self.function_pointer_variables
-                    .get_mut(left_var.unwrap())
-                    .unwrap()
-                    .arg_count = Some(arg_count);
-                self.function_pointer_variables
-                    .get_mut(right_var.unwrap())
-                    .unwrap()
-                    .arg_count = Some(arg_count);
-            }
-            assert!(ret_count1.is_none() || ret_count2.is_none() || ret_count1 == ret_count2);
+            // For function types, the subtyping relationship is:
+            // A function type with fewer parameters is a subtype of a function type with more parameters
+            //
+            // In this case, we have constraint: left_fp <: right_fp
+            // So left_fp should have fewer or equal args than right_fp
+            let right_fpi_mut = self
+                .function_pointer_variables
+                .get_mut(right_var.unwrap())
+                .unwrap();
+            right_fpi_mut.min_arg_count = right_fpi_mut.min_arg_count.max(min_arg_count1);
+            if right_fp.min_arg_count != right_fpi_mut.min_arg_count {
+                changed = true;
+            };
             if let Some(ret_count) = ret_count1.or(ret_count2) {
                 self.function_pointer_variables
                     .get_mut(left_var.unwrap())
@@ -696,7 +712,7 @@ impl Solver {
             }
         }
 
-        Ok(false)
+        Ok(changed)
     }
 }
 
@@ -709,6 +725,10 @@ fn add_function_parameter_binding_constraint(
     constraint: &Constraint,
     result: &mut Vec<Constraint>,
 ) -> Result<(), disasm::Error> {
+    // bound_type is always lower:
+    //  means fptr = &func_addr, and does fptr >: type(func_addr)
+    //  which means that fptr takes at least as many arguments as func_addr.
+
     let callee_function_id = FunctionId::from(func_addr as usize);
     let fca = solver.model.get_function_call_analysis().unwrap();
     let Some(callee_info) = fca.callee_info.get(&callee_function_id) else {
@@ -723,29 +743,35 @@ fn add_function_parameter_binding_constraint(
         });
     };
 
-    let FunctionPointerInfo {
-        args: arg_type,
-        returns: ret_type,
-        ..
-    } = func_ptr_info;
-
     // Construct the tuple type from the callee's parameters
-    let mut tuple_elems = vec![];
+    let mut callee_args_vec = vec![];
     for (_, callee_ssa_var) in callee_info
         .parameter_entry_vars
         .iter()
         .sorted_by_key(|(k, _)| *k)
     {
-        tuple_elems.push(Type::from_ssavar(callee_ssa_var));
+        callee_args_vec.push(Type::from_ssavar(callee_ssa_var));
     }
-    let actual_param_tuple_type = Type::Tuple(tuple_elems);
-    let arg_count = Some(callee_info.parameter_entry_vars.len());
-    assert!(func_ptr_info.arg_count.is_none() || func_ptr_info.arg_count == arg_count);
-    solver
-        .function_pointer_variables
-        .get_mut(func_key)
-        .expect(format!("Function pointer variable {} is untracked", arg_type).as_str())
-        .arg_count = arg_count;
+    let callee_args_type = Type::Tuple(callee_args_vec);
+    let callee_args_count = callee_info.parameter_entry_vars.len();
+    // Functions with fewer parameters can be subtypes of functions with more parameters
+    match bound_type {
+        BoundType::Lower => {
+            // The function pointer is a upper bounder, so it must have at least as many arguments
+            // than the callee function. We push up the minimum arg count.
+            let fpi = solver
+                .function_pointer_variables
+                .get_mut(func_key)
+                .expect(format!("Function pointer variable {} is untracked", func_key).as_str());
+
+            fpi.min_arg_count = Some(fpi.min_arg_count.unwrap_or_default().max(callee_args_count));
+        }
+        BoundType::Upper => {
+            // If the function pointer is an upper bound (supertype), it could have more or equal args
+            // than the callee function
+            unreachable!("Does this ever happen?");
+        }
+    }
 
     // Determine the direction of the constraint based on the original constraint
     // and which side held the constant function address.
@@ -753,12 +779,12 @@ fn add_function_parameter_binding_constraint(
         BoundType::Lower => {
             // Original case: const_addr <: func_ptr_var
             // By contravariance of args: func_ptr_arg_type <: actual_param_tuple_type
-            (arg_type.clone(), actual_param_tuple_type)
+            (func_ptr_info.args.clone(), callee_args_type)
         }
         BoundType::Upper => {
             // New case: func_ptr_var <: const_addr
             // By contravariance of args: actual_param_tuple_type <: func_ptr_arg_type
-            (actual_param_tuple_type, arg_type.clone())
+            (callee_args_type, func_ptr_info.args.clone())
         }
     };
 
@@ -767,7 +793,7 @@ fn add_function_parameter_binding_constraint(
         right: arg_right,
         addr: constraint.addr,
         function_id: constraint.function_id,
-        reason: ConstraintReason::FunctionParameterBinding,
+        reason: ConstraintReason::FunctionParameterBindingBetweenCalleeAndTypeVar,
     });
 
     if let Some(ret_count) = func_ptr_info.ret_count {
@@ -780,18 +806,18 @@ fn add_function_parameter_binding_constraint(
                 .expect(format!("Return write not found not found for {}", i).as_str());
             tuple_elems.push(Type::from_ssavar(&callee_ssa_var));
         }
-        let actual_return_type = Type::Tuple(tuple_elems);
+        let callee_return_type = Type::Tuple(tuple_elems);
 
         let (ret_left, ret_right) = match bound_type {
             BoundType::Lower => {
                 // New case: func_ptr_var <: const_addr
                 // By contravariance of args: actual_param_tuple_type <: func_ptr_arg_type
-                (actual_return_type, ret_type.clone())
+                (callee_return_type, func_ptr_info.returns.clone())
             }
             BoundType::Upper => {
                 // Original case: const_addr <: func_ptr_var
                 // By contravariance of args: func_ptr_arg_type <: actual_param_tuple_type
-                (ret_type.clone(), actual_return_type)
+                (func_ptr_info.returns.clone(), callee_return_type)
             }
         };
 
@@ -800,7 +826,7 @@ fn add_function_parameter_binding_constraint(
             right: ret_right,
             addr: constraint.addr,
             function_id: constraint.function_id,
-            reason: ConstraintReason::FunctionParameterBinding,
+            reason: ConstraintReason::FunctionReturnBinding,
         });
     }
 

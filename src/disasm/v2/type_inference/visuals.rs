@@ -1,5 +1,5 @@
 use colored::{Color, ColoredString, Colorize};
-use itertools::{Itertools, Position};
+use itertools::Itertools;
 use std::fmt;
 
 use super::{
@@ -14,6 +14,9 @@ impl TraceColors {
     // Type colors
     pub fn var() -> Color {
         Color::BrightCyan
+    }
+    pub fn type_var() -> Color {
+        Color::Yellow
     }
     pub fn type_name() -> Color {
         Color::BrightMagenta
@@ -37,22 +40,27 @@ impl TraceColors {
             Some(oi) => format!("{}:", oi.function_id),
             None => "".to_string(),
         };
-        format!("{}{}", function_id, var).color(Self::var()).bold()
+        match var {
+            VariableKind::SsaVar(var) => {
+                format!("{}{}", function_id, var).color(Self::var()).bold()
+            }
+            VariableKind::Const { value, .. } => format!("{}{}", function_id, value)
+                .color(Self::var())
+                .bold(),
+            VariableKind::TypeVar(_) => format!("{}", var).color(Self::type_var()).bold(),
+        }
     }
 
     pub fn format_type(typ: &Type) -> ColoredString {
         match typ {
             Type::Variable(var) => Self::format_var(var),
             Type::Tuple(ts) => {
-                let mut s = format!("(");
+                let mut s = format!("Tuple(");
                 for (p, t) in ts.iter().with_position() {
                     s.push_str(&Self::format_type(t));
-                    if p == Position::Last || p == Position::Only {
-                        s.push_str(")");
-                    } else {
-                        s.push_str(", ");
-                    }
+                    s.push_str(", ");
                 }
+                s.push_str(")");
                 s.color(Self::type_name()).bold()
             }
             _ => format!("{}", typ).color(Self::type_name()).bold(),

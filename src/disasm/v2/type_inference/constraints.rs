@@ -1,7 +1,6 @@
 use std::fmt;
 
 use crate::disasm::v2::{
-    data_flow::CallSiteInfo,
     instructions::InstructionId,
     model::{BlockId, FunctionId},
 };
@@ -64,6 +63,8 @@ pub enum ConstraintReason {
     TupleSubtype,
     FunctionPointerSubtype,
     FunctionPointerSignature,
+    FunctionParameterBindingBetweenCalleeAndTypeVar,
+    FunctionParameterBindingAtCallSite,
 }
 
 impl fmt::Display for ConstraintReason {
