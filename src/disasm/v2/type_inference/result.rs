@@ -15,6 +15,7 @@ use colored::Colorize;
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub inferred_types: HashMap<SsaVar, Type>,
+    #[allow(dead_code)]
     pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
     /// Inferred function signatures, including those discovered through indirect calls

@@ -745,7 +745,7 @@ f1:
 
     #[test]
     fn test_reconcile_truthy_with_pointer_across_functions() {
-        let ctx = TestContext::try_new(
+        let ctx = TestContext::new(
             r#"
                 R += 1000
                 'a [320] = 17
@@ -767,18 +767,10 @@ f1:
                 goto [R]
             "#,
         );
-        /*
         pretty_print_with_types(&ctx.model);
-
-        ctx.print_traces_for_marker('a');
-        ctx.print_traces_for_marker('b');
-        ctx.print_traces_for_marker('d');
-        ctx.print_traces_for_marker('e');
-        ctx.print_traces_for_marker('f');
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
         assert_marker_type!(ctx, 'e', Type::pointer(Type::Char));
-        */
         // [R-4] <: [R+1]
         // [R-4] <: Pointer(Char)
         // [R+1] <: Truthy

@@ -294,15 +294,11 @@ impl TypeInferenceAnalyzer {
             }
         }
         instruction.reads().iter().for_each(|operand| {
-            if let SsaOperandKind::Variable(SsaVar {
-                kind:
-                    SsaVarKind::Deref {
-                        address,
-                        address_version,
-                    },
-                version,
-                origin_info,
-            }) = operand.kind
+        if let SsaOperandKind::Variable(SsaVar {
+            kind: SsaVarKind::Deref { address, address_version },
+            version: _,
+            origin_info,
+        }) = operand.kind
             {
                 let mem_ssa_var = SsaOperand {
                     kind: SsaOperandKind::Variable(SsaVar {

@@ -516,7 +516,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
     }
 
     /// Maps operands based on read/write context using infallible closures.
-    /// Panics if the closures panic.
+    #[cfg(test)]
     pub fn map_rw<C, R, W, S>(
         &self,
         context: &mut C,

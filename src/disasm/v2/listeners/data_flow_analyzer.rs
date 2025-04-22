@@ -439,7 +439,7 @@ mod tests {
         publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
 
         model.load_image(&binary, &mut publisher);
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
         model // Return model with CFG and DataFlow results
     }
 

@@ -3,7 +3,7 @@ use itertools::Itertools;
 use std::fmt;
 
 use super::{
-    constraints::{Constraint, ConstraintReason},
+    constraints::Constraint,
     types::{Type, VariableKind},
 };
 
@@ -23,9 +23,6 @@ impl TraceColors {
     }
     pub fn bound() -> Color {
         Color::BrightYellow
-    }
-    pub fn constraint() -> Color {
-        Color::BrightGreen
     }
     pub fn location() -> Color {
         Color::Blue
@@ -56,7 +53,7 @@ impl TraceColors {
             Type::Variable(var) => Self::format_var(var),
             Type::Tuple(ts) => {
                 let mut s = format!("Tuple(");
-                for (p, t) in ts.iter().with_position() {
+                for (_, t) in ts.iter().with_position() {
                     s.push_str(&Self::format_type(t));
                     s.push_str(", ");
                 }
@@ -67,16 +64,7 @@ impl TraceColors {
         }
     }
 
-    /// Format a type for display in a trace
-    pub fn format_trace(typ: &Type) -> ColoredString {
-        format!("{}", typ).color(Self::type_name()).bold()
-    }
 
-    pub fn format_reason(reason: &ConstraintReason) -> ColoredString {
-        format!("{}", reason.to_string())
-            .color(Self::constraint())
-            .bold()
-    }
 
     pub fn format_constraint(c: &Constraint) -> String {
         // Format the left side with appropriate color

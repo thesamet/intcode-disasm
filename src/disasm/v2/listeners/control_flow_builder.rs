@@ -358,7 +358,7 @@ mod tests {
 
         // Run the pipeline
         model.load_image(&binary, &mut publisher);
-        publisher.process_events(&mut model); // ImageScanner runs
+        publisher.process_events(&mut model).unwrap(); // ImageScanner runs
 
         model
     }

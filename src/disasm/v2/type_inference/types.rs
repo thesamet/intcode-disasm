@@ -137,23 +137,12 @@ impl Type {
         }
     }
 
-    pub fn tuple(v: &[Type]) -> Type {
-        Type::Tuple(v.to_vec())
-    }
-
     pub fn from_ssavar(var: &SsaVar) -> Type {
         Type::Variable(VariableKind::from_ssavar(var))
     }
 
     pub fn from_ssaoperand(ssa_op: &SsaOperand) -> Type {
         Type::Variable(VariableKind::from_ssaoperand(ssa_op))
-    }
-
-    pub fn as_ssavar(&self) -> Option<&SsaVar> {
-        match self {
-            Type::Variable(VariableKind::SsaVar(var)) => Some(var),
-            _ => None,
-        }
     }
 
     pub fn as_variable(&self) -> Option<&VariableKind> {
@@ -168,10 +157,6 @@ impl Type {
             Type::Variable(VariableKind::Const { value, .. }) => Some(value),
             _ => None,
         }
-    }
-
-    pub fn is_strict_subtype_of(&self, other: &Type) -> bool {
-        self != other && self.is_subtype_of(other)
     }
 
     fn get_types_recursive(&self) -> Vec<Type> {
@@ -211,12 +196,17 @@ impl Type {
         }
     }
 
+    #[cfg(test)]
+    pub fn tuple(v: &[Type]) -> Type {
+        Type::Tuple(v.to_vec())
+    }
+
+    #[cfg(test)]
     pub fn function_pointer_types(args: &[Type], returns: &[Type]) -> Type {
         let args = Type::Tuple(args.to_vec());
         let returns = Type::Tuple(returns.to_vec());
         Type::function_pointer(args, returns)
     }
-
     /// Returns true if this type is a function pointer (i.e., a Function signature).
     pub fn is_function_pointer(&self) -> bool {
         matches!(self, Type::Function { .. })

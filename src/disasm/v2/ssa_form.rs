@@ -57,14 +57,7 @@ pub struct SsaVar {
 }
 
 impl SsaVar {
-    pub fn new(kind: SsaVarKind, version: usize, function_id: FunctionId) -> Self {
-        Self {
-            kind,
-            version,
-            origin_info: SsaOriginInfo::new(function_id, 0, None),
-        }
-    }
-
+    #[cfg(test)]
     pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> Self {
         Self {
             kind: match operand.kind {
@@ -155,6 +148,7 @@ impl SsaOperand {
         }
     }
 
+    #[cfg(test)]
     pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> SsaOperand {
         let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
 
@@ -185,24 +179,9 @@ impl SsaOperand {
             }
         }
     }
-
-    pub fn get_immediate(&self) -> Option<i128> {
-        match self.kind {
-            SsaOperandKind::Constant(val) => Some(val),
-            SsaOperandKind::Variable(_) => None,
-        }
-    }
-
     pub fn as_variable(&self) -> Option<&SsaVar> {
         match self.kind {
             SsaOperandKind::Variable(ref var) => Some(var),
-            _ => None,
-        }
-    }
-
-    pub fn variable_kind(&self) -> Option<SsaVarKind> {
-        match self.kind {
-            SsaOperandKind::Variable(var) => Some(var.kind),
             _ => None,
         }
     }
@@ -967,14 +946,6 @@ mod tests {
         }
     }
 
-    fn memory_operand(offset: usize) -> Operand {
-        Operand {
-            kind: OperandKind::Memory(offset as i128),
-            offset: 0,
-            debug_marker: None,
-        }
-    }
-    // Helper to prepare a model with control flow and data flow analyses done
     fn setup_analyzed_model(assembly: &str) -> ProgramModel {
         let binary = parser::compile(assembly);
         let mut model = ProgramModel::new();
@@ -988,7 +959,7 @@ mod tests {
 
         // Run the pipeline
         model.load_image(&binary, &mut publisher);
-        publisher.process_events(&mut model);
+        publisher.process_events(&mut model).unwrap();
 
         model
     }

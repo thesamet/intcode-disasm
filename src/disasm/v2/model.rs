@@ -85,9 +85,6 @@ impl ProgramModel {
         self.functions.insert(function.function_id, function);
     }
 
-    pub fn has_function(&self, function_id: FunctionId) -> bool {
-        self.functions.contains_key(&function_id)
-    }
 
     pub fn get_function(&self, function_id: FunctionId) -> &Function {
         self.functions.get(&function_id).unwrap()

@@ -14,8 +14,6 @@ use v2::type_inference::{
 /// Represents errors that can occur during disassembly operations
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Disassembly operation failed")]
-    DisassemblyFailed,
 
     #[error("Type conflict for {key}: existing {bound_type} bound {current_value} and {other} at {constraint}")]
     TypeConflict {
@@ -27,14 +25,6 @@ pub enum Error {
         partial_result: Box<TypeInferenceResult>,
     },
 
-    #[error("{bound_type} bound conflict: type conflict between {left} and {right} for {var_type} at {constraint}")]
-    BoundConflict {
-        bound_type: BoundType,
-        left: Type,
-        right: Type,
-        var_type: Type,
-        constraint: Constraint,
-    },
     #[error("Type inconsistency for {key}: {bound_type} bound {lower} not a subtype of {upper}")]
     TypeInconsistency {
         key: VariableKind,
@@ -45,6 +35,4 @@ pub enum Error {
     #[error("Invalid function pointer value {addr} for {}", TraceColors::format_constraint(.constraint))]
     InvalidFunctionPointerValue { addr: usize, constraint: Constraint },
     
-    #[error("Invalid operation at {addr}: {message}")]
-    InvalidOperation { message: String, addr: v2::instructions::InstructionId },
 }

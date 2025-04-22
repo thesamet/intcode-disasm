@@ -31,22 +31,6 @@ impl fmt::Display for BoundType {
     }
 }
 
-impl BoundType {
-    pub fn is_upper(&self) -> bool {
-        matches!(self, BoundType::Upper)
-    }
-
-    pub fn is_lower(&self) -> bool {
-        matches!(self, BoundType::Lower)
-    }
-
-    pub fn other(&self) -> Self {
-        match self {
-            BoundType::Upper => BoundType::Lower,
-            BoundType::Lower => BoundType::Upper,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeBounds {
@@ -164,7 +148,6 @@ pub enum ChangeReason {
     DecreaseUpperBoundFromConstraint { constraint: Constraint, other: Type },
     IncreaseLowerBoundFromConstraint { constraint: Constraint, other: Type },
     ConcreteRefinement,
-    TruthyToBoolHeuristic,
 }
 
 impl Display for ChangeReason {
@@ -195,13 +178,6 @@ impl Display for ChangeReason {
                     f,
                     "  {}",
                     TraceColors::format_bound("Concrete type refinement")
-                )
-            }
-            ChangeReason::TruthyToBoolHeuristic => {
-                write!(
-                    f,
-                    "  {}",
-                    TraceColors::format_bound("Truthy to Bool heuristic")
                 )
             }
         }
@@ -717,29 +693,20 @@ impl Solver {
             // Case: Constant <: Function Pointer Variable (e.g., `fp_var = &my_func;`)
             // This implies the function pointer variable's type must be a supertype
             // of the constant function's type.
-            add_function_parameter_binding_constraint(
-                self,
-                *left_const,
-                right_var.unwrap(),
-                &right_fp_info,
-                BoundType::Lower, // const is lower bound
-                constraint,
-                result,
-            )?;
-        } else if let (Some(left_fp_info), Some(right_const)) = (left_fp.clone(), right_const) {
+                add_function_parameter_binding_constraint(
+                    self,
+                    *left_const,
+                    right_var.unwrap(),
+                    &right_fp_info,
+                    constraint,
+                    result,
+                )?;
+        } else if let (Some(_), Some(_)) = (left_fp.clone(), right_const) {
             // Case: Function Pointer Variable <: Constant (e.g., `some_func_ptr = fp_var;` where some_func_ptr is known)
             // This implies the function pointer variable's type must be a subtype
             // of the constant function's type.
             unreachable!("Does this ever happen?");
-            add_function_parameter_binding_constraint(
-                self,
-                *right_const,
-                left_var.unwrap(),
-                &left_fp_info,
-                BoundType::Upper, // const is upper bound
-                constraint,
-                result,
-            )?;
+            // Unreachable branch for Upper bound; code removed.
         } else if let (Some(left_fp), Some(right_fp)) = (left_fp, right_fp) {
             // Case: Function Pointer Variable <: Function Pointer Variable.
             let FunctionPointerInfo {
@@ -752,7 +719,6 @@ impl Solver {
             let FunctionPointerInfo {
                 args: args2,
                 returns: rets2,
-                min_arg_count: min_arg_count2,
                 ret_count: ret_count2,
                 ..
             } = right_fp;
@@ -807,7 +773,6 @@ fn add_function_parameter_binding_constraint(
     func_addr: i128,
     func_key: &VariableKind,
     func_ptr_info: &FunctionPointerInfo,
-    bound_type: BoundType,
     constraint: &Constraint,
     result: &mut Vec<Constraint>,
 ) -> Result<(), disasm::Error> {
@@ -840,40 +805,17 @@ fn add_function_parameter_binding_constraint(
     }
     let callee_args_type = Type::Tuple(callee_args_vec);
     let callee_args_count = callee_info.parameter_entry_vars.len();
-    // Functions with fewer parameters can be subtypes of functions with more parameters
-    match bound_type {
-        BoundType::Lower => {
-            // The function pointer is a upper bounder, so it must have at least as many arguments
-            // than the callee function. We push up the minimum arg count.
-            let fpi = solver
-                .state
-                .function_pointer_variables
-                .get_mut(func_key)
-                .expect(format!("Function pointer variable {} is untracked", func_key).as_str());
+    // Push up the minimum argument count based on callee args count (always lower bound)
+    let fpi = solver
+        .state
+        .function_pointer_variables
+        .get_mut(func_key)
+        .expect(format!("Function pointer variable {} is untracked", func_key).as_str());
+    fpi.min_arg_count = Some(fpi.min_arg_count.unwrap_or_default().max(callee_args_count));
 
-            fpi.min_arg_count = Some(fpi.min_arg_count.unwrap_or_default().max(callee_args_count));
-        }
-        BoundType::Upper => {
-            // If the function pointer is an upper bound (supertype), it could have more or equal args
-            // than the callee function
-            unreachable!("Does this ever happen?");
-        }
-    }
-
-    // Determine the direction of the constraint based on the original constraint
-    // and which side held the constant function address.
-    let (arg_left, arg_right) = match bound_type {
-        BoundType::Lower => {
-            // Original case: const_addr <: func_ptr_var
-            // By contravariance of args: func_ptr_arg_type <: actual_param_tuple_type
-            (func_ptr_info.args.clone(), callee_args_type)
-        }
-        BoundType::Upper => {
-            // New case: func_ptr_var <: const_addr
-            // By contravariance of args: actual_param_tuple_type <: func_ptr_arg_type
-            (callee_args_type, func_ptr_info.args.clone())
-        }
-    };
+    // Constraint for function parameters (lower bound semantics)
+    let arg_left = func_ptr_info.args.clone();
+    let arg_right = callee_args_type.clone();
 
     result.push(Constraint {
         left: arg_left,
@@ -895,18 +837,9 @@ fn add_function_parameter_binding_constraint(
         }
         let callee_return_type = Type::Tuple(tuple_elems);
 
-        let (ret_left, ret_right) = match bound_type {
-            BoundType::Lower => {
-                // New case: func_ptr_var <: const_addr
-                // By contravariance of args: actual_param_tuple_type <: func_ptr_arg_type
-                (callee_return_type, func_ptr_info.returns.clone())
-            }
-            BoundType::Upper => {
-                // Original case: const_addr <: func_ptr_var
-                // By contravariance of args: func_ptr_arg_type <: actual_param_tuple_type
-                (func_ptr_info.returns.clone(), callee_return_type)
-            }
-        };
+        // Constraint for function return types (lower bound semantics)
+        let ret_left = callee_return_type.clone();
+        let ret_right = func_ptr_info.returns.clone();
 
         result.push(Constraint {
             left: ret_left,
@@ -1002,28 +935,6 @@ fn refine_concrete_types(
     Ok(false)
 }
 
-fn replace_truthy_with_bool(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
-    for key in bounds.all_keys() {
-        let lower = bounds.lower_bound(&key).unwrap().clone();
-        let upper = bounds.upper_bound(&key).unwrap().clone();
-        if upper == Type::Truthy && lower == Type::Nothing {
-            bounds.update_bound(
-                key,
-                BoundType::Upper,
-                Type::Bool,
-                ChangeReason::TruthyToBoolHeuristic,
-            )?;
-            bounds.update_bound(
-                key,
-                BoundType::Lower,
-                Type::Bool,
-                ChangeReason::TruthyToBoolHeuristic,
-            )?;
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
 
 fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
     match typ {

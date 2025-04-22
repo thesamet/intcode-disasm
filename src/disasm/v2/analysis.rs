@@ -29,20 +29,13 @@ pub fn run_analysis(image: Vec<i128>) {
     model.load_image(&image, &mut publisher);
     let res = publisher.process_events(&mut model);
     match res {
-        Ok(r) => {
+        Ok(_) => {
             pretty_print_with_types(&model);
         }
         Err(e) => {
             eprintln!("\nError: {}", e.to_string().red().bold());
             match e {
-                Error::TypeConflict {
-                    key,
-                    bound_type,
-                    current_value,
-                    other,
-                    constraint,
-                    partial_result,
-                } => {
+                Error::TypeConflict { key, partial_result, .. } => {
                     eprintln!("\n{}", partial_result.format_traces_for_var(key));
                 }
                 _ => {}
