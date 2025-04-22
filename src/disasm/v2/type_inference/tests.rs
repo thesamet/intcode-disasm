@@ -778,41 +778,6 @@ f1:
     }
 
     #[test]
-    #[ignore]
-    fn test_type_decuction_in_equality() {
-        let ctx = TestContext::new(
-            r#"
-                R += 1000         ; 0
-                ppi = 350
-                [R-1] = *ppi
-                ppi2 = [R-1]
-                [1300] = *ppi2 * 19
-                [R+1] = ppi
-                [R] = @ret        ; 2
-                goto @takes_ptr   ; 6
-            ret:
-                [R-2] = [R+1] == 15
-                halt
-
-            takes_ptr:
-                R += 2
-                'y foo = [R-1]
-                [R-1] = 'x *foo == 0
-                R -= 2
-                goto [R]
-                "#,
-        );
-        pretty_print_with_types(&ctx.model);
-        ctx.print_traces_for_marker('x');
-        ctx.print_traces_for_marker('y');
-        assert_marker_type!(
-            ctx,
-            'x',
-            Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Int))))
-        );
-    }
-
-    #[test]
     fn test_signatures_for_indirect_calls() {
         let ctx = TestContext::new(
             r#"

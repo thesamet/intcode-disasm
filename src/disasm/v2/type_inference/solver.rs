@@ -31,7 +31,6 @@ impl fmt::Display for BoundType {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeBounds {
     pub lower: Type,
@@ -512,10 +511,7 @@ impl Solver {
 
             if is_op1_int && is_op2_int {
                 worklist.push(constaint(result.as_type(), Type::Int));
-            } else if is_result_char {
-                worklist.push(constaint(op1.as_type(), Type::Int));
-                worklist.push(constaint(op2.as_type(), Type::Int));
-            } else if is_result_int {
+            } else if is_result_char || is_result_int {
                 worklist.push(constaint(op1.as_type(), Type::Int));
                 worklist.push(constaint(op2.as_type(), Type::Int));
             } else if is_op1_pointer {
@@ -693,14 +689,14 @@ impl Solver {
             // Case: Constant <: Function Pointer Variable (e.g., `fp_var = &my_func;`)
             // This implies the function pointer variable's type must be a supertype
             // of the constant function's type.
-                add_function_parameter_binding_constraint(
-                    self,
-                    *left_const,
-                    right_var.unwrap(),
-                    &right_fp_info,
-                    constraint,
-                    result,
-                )?;
+            add_function_parameter_binding_constraint(
+                self,
+                *left_const,
+                right_var.unwrap(),
+                &right_fp_info,
+                constraint,
+                result,
+            )?;
         } else if let (Some(_), Some(_)) = (left_fp.clone(), right_const) {
             // Case: Function Pointer Variable <: Constant (e.g., `some_func_ptr = fp_var;` where some_func_ptr is known)
             // This implies the function pointer variable's type must be a subtype
@@ -934,7 +930,6 @@ fn refine_concrete_types(
     */
     Ok(false)
 }
-
 
 fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
     match typ {

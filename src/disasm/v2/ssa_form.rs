@@ -77,7 +77,7 @@ impl SsaVar {
     }
 
     // Convert SsaVar back to a representative Operand
-    pub fn to_operand(&self) -> Operand {
+    pub fn to_operand(self) -> Operand {
         Operand {
             kind: match self.kind {
                 SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
@@ -129,7 +129,7 @@ impl From<SsaOperand> for Operand {
 
 // Helper methods on SsaOperand
 impl SsaOperand {
-    pub fn to_operand(&self) -> Operand {
+    pub fn to_operand(self) -> Operand {
         match self.kind {
             SsaOperandKind::Constant(val) => Operand {
                 kind: OperandKind::Immediate(val),

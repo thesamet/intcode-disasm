@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     fmt::{self, Display},
     sync::atomic::AtomicUsize,
 };
@@ -374,10 +375,14 @@ pub fn glb(a: &Type, b: &Type) -> Option<Type> {
                 }
 
                 // Add remaining elements from the longer tuple
-                if ts1.len() > ts2.len() {
-                    result.extend_from_slice(&ts1[ts2.len()..]);
-                } else if ts2.len() > ts1.len() {
-                    result.extend_from_slice(&ts2[ts1.len()..]);
+                match ts1.len().cmp(&ts2.len()) {
+                    Ordering::Greater => {
+                        result.extend_from_slice(&ts1[ts2.len()..]);
+                    }
+                    Ordering::Less => {
+                        result.extend_from_slice(&ts2[ts1.len()..]);
+                    }
+                    Ordering::Equal => {}
                 }
 
                 Some(Type::Tuple(result))
@@ -605,6 +610,14 @@ mod tests {
                 &Type::tuple(&[Type::Int, Type::Bool, Type::Char])
             ),
             Some(Type::tuple(&[Type::Int, Type::Bool, Type::Nothing]))
+        );
+
+        assert_eq!(
+            glb(
+                &Type::tuple(&[Type::Bool,]),
+                &Type::tuple(&[Type::Char, Type::Int])
+            ),
+            Some(Type::tuple(&[Type::Nothing, Type::Int]))
         );
     }
 
