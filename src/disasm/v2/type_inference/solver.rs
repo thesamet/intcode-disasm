@@ -1,6 +1,6 @@
 use colored::Colorize;
 use itertools::Itertools;
-use log::{error, info, trace, warn};
+use log::{info, trace};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 
@@ -587,30 +587,14 @@ impl Solver {
         other: Type,
         constraint: &Constraint,
     ) -> Result<Type, disasm::Error> {
-        match refined {
-            Some(refined) => Ok(refined),
-            None => {
-                if constraint.reason == ConstraintReason::PhiAssignment {
-                    // Phi assignments may not be a live variable. For now,
-                    // return a "Conflict" type and not fail the unification.
-                    warn!(
-                        "PhiAssignment {bound_type} bound conflict at key={key}, constraint={}\n.Current value={current_value}, other={other}",
-                        TraceColors::format_constraint(constraint),
-                    );
-                    Ok(Type::Conflict)
-                } else {
-                    // Extract SSA var from the type if possible for better error reporting
-                    Err(disasm::Error::TypeConflict {
-                        key: *key,
-                        bound_type,
-                        current_value,
-                        other,
-                        constraint: constraint.clone(),
-                        partial_result: Box::new(self.build_result()),
-                    })
-                }
-            }
-        }
+        refined.ok_or_else(|| disasm::Error::TypeConflict {
+            key: *key,
+            bound_type,
+            current_value,
+            other,
+            constraint: constraint.clone(),
+            partial_result: Box::new(self.build_result()),
+        })
     }
 
     fn handle_function_pointer_constraints(
