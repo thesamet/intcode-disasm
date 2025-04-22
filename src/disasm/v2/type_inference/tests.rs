@@ -44,10 +44,8 @@ mod type_inference_tests {
 
     macro_rules! assert_function_pointer {
         ($typ: expr) => {
-            let Type::Pointer(ptr_type) = $typ else {
-                panic!("Not a function pointer, got {:?}", $typ);
-            };
-            let Type::Function { .. } = **ptr_type else {
+            // Should be a direct Function type
+            let Type::Function { .. } = $typ else {
                 panic!("Not a function pointer, got {:?}", $typ);
             };
         };
@@ -56,13 +54,8 @@ mod type_inference_tests {
     macro_rules! assert_marker_is_function_pointer {
         ($ctx:expr, $marker:expr) => {
             let actual_type = $ctx.get_marker_type($marker);
-            let Type::Pointer(ptr_type) = &actual_type else {
-                panic!(
-                    "Marker {} is not a function pointer, got {:?}",
-                    $marker, actual_type
-                );
-            };
-            let Type::Function { .. } = **ptr_type else {
+            // Should be a direct Function type
+            let Type::Function { .. } = actual_type else {
                 panic!(
                     "Marker {} is not a function pointer, got {:?}",
                     $marker, actual_type
@@ -211,10 +204,11 @@ mod type_inference_tests {
     }
 
     fn function_pointer(args: &[Type], returns: &[Type]) -> Type {
-        Type::Pointer(Box::new(Type::Function {
+        // Represent function pointers directly as Function signatures
+        Type::Function {
             args: Box::new(Type::Tuple(args.to_vec())),
             returns: Box::new(Type::Tuple(returns.to_vec())),
-        }))
+        }
     }
 
     /// Direct API test for type inference (no assembly parsing)
@@ -470,10 +464,15 @@ mod type_inference_tests {
         "#;
 
         // Create the TestContext, which runs the full analysis pipeline
-        let Err(e) = TestContext::try_new(assembly) else {
-            panic!("Expected try_new to fail.");
-        };
-        assert!(e.to_string().contains("Type conflict for [R-1]_0"));
+        match TestContext::try_new(assembly) {
+            Err(e) => {
+                assert!(e.to_string().contains("Type conflict for [R-1]_0"));
+            }
+            Ok(ctx) => {
+                pretty_print_with_types(&ctx.model);
+                panic!("Expected try_new to fail.");
+            }
+        }
     }
 
     #[test]
@@ -555,7 +554,7 @@ f1:
         ctx.assert_type(1, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int);
         ctx.print_traces_for_marker('b');
-        assert_marker_type!(ctx, 'b', Type::Bool);
+        assert_marker_type!(ctx, 'b', Type::Truthy);
     }
 
     #[test]
@@ -689,7 +688,7 @@ f1:
         ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_is_function_pointer!(ctx, 'c');
-        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
+        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Truthy)));
     }
 
     #[test]

@@ -90,6 +90,7 @@ impl Type {
             (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(_), Type::Truthy) => true,
             (Type::Function { .. }, Type::Truthy) => true,
+            (Type::Function { .. }, Type::Pointer(t)) if **t == Type::Int => true,
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
@@ -202,11 +203,12 @@ impl Type {
         Type::Variable(VariableKind::TypeVar(id))
     }
 
+    /// Constructs a function pointer type (represented directly as a Function signature).
     pub fn function_pointer(args: Type, returns: Type) -> Type {
-        Type::Pointer(Box::new(Type::Function {
+        Type::Function {
             args: Box::new(args),
             returns: Box::new(returns),
-        }))
+        }
     }
 
     pub fn function_pointer_types(args: &[Type], returns: &[Type]) -> Type {
@@ -215,16 +217,9 @@ impl Type {
         Type::function_pointer(args, returns)
     }
 
+    /// Returns true if this type is a function pointer (i.e., a Function signature).
     pub fn is_function_pointer(&self) -> bool {
-        match self {
-            Type::Pointer(p) => {
-                let Type::Function { .. } = p.as_ref() else {
-                    return false;
-                };
-                true
-            }
-            _ => false,
-        }
+        matches!(self, Type::Function { .. })
     }
 
     pub fn is_pointer(&self) -> bool {
@@ -242,8 +237,12 @@ impl Type {
         }
     }
 
+    /// The most general callable: function from Nothing to Any.
     pub fn callable() -> Type {
-        Type::function_pointer(Type::Nothing, Type::Any)
+        Type::Function {
+            args: Box::new(Type::Nothing),
+            returns: Box::new(Type::Any),
+        }
     }
 }
 
@@ -415,6 +414,12 @@ mod tests {
         assert!(Type::pointer(Type::Bool).is_subtype_of(&Type::pointer(Type::Int)));
         assert!(Type::tuple(&[Type::Char]).is_subtype_of(&Type::tuple(&[])));
         assert!(!Type::tuple(&[]).is_subtype_of(&Type::tuple(&[Type::Char])));
+        // Functions act as function pointers, subtypes of raw pointers
+        let fn_ty = Type::Function {
+            args: Box::new(Type::tuple(&[])),
+            returns: Box::new(Type::tuple(&[])),
+        };
+        assert!(fn_ty.is_subtype_of(&Type::pointer(Type::Int)));
     }
 
     #[test]
