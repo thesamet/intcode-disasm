@@ -12,13 +12,8 @@ use super::{
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
         ssa_converter::SsaConverter,
     },
-    model::FunctionId,
     pretty_print::{pretty_print_ssa, pretty_print_with_types},
-    ssa_form::SsaVar,
-    type_inference::{
-        types::VariableKind,
-        TypeInferenceAnalyzer,
-    },
+    type_inference::TypeInferenceAnalyzer,
 };
 
 /// Run the analysis pipeline and print data flow information
@@ -36,18 +31,6 @@ pub fn run_analysis(image: Vec<i128>) {
     match res {
         Ok(r) => {
             pretty_print_with_types(&model);
-            let fid = FunctionId::from(1174);
-            println!(
-                "{}",
-                model
-                    .get_type_inference_result()
-                    .unwrap()
-                    .format_traces_for_var(VariableKind::SsaVar(SsaVar::new(
-                        super::ssa_form::SsaVarKind::RelativeMemory(-3),
-                        1,
-                        fid,
-                    ))),
-            );
         }
         Err(e) => {
             eprintln!("\nError: {}", e.to_string().red().bold());

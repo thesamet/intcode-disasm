@@ -303,13 +303,18 @@ impl Solver {
         }
         loop {
             while self.reach_constraint_fixed_point()? {}
-            if refine_concrete_types(&mut self.state.bounds_map)? {
+            if refine_concrete_types(&mut self.state.bounds_map, true, false)? {
                 continue;
             }
+            if refine_concrete_types(&mut self.state.bounds_map, false, true)? {
+                continue;
+            }
+            /*
             if replace_truthy_with_bool(&mut self.state.bounds_map)? {
                 trace!("Replaced truthy with bool changed");
                 continue;
             }
+            */
             break;
         }
         info!("{}", "Type inference completed successfully".bold());
@@ -515,25 +520,33 @@ impl Solver {
             let is_op1_pointer = op1_upper.is_pointer();
             let is_op2_pointer = op2_upper.is_pointer();
             let is_result_pointer = result_upper.is_pointer();
+            let is_result_char = matches!(result_lower, Type::Char);
 
             let constaint = |left, right| Constraint {
                 left,
                 right,
                 addr: instruction.instruction_id,
                 function_id: instruction.function_id,
-                reason: ConstraintReason::AddSecondParameterImpliesInt,
+                reason: ConstraintReason::AddRules,
             };
 
+            // Stating that a type is <: Type::Int doesn't mean much where practically every type
+            // is a subtype of Type::Int. This however, will get concrete refinement to pick this type
+            // if there is nothing more specific.
+
             if is_op1_int && is_op2_int {
-                worklist.push(constaint(Type::Int, result.as_type()));
+                worklist.push(constaint(result.as_type(), Type::Int));
+            } else if is_result_char {
+                worklist.push(constaint(op1.as_type(), Type::Int));
+                worklist.push(constaint(op2.as_type(), Type::Int));
             } else if is_result_int {
-                worklist.push(constaint(Type::Int, op1.as_type()));
-                worklist.push(constaint(Type::Int, op2.as_type()));
+                worklist.push(constaint(op1.as_type(), Type::Int));
+                worklist.push(constaint(op2.as_type(), Type::Int));
             } else if is_op1_pointer {
-                worklist.push(constaint(Type::Int, op2.as_type()));
+                worklist.push(constaint(op2.as_type(), Type::Int));
                 worklist.push(constaint(op1.as_type(), result.as_type()));
             } else if is_op2_pointer {
-                worklist.push(constaint(Type::Int, op1.as_type()));
+                worklist.push(constaint(op1.as_type(), Type::Int));
                 worklist.push(constaint(op2.as_type(), result.as_type()));
             } else if is_result_pointer && is_op1_int {
                 worklist.push(constaint(op2.as_type(), result.as_type()));
@@ -922,7 +935,48 @@ pub fn unify(
     solver.unify()
 }
 
-fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Error> {
+fn refine_concrete_types(
+    bounds: &mut TypeBoundsMap,
+    do_lower: bool,
+    do_upper: bool,
+) -> Result<bool, disasm::Error> {
+    for key in bounds.all_keys().into_iter().sorted() {
+        let lower = bounds.lower_bound(&key).unwrap().clone();
+        let upper = bounds.upper_bound(&key).unwrap().clone();
+        if do_lower && lower == Type::Nothing && is_concrete_type(&upper) {
+            bounds.update_bound(
+                key,
+                BoundType::Lower,
+                upper.clone(),
+                ChangeReason::ConcreteRefinement,
+            )?;
+            return Ok(true);
+        }
+        if do_upper && upper == Type::Any && is_concrete_type(&lower) {
+            bounds.update_bound(
+                key,
+                BoundType::Upper,
+                lower.clone(),
+                ChangeReason::ConcreteRefinement,
+            )?;
+            return Ok(true);
+        }
+    }
+    /*
+    for key in bounds.all_keys().into_iter().sorted() {
+        let lower = bounds.lower_bound(&key).unwrap().clone();
+        let upper = bounds.upper_bound(&key).unwrap().clone();
+        if specifity(&lower) > specifity(&upper) && is_concrete_type(&lower) {
+            println!("{}: {upper} -> {lower}", key);
+            count += 1;
+        } else if specifity(&upper) > specifity(&lower) && is_concrete_type(&upper) {
+            println!("{}: {lower} -> {upper}", key);
+            count += 1;
+        }
+    }
+    println!("Refinement count: {}", count);
+    */
+    /*
     for key in bounds.all_keys().into_iter().sorted() {
         let lower = bounds.lower_bound(&key).unwrap().clone();
         let upper = bounds.upper_bound(&key).unwrap().clone();
@@ -944,6 +998,7 @@ fn refine_concrete_types(bounds: &mut TypeBoundsMap) -> Result<bool, disasm::Err
             return Ok(true);
         }
     }
+    */
     Ok(false)
 }
 

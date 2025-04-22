@@ -247,7 +247,7 @@ mod type_inference_tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddSecondParameterImpliesInt,
+            ConstraintReason::AddRules,
         );
 
         type_inference.add_constraint(
@@ -386,7 +386,7 @@ mod type_inference_tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddSecondParameterImpliesInt,
+            ConstraintReason::AddRules,
         );
 
         // ptr_var is a pointer to int_var
@@ -496,7 +496,7 @@ mod type_inference_tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddSecondParameterImpliesInt,
+            ConstraintReason::AddRules,
         );
 
         // Then, constrain it to Char from I/O - this should refine the type

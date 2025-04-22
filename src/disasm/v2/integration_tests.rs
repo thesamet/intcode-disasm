@@ -88,7 +88,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddSecondParameterImpliesInt,
+            ConstraintReason::AddRules,
         );
         type_inference.add_constraint(
             bool_type.clone(),
@@ -218,7 +218,7 @@ mod tests {
             Type::Int,
             InstructionId::from(1),
             FunctionId::from(0),
-            ConstraintReason::AddSecondParameterImpliesInt,
+            ConstraintReason::AddRules,
         );
         type_inference.add_constraint(
             ptr_type.clone(),

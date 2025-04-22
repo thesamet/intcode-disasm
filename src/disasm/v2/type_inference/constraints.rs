@@ -11,11 +11,7 @@ use super::{types::Type, visuals::TraceColors};
 #[derive(Debug, Copy, Clone, PartialEq, Ord, PartialOrd, Eq)]
 pub enum ConstraintReason {
     /// Addition operations imply integer types
-    AddSecondParameterImpliesInt,
-
-    // The addition is either numeric or pointer addition. The destination is a more
-    // generic type that can contain the type of the first parameter.
-    AddFirstParameterSubtypeOfDestination,
+    AddRules,
 
     /// Multiplication operations imply integer types
     MulImpliesInt,
