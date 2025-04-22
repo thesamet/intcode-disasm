@@ -90,7 +90,9 @@ impl Type {
             (Type::Pointer(_), Type::Int) => true,
             (Type::Pointer(_), Type::Truthy) => true,
             (Type::Function { .. }, Type::Truthy) => true,
-            (Type::Function { .. }, Type::Pointer(t)) if **t == Type::Int => true,
+            (Type::Function { .. }, Type::Pointer(t)) if **t == Type::Int || **t == Type::Any => {
+                true
+            }
             (Type::Int, Type::Truthy) => true,
             (Type::Bool, Type::Truthy) => true,
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
