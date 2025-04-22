@@ -174,7 +174,7 @@ impl Type {
             Type::Function { args, returns } => args
                 .get_types_recursive()
                 .into_iter()
-                .chain(returns.get_types_recursive().into_iter())
+                .chain(returns.get_types_recursive())
                 .collect(),
             Type::Truthy => vec![],
             Type::Conflict => vec![],

@@ -115,9 +115,9 @@ mod tests {
         .expect("Unification should succeed");
 
         // Verify types using the result
-        let int_result = result.get_type_for_ssavar(&int_var.as_variable().unwrap());
-        let bool_result = result.get_type_for_ssavar(&bool_var.as_variable().unwrap());
-        let char_result = result.get_type_for_ssavar(&char_var.as_variable().unwrap());
+        let int_result = result.get_type_for_ssavar(int_var.as_variable().unwrap());
+        let bool_result = result.get_type_for_ssavar(bool_var.as_variable().unwrap());
+        let char_result = result.get_type_for_ssavar(char_var.as_variable().unwrap());
 
         assert_eq!(
             *int_result.unwrap(),
@@ -247,8 +247,8 @@ mod tests {
 
         // Verify types
         let int_result = result.get_type_for_ssavar(int_var.as_variable().unwrap());
-        let ptr_result = result.get_type_for_ssavar(&ptr_var.as_variable().unwrap());
-        let deref_result = result.get_type_for_ssavar(&deref_var.as_variable().unwrap());
+        let ptr_result = result.get_type_for_ssavar(ptr_var.as_variable().unwrap());
+        let deref_result = result.get_type_for_ssavar(deref_var.as_variable().unwrap());
 
         assert_eq!(
             *int_result.unwrap(),

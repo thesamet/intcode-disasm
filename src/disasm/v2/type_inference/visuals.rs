@@ -52,12 +52,12 @@ impl TraceColors {
         match typ {
             Type::Variable(var) => Self::format_var(var),
             Type::Tuple(ts) => {
-                let mut s = format!("Tuple(");
+                let mut s = "Tuple(".to_string();
                 for (_, t) in ts.iter().with_position() {
                     s.push_str(&Self::format_type(t));
                     s.push_str(", ");
                 }
-                s.push_str(")");
+                s.push(')');
                 s.color(Self::type_name()).bold()
             }
             _ => format!("{}", typ).color(Self::type_name()).bold(),

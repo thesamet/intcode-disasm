@@ -376,7 +376,7 @@ impl<'a> SSAConversionState<'a> {
                 let base_var = current_versions
                     .get(&ssa_var_kind)
                     .copied() // Get a copy of the SsaVar
-                    .unwrap_or_else(|| {
+                    .unwrap_or({
                         // If not found, it's version 0.
                         SsaVar {
                             kind: ssa_var_kind,

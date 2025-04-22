@@ -68,7 +68,7 @@ impl TypeInferenceResult {
         result: &mut Vec<(usize, &'a AnalysisTrace)>,
         visited: &mut HashSet<VariableKind>,
     ) {
-        if !visited.insert(type_key.clone()) {
+        if !visited.insert(type_key) {
             return; // Already visited this type
         }
 
@@ -87,7 +87,7 @@ impl TypeInferenceResult {
                         constraint: _,
                         other: Type::Variable(other),
                     } => {
-                        self.collect_related_traces(other.clone(), result, visited);
+                        self.collect_related_traces(*other, result, visited);
                     }
                     _ => {}
                 }
@@ -97,7 +97,7 @@ impl TypeInferenceResult {
 
     /// Format all traces for an SSA variable in chronological order
     pub fn format_traces_for_var(&self, typ: VariableKind) -> String {
-        let traces = self.get_recursive_traces_for_var(typ.clone());
+        let traces = self.get_recursive_traces_for_var(typ);
         if traces.is_empty() {
             return format!("No traces found for {}", typ);
         }

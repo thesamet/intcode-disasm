@@ -98,7 +98,7 @@ impl TypeBoundsMap {
             .bounds
             .get(&key)
             .cloned()
-            .expect(format!("Update bound for missing key: {}", key).as_str());
+            .unwrap_or_else(|| panic!("Update bound for missing key: {}", key));
         let mut new_bounds = old_bounds.clone();
         match bound_type {
             BoundType::Lower => new_bounds.lower = new_value,
@@ -114,14 +114,14 @@ impl TypeBoundsMap {
                 new_bounds.lower, new_bounds.upper, old_bounds.lower, old_bounds.upper, reason
             );
             return Err(disasm::Error::TypeInconsistency {
-                key: key.clone(),
+                key,
                 bound_type,
                 lower: new_bounds.lower,
                 upper: new_bounds.upper,
             });
         }
         let trace = AnalysisTrace {
-            key: key.clone(),
+            key,
             change: BoundChange {
                 bound_type,
                 old_bounds,
@@ -160,7 +160,7 @@ impl Display for ChangeReason {
                     TraceColors::format_type(other)
                 };
 
-                let constraint_str = format!("{}", TraceColors::format_constraint(constraint),);
+                let constraint_str = TraceColors::format_constraint(constraint).to_string();
 
                 write!(f, "  {} with {}", constraint_str, other_str)
             }
@@ -170,7 +170,7 @@ impl Display for ChangeReason {
                 } else {
                     TraceColors::format_type(other)
                 };
-                let constraint_str = format!("{}", TraceColors::format_constraint(constraint),);
+                let constraint_str = TraceColors::format_constraint(constraint).to_string();
                 write!(f, "  {} with {}", constraint_str, other_str)
             }
             ChangeReason::ConcreteRefinement => {
@@ -341,17 +341,17 @@ impl Solver {
         if let Type::Variable(u) = &constraint.left {
             let current_upper = self.state.bounds_map.upper_bound(u).unwrap();
             let eub = effective_upper_bound(&constraint.right, &self.state.bounds_map);
-            let glb = glb(&current_upper, &eub);
+            let glb = glb(current_upper, &eub);
             let glb = self.ok_or_bound_conflict(
                 u,
                 glb,
                 BoundType::Upper,
                 current_upper.clone(),
                 eub,
-                &constraint,
+                constraint,
             )?;
             changed |= self.state.bounds_map.update_bound(
-                u.clone(),
+                *u,
                 BoundType::Upper,
                 glb.clone(),
                 ChangeReason::DecreaseUpperBoundFromConstraint {
@@ -399,17 +399,17 @@ impl Solver {
         if let Type::Variable(v) = &constraint.right {
             let current_lower = self.state.bounds_map.lower_bound(v).unwrap();
             let elb = effective_lower_bound(&constraint.left, &self.state.bounds_map);
-            let lub = lub(&current_lower, &elb);
+            let lub = lub(current_lower, &elb);
             let lub = self.ok_or_bound_conflict(
                 v,
                 lub,
                 BoundType::Lower,
                 current_lower.clone(),
                 elb,
-                &constraint,
+                constraint,
             )?;
             changed |= self.state.bounds_map.update_bound(
-                v.clone(),
+                *v,
                 BoundType::Lower,
                 lub,
                 ChangeReason::IncreaseLowerBoundFromConstraint {
@@ -484,12 +484,12 @@ impl Solver {
             init_bounds_for_type(&op1.as_type(), &mut self.state.bounds_map);
             init_bounds_for_type(&op2.as_type(), &mut self.state.bounds_map);
             init_bounds_for_type(&result.as_type(), &mut self.state.bounds_map);
-            let op1_lower = self.state.bounds_map.lower_bound(&op1).unwrap();
-            let op1_upper = self.state.bounds_map.upper_bound(&op1).unwrap();
-            let op2_lower = self.state.bounds_map.lower_bound(&op2).unwrap();
-            let op2_upper = self.state.bounds_map.upper_bound(&op2).unwrap();
-            let result_upper = self.state.bounds_map.upper_bound(&result).unwrap();
-            let result_lower = self.state.bounds_map.lower_bound(&result).unwrap();
+            let op1_lower = self.state.bounds_map.lower_bound(op1).unwrap();
+            let op1_upper = self.state.bounds_map.upper_bound(op1).unwrap();
+            let op2_lower = self.state.bounds_map.lower_bound(op2).unwrap();
+            let op2_upper = self.state.bounds_map.upper_bound(op2).unwrap();
+            let result_upper = self.state.bounds_map.upper_bound(result).unwrap();
+            let result_lower = self.state.bounds_map.lower_bound(result).unwrap();
             let is_op1_int = matches!(op1_lower, Type::Int);
             let is_op2_int = matches!(op2_lower, Type::Int);
             let is_result_int = matches!(result_lower, Type::Int);
@@ -605,7 +605,7 @@ impl Solver {
                 } else {
                     // Extract SSA var from the type if possible for better error reporting
                     Err(disasm::Error::TypeConflict {
-                        key: key.clone(),
+                        key: *key,
                         bound_type,
                         current_value,
                         other,
@@ -810,7 +810,7 @@ fn add_function_parameter_binding_constraint(
         .state
         .function_pointer_variables
         .get_mut(func_key)
-        .expect(format!("Function pointer variable {} is untracked", func_key).as_str());
+        .unwrap_or_else(|| panic!("Function pointer variable {} is untracked", func_key));
     fpi.min_arg_count = Some(fpi.min_arg_count.unwrap_or_default().max(callee_args_count));
 
     // Constraint for function parameters (lower bound semantics)
@@ -832,8 +832,8 @@ fn add_function_parameter_binding_constraint(
             let callee_ssa_var = callee_info
                 .return_writes
                 .get(&((i as i128) - stack_size))
-                .expect(format!("Return write not found not found for {}", i).as_str());
-            tuple_elems.push(Type::from_ssavar(&callee_ssa_var));
+                .unwrap_or_else(|| panic!("Return write not found not found for {}", i));
+            tuple_elems.push(Type::from_ssavar(callee_ssa_var));
         }
         let callee_return_type = Type::Tuple(tuple_elems);
 
@@ -991,8 +991,8 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
             init_bounds_for_type(x, bounds);
         }
         Type::Function { args, returns } => {
-            let _ = init_bounds_for_type(args, bounds);
-            let _ = init_bounds_for_type(returns, bounds);
+            init_bounds_for_type(args, bounds);
+            init_bounds_for_type(returns, bounds);
         }
         Type::Tuple(ts) => {
             for t in ts {
@@ -1000,8 +1000,8 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
             }
         }
         Type::Variable(v) => {
-            if !bounds.contains_key(&v) {
-                bounds.create_key(v.clone(), Type::Nothing, Type::Any);
+            if !bounds.contains_key(v) {
+                bounds.create_key(*v, Type::Nothing, Type::Any);
             }
         }
     }

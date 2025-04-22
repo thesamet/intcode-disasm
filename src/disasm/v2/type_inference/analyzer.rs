@@ -304,9 +304,9 @@ impl TypeInferenceAnalyzer {
                     kind: SsaOperandKind::Variable(SsaVar {
                         kind: SsaVarKind::Memory(address as i128),
                         version: address_version,
-                        origin_info: origin_info,
+                        origin_info,
                     }),
-                    origin_info: origin_info,
+                    origin_info,
                 };
                 self.add_constraint(
                     Type::from_ssaoperand(&mem_ssa_var),

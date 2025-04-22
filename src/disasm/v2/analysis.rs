@@ -34,11 +34,8 @@ pub fn run_analysis(image: Vec<i128>) {
         }
         Err(e) => {
             eprintln!("\nError: {}", e.to_string().red().bold());
-            match e {
-                Error::TypeConflict { key, partial_result, .. } => {
-                    eprintln!("\n{}", partial_result.format_traces_for_var(key));
-                }
-                _ => {}
+            if let Error::TypeConflict { key, partial_result, .. } = e {
+                eprintln!("\n{}", partial_result.format_traces_for_var(key));
             }
         }
     }

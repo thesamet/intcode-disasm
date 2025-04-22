@@ -140,8 +140,8 @@ mod type_inference_tests {
             self.model
                 .get_type_inference_result()
                 .unwrap()
-                .get_type_for_ssavar(&ssa_var.as_variable().unwrap())
-                .expect(&format!("No type found for SSA variable marker {}", marker))
+                .get_type_for_ssavar(ssa_var.as_variable().unwrap())
+                .unwrap_or_else(|| panic!("No type found for SSA variable marker {}", marker))
                 .clone()
         }
 
@@ -314,7 +314,7 @@ mod type_inference_tests {
         // Add constraint for function pointer
         type_inference.add_constraint(
             func_ptr_type,
-            function_pointer(&vec![], &vec![]),
+            function_pointer(&[], &[]),
             InstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall {
