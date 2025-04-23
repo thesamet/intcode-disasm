@@ -1,6 +1,6 @@
 use colored::Colorize;
 use itertools::Itertools;
-use log::{info, trace};
+use log::{error, info, trace};
 use std::collections::HashMap;
 use std::fmt::{self, Display};
 
@@ -244,22 +244,22 @@ struct SolverState {
     function_pointer_variables: HashMap<VariableKind, FunctionPointerInfo>,
 }
 
-struct Solver {
-    model: ProgramModel,
+struct Solver<'a> {
+    model: &'a ProgramModel,
     debug_markers: HashMap<char, SsaOperand>,
     constraints: Vec<Constraint>,
     state: SolverState,
 }
 
-impl Solver {
+impl<'a> Solver<'a> {
     fn new(
-        model: ProgramModel,
+        model: &'a ProgramModel,
         constraints: &[Constraint],
         add_instructions: &[AddInstruction],
         debug_markers: HashMap<char, SsaOperand>,
     ) -> Self {
         Self {
-            model,
+            model: &model,
             debug_markers,
             constraints: constraints.to_vec(),
             state: SolverState {
@@ -839,12 +839,7 @@ pub fn unify(
     add_instructions: &[AddInstruction],
     debug_markers: &HashMap<char, SsaOperand>,
 ) -> Result<TypeInferenceResult, disasm::Error> {
-    let mut solver = Solver::new(
-        model.clone(),
-        constraints,
-        add_instructions,
-        debug_markers.clone(),
-    );
+    let mut solver = Solver::new(model, constraints, add_instructions, debug_markers.clone());
     solver.unify()
 }
 
@@ -918,7 +913,7 @@ fn refine_concrete_types(
 fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
     match typ {
         Type::Int | Type::Bool | Type::Char => typ.clone(),
-        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
+        Type::Truthy | Type::Nothing | Type::Any => typ.clone(),
         Type::Pointer(x) => Type::Pointer(Box::new(effective_upper_bound(x, bounds))),
         Type::Function { args, returns } => {
             let args = effective_lower_bound(args, bounds);
@@ -940,7 +935,7 @@ fn effective_upper_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
 fn effective_lower_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
     match typ {
         Type::Int | Type::Bool | Type::Char => typ.clone(),
-        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => typ.clone(),
+        Type::Truthy | Type::Nothing | Type::Any => typ.clone(),
         Type::Pointer(x) => Type::Pointer(Box::new(effective_lower_bound(x, bounds))),
         Type::Function { args, returns } => {
             let args = effective_upper_bound(args, bounds);
@@ -965,7 +960,7 @@ fn effective_lower_bound(typ: &Type, bounds: &TypeBoundsMap) -> Type {
 pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
     match typ {
         Type::Int | Type::Bool | Type::Char => {}
-        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => {}
+        Type::Truthy | Type::Nothing | Type::Any => {}
         Type::Pointer(x) => {
             init_bounds_for_type(x, bounds);
         }
@@ -989,7 +984,7 @@ pub(crate) fn init_bounds_for_type(typ: &Type, bounds: &mut TypeBoundsMap) {
 fn specifity(typ: &Type) -> u32 {
     match typ {
         Type::Int | Type::Bool | Type::Char => 1,
-        Type::Truthy | Type::Conflict | Type::Nothing | Type::Any => 0,
+        Type::Truthy | Type::Nothing | Type::Any => 0,
         Type::Pointer(x) => 1 + specifity(x),
         Type::Function { args, returns } => {
             let args = specifity(args);

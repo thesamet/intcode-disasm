@@ -6,7 +6,11 @@ use super::{
     dispatching::{EventCollector, EventPublisher},
     events::{Event, ImageAdded, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::{function_call_analyzer::FunctionCallAnalysis, image_scanner::ImageScannerResult},
+    listeners::{
+        function_call_analyzer::FunctionCallAnalysis,
+        image_scanner::ImageScannerResult,
+        variable_analyzer::{ClusterId, VariableCluster, VariableMergerResult},
+    },
     ssa_form::SsaResult,
     type_inference::TypeInferenceResult,
 };
@@ -28,6 +32,9 @@ pub struct ProgramModel {
     function_call_analysis: Option<FunctionCallAnalysis>,
 
     type_inference_result: Option<TypeInferenceResult>,
+
+    // Variable clusters for high-level variable recovery
+    variable_merger_result: Option<VariableMergerResult>,
 }
 
 impl ProgramModel {
@@ -41,6 +48,7 @@ impl ProgramModel {
             ssa_result: None,
             type_inference_result: None,
             function_call_analysis: None,
+            variable_merger_result: None,
         }
     }
 
@@ -84,7 +92,6 @@ impl ProgramModel {
     pub fn add_function(&mut self, function: Function) {
         self.functions.insert(function.function_id, function);
     }
-
 
     pub fn get_function(&self, function_id: FunctionId) -> &Function {
         self.functions.get(&function_id).unwrap()
@@ -140,6 +147,14 @@ impl ProgramModel {
 
     pub fn get_function_call_analysis(&self) -> Option<&FunctionCallAnalysis> {
         self.function_call_analysis.as_ref()
+    }
+
+    pub fn set_variable_merger_result(&mut self, result: VariableMergerResult) {
+        self.variable_merger_result = Some(result);
+    }
+
+    pub fn get_variable_merger_result(&self) -> Option<&VariableMergerResult> {
+        self.variable_merger_result.as_ref()
     }
 }
 

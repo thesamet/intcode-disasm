@@ -10,14 +10,44 @@ use super::{
     listeners::{
         control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
         function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
-        ssa_converter::SsaConverter,
+        ssa_converter::SsaConverter, variable_analyzer::VariableAnalyzer,
     },
-    pretty_print::{pretty_print_ssa, pretty_print_with_types},
+    pretty_print::{pretty_print_ssa, pretty_print_with_types, pretty_print_with_vars},
     type_inference::TypeInferenceAnalyzer,
 };
 
 /// Run the analysis pipeline and print data flow information
 pub fn run_analysis(image: Vec<i128>) {
+    let mut model = ProgramModel::new();
+    let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+    publisher.add_listener(Box::new(ImageScanner::new()));
+    publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+    publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+    publisher.add_listener(Box::new(SsaConverter::new()));
+    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
+    publisher.add_listener(Box::new(VariableAnalyzer::new()));
+    model.load_image(&image, &mut publisher);
+    let res = publisher.process_events(&mut model);
+    match res {
+        Ok(_) => {
+            pretty_print_with_vars(&model);
+        }
+        Err(e) => {
+            eprintln!("\nError: {}", e.to_string().red().bold());
+            if let Error::TypeConflict {
+                key,
+                partial_result,
+                ..
+            } = e
+            {
+                eprintln!("\n{}", partial_result.format_traces_for_var(key));
+            }
+        }
+    }
+}
+
+pub fn run_types(image: Vec<i128>) {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner::new()));
@@ -34,7 +64,12 @@ pub fn run_analysis(image: Vec<i128>) {
         }
         Err(e) => {
             eprintln!("\nError: {}", e.to_string().red().bold());
-            if let Error::TypeConflict { key, partial_result, .. } = e {
+            if let Error::TypeConflict {
+                key,
+                partial_result,
+                ..
+            } = e
+            {
                 eprintln!("\n{}", partial_result.format_traces_for_var(key));
             }
         }

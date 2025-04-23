@@ -31,38 +31,7 @@ macro_rules! define_id_type {
             }
         }
 
-        /*
-        paste::paste! {
-            mod [<counter_ $id_type:snake>] {
-                use std::sync::atomic::{AtomicUsize, Ordering};
-
-                #[allow(non_upper_case_globals)]
-                static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-                pub fn next() -> usize {
-                    COUNTER.fetch_add(1, Ordering::Relaxed)
-                }
-
-                pub fn reset() {
-                    COUNTER.store(0, Ordering::Relaxed)
-                }
-            }
-        }
-        */
-
-        impl $id_type {
-            /*
-            pub fn fresh() -> Self {
-                let id = paste::paste! { [<counter_ $id_type:snake>]::next() };
-                Self(id)
-            }
-
-            /// Reset the ID counter (useful for tests)
-            pub fn reset_counter() {
-                paste::paste! { [<counter_ $id_type:snake>]::reset() };
-            }
-            */
-        }
+        impl $id_type {}
     };
 }
 pub(crate) use define_id_type;

@@ -14,7 +14,6 @@ use v2::type_inference::{
 /// Represents errors that can occur during disassembly operations
 #[derive(Error, Debug)]
 pub enum Error {
-
     #[error("Type conflict for {key}: existing {bound_type} bound {current_value} and {other} at {constraint}")]
     TypeConflict {
         key: VariableKind,
@@ -34,5 +33,7 @@ pub enum Error {
     },
     #[error("Invalid function pointer value {addr} for {}", TraceColors::format_constraint(.constraint))]
     InvalidFunctionPointerValue { addr: usize, constraint: Constraint },
-    
+
+    #[error("Analysis failed: {0}")]
+    AnalysisFailed(String),
 }

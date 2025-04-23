@@ -69,7 +69,6 @@ pub enum Type {
     Tuple(Vec<Type>),
     Truthy, // a marker type for truthy types
     Any,
-    Conflict, // Represents a type that was conflicted, but hopefully it will not be needed.
 }
 
 static NEXT_VAR_ID: AtomicUsize = AtomicUsize::new(1);
@@ -178,7 +177,6 @@ impl Type {
                 .chain(returns.get_types_recursive())
                 .collect(),
             Type::Truthy => vec![],
-            Type::Conflict => vec![],
         }
     }
 
@@ -249,7 +247,6 @@ pub fn is_concrete_type(typ: &Type) -> bool {
         Type::Tuple(x) => x.iter().all(is_concrete_type),
         Type::Pointer(p) => is_concrete_type(p),
         Type::Truthy => false,
-        Type::Conflict => false,
         Type::Any => false,
         Type::Nothing => false,
         Type::Variable(_) => false,
@@ -277,7 +274,6 @@ impl fmt::Display for Type {
                 write!(f, "{}", returns)?;
                 Ok(())
             }
-            Type::Conflict => write!(f, "CONFLICT"),
         }
     }
 }

@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use super::{
     control_flow::PredecessorKind,
-    instructions::{GenericInstruction, InstructionKind},
+    instructions::{GenericInstruction, Instruction, InstructionKind},
     model::ProgramModel,
     // Import SsaOperand and related types
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind},
@@ -12,6 +12,7 @@ use super::{
 struct PrettyPrinter<'a> {
     model: &'a ProgramModel,
     show_types: bool,
+    show_vars: bool,
 }
 
 impl<'a> PrettyPrinter<'a> {
@@ -44,34 +45,48 @@ impl<'a> PrettyPrinter<'a> {
                     .map(|m| format!("'{} ", m).yellow())
                     .unwrap_or_default();
 
-                match var.kind {
-                    SsaVarKind::RelativeMemory(offset) => {
-                        if offset == 0 {
-                            "[R]".cyan().to_string() // Version not shown for [R]_0 usually
-                        } else if offset > -1 {
-                            format!("{}[R+{}]_{}{}", debug_marker, offset, var.version, typ_str)
-                                .cyan()
-                                .to_string()
-                        } else {
-                            format!("{}[R{}]_{}{}", debug_marker, offset, var.version, typ_str)
-                                .blue()
+                if !self.show_vars {
+                    match var.kind {
+                        SsaVarKind::RelativeMemory(offset) => {
+                            if offset == 0 {
+                                "[R]".cyan().to_string() // Version not shown for [R]_0 usually
+                            } else if offset > -1 {
+                                format!("{}[R+{}]_{}{}", debug_marker, offset, var.version, typ_str)
+                                    .cyan()
+                                    .to_string()
+                            } else {
+                                format!("{}[R{}]_{}{}", debug_marker, offset, var.version, typ_str)
+                                    .blue()
+                                    .to_string()
+                            }
+                        }
+                        SsaVarKind::Memory(addr) => {
+                            format!("{}[{}]_{}{}", debug_marker, addr, var.version, typ_str)
+                                .purple()
                                 .to_string()
                         }
+                        SsaVarKind::Deref {
+                            address,
+                            address_version,
+                        } => format!(
+                            "{}*[{}_{}]_{}{}",
+                            debug_marker, address, address_version, var.version, typ_str
+                        )
+                        .bright_red()
+                        .to_string(),
                     }
-                    SsaVarKind::Memory(addr) => {
-                        format!("{}[{}]_{}{}", debug_marker, addr, var.version, typ_str)
-                            .purple()
-                            .to_string()
+                } else {
+                    if var.kind.get_relative_memory() == Some(0) {
+                        format!("R").cyan().to_string()
+                    } else {
+                        let clusters = &self.model.get_variable_merger_result().unwrap();
+                        let name = &clusters
+                            .clusters
+                            .get(&clusters.variable_to_cluster[&var])
+                            .unwrap()
+                            .cluster_name;
+                        format!("{}{}", name, typ_str)
                     }
-                    SsaVarKind::Deref {
-                        address,
-                        address_version,
-                    } => format!(
-                        "{}*[{}_{}]_{}{}",
-                        debug_marker, address, address_version, var.version, typ_str
-                    )
-                    .bright_red()
-                    .to_string(),
                 }
             }
         }
@@ -95,7 +110,7 @@ impl<'a> PrettyPrinter<'a> {
                     kind: SsaOperandKind::Variable(*ssa_op),
                     origin_info: ssa_op.origin_info,
                 };
-                
+
                 format!(
                     "{}{}: {}",
                     source_id,
@@ -204,12 +219,37 @@ impl<'a> PrettyPrinter<'a> {
         ));
 
         // Phi functions
-        for phi in &block.phi_functions {
-            lines.push(format!("{:<8}{}", "", self.format_phi_function(phi)));
+        if !self.show_vars {
+            for phi in &block.phi_functions {
+                lines.push(format!("{:<8}{}", "", self.format_phi_function(phi)));
+            }
         }
 
         // Instructions
         for instr in &block.instructions {
+            if self.show_vars {
+                match instr.kind {
+                    InstructionKind::Assign(a, b) => {
+                        // skip a == b where a and b are the same variable
+                        if let (Some(a), Some(b)) = (a.as_variable(), b.as_variable()) {
+                            let var_to_cluster = &self
+                                .model
+                                .get_variable_merger_result()
+                                .unwrap()
+                                .variable_to_cluster;
+                            let ca = var_to_cluster.get(a).unwrap();
+                            let cb = var_to_cluster.get(b).unwrap();
+                            if ca == cb {
+                                continue;
+                            }
+                        }
+                    }
+                    InstructionKind::AdjustRelativeBase(_) => {
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             lines.push(format!("{:<8}{}", "", self.format_instruction(instr)));
         }
 
@@ -251,10 +291,12 @@ impl<'a> PrettyPrinter<'a> {
                 Some(return_values) if return_values.len() == 1 => return_values
                     .iter()
                     // Return values are SsaVar, wrap for formatting
-                    .map(|v| self.format_ssa_operand(&SsaOperand {
-                        kind: SsaOperandKind::Variable(*v),
-                        origin_info: v.origin_info,
-                    }))
+                    .map(|v| {
+                        self.format_ssa_operand(&SsaOperand {
+                            kind: SsaOperandKind::Variable(*v),
+                            origin_info: v.origin_info,
+                        })
+                    })
                     .join(", ")
                     .to_string(),
                 Some(_) => "void".to_string().red().to_string(), // Empty return_values vec
@@ -334,6 +376,7 @@ pub fn pretty_print_ssa(model: &ProgramModel) {
     let printer = PrettyPrinter {
         model,
         show_types: false,
+        show_vars: false,
     };
     printer.print_ssa();
 }
@@ -342,6 +385,16 @@ pub fn pretty_print_with_types(model: &ProgramModel) {
     let printer = PrettyPrinter {
         model,
         show_types: true,
+        show_vars: false,
+    };
+    printer.print_ssa();
+}
+
+pub fn pretty_print_with_vars(model: &ProgramModel) {
+    let printer = PrettyPrinter {
+        model,
+        show_types: true,
+        show_vars: true,
     };
     printer.print_ssa();
 }

@@ -88,6 +88,26 @@ impl SsaVar {
             debug_marker: self.origin_info.debug_marker,
         }
     }
+
+    pub fn get_relative_memory(&self) -> Option<i128> {
+        self.kind.get_relative_memory()
+    }
+
+    pub fn pointer_from_deref(&self) -> Option<SsaVar> {
+        if let SsaVarKind::Deref {
+            address,
+            address_version,
+        } = self.kind
+        {
+            Some(SsaVar {
+                kind: SsaVarKind::Memory(address as i128),
+                version: address_version,
+                origin_info: self.origin_info,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl PartialEq for SsaVar {
