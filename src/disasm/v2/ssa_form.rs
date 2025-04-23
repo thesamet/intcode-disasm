@@ -14,12 +14,9 @@ use super::instructions::{GenericInstruction, InstructionId};
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SsaVarKind {
-    Memory(i128),
+    Memory(usize),
     RelativeMemory(i128),
-    Deref {
-        address: usize, // TODO: Should this refer to another SsaOperand?
-        address_version: usize,
-    },
+    Pointer(usize),
 }
 
 impl SsaVarKind {
@@ -29,8 +26,32 @@ impl SsaVarKind {
             _ => None,
         }
     }
-}
 
+    pub fn get_pointer(&self) -> Option<usize> {
+        match self {
+            SsaVarKind::Pointer(addr) => Some(*addr),
+            _ => None,
+        }
+    }
+
+    pub fn to_operand_kind(&self) -> OperandKind {
+        match self {
+            SsaVarKind::Memory(addr) => OperandKind::Memory(*addr),
+            SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(*offset),
+            SsaVarKind::Pointer(addr) => OperandKind::Pointer(*addr),
+        }
+    }
+
+    pub fn from_operand_kind(operand_kind: &OperandKind) -> Option<SsaVarKind> {
+        Some(match operand_kind {
+            OperandKind::Memory(addr) => SsaVarKind::Memory(*addr),
+            OperandKind::Pointer(addr) => SsaVarKind::Pointer(*addr),
+            OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(*offset),
+            OperandKind::Deref(_) => return None,
+            OperandKind::Immediate(_) => return None,
+        })
+    }
+}
 // Represents a versioned SSA variable
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SsaOriginInfo {
@@ -57,33 +78,24 @@ pub struct SsaVar {
 }
 
 impl SsaVar {
-    #[cfg(test)]
-    pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> Self {
-        Self {
-            kind: match operand.kind {
-                OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
-                OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
-                OperandKind::Immediate(val) => {
-                    unreachable!("Cannot create SsaVar from immediate operand: {:?}", val)
-                }
-                OperandKind::Deref(address) => SsaVarKind::Deref {
-                    address,
-                    address_version: 0,
-                },
-            },
+    pub fn from_operand(
+        operand: &Operand,
+        version: usize,
+        function_id: FunctionId,
+    ) -> Option<SsaVar> {
+        let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
+        let kind = SsaVarKind::from_operand_kind(&operand.kind)?;
+        Some(SsaVar {
+            kind,
+            origin_info,
             version,
-            origin_info: SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker),
-        }
+        })
     }
 
     // Convert SsaVar back to a representative Operand
     pub fn to_operand(self) -> Operand {
         Operand {
-            kind: match self.kind {
-                SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
-                SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
-                SsaVarKind::Deref { address, .. } => OperandKind::Deref(address),
-            },
+            kind: self.kind.to_operand_kind(),
             offset: self.origin_info.offset,
             debug_marker: self.origin_info.debug_marker,
         }
@@ -91,22 +103,6 @@ impl SsaVar {
 
     pub fn get_relative_memory(&self) -> Option<i128> {
         self.kind.get_relative_memory()
-    }
-
-    pub fn pointer_from_deref(&self) -> Option<SsaVar> {
-        if let SsaVarKind::Deref {
-            address,
-            address_version,
-        } = self.kind
-        {
-            Some(SsaVar {
-                kind: SsaVarKind::Memory(address as i128),
-                version: address_version,
-                origin_info: self.origin_info,
-            })
-        } else {
-            None
-        }
     }
 }
 
@@ -131,6 +127,7 @@ impl std::hash::Hash for SsaVar {
 pub enum SsaOperandKind {
     Constant(i128),
     Variable(SsaVar),
+    Deref(SsaVar), // SsaVar must be a pointer.
 }
 
 // Represents either a constant or a versioned SSA variable in an instruction
@@ -160,8 +157,13 @@ impl SsaOperand {
                 kind: match var.kind {
                     SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
                     SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
-                    SsaVarKind::Deref { address, .. } => OperandKind::Deref(address),
+                    SsaVarKind::Pointer(addr) => OperandKind::Pointer(addr),
                 },
+                offset: var.origin_info.offset,
+                debug_marker: var.origin_info.debug_marker,
+            },
+            SsaOperandKind::Deref(var) => Operand {
+                kind: OperandKind::Deref(var.origin_info.offset),
                 offset: var.origin_info.offset,
                 debug_marker: var.origin_info.debug_marker,
             },
@@ -177,28 +179,49 @@ impl SsaOperand {
                 kind: SsaOperandKind::Constant(val),
                 origin_info,
             },
-            _ => {
-                let kind = match operand.kind {
-                    OperandKind::Memory(addr) => SsaVarKind::Memory(addr),
-                    OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
-                    OperandKind::Deref(address) => SsaVarKind::Deref {
-                        address,
-                        address_version: 0,
-                    },
-                    OperandKind::Immediate(_) => unreachable!(), // We handled this above
-                };
-
-                SsaOperand {
-                    kind: SsaOperandKind::Variable(SsaVar {
-                        kind,
-                        version,
-                        origin_info,
-                    }),
+            OperandKind::Deref(addr) => SsaOperand {
+                kind: SsaOperandKind::Deref(SsaVar {
+                    kind: SsaVarKind::Pointer(addr),
                     origin_info,
-                }
-            }
+                    version: 0,
+                }),
+                origin_info,
+            },
+            OperandKind::Memory(addr) => SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::Memory(addr),
+                    origin_info,
+                    version,
+                }),
+                origin_info,
+            },
+            OperandKind::Pointer(addr) => SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::Pointer(addr),
+                    origin_info,
+                    version,
+                }),
+                origin_info,
+            },
+            OperandKind::RelativeMemory(offset) => SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::RelativeMemory(offset),
+                    origin_info,
+                    version,
+                }),
+                origin_info,
+            },
         }
     }
+
+    pub fn from_ssaoperand(ssa_op: &SsaOperand) -> SsaVar {
+        match ssa_op.kind {
+            SsaOperandKind::Constant(_) => unreachable!(),
+            SsaOperandKind::Variable(var) => var,
+            SsaOperandKind::Deref(var) => var,
+        }
+    }
+
     pub fn as_variable(&self) -> Option<&SsaVar> {
         match self.kind {
             SsaOperandKind::Variable(ref var) => Some(var),
@@ -215,11 +238,7 @@ impl fmt::Display for SsaVarKind {
             SsaVarKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
             SsaVarKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{}]", offset),
             SsaVarKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
-            SsaVarKind::Deref {
-                address,
-                address_version,
-            } => write!(f, "[[{}_{}]]", address, address_version),
-            // No Immediate variant here
+            SsaVarKind::Pointer(addr) => write!(f, "p{}", addr),
         }
     }
 }
@@ -235,6 +254,7 @@ impl fmt::Display for SsaOperand {
         match self.kind {
             SsaOperandKind::Constant(val) => write!(f, "{}", val),
             SsaOperandKind::Variable(ref var) => write!(f, "{}", var), // Uses SsaVar Display
+            SsaOperandKind::Deref(var) => write!(f, "*{}", var),
         }
     }
 }
@@ -357,7 +377,7 @@ impl<'a> SSAConversionState<'a> {
         function_id: FunctionId,
     ) -> SsaVar {
         // This function should only be called for actual variables, not constants.
-        let kind = operand_to_ssa_var_kind(var_operand, current_versions)
+        let kind = SsaVarKind::from_operand_kind(&var_operand.kind)
             .expect("create_next_version called on a non-variable operand");
 
         let version = current_versions.get(&kind).map(|v| v.version).unwrap_or(0) + 1;
@@ -389,8 +409,8 @@ impl<'a> SSAConversionState<'a> {
             },
             _ => {
                 // It's a variable kind
-                let ssa_var_kind = operand_to_ssa_var_kind(op, current_versions)
-                    .expect("Expected variable kind for version lookup");
+                let ssa_var_kind = SsaVarKind::from_operand_kind(&op.kind)
+                    .unwrap_or_else(|| panic!("Expected to find variable kind; got op={op}"));
 
                 // Retrieve the base SsaVar (version and kind)
                 let base_var = current_versions
@@ -668,7 +688,7 @@ impl<'a> SSAConversionState<'a> {
                     debug_marker: None,
                 };
                 // Convert OperandKind to SsaVarKind (this requires current_versions for Deref, use empty for template)
-                let template_kind = operand_to_ssa_var_kind(template_operand, &HashMap::new())
+                let template_kind = SsaVarKind::from_operand_kind(&template_operand.kind)
                     .expect("Phi function created for non-variable kind");
 
                 // Create a template SsaVar for the phi result (version 0 is placeholder)
@@ -807,35 +827,6 @@ impl<'a> SSAConversionState<'a> {
     }
 }
 
-/// Helper function to determine the correct SsaVarKind for a given *variable* operand.
-/// Returns None if the operand is an Immediate.
-///
-/// For Deref operands, it looks up the current version of the memory address.
-fn operand_to_ssa_var_kind(
-    operand: Operand,
-    current_versions: &HashMap<SsaVarKind, SsaVar>,
-) -> Option<SsaVarKind> {
-    match operand.kind {
-        OperandKind::Memory(addr) => Some(SsaVarKind::Memory(addr)),
-        OperandKind::RelativeMemory(offset) => Some(SsaVarKind::RelativeMemory(offset)),
-        OperandKind::Deref(address) => {
-            // Find the SsaVarKind corresponding to the base address operand
-            // We assume the base address is always OperandKind::Memory for now.
-            // TODO: This might need refinement if Deref can use RelativeMemory base.
-            let base_address_kind = SsaVarKind::Memory(address as i128);
-            let address_version = current_versions
-                .get(&base_address_kind)
-                .map(|v| v.version)
-                .unwrap_or(0); // Default to version 0 if base address not found
-            Some(SsaVarKind::Deref {
-                address,         // Store the original address offset
-                address_version, // Store the version of the base address variable
-            })
-        }
-        OperandKind::Immediate(_) => None, // Constants don't have an SsaVarKind
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -871,7 +862,7 @@ mod tests {
         ($addr:expr, $version:expr) => {
             SsaOperand {
                 kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::Memory($addr as i128),
+                    kind: SsaVarKind::Memory($addr),
                     version: $version,
                     origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
                 }),
@@ -885,12 +876,9 @@ mod tests {
         ($addr:expr, $addr_ver: expr, $deref_version:expr) => {
             // Added addr_ver
             SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::Deref {
-                        address: $addr,
-                        address_version: $addr_ver, // Use provided address version
-                    },
-                    version: $deref_version,
+                kind: SsaOperandKind::Deref(SsaVar {
+                    kind: SsaVarKind::Pointer($addr),
+                    version: $addr_ver,
                     origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
                 }),
                 origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
@@ -907,33 +895,19 @@ mod tests {
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
             // Extract the expected SsaVar if the expected operand's kind is Variable
-            let expected_var = match $expected_operand.kind {
-                SsaOperandKind::Variable(v) => v,
-                SsaOperandKind::Constant(_) => {
-                    panic!("Expected SsaOperandKind::Variable for marker assertion, got Constant")
+            match ($expected_operand.kind, found_operand.kind) {
+                (SsaOperandKind::Variable(expected_var), SsaOperandKind::Variable(found_var)) => {
+                    assert_eq!(expected_var.kind, found_var.kind, "For marker '{}': Expected kind: {:?}, Actual kind: {:?}", $marker, expected_var.kind, found_var.kind);
+                    assert_eq!(expected_var.version, found_var.version, "For marker '{}': Expected version: {}, Actual version: {}", $marker, expected_var.version, found_var.version);
+                },
+                (SsaOperandKind::Deref(expected_var), SsaOperandKind::Deref(actual_var)) => {
+                    assert_eq!(expected_var.kind, actual_var.kind, "For marker '{}': Expected kind: {:?}, Actual kind: {:?}", $marker, expected_var.kind, actual_var.kind);
+                    assert_eq!(expected_var.version, actual_var.version, "For marker '{}': Expected version: {}, Actual version: {}", $marker, expected_var.version, actual_var.version);
+                },
+                (a, b) => {
+                    panic!("For marker '{}: Expected SsaOperandKind::Variable or SsaOperandKind::Deref for marker assertion, got {:?} and {:?}", $marker, a, b);
                 }
-            };
-
-            // Assert that the found operand's kind is also Variable
-            let found_var = match found_operand.kind {
-                SsaOperandKind::Variable(v) => v,
-                SsaOperandKind::Constant(_) => panic!(
-                    "Found SsaOperandKind::Constant for marker '{}', expected Variable",
-                    $marker
-                ),
-            };
-
-            // Compare the underlying SsaVar kinds and versions
-            assert_eq!(
-                expected_var.kind, found_var.kind,
-                "For marker '{}': Expected kind: {:?}, Actual kind: {:?}",
-                $marker, expected_var.kind, found_var.kind
-            );
-            assert_eq!(
-                expected_var.version, found_var.version,
-                "For marker '{}': Expected version: {}, Actual version: {}",
-                $marker, expected_var.version, found_var.version
-            );
+            }
         }};
     }
 
@@ -1125,8 +1099,8 @@ mod tests {
         );
 
         // Verify the output operand is a variable and has a non-zero version
-        match output_ssa_operand.kind {
-            SsaOperandKind::Variable(var) => {
+        match output_ssa_operand.as_variable() {
+            Some(var) => {
                 assert!(
                     var.version > 0,
                     "Output variable should have a non-zero version, got: {}",
@@ -1134,8 +1108,11 @@ mod tests {
                 );
                 println!("Output operand version: {}", var.version);
             }
-            SsaOperandKind::Constant(_) => {
-                panic!("Output operand should be a Variable, but found Constant");
+            _ => {
+                panic!(
+                    "Output operand should be a Variable, but found {}",
+                    output_ssa_operand
+                );
             }
         }
         // Note: Phi function expectations remain the same.
@@ -1208,15 +1185,15 @@ mod tests {
         // Simply check that the conversion runs without errors. In the future, we may want to
         // enhance this test to verify other aspects of the conversion.
         if let InstructionKind::Output(ssa_op) = &output_instr.kind {
-            match ssa_op.kind {
-                SsaOperandKind::Variable(var) => {
+            match ssa_op.as_variable() {
+                Some(var) => {
                     assert!(
                         var.version > 0,
                         "Output variable should have a valid version number, got {}",
                         var.version
                     );
                 }
-                SsaOperandKind::Constant(_) => {
+                _ => {
                     panic!("Output operand in function call test should be Variable");
                 }
             }

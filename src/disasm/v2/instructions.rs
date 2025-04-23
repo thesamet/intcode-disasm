@@ -11,15 +11,16 @@ define_id_type!(InstructionId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, PartialOrd, Ord)]
 pub enum OperandKind {
-    Memory(i128),
+    Memory(usize),
     Immediate(i128),
     RelativeMemory(i128),
+    Pointer(usize),
     Deref(usize),
 }
 
 impl OperandKind {
     #[allow(dead_code)]
-    pub fn get_memory(&self) -> Option<i128> {
+    pub fn get_memory(&self) -> Option<usize> {
         match self {
             OperandKind::Memory(value) => Some(*value),
             _ => None,
@@ -27,7 +28,14 @@ impl OperandKind {
     }
 
     #[allow(dead_code)]
-    pub fn get_deref(&self) -> Option<usize> {
+    fn get_pointer(&self) -> Option<usize> {
+        match self {
+            OperandKind::Pointer(offset) => Some(*offset),
+            _ => None,
+        }
+    }
+
+    fn get_deref(&self) -> Option<usize> {
         match self {
             OperandKind::Deref(offset) => Some(*offset),
             _ => None,
@@ -70,7 +78,8 @@ impl fmt::Display for OperandKind {
             OperandKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
             OperandKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{}]", offset),
             OperandKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
-            OperandKind::Deref(offset) => write!(f, "[[{}]]", offset),
+            OperandKind::Pointer(offset) => write!(f, "p{}", offset),
+            OperandKind::Deref(offset) => write!(f, "*p{}", offset),
         }
     }
 }
@@ -378,7 +387,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
                         if input[offset + i + 1] == 0 {
                             Ok(OperandKind::Deref(offset + i + 1))
                         } else {
-                            Ok(OperandKind::Memory(input[offset + i + 1]))
+                            Ok(OperandKind::Memory(input[offset + i + 1] as usize))
                         }
                     }
                     1 => Ok(OperandKind::Immediate(input[offset + i + 1])),

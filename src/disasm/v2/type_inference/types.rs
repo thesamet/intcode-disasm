@@ -11,6 +11,7 @@ use crate::disasm::v2::ssa_form::{SsaOperand, SsaOperandKind, SsaOriginInfo, Ssa
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableKind {
     SsaVar(SsaVar),
+    Deref(SsaVar),
     TypeVar(usize),
     Const {
         value: i128,
@@ -23,6 +24,7 @@ impl VariableKind {
         match self {
             VariableKind::SsaVar(var) => Some(var.origin_info),
             VariableKind::Const { origin_info, .. } => Some(*origin_info),
+            VariableKind::Deref(pointer) => Some(pointer.origin_info),
             VariableKind::TypeVar(_) => None,
         }
     }
@@ -38,6 +40,7 @@ impl VariableKind {
                 origin_info: ssa_op.origin_info,
             },
             SsaOperandKind::Variable(ref var) => Self::from_ssavar(var),
+            SsaOperandKind::Deref(ref var) => Self::Deref(var.clone()),
         }
     }
 
@@ -50,6 +53,7 @@ impl Display for VariableKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VariableKind::SsaVar(var) => write!(f, "{}", var),
+            VariableKind::Deref(var) => write!(f, "*{}", var),
             VariableKind::TypeVar(id) => write!(f, "T{}", id),
             VariableKind::Const { value, .. } => write!(f, "{}", value),
         }
@@ -265,6 +269,7 @@ impl fmt::Display for Type {
             Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{}", t)).join(", ")),
             Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{}", id),
             Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{}", var),
+            Type::Variable(VariableKind::Deref(var)) => write!(f, "*{}", var),
             Type::Variable(VariableKind::Const { value, .. }) => write!(f, "{}", value),
             Type::Truthy => write!(f, "Truthy"),
             Type::Function { args, returns } => {

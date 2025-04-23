@@ -445,7 +445,7 @@ mod tests {
 
     // Helper to create an OperandKind for assertions
     fn mem_kind(addr: i128) -> OperandKind {
-        OperandKind::Memory(addr)
+        OperandKind::Memory(addr as usize)
     }
     fn rel_kind(offset: i128) -> OperandKind {
         OperandKind::RelativeMemory(offset)

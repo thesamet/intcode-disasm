@@ -16,10 +16,17 @@ struct PrettyPrinter<'a> {
 }
 
 impl<'a> PrettyPrinter<'a> {
-    // Format SsaOperand which now has kind and origin_info
     fn format_ssa_operand(&self, ssa_op: &SsaOperand) -> String {
-        match ssa_op.kind {
+        self.format_ssa_operand_kind(&ssa_op.kind)
+    }
+
+    fn format_ssa_operand_kind(&self, op_kind: &SsaOperandKind) -> String {
+        match op_kind {
             SsaOperandKind::Constant(val) => format!("{}", val).green().to_string(),
+            SsaOperandKind::Deref(ptr) => format!(
+                "*{}",
+                self.format_ssa_operand_kind(&SsaOperandKind::Variable(*ptr))
+            ),
             SsaOperandKind::Variable(ref var) => {
                 // Formatting logic for SsaVar
                 let typ = if let Some(type_info) = self.model.get_type_inference_result() {
@@ -37,7 +44,6 @@ impl<'a> PrettyPrinter<'a> {
                     None => "".to_string(),
                 };
 
-                // Debug marker is now in origin_info
                 let debug_marker = var
                     .origin_info
                     .debug_marker
@@ -65,13 +71,11 @@ impl<'a> PrettyPrinter<'a> {
                                 .purple()
                                 .to_string()
                         }
-                        SsaVarKind::Deref {
-                            address,
-                            address_version,
-                        } => format!(
-                            "{}*[{}_{}]_{}{}",
-                            debug_marker, address, address_version, var.version, typ_str
-                        )
+                        SsaVarKind::Pointer(addr) => {
+                            format!("{}p{}_{}{}", debug_marker, addr, var.version, typ_str)
+                                .purple()
+                                .to_string()
+                        }
                         .bright_red()
                         .to_string(),
                     }

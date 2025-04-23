@@ -41,6 +41,9 @@ impl TraceColors {
             VariableKind::SsaVar(var) => {
                 format!("{}{}", function_id, var).color(Self::var()).bold()
             }
+            VariableKind::Deref(var) => {
+                format!("{}*{}", function_id, var).color(Self::var()).bold()
+            }
             VariableKind::Const { value, .. } => format!("{}{}", function_id, value)
                 .color(Self::var())
                 .bold(),
@@ -63,8 +66,6 @@ impl TraceColors {
             _ => format!("{}", typ).color(Self::type_name()).bold(),
         }
     }
-
-
 
     pub fn format_constraint(c: &Constraint) -> String {
         // Format the left side with appropriate color

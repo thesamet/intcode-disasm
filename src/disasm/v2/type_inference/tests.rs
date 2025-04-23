@@ -151,7 +151,7 @@ mod type_inference_tests {
             let var = ti
                 .inferred_types
                 .keys()
-                .filter(|var| var.to_operand().kind.get_memory() == Some(addr as i128))
+                .filter(|var| var.to_operand().kind.get_memory() == Some(addr))
                 .max_by_key(|var| var.version)
                 .unwrap_or_else(|| panic!("No type variable found for address {}", addr));
 
@@ -189,7 +189,7 @@ mod type_inference_tests {
 
     fn memory_operand(offset: usize) -> Operand {
         Operand {
-            kind: OperandKind::Memory(offset as i128),
+            kind: OperandKind::Memory(offset),
             offset: 0,
             debug_marker: None,
         }
@@ -484,7 +484,7 @@ mod type_inference_tests {
         let function_id = FunctionId::from(0);
 
         // Create a variable
-        let var = SsaVar::from_operand(&memory_operand(100), 1, function_id);
+        let var = SsaVar::from_operand(&memory_operand(100), 1, function_id).unwrap();
 
         // Get type variable
         let var_type = Type::from_ssavar(&var);

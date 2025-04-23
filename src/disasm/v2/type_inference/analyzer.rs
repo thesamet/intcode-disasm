@@ -294,32 +294,19 @@ impl TypeInferenceAnalyzer {
             }
         }
         instruction.reads().iter().for_each(|operand| {
-        if let SsaOperandKind::Variable(SsaVar {
-            kind: SsaVarKind::Deref { address, address_version },
-            version: _,
-            origin_info,
-        }) = operand.kind
-            {
-                let mem_ssa_var = SsaOperand {
-                    kind: SsaOperandKind::Variable(SsaVar {
-                        kind: SsaVarKind::Memory(address as i128),
-                        version: address_version,
-                        origin_info,
-                    }),
-                    origin_info,
-                };
+            if let SsaOperandKind::Deref(pointer) = operand.kind {
                 self.add_constraint(
-                    Type::from_ssaoperand(&mem_ssa_var),
+                    Type::from_ssavar(&pointer),
                     Type::pointer(Type::from_ssaoperand(operand)),
                     instruction.id,
-                    origin_info.function_id,
+                    pointer.origin_info.function_id,
                     ConstraintReason::Deref,
                 );
                 self.add_constraint(
                     Type::pointer(Type::from_ssaoperand(operand)),
-                    Type::from_ssaoperand(&mem_ssa_var),
+                    Type::from_ssavar(&pointer),
                     instruction.id,
-                    origin_info.function_id,
+                    pointer.origin_info.function_id,
                     ConstraintReason::Deref,
                 );
             }

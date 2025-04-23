@@ -150,9 +150,8 @@ impl<'a> VariableMerger<'a> {
 
     fn are_same_location(var1: &SsaVar, var2: &SsaVar) -> bool {
         match var1.kind {
-            SsaVarKind::RelativeMemory(_) | SsaVarKind::Memory(_) => var1.kind == var2.kind,
-            SsaVarKind::Deref { address: a1, .. } => {
-                matches!(var2.kind, SsaVarKind::Deref { address: a2, .. } if a1 == a2)
+            SsaVarKind::RelativeMemory(_) | SsaVarKind::Memory(_) | SsaVarKind::Pointer(_) => {
+                var1.kind == var2.kind
             }
         }
     }
@@ -295,21 +294,15 @@ impl<'a> VariableMerger<'a> {
         let name = if globals.values().contains(set_id) {
             let addr = Self::global_memory(self.model, &rep).unwrap();
             format!("Global{}", addr)
-        } else if let Some(pointer) = vars.iter().find_map(|v| v.pointer_from_deref()) {
-            let pointer_cluster_id = self.variable_to_cluster.get(&pointer)?;
-            let cluster = self.clusters.get(pointer_cluster_id)?;
-            if cluster.cluster_name.is_empty() {
-                // we will provide it in a later pass.
-                return None;
-            }
-            format!("*{}", cluster.cluster_name)
+        } else if let Some(_) = vars.iter().find_map(|v| v.kind.get_pointer()) {
+            let n = state.next_pointer;
+            state.next_pointer += 1;
+            format!("ptr{}", n)
         } else if let Some(_) = vars
             .iter()
             .find(|v| matches!(v.kind, SsaVarKind::Memory(_)))
         {
-            let n = state.next_pointer;
-            state.next_pointer += 1;
-            format!("ptr{}", n)
+            unreachable!("Memory variables are either pointers or globals at this point.");
         } else if vars.iter().any(|v| params.values().contains(v)) {
             let n = state.next_input;
             state.next_input += 1;

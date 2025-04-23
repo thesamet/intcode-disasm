@@ -29,7 +29,7 @@ mod tests {
 
     fn memory_operand(offset: usize) -> Operand {
         Operand {
-            kind: OperandKind::Memory(offset as i128),
+            kind: OperandKind::Memory(offset),
             offset: 0,
             debug_marker: None,
         }
@@ -144,7 +144,7 @@ mod tests {
 
         // Create an SSA variable for a function pointer
         let function_id = FunctionId::from(0);
-        let func_ptr_var = SsaVar::from_operand(&memory_operand(200), 1, function_id);
+        let func_ptr_var = SsaVar::from_operand(&memory_operand(200), 1, function_id).unwrap();
 
         // Get type variable
         let func_ptr_type = Type::from_ssavar(&func_ptr_var);

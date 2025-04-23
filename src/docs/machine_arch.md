@@ -108,12 +108,14 @@ Note that there are no substraction and division syntax. The following statement
 The assembly language has limited support for variables through the indirect memory access mechanism (explained in detail in the "Indirect memory access" section). Variables in this context always represent memory addresses, and operations on them are restricted.
 
 To use a variable:
+
 1. It must first be assigned a value (typically a memory address)
 2. It must be dereferenced exactly once in the program using the `*var` syntax
 
 The decompiler infers variable types based on how they're used. For example, if a variable is used in pointer arithmetic operations (like `ptr + 4`), it's inferred to be a pointer.
 
 For pointer arithmetic:
+
 ```
 ptr = 1000          ; ptr now contains address 1000
 [R+1] = *ptr        ; Dereferencing ptr to read from address 1000
@@ -233,7 +235,9 @@ ptr = 375
 [R+1] = *ptr
 ```
 
-The ptr object references the address of the instruction that derefences it. So `ptr=375` writes the value 375 into the memory address where the first argument of the instruction in the second line is located.
+The ptr object references the address of an operand in an instruction that dereferences it. So `ptr=375` writes the value 375 into the memory address where the first argument of the instruction in the second line is located.
+
+Since dereferencing happens within an instruction, a pointer can be dereferenced at most once. For this reason, in SSA, we track the changes in the value of the pointer (changes to the address), but not changes in the value of the pointee. The pointee is treated like a global variable. Note that the syntax implemented by the parser requires dereferencing a pointer. Therefore in the assembly language, a pointer must be dereferenced exactly once.
 
 # Decompilation
 
@@ -307,12 +311,6 @@ next:
 goto [R]
 ```
 
-# Implementation details of low_ir
-
-Phi instruction is used in SSA representation to represent the value of a variable at a given point in the program. It is used to represent the value of a variable that is defined by multiple paths in the program. Phi instructions are used to ensure that the value of a variable is consistent across all paths in the program.
-
-The `Data` instruction is used to represent data values in the program. It is used to represent locations in the program that are constants or variables.
-
 ## Instruction simplification
 
 The code has automatic simplification logic that converts certain patterns to more readable forms:
@@ -326,10 +324,11 @@ The code has automatic simplification logic that converts certain patterns to mo
 - Debug markers bind to operators, not statements. So `'a output [R+1]` is invalid, but `output 'a [R+1]` is valid.
 
 # Some facts about functions
-We can tell what parameters a function takes by looking at the stack reads within the function for [R-n] slots that are not initialized. That means we can only infer the parameter types by looking at the callee itself. To determine the return arguments, we see what is read from [R+n] at the caller:
 
-*   `CalleeInfo` (`return_writes`) only tells us which `SsaVar`s the function `f` *writes* to potential return slots (`[R-n]`, n < 0, adjusted for stack offset) before returning.
-*   `CallSiteInfo` (`return_reads`) tells us which slots the *caller reads* after a specific call returns.
-*   A function `f` might write to `[R-1]` and `[R-2]`, but a particular indirect call might only read `[R-1]`.
+We can tell what parameters a function takes by looking at the stack reads within the function for [R-n] slots that are not initialized. That means we can only conclude how many parameters a function have by by reading the callee. To determine the return arguments, we see what is read from [R+n] at the caller following a function call.
 
-Therefore, we cannot reliably determine a single, definitive `callee_returns_tuple` for function `f` just by looking at `f` itself (`CalleeInfo`). The return type expectation is primarily defined by the *caller* at the point of use.
+- `CalleeInfo` (`return_writes`) only tells us which `SsaVar`s the function `f` _writes_ to potential return slots (`[R-n]`, n < 0, adjusted for stack offset) before returning.
+- `CallSiteInfo` (`return_reads`) tells us which slots the _caller reads_ after a specific call returns.
+- A function `f` might write to `[R-1]` and `[R-2]`, but a particular indirect call might only read `[R-1]`.
+
+Therefore, we cannot reliably determine a single, definitive `callee_returns_tuple` for function `f` just by looking at `f` itself (`CalleeInfo`). The return type expectation is primarily defined by the _caller_ at the point of use.

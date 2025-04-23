@@ -88,7 +88,7 @@ fn parse_memory(input: &str, debug_marker: DebugMarker) -> IResult<&str, Unresol
             // Temporarily create OperandKind, offset is unknown here (placeholder 0)
             UnresolvedArgument::Resolved {
                 op: Operand {
-                    kind: OperandKind::Memory(a),
+                    kind: OperandKind::Memory(a as usize),
                     offset: 0,
                     debug_marker,
                 },
@@ -438,7 +438,7 @@ fn resolve_argument(
             if let Some(&target_arg_addr) = pointers.get(name.as_str()) {
                 // Use get with &str
                 Ok(Operand {
-                    kind: OperandKind::Memory(target_arg_addr as i128),
+                    kind: OperandKind::Memory(target_arg_addr),
                     offset: 0,
                     debug_marker: *debug_marker,
                 })
@@ -614,7 +614,7 @@ pub fn compile(code: &str) -> Vec<i128> {
 
         for (i, operand) in args_to_serialize.iter().enumerate() {
             let mode = match operand.kind {
-                OperandKind::Memory(_) | OperandKind::Deref(_) => 0, // Treat Deref as Memory for mode
+                OperandKind::Memory(_) | OperandKind::Deref(_) | OperandKind::Pointer(_) => 0, // Treat Pointers and Deref as Memory for mode
                 OperandKind::Immediate(_) => 1,
                 OperandKind::RelativeMemory(_) => 2,
             };
@@ -635,7 +635,7 @@ pub fn compile(code: &str) -> Vec<i128> {
 
         for operand in args_to_serialize {
             let value = match operand.kind {
-                OperandKind::Memory(addr) => addr,
+                OperandKind::Memory(addr) | OperandKind::Pointer(addr) => addr as i128,
                 OperandKind::Immediate(val) => val,
                 OperandKind::RelativeMemory(offset) => offset,
                 // Deref(offset) refers to the *location* of the operand, not its value yet.
