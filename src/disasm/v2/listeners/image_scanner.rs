@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::disasm::v2::{
     events::{self, ImageAdded, ModelEventListener},
-    instructions::{Instruction, Opcode, Operand, ParseError},
+    instructions::{Instruction, Opcode, Operand, OperandKind, ParseError},
     model::ProgramModel,
     Span,
 };
@@ -214,8 +214,23 @@ fn scan_from(
     }
     instructions.sort_by_key(|i| i.span.start);
     assert!(returns.len() <= 1);
+    let span = Span::new(start, instructions.last().unwrap().span.end);
+    let mut t = |_: &mut (), op: &Operand| {
+        if let Some(addr) = op.kind.get_memory() {
+            if span.contains_address(addr) {
+                let mut r = op.clone();
+                r.kind = OperandKind::Pointer(addr);
+                return r;
+            }
+        }
+        *op
+    };
+    for instruction in instructions.iter_mut() {
+        *instruction = instruction.map_rw(&mut (), &mut t.clone(), &mut t);
+    }
+
     Ok(RecognizedFunction {
-        span: Span::new(start, instructions.last().unwrap().span.end),
+        span,
         stack_size: stack_size as usize,
         instructions,
         return_span: returns.iter().exactly_one().ok().cloned(),
@@ -390,5 +405,35 @@ mod tests {
 
         assert_eq!(main.function_calls.len(), 1);
         assert_eq!(main.function_calls[0].return_address, 17);
+    }
+
+    #[test]
+    fn test_derefs_and_pointers() {
+        let result = parse_and_scan(
+            r#"
+            ; Main Function (Offset 0)
+            main:
+            R += 5
+            ; Offset 2
+            [R+1] = 111 ; Arg 1
+            ; Offset 6
+            [R+2] = 222 ; Arg 2
+            ; Offset 10
+            [R] = @main_ret ; Set return address
+            ; Offset 14
+            goto @callee ; Call
+            ; Offset 17
+            main_ret:
+            output [R+1] ; Use return value
+            ; Offset 19
+            R -= 5
+            ; Offset 21
+            goto [R]
+
+            ; Callee Function (Offset 24)
+            callee:
+            R += 4 ; Stack frame for locals + args
+        "#,
+        );
     }
 }

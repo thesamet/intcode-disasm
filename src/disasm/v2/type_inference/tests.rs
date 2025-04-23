@@ -535,15 +535,15 @@ mod type_inference_tests {
         let ctx = TestContext::new(
             r#"
         R += 5000
-        [3] = 'a [1] + [2]
-        [3] = [3] * 9    ; forces [3] to be an int
+        [503] = 'a [501] + [502]
+        [503] = [503] * 9    ; forces [3] to be an int
         [R] = @res
         goto @f1
 res:
         halt
 f1:
         R += 4
-        [21] = [R-1]
+        [521] = [R-1]
         if 'b [R-2] goto @f1
         R -= 4
         goto [R]
@@ -551,7 +551,7 @@ f1:
         "#,
         );
         pretty_print_with_types(&ctx.model);
-        ctx.assert_type(1, Type::Int);
+        ctx.assert_type(501, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int);
         ctx.print_traces_for_marker('b');
         assert_marker_type!(ctx, 'b', Type::Truthy);

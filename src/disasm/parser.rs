@@ -438,7 +438,7 @@ fn resolve_argument(
             if let Some(&target_arg_addr) = pointers.get(name.as_str()) {
                 // Use get with &str
                 Ok(Operand {
-                    kind: OperandKind::Memory(target_arg_addr),
+                    kind: OperandKind::Pointer(target_arg_addr),
                     offset: 0,
                     debug_marker: *debug_marker,
                 })
@@ -1113,8 +1113,8 @@ mod tests {
         // So 'a ptr = 350' -> Assign(Mem(13), Imm(350)) -> Target Mem(17) gets marker 'a'.
         if let InstructionKind::Assign(target, source) = &instructions[3].kind {
             assert!(
-                matches!(target.kind, OperandKind::Memory(17)),
-                "Expected target to be Mem(17), got {:?}",
+                matches!(target.kind, OperandKind::Pointer(17)),
+                "Expected target to be Pointer(17), got {:?}",
                 target.kind
             ); // Points to offset of *ptr arg
             assert_eq!(target.debug_marker, Some('a')); // Marker 'a' is on the target operand

@@ -228,6 +228,13 @@ impl SsaOperand {
             _ => None,
         }
     }
+
+    pub fn get_pointer_from_deref(&self) -> Option<&SsaVar> {
+        match self.kind {
+            SsaOperandKind::Deref(ref var) => Some(&var),
+            _ => None,
+        }
+    }
 }
 
 // Display implementations
@@ -407,6 +414,21 @@ impl<'a> SSAConversionState<'a> {
                 kind: SsaOperandKind::Constant(val),
                 origin_info,
             },
+            OperandKind::Deref(addr) => {
+                let ptr = Operand {
+                    kind: OperandKind::Pointer(addr),
+                    offset: op.offset,
+                    debug_marker: op.debug_marker,
+                };
+                SsaOperand {
+                    kind: SsaOperandKind::Deref(
+                        *Self::get_current_value_for(current_versions, ptr, function_id)
+                            .as_variable()
+                            .unwrap(),
+                    ),
+                    origin_info,
+                }
+            }
             _ => {
                 // It's a variable kind
                 let ssa_var_kind = SsaVarKind::from_operand_kind(&op.kind)
@@ -871,6 +893,19 @@ mod tests {
         };
     }
 
+    macro_rules! ssa_var_pointer {
+        ($addr:expr, $version:expr) => {
+            SsaOperand {
+                kind: SsaOperandKind::Variable(SsaVar {
+                    kind: SsaVarKind::Pointer($addr),
+                    version: $version,
+                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+                }),
+                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
+            }
+        };
+    }
+
     // Note: Deref versioning needs careful thought. This macro assumes address_version 0 for simplicity.
     macro_rules! ssa_var_deref {
         ($addr:expr, $addr_ver: expr, $deref_version:expr) => {
@@ -1304,11 +1339,11 @@ mod tests {
         pretty_print_ssa(&ctx.model);
         // Note: Deref versioning is complex. These assertions might need adjustment
         // based on how operand_to_ssa_var_kind handles Deref address versions.
-        assert_marker_at_main!(ctx, 'a', ssa_var_mem!(23, 2)); // ptr = ptr + [R+2]
-        assert_marker_at_main!(ctx, 'b', ssa_var_mem!(23, 3)); // ptr = ptr + [R+3]
-                                                               // 'c' marks the *ptr read. The SsaOperand will be Deref.
-                                                               // The version of the *Deref* itself depends on when *ptr was last written (version 3).
-                                                               // The address_version inside Deref depends on the version of ptr when read (version 3).
+        assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(23, 2)); // ptr = ptr + [R+2]
+        assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(23, 3)); // ptr = ptr + [R+3]
+                                                                   // 'c' marks the *ptr read. The SsaOperand will be Deref.
+                                                                   // The version of the *Deref* itself depends on when *ptr was last written (version 3).
+                                                                   // The address_version inside Deref depends on the version of ptr when read (version 3).
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3, 0)); // Expecting address_version 3, deref version 0
         assert_marker_at_main!(ctx, 'd', ssa_var_rel!(1, 1)); // [R+1] = *ptr
     }

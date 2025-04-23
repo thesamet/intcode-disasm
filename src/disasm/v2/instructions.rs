@@ -35,6 +35,7 @@ impl OperandKind {
         }
     }
 
+    #[allow(dead_code)]
     fn get_deref(&self) -> Option<usize> {
         match self {
             OperandKind::Deref(offset) => Some(*offset),
@@ -525,7 +526,6 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
     }
 
     /// Maps operands based on read/write context using infallible closures.
-    #[cfg(test)]
     pub fn map_rw<C, R, W, S>(
         &self,
         context: &mut C,
