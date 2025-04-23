@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn run_analysis_executes_without_panic() {
         // Define a minimal valid Intcode program (e.g., addition then halt)
-        let sample_image = vec![109, 1, 1, 0, 0, 0, 99];
+        let sample_image = vec![109, 1, 21101, 3, 2, -3, 99];
 
         // Call the function. Since it doesn't return anything or have observable
         // side effects in its current state (doesn't call process_events),

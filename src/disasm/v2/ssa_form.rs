@@ -483,11 +483,9 @@ impl<'a> SSAConversionState<'a> {
         let mut block_phi_functions = Vec::new();
         if let Some(phis) = phi_placements.get(&block_id) {
             for phi_template in phis {
-                // Phi results are always variables, create the next version
-                // Use the SsaVar's to_operand method here
                 let phi_result_var = Self::create_next_version(
                     current_versions,
-                    phi_template.result.to_operand(), // Use the new method
+                    phi_template.result.to_operand(),
                     phi_template.result.origin_info.function_id,
                 );
 
@@ -550,10 +548,10 @@ impl<'a> SSAConversionState<'a> {
         let ssa_block = SsaBlock {
             original_id: block_id,
             phi_functions: block_phi_functions,
-            instructions: block_instructions, // Correct type Vec<SsaInstruction>
-            start_state: HashMap::new(),      // Will be computed later
-            end_state: current_block_end_state, // Correct type HashMap<SsaVarKind, SsaVar>
-            next: ssa_next,                   // Correct type NextKind<SsaOperand>
+            instructions: block_instructions,
+            start_state: HashMap::new(),
+            end_state: current_block_end_state,
+            next: ssa_next,
         };
 
         ssa_blocks.insert(block_id, ssa_block);
@@ -584,11 +582,10 @@ impl<'a> SSAConversionState<'a> {
         // Get data flow result
         let data_flow = self.model.get_data_flow_result().unwrap();
 
-        // For each block with multiple predecessors, check which variables need phi functions
         for &block_id in &function.blocks {
             let block = self.model.get_block(block_id);
 
-            // Only blocks with multiple predecessors need phi functions
+            // Only blocks with multiple predecessors or blocks that are function returns nee d phi functions.
             if block.predecessors.len() <= 1
                 && !block
                     .predecessors
@@ -1487,5 +1484,30 @@ exit:
                 .version, // Access version on the SsaVar
             return_block.phi_functions[0].result.version // Compare with phi result version
         );
+    }
+
+    #[test]
+    fn test_versioning_with_if() {
+        let ctx = TestContext::new(
+            r#"
+            R += 5
+            if [R-1] goto @true
+            ptr = 'a [R-4]
+            output(*ptr)
+            goto @join
+        true:
+            ptr = 'b [R-4]
+            ptr = ptr + 1
+        join:
+            'c [R-4] = 10
+            R -= 5
+            goto [R]
+            "#,
+        );
+        pretty_print_ssa(&ctx.model);
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
+        assert!(false);
     }
 }
