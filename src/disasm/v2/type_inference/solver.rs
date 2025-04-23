@@ -536,17 +536,15 @@ impl<'a> Solver<'a> {
             .state
             .bounds_map
             .iter()
-            .filter_map({
-                |(k, v)| match k {
-                    VariableKind::SsaVar(var) => {
-                        let typ = if specifity(&v.upper) >= specifity(&v.lower) {
-                            &v.upper
-                        } else {
-                            &v.lower
-                        };
-                        Some((*var, typ.clone()))
-                    }
-                    _ => None,
+            .map({
+                |(k, v)| {
+                    let typ = if specifity(&v.upper) >= specifity(&v.lower) {
+                        &v.upper
+                    } else {
+                        &v.lower
+                    };
+
+                    (*k, typ.clone())
                 }
             })
             .collect();

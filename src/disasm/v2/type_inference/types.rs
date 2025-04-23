@@ -47,6 +47,13 @@ impl VariableKind {
     pub fn as_type(self) -> Type {
         Type::Variable(self)
     }
+
+    pub fn as_ssavar(&self) -> Option<&SsaVar> {
+        match self {
+            VariableKind::SsaVar(var) => Some(var),
+            _ => None,
+        }
+    }
 }
 
 impl Display for VariableKind {

@@ -248,7 +248,7 @@ mod tests {
         // Verify types
         let int_result = result.get_type_for_ssavar(int_var.as_variable().unwrap());
         let ptr_result = result.get_type_for_ssavar(ptr_var.as_variable().unwrap());
-        let deref_result = result.get_type_for_ssavar(deref_var.as_variable().unwrap());
+        let deref_result = result.get_type_for_ssaoperand(&deref_var);
 
         assert_eq!(
             *int_result.unwrap(),

@@ -27,6 +27,13 @@ impl SsaVarKind {
         }
     }
 
+    pub fn get_memory(&self) -> Option<usize> {
+        match self {
+            SsaVarKind::Memory(addr) => Some(*addr),
+            _ => None,
+        }
+    }
+
     pub fn get_pointer(&self) -> Option<usize> {
         match self {
             SsaVarKind::Pointer(addr) => Some(*addr),

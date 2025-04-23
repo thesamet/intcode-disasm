@@ -151,11 +151,14 @@ mod type_inference_tests {
             let var = ti
                 .inferred_types
                 .keys()
-                .filter(|var| var.to_operand().kind.get_memory() == Some(addr))
-                .max_by_key(|var| var.version)
+                .filter(|var| {
+                    var.as_ssavar()
+                        .is_some_and(|v| v.kind.get_memory() == Some(addr))
+                })
+                .max_by_key(|var| var.as_ssavar().unwrap().version)
                 .unwrap_or_else(|| panic!("No type variable found for address {}", addr));
 
-            ti.get_type_for_ssavar(var)
+            ti.get_type_for_ssavar(var.as_ssavar().unwrap())
         }
 
         fn assert_type(&self, addr: usize, expected: Type) {
@@ -429,6 +432,9 @@ mod type_inference_tests {
             Some(Type::Pointer(Box::new(Type::Int))),
             "Variable 'b' should be a pointer to an integer"
         );
+        for x in final_result.debug_markers.iter() {
+            println!("{:?}", x);
+        }
         assert_eq!(c_type, Some(Type::Int), "Variable 'c' should be an integer");
     }
 
@@ -519,7 +525,10 @@ mod type_inference_tests {
 
         // Get the final type for the variable
         // Need to associate the SsaVar with its type manually for testing without the full pipeline
-        let final_type = result.inferred_types.get(&var).unwrap();
+        let final_type = result
+            .inferred_types
+            .get(&VariableKind::SsaVar(var))
+            .unwrap();
 
         // The final type should be Char (the more specific type)
         assert_eq!(

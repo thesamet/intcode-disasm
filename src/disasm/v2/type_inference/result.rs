@@ -14,7 +14,7 @@ use colored::Colorize;
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
-    pub inferred_types: HashMap<SsaVar, Type>,
+    pub inferred_types: HashMap<VariableKind, Type>,
     #[allow(dead_code)]
     pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
@@ -24,7 +24,11 @@ pub struct TypeInferenceResult {
 
 impl TypeInferenceResult {
     pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
-        self.inferred_types.get(var)
+        self.inferred_types.get(&VariableKind::SsaVar(*var))
+    }
+
+    pub fn get_type_for_ssaoperand(&self, op: &SsaOperand) -> Option<&Type> {
+        self.inferred_types.get(&VariableKind::from_ssaoperand(op))
     }
 
     pub fn get_function_signature(&self, function_id: &FunctionId) -> Option<&Type> {
@@ -40,10 +44,8 @@ impl TypeInferenceResult {
     /// Get the final type for a debug marker after unification
     #[cfg(test)]
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {
-        self.get_marked_var(marker).and_then(|var| {
-            self.get_type_for_ssavar(var.as_variable().unwrap())
-                .cloned()
-        })
+        let ssa_op = self.get_marked_var(marker)?;
+        self.get_type_for_ssaoperand(ssa_op).cloned()
     }
 
     /// Get traces for a variable plus any related traces through constraints
