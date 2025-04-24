@@ -29,6 +29,7 @@ impl<T: Hash + Eq + Clone> DisjointSet<T> {
         self.element_to_set.get(elem).copied()
     }
 
+    #[cfg(test)]
     pub(crate) fn contains(&self, elem: &T) -> bool {
         self.element_to_set.contains_key(elem)
     }
@@ -52,8 +53,8 @@ impl<T: Hash + Eq + Clone> DisjointSet<T> {
         if id1 == id2 {
             return *id1;
         }
-        let set1 = self.sets.remove(&id1).unwrap();
-        let set2 = self.sets.remove(&id2).unwrap();
+        let set1 = self.sets.remove(id1).unwrap();
+        let set2 = self.sets.remove(id2).unwrap();
         let new_set: HashSet<_> = set1.union(&set2).cloned().collect();
         let new_id = SetId(self.next_id);
         self.next_id += 1;

@@ -5,8 +5,7 @@ use super::{
 };
 
 // Describes how control flow leaves a block
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NextKind<T>
 where
     T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
@@ -48,6 +47,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub fn successors(&self) -> Vec<BlockId> {
         match self {
             NextKind::Follows(id) => vec![*id],
@@ -155,7 +155,6 @@ impl<T> Condition<T> {
         }
     }
 }
-
 
 /// A block in the control flow graph
 #[derive(Debug, Clone, PartialEq, Eq)]

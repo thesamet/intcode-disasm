@@ -30,6 +30,7 @@ impl SsaVarKind {
         }
     }
 
+    #[cfg(test)]
     pub fn get_memory(&self) -> Option<usize> {
         match self {
             SsaVarKind::Memory(addr) => Some(*addr),
@@ -44,11 +45,11 @@ impl SsaVarKind {
         }
     }
 
-    pub fn to_operand_kind(&self) -> OperandKind {
+    pub fn to_operand_kind(self) -> OperandKind {
         match self {
-            SsaVarKind::Memory(addr) => OperandKind::Memory(*addr),
-            SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(*offset),
-            SsaVarKind::Pointer(addr) => OperandKind::Pointer(*addr),
+            SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
+            SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
+            SsaVarKind::Pointer(addr) => OperandKind::Pointer(addr),
         }
     }
 
@@ -88,6 +89,7 @@ pub struct SsaVar {
 }
 
 impl SsaVar {
+    #[cfg(test)]
     pub fn from_operand(
         operand: &Operand,
         version: usize,
@@ -223,24 +225,9 @@ impl SsaOperand {
         }
     }
 
-    pub fn from_ssaoperand(ssa_op: &SsaOperand) -> SsaVar {
-        match ssa_op.kind {
-            SsaOperandKind::Constant(_) => unreachable!(),
-            SsaOperandKind::Variable(var) => var,
-            SsaOperandKind::Deref(var) => var,
-        }
-    }
-
     pub fn as_variable(&self) -> Option<&SsaVar> {
         match self.kind {
             SsaOperandKind::Variable(ref var) => Some(var),
-            _ => None,
-        }
-    }
-
-    pub fn get_pointer_from_deref(&self) -> Option<&SsaVar> {
-        match self.kind {
-            SsaOperandKind::Deref(ref var) => Some(&var),
             _ => None,
         }
     }
@@ -416,7 +403,7 @@ impl<'a> SSAConversionState<'a> {
         op: Operand,
         function_id: FunctionId,
     ) -> SsaOperand {
-        let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker.clone());
+        let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker);
         match op.kind {
             OperandKind::Memory(_) | OperandKind::Pointer(_) | OperandKind::RelativeMemory(_) => {
                 let kind = SsaVarKind::from_operand_kind(&op.kind).unwrap();
@@ -424,7 +411,7 @@ impl<'a> SSAConversionState<'a> {
                     kind: SsaOperandKind::Variable(SsaVar {
                         kind,
                         version: current_versions.get(&kind).map(|v| v.version).unwrap_or(0),
-                        origin_info: origin_info.clone(),
+                        origin_info,
                     }),
                     origin_info,
                 }
@@ -440,7 +427,7 @@ impl<'a> SSAConversionState<'a> {
                         .get(&SsaVarKind::Pointer(addr))
                         .map(|v| v.version)
                         .unwrap_or(0),
-                    origin_info: origin_info.clone(),
+                    origin_info,
                 }),
                 origin_info,
             },
@@ -464,7 +451,7 @@ impl<'a> SSAConversionState<'a> {
         let function = self.model.get_function(function_id);
         let mut initial_versions = HashMap::new();
         let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(
-            &function,
+            function,
             &phi_placements,
             &mut initial_versions,
         );
@@ -473,7 +460,7 @@ impl<'a> SSAConversionState<'a> {
         self.compute_start_end_states(&mut ssa_blocks);
 
         // Step 4: Populate reads and phis.
-        self.populate_reads_and_phis(&function, &mut ssa_blocks);
+        self.populate_reads_and_phis(function, &mut ssa_blocks);
 
         ssa_blocks
     }
@@ -647,7 +634,7 @@ impl<'a> SSAConversionState<'a> {
                     continue;
                 }
 
-                let phi_kind = SsaVarKind::from_operand_kind(&var_kind)
+                let phi_kind = SsaVarKind::from_operand_kind(var_kind)
                     .expect("Phi function created for non-variable kind");
 
                 let phi_result = SsaVar {
@@ -700,17 +687,17 @@ impl<'a> SSAConversionState<'a> {
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
                     // new_in should store SsaVarKind -> SsaVar
                     for (var_kind, var) in pred_end_state {
-                        if !live_in.contains(&var_kind.to_operand_kind()) {
-                            // This var doesn't live from here, so no need to get it into start_state
+                        if !live_in.contains(&var_kind.to_operand_kind())
+                            && !var_kind.get_relative_memory().is_some_and(|r| r < 0)
+                        {
+                            // This var doesn't live from here and not a return value
                             continue;
                         }
-                        if initial_start_states[block_id].contains_key(&var_kind) {
+                        if initial_start_states[block_id].contains_key(var_kind) {
                             // This block's phis write to the key, so both start_state and end_state can't affect from a predecessor
                             continue;
                         }
 
-                        println!("{:?}", ssa_blocks[block_id].phi_functions);
-                        println!("{:?}", initial_start_states[block_id]);
                         // If we get multiple live value through the predecessor, some phi function
                         // should have concsolidated them and then we wouldn't get here (since the
                         // var would be in initial_start_states).
@@ -728,10 +715,20 @@ impl<'a> SSAConversionState<'a> {
                         new_in.insert(*var_kind, *var);
 
                         // means we write to the key, so this can't affect the end_state
-                        if initial_end_states[block_id].contains_key(&var_kind) {
+                        if initial_end_states[block_id].contains_key(var_kind) {
                             continue;
                         }
-                        assert!(!new_out.contains_key(&var_kind));
+                        assert!(
+                            ssa_blocks[block_id]
+                                .end_state
+                                .get(var_kind)
+                                .is_none_or(|x| x == var),
+                            "End state of {} contains {}, but {} provided from predecessor {}",
+                            block_id,
+                            ssa_blocks[block_id].end_state.get(var_kind).unwrap(),
+                            var,
+                            pred.source_block_id()
+                        );
                         new_out.insert(*var_kind, *var);
                     }
                 }
@@ -752,57 +749,6 @@ impl<'a> SSAConversionState<'a> {
         }
     }
 
-    // New function to populate phi inputs
-    fn populate_phis(&self, model: &ProgramModel, ssa_blocks: &mut HashMap<BlockId, SsaBlock>) {
-        // Collect end states before mutable iteration to avoid borrow checker issues
-        let all_end_states: HashMap<_, _> = ssa_blocks
-            .iter()
-            .map(|(id, block)| (*id, block.end_state.clone()))
-            .collect();
-
-        for (&block_id, ssa_block) in ssa_blocks.iter_mut() {
-            let original_block = model.get_block(block_id);
-
-            for pred_kind in &original_block.predecessors {
-                let pred_id = pred_kind.source_block_id();
-                let pred_end_state = all_end_states
-                    .get(&pred_id)
-                    .expect("Predecessor block should exist in collected end states");
-
-                for phi in ssa_block.phi_functions.iter_mut() {
-                    // Phi result is always a variable, so we use its kind directly
-                    let var_kind = phi.result.kind;
-
-                    match pred_kind {
-                        PredecessorKind::FunctionCallReturns(_) => {
-                            // For function returns, the phi result itself represents the value.
-                            // Wrap the SsaVar result in SsaOperand::Variable.
-                            phi.inputs.insert(pred_kind.clone(), phi.result);
-                        }
-                        _ => {
-                            // For other predecessors, find the variable version from the predecessor's end state.
-                            if let Some(&pred_var) = pred_end_state.get(&var_kind) {
-                                // Wrap the found SsaVar in SsaOperand::Variable.
-                                phi.inputs.insert(pred_kind.clone(), pred_var);
-                            } else {
-                                // If the variable wasn't in the predecessor's end state, it means
-                                // the value flowing along this edge is the initial version (version 0).
-                                // Create a version 0 SsaVar.
-                                let version_zero_var = SsaVar {
-                                    kind: var_kind,
-                                    version: 0,
-                                    origin_info: phi.result.origin_info, // Use origin_info from phi result
-                                };
-                                phi.inputs.insert(pred_kind.clone(), version_zero_var);
-                                // log::trace!("Phi input for {:?} in block {} from pred {:?} not found in end state, using version 0.", var_kind, block_id, pred_kind);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn populate_reads_and_phis(
         &self,
         function: &Function,
@@ -810,15 +756,21 @@ impl<'a> SSAConversionState<'a> {
     ) {
         for block_id in &function.blocks {
             let block = self.model.get_block(*block_id);
-            let ssa_block = ssa_blocks.get(&block_id).unwrap();
+            let ssa_block = ssa_blocks.get(block_id).unwrap();
             let mut phi_functions = vec![];
             for phi in &ssa_block.phi_functions {
                 let mut phi_inputs = HashMap::new();
                 for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
-                    if let Some(pred_var) = pred_ssa_block.end_state.get(&phi.result.kind) {
-                        phi_inputs.insert(pred.clone(), pred_var.clone());
+                    if matches!(pred, PredecessorKind::FunctionCallReturns(_))
+                        && phi.result.get_relative_memory().is_some_and(|x| x > 0)
+                    {
+                        // For function returns, the phi result itself represents the value.
+                        // Wrap the SsaVar result in SsaOperand::Variable.
+                        phi_inputs.insert(pred.clone(), phi.result);
+                    } else if let Some(pred_var) = pred_ssa_block.end_state.get(&phi.result.kind) {
+                        phi_inputs.insert(pred.clone(), *pred_var);
                     }
                 }
                 let mut phi = phi.clone();
@@ -832,11 +784,19 @@ impl<'a> SSAConversionState<'a> {
                 instr = instr.map_rw(
                     &mut state,
                     |c, op| Self::get_current_value_for(c, op.to_operand(), function.function_id),
-                    |_, op| op.clone(),
+                    |c, op| {
+                        if matches!(op.kind, SsaOperandKind::Deref(..)) {
+                            // Derefs need to be renewed also for writes, since the pointer they
+                            // deref has an updated version.
+                            Self::get_current_value_for(c, op.to_operand(), function.function_id)
+                        } else {
+                            *op
+                        }
+                    },
                 );
                 if let Some(write) = instr.writes() {
                     if let Some(write) = write.as_variable() {
-                        state.insert(write.kind, write.clone());
+                        state.insert(write.kind, *write);
                     }
                 }
                 instructions.push(instr);
@@ -882,19 +842,6 @@ mod tests {
         };
     }
 
-    macro_rules! ssa_var_mem {
-        ($addr:expr, $version:expr) => {
-            SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::Memory($addr),
-                    version: $version,
-                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-                }),
-                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-            }
-        };
-    }
-
     macro_rules! ssa_var_pointer {
         ($addr:expr, $version:expr) => {
             SsaOperand {
@@ -910,7 +857,7 @@ mod tests {
 
     // Note: Deref versioning needs careful thought. This macro assumes address_version 0 for simplicity.
     macro_rules! ssa_var_deref {
-        ($addr:expr, $addr_ver: expr, $deref_version:expr) => {
+        ($addr:expr, $addr_ver: expr) => {
             // Added addr_ver
             SsaOperand {
                 kind: SsaOperandKind::Deref(SsaVar {
@@ -1346,8 +1293,23 @@ mod tests {
                                                                    // 'c' marks the *ptr read. The SsaOperand will be Deref.
                                                                    // The version of the *Deref* itself depends on when *ptr was last written (version 3).
                                                                    // The address_version inside Deref depends on the version of ptr when read (version 3).
-        assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3, 0)); // Expecting address_version 3, deref version 0
+        assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3)); // Expecting address_version 3, deref version 0
         assert_marker_at_main!(ctx, 'd', ssa_var_rel!(1, 1)); // [R+1] = *ptr
+    }
+
+    #[test]
+    fn test_deref_read_after_write() {
+        let ctx = TestContext::new(
+            r#"
+                R += 5
+                'a ptr = [R-2]
+                'b *ptr = 1
+                halt
+                "#,
+        );
+        pretty_print_ssa(&ctx.model);
+        assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
     }
 
     #[test]
@@ -1444,13 +1406,16 @@ mod tests {
             .functions
             .get(&FunctionId::from(0))
             .unwrap();
-        assert!(f0
-            .blocks
-            .get(&return_block_id)
-            .unwrap()
-            .end_state
-            .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
-            .is_none());
+        assert_eq!(
+            f0.blocks
+                .get(&return_block_id)
+                .unwrap()
+                .end_state
+                .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
+                .expect("End state should contain [R-1]")
+                .version, // Access version on the SsaVar
+            3 // Expecting version 3 based on the control flow
+        );
         assert_eq!(
             f0.blocks
                 .get(&BlockId::from(13))

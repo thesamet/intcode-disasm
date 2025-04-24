@@ -7,8 +7,7 @@ use crate::disasm::v2::{
     instructions::{InstructionId, InstructionKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{
-        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
-        SsaVar, SsaVarKind,
+        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult, SsaVarKind,
     },
     type_inference::visuals::TraceColors,
 };

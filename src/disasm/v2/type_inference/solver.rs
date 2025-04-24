@@ -259,7 +259,7 @@ impl<'a> Solver<'a> {
         debug_markers: HashMap<char, SsaOperand>,
     ) -> Self {
         Self {
-            model: &model,
+            model,
             debug_markers,
             constraints: constraints.to_vec(),
             state: SolverState {

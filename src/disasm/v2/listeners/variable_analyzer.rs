@@ -62,6 +62,7 @@ pub struct VariableMerger<'a> {
     function_state: HashMap<FunctionId, FunctionVarNamingState>,
 }
 
+#[allow(dead_code)]
 struct FunctionVarNamingState {
     next_input: usize,
     next_output: usize,
@@ -104,15 +105,18 @@ impl<'a> VariableMerger<'a> {
             Self::initialize_clusters_from_phi_nodes(&function.blocks, &mut ds);
 
             // Merge clusters based on data flow
-            Self::merge_clusters_based_on_data_flow(&self.model, function, &mut ds, &mut globals);
+            Self::merge_clusters_based_on_data_flow(self.model, function, &mut ds, &mut globals);
         }
         let mut processed_sets = HashSet::new();
         loop {
             let mut changed = false;
-            for (set_id, vars) in ds
-                .iter()
-                .sorted_by_key(|(_, v)| v.iter().min().unwrap().version)
-            {
+            for (set_id, vars) in ds.iter().sorted_by_key(|(_, v)| {
+                v.iter().min_by_key(|v| {
+                    v.get_relative_memory()
+                        .map(|v| (1, v))
+                        .unwrap_or((0, v.origin_info.offset as i128))
+                })
+            }) {
                 if processed_sets.contains(set_id) {
                     continue;
                 }
@@ -130,7 +134,7 @@ impl<'a> VariableMerger<'a> {
                 let id = c.id;
                 self.clusters.insert(c.id, c);
                 self.variable_to_cluster
-                    .extend(vars.iter().map(|v| (v.clone(), id)));
+                    .extend(vars.iter().map(|v| (*v, id)));
                 processed_sets.insert(*set_id);
                 changed = true;
             }
@@ -229,7 +233,7 @@ impl<'a> VariableMerger<'a> {
             }
             if let Some(addr) = Self::global_memory(model, v) {
                 if let Some(set_id) = globals.get(&addr) {
-                    globals.insert(addr, ds.insert_join(&set_id, *v));
+                    globals.insert(addr, ds.insert_join(set_id, *v));
                 } else {
                     globals.insert(addr, ds.insert(*v));
                 }
@@ -264,13 +268,6 @@ impl<'a> VariableMerger<'a> {
         }
     }
 
-    /// Get the cluster for a specific SSA variable
-    pub fn get_cluster_for_variable(&self, variable: &SsaVar) -> Option<&VariableCluster> {
-        self.variable_to_cluster
-            .get(&variable)
-            .and_then(|&cluster_id| self.clusters.get(&cluster_id))
-    }
-
     fn generate_cluster_name(
         &mut self,
         set_id: &SetId,
@@ -290,18 +287,15 @@ impl<'a> VariableMerger<'a> {
         let state = self
             .function_state
             .entry(function_id)
-            .or_insert_with(|| FunctionVarNamingState::new());
+            .or_insert_with(FunctionVarNamingState::new);
         let name = if globals.values().contains(set_id) {
-            let addr = Self::global_memory(self.model, &rep).unwrap();
+            let addr = Self::global_memory(self.model, rep).unwrap();
             format!("Global{}", addr)
-        } else if let Some(_) = vars.iter().find_map(|v| v.kind.get_pointer()) {
+        } else if vars.iter().find_map(|v| v.kind.get_pointer()).is_some() {
             let n = state.next_pointer;
             state.next_pointer += 1;
             format!("ptr{}", n)
-        } else if let Some(_) = vars
-            .iter()
-            .find(|v| matches!(v.kind, SsaVarKind::Memory(_)))
-        {
+        } else if vars.iter().any(|v| matches!(v.kind, SsaVarKind::Memory(_))) {
             unreachable!("Memory variables are either pointers or globals at this point.");
         } else if vars.iter().any(|v| params.values().contains(v)) {
             let n = state.next_input;
@@ -328,8 +322,8 @@ impl<'a> VariableMerger<'a> {
         match v.kind {
             SsaVarKind::Memory(addr) => data_segments
                 .iter()
-                .any(|s| s.contains_address(addr as usize))
-                .then(|| addr as usize),
+                .any(|s| s.contains_address(addr))
+                .then_some(addr),
             _ => None,
         }
     }
@@ -341,7 +335,7 @@ impl<'a> VariableMerger<'a> {
         if Self::global_memory(model, b).is_some() {
             return false;
         }
-        return true;
+        true
     }
 }
 
@@ -361,33 +355,30 @@ impl EventListener<Event, ProgramModel> for VariableAnalyzer {
         _collector: &mut EventCollector<Event>,
     ) -> Result<(), Error> {
         // Only process the event that indicates SSA conversion is complete
-        match event {
-            Event::TypeInferenceComplete(_) => {
-                println!("Creating variable clusters");
-                // Create variable clusters
-                let mut merger = VariableMerger::new(&model);
-                merger.build_clusters()?;
+        if let Event::TypeInferenceComplete(_) = event {
+            println!("Creating variable clusters");
+            // Create variable clusters
+            let mut merger = VariableMerger::new(model);
+            merger.build_clusters()?;
 
-                // Store the result in the model
-                for cluster in merger.clusters.values() {
-                    println!(
-                        "cluster for {}: {:?}:",
-                        cluster.cluster_name, cluster.inferred_type,
-                    );
-                    for var in &cluster.ssa_variables {
-                        print!(
-                            "{}, ",
-                            TraceColors::format_var(&VariableKind::from_ssavar(&var))
-                        )
-                    }
-                    println!();
+            // Store the result in the model
+            for cluster in merger.clusters.values() {
+                println!(
+                    "cluster for {}: {:?}:",
+                    cluster.cluster_name, cluster.inferred_type,
+                );
+                for var in &cluster.ssa_variables {
+                    print!(
+                        "{}, ",
+                        TraceColors::format_var(&VariableKind::from_ssavar(var))
+                    )
                 }
-                model.set_variable_merger_result(VariableMergerResult {
-                    variable_to_cluster: merger.variable_to_cluster,
-                    clusters: merger.clusters,
-                })
+                println!();
             }
-            _ => {}
+            model.set_variable_merger_result(VariableMergerResult {
+                variable_to_cluster: merger.variable_to_cluster,
+                clusters: merger.clusters,
+            })
         }
         Ok(())
     }

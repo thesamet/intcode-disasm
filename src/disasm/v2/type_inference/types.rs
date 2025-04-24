@@ -40,7 +40,7 @@ impl VariableKind {
                 origin_info: ssa_op.origin_info,
             },
             SsaOperandKind::Variable(ref var) => Self::from_ssavar(var),
-            SsaOperandKind::Deref(ref var) => Self::Deref(var.clone()),
+            SsaOperandKind::Deref(ref var) => Self::Deref(*var),
         }
     }
 
@@ -48,6 +48,7 @@ impl VariableKind {
         Type::Variable(self)
     }
 
+    #[cfg(test)]
     pub fn as_ssavar(&self) -> Option<&SsaVar> {
         match self {
             VariableKind::SsaVar(var) => Some(var),

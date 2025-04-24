@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use super::{
     control_flow::PredecessorKind,
-    instructions::{GenericInstruction, Instruction, InstructionKind},
+    instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
     // Import SsaOperand and related types
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind},
@@ -79,24 +79,22 @@ impl<'a> PrettyPrinter<'a> {
                         .bright_red()
                         .to_string(),
                     }
+                } else if var.kind.get_relative_memory() == Some(0) {
+                    "R".to_string().cyan().to_string()
                 } else {
-                    if var.kind.get_relative_memory() == Some(0) {
-                        format!("R").cyan().to_string()
-                    } else {
-                        let clusters = &self.model.get_variable_merger_result().unwrap();
-                        let cluster_id = clusters
-                            .variable_to_cluster
-                            .get(&var)
-                            .unwrap_or_else(|| panic!("No entry found for key {}", var));
-                        let name = &clusters
-                            .clusters
-                            .get(cluster_id)
-                            .unwrap_or_else(|| {
-                                panic!("Missing cluster id {} for key {}", cluster_id, var)
-                            })
-                            .cluster_name;
-                        format!("{}{}", name, typ_str)
-                    }
+                    let clusters = &self.model.get_variable_merger_result().unwrap();
+                    let cluster_id = clusters
+                        .variable_to_cluster
+                        .get(var)
+                        .unwrap_or_else(|| panic!("No entry found for key {}", var));
+                    let name = &clusters
+                        .clusters
+                        .get(cluster_id)
+                        .unwrap_or_else(|| {
+                            panic!("Missing cluster id {} for key {}", cluster_id, var)
+                        })
+                        .cluster_name;
+                    format!("{}{}", name, typ_str)
                 }
             }
         }

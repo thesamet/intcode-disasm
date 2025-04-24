@@ -218,7 +218,7 @@ fn scan_from(
     let mut t = |_: &mut (), op: &Operand| {
         if let Some(addr) = op.kind.get_memory() {
             if span.contains_address(addr) {
-                let mut r = op.clone();
+                let mut r = *op;
                 r.kind = OperandKind::Pointer(addr);
                 return r;
             }
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_derefs_and_pointers() {
-        let result = parse_and_scan(
+        let _ = parse_and_scan(
             r#"
             ; Main Function (Offset 0)
             main:

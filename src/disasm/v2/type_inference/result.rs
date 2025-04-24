@@ -1,3 +1,4 @@
+#[deny(unused_imports)]
 use std::collections::{HashMap, HashSet};
 
 use crate::disasm::v2::{
@@ -19,9 +20,11 @@ pub struct TypeInferenceResult {
     pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
     /// Inferred function signatures, including those discovered through indirect calls
+    #[allow(dead_code)]
     pub function_signatures: HashMap<FunctionId, Type>,
 }
 
+#[allow(dead_code)]
 impl TypeInferenceResult {
     pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
         self.inferred_types.get(&VariableKind::SsaVar(*var))

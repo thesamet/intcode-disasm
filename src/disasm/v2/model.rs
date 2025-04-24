@@ -9,7 +9,7 @@ use super::{
     listeners::{
         function_call_analyzer::FunctionCallAnalysis,
         image_scanner::ImageScannerResult,
-        variable_analyzer::{ClusterId, VariableCluster, VariableMergerResult},
+        variable_analyzer::VariableMergerResult,
     },
     ssa_form::SsaResult,
     type_inference::TypeInferenceResult,
