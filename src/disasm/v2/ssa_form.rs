@@ -9,7 +9,10 @@ use crate::disasm::v2::{
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::instructions::{GenericInstruction, InstructionId};
+use super::{
+    instructions::{GenericInstruction, InstructionId},
+    model::Function,
+};
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -177,7 +180,6 @@ impl SsaOperand {
         }
     }
 
-    #[cfg(test)]
     pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> SsaOperand {
         let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
 
@@ -414,57 +416,34 @@ impl<'a> SSAConversionState<'a> {
         op: Operand,
         function_id: FunctionId,
     ) -> SsaOperand {
-        let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker);
-
+        let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker.clone());
         match op.kind {
-            OperandKind::Immediate(val) => SsaOperand {
-                kind: SsaOperandKind::Constant(val),
-                origin_info,
-            },
-            OperandKind::Deref(addr) => {
-                let ptr = Operand {
-                    kind: OperandKind::Pointer(addr),
-                    offset: op.offset,
-                    debug_marker: op.debug_marker,
-                };
-                SsaOperand {
-                    kind: SsaOperandKind::Deref(
-                        *Self::get_current_value_for(current_versions, ptr, function_id)
-                            .as_variable()
-                            .unwrap(),
-                    ),
-                    origin_info,
-                }
-            }
-            _ => {
-                // It's a variable kind
-                let ssa_var_kind = SsaVarKind::from_operand_kind(&op.kind)
-                    .unwrap_or_else(|| panic!("Expected to find variable kind; got op={op}"));
-
-                // Retrieve the base SsaVar (version and kind)
-                let base_var = current_versions
-                    .get(&ssa_var_kind)
-                    .copied() // Get a copy of the SsaVar
-                    .unwrap_or({
-                        // If not found, it's version 0.
-                        SsaVar {
-                            kind: ssa_var_kind,
-                            version: 0,
-                            origin_info,
-                        }
-                    });
-
-                // Create the final SsaOperand::Variable, always using the origin_info
-                // from the operand `op` being read, but the version from base_var.
+            OperandKind::Memory(_) | OperandKind::Pointer(_) | OperandKind::RelativeMemory(_) => {
+                let kind = SsaVarKind::from_operand_kind(&op.kind).unwrap();
                 SsaOperand {
                     kind: SsaOperandKind::Variable(SsaVar {
-                        kind: base_var.kind,
-                        version: base_var.version,
-                        origin_info,
+                        kind,
+                        version: current_versions.get(&kind).map(|v| v.version).unwrap_or(0),
+                        origin_info: origin_info.clone(),
                     }),
                     origin_info,
                 }
             }
+            OperandKind::Immediate(val) => SsaOperand {
+                kind: SsaOperandKind::Constant(val),
+                origin_info,
+            },
+            OperandKind::Deref(addr) => SsaOperand {
+                kind: SsaOperandKind::Deref(SsaVar {
+                    kind: SsaVarKind::Pointer(addr),
+                    version: current_versions
+                        .get(&SsaVarKind::Pointer(addr))
+                        .map(|v| v.version)
+                        .unwrap_or(0),
+                    origin_info: origin_info.clone(),
+                }),
+                origin_info,
+            },
         }
     }
 
@@ -481,139 +460,97 @@ impl<'a> SSAConversionState<'a> {
         // Step 1: Place phi functions where needed
         let phi_placements = self.place_phi_functions(function_id);
 
-        // Step 2: Perform variable renaming starting from the entry point
+        // Step 2: Populate versions for phi results and targets of writes in top-bottom order.
         let function = self.model.get_function(function_id);
-
-        // Initialize the result map for SSA blocks
-        let mut ssa_blocks: HashMap<BlockId, SsaBlock> = HashMap::new();
-
-        // Initialize a map to track visited blocks (to handle loops)
-        let mut visited_blocks: HashSet<BlockId> = HashSet::new();
-
-        // Create a clone of the current versions map for the initial state
         let mut initial_versions = HashMap::new();
-
-        // Start renaming from the entry block
-        self.rename_block(
-            function.entry_block,
-            &mut ssa_blocks,
+        let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(
+            &function,
             &phi_placements,
-            &mut visited_blocks,
             &mut initial_versions,
-            function_id,
         );
 
-        self.compute_start_end_states(self.model, &mut ssa_blocks);
+        // Step 3: Compute start and end states for all blocks.
+        self.compute_start_end_states(&mut ssa_blocks);
 
-        // Step 5: Populate Phi function inputs using PredecessorKind
-        self.populate_phis(self.model, &mut ssa_blocks);
+        // Step 4: Populate reads and phis.
+        self.populate_reads_and_phis(&function, &mut ssa_blocks);
 
         ssa_blocks
     }
 
-    fn rename_block(
+    fn build_ssa_blocks_with_write_versioning(
         &mut self,
-        block_id: BlockId,
-        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
+        function: &Function,
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-        visited_blocks: &mut HashSet<BlockId>,
         current_versions: &mut HashMap<SsaVarKind, SsaVar>,
-        function_id: FunctionId,
-    ) {
-        if !visited_blocks.insert(block_id) {
-            return;
+    ) -> HashMap<BlockId, SsaBlock> {
+        let mut ssa_blocks = HashMap::new();
+
+        fn map_read(
+            (function_id, _, _): &mut (
+                FunctionId,
+                &mut HashMap<SsaVarKind, SsaVar>,
+                &mut HashMap<SsaVarKind, SsaVar>,
+            ),
+            op: &Operand,
+        ) -> SsaOperand {
+            SsaOperand::from_operand(op, usize::MAX, *function_id)
         }
 
-        let original_block = self.model.get_block(block_id);
-        // End state tracks the latest *versioned* variable state within this block
-        let mut current_block_end_state: HashMap<SsaVarKind, SsaVar> = HashMap::new();
-
-        // Step 1: Process phi functions in this block, create new versions
-        let mut block_phi_functions = Vec::new();
-        if let Some(phis) = phi_placements.get(&block_id) {
-            for phi_template in phis {
-                let phi_result_var = Self::create_next_version(
-                    current_versions,
-                    phi_template.result.to_operand(),
-                    phi_template.result.origin_info.function_id,
-                );
-
-                // Create the actual phi function for this block
-                let new_phi = PhiFunction {
-                    result: phi_result_var, // This is the SsaVar representing the result
-                    inputs: HashMap::new(), // Will be filled later in populate_phis
-                };
-                block_phi_functions.push(new_phi);
-                // Update the block's end state (tracks latest version *within* the block)
-                current_block_end_state.insert(phi_result_var.kind, phi_result_var);
-                // Update the global current versions map passed down the CFG
-                current_versions.insert(phi_result_var.kind, phi_result_var);
+        fn map_write(
+            (function_id, current, end): &mut (
+                FunctionId,
+                &mut HashMap<SsaVarKind, SsaVar>,
+                &mut HashMap<SsaVarKind, SsaVar>,
+            ),
+            op: &Operand,
+        ) -> SsaOperand {
+            let mut ssa_op = SsaOperand::from_operand(op, usize::MAX, *function_id);
+            if ssa_op.as_variable().is_some() {
+                let next_var = SSAConversionState::create_next_version(current, *op, *function_id);
+                end.insert(next_var.kind, next_var); // Capture current_block_end_state mutably
+                ssa_op.kind = SsaOperandKind::Variable(next_var);
             }
+            ssa_op
         }
 
-        // Step 2: Process instructions, creating new versions for write operations
-        let mut block_instructions: Vec<SsaInstruction> = Vec::new(); // Explicit type
-        for instr in &original_block.instructions {
-            // Create the SSA instruction using map_rw_result
-            // Need to handle the Result, using unwrap() assuming infallible for now
-            // map_rw_result expects FnMut(&mut C, &T) -> Result<S, E> for both closures.
-            // We need to adjust map_read slightly or use a different approach if map_rw_result strictly requires mutable context for reads.
-            // Let's try passing current_versions mutably to both, even if map_read doesn't modify it.
-            // Define closures as mutable
-            let mut map_read = |cv: &mut HashMap<SsaVarKind, SsaVar>,
-                                op: &Operand|
-             -> Result<SsaOperand, std::convert::Infallible> {
-                // get_current_value_for takes &HashMap, so this closure doesn't actually mutate cv,
-                // but map_rw_result requires FnMut(&mut C, ...) signature.
-                Ok(Self::get_current_value_for(cv, *op, function_id))
+        for block_id in function.blocks.iter().sorted() {
+            let mut end_state = HashMap::new();
+            let block = self.model.get_block(*block_id);
+            let mut phi_functions = phi_placements.get(block_id).unwrap_or(&Vec::new()).clone();
+            for phi in phi_functions.iter_mut() {
+                phi.result = Self::create_next_version(
+                    current_versions,
+                    phi.result.to_operand(),
+                    function.function_id,
+                );
+                end_state.insert(phi.result.kind, phi.result);
+            }
+            // At this point end_state has the phi functions for this block, so this is the start state
+            // we have without variables flowing from predecessors.
+            let start_state = end_state.clone();
+            let mut instructions = Vec::new();
+            for instr in &block.instructions {
+                let mut state: (_, &mut HashMap<_, _>, &mut HashMap<_, _>) = (
+                    function.function_id,
+                    current_versions as &mut HashMap<_, _>,
+                    &mut end_state,
+                );
+                instructions.push(instr.map_rw(&mut state, map_read, map_write));
+            }
+
+            let ssa_block = SsaBlock {
+                original_id: *block_id,
+                phi_functions,
+                instructions,
+                start_state,
+                end_state,
+                next: NextKind::Halt,
             };
-            let mut map_write = |cv: &mut HashMap<SsaVarKind, SsaVar>,
-                                 op: &Operand|
-             -> Result<SsaOperand, std::convert::Infallible> {
-                if op.kind.is_variable() {
-                    let next_var = Self::create_next_version(cv, *op, function_id);
-                    current_block_end_state.insert(next_var.kind, next_var); // Capture current_block_end_state mutably
-                    Ok(SsaOperand {
-                        kind: SsaOperandKind::Variable(next_var),
-                        origin_info: next_var.origin_info,
-                    })
-                } else {
-                    panic!("Attempted to write to a non-variable operand: {:?}", op);
-                }
-            };
 
-            // Pass mutable references to the mutable closures
-            let ssa_instr: SsaInstruction = instr
-                .map_rw_result(current_versions, &mut map_read, &mut map_write)
-                .unwrap();
-            block_instructions.push(ssa_instr);
+            ssa_blocks.insert(*block_id, ssa_block);
         }
-
-        // Step 3: Create SSA version of the terminator (next) using SsaOperands
-        let ssa_next: NextKind<SsaOperand> = // Explicit type
-            Self::create_ssa_next_kind(current_versions, &original_block.next, function_id);
-
-        // Step 4: Create and register the SSA block
-        let ssa_block = SsaBlock {
-            original_id: block_id,
-            phi_functions: block_phi_functions,
-            instructions: block_instructions,
-            start_state: HashMap::new(),
-            end_state: current_block_end_state,
-            next: ssa_next,
-        };
-
-        ssa_blocks.insert(block_id, ssa_block);
-        for succ_id in original_block.next.successors() {
-            self.rename_block(
-                succ_id,
-                ssa_blocks,
-                phi_placements,
-                visited_blocks,
-                current_versions,
-                function_id,
-            );
-        }
+        ssa_blocks
     }
 
     fn place_phi_functions(
@@ -705,31 +642,23 @@ impl<'a> SSAConversionState<'a> {
             // For each variable with multiple different definitions reaching this block,
             // add a phi function
             for var_kind in vars {
-                // Skip constants and special values
+                // Skip constants and derefs
                 if !var_kind.is_variable() {
                     continue;
                 }
 
-                // Create a template Operand first
-                let template_operand = Operand {
-                    kind: *var_kind,
-                    offset: 0,
-                    debug_marker: None,
-                };
-                // Convert OperandKind to SsaVarKind (this requires current_versions for Deref, use empty for template)
-                let template_kind = SsaVarKind::from_operand_kind(&template_operand.kind)
+                let phi_kind = SsaVarKind::from_operand_kind(&var_kind)
                     .expect("Phi function created for non-variable kind");
 
-                // Create a template SsaVar for the phi result (version 0 is placeholder)
-                let result_template = SsaVar {
-                    kind: template_kind,
+                let phi_result = SsaVar {
+                    kind: phi_kind,
                     version: 0, // Placeholder
                     origin_info: SsaOriginInfo::new(function_id, 0, None),
                 };
 
-                // Create a dummy phi function template
+                // We fill this function later.
                 let phi = PhiFunction {
-                    result: result_template,
+                    result: phi_result,
                     inputs: HashMap::new(), // Will be filled later
                 };
 
@@ -741,61 +670,80 @@ impl<'a> SSAConversionState<'a> {
         phi_placements
     }
 
-    fn compute_start_end_states(
-        &self,
-        model: &ProgramModel,
-        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
-    ) {
+    fn compute_start_end_states(&self, ssa_blocks: &mut HashMap<BlockId, SsaBlock>) {
         let block_ids = ssa_blocks.keys().copied().collect_vec();
 
-        // Collect end states *before* the loop to avoid borrowing issues inside.
-        // This was the cause of the `all_end_states` scope error.
-        let mut all_end_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
+        // These are the variables that are updated by the block. No predecessor
+        // can affect the end staet of these variable.
+        let initial_end_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
             .iter()
             .map(|(id, block)| (*id, block.end_state.clone()))
+            .collect();
+
+        let initial_start_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
+            .iter()
+            .map(|(id, block)| (*id, block.start_state.clone()))
             .collect();
 
         loop {
             let mut changed = false;
             for block_id in &block_ids {
-                let mut new_in = HashMap::new();
-                let control_block = model.get_block(*block_id);
+                let mut new_in = initial_start_states[block_id].clone();
+                let mut new_out = initial_end_states[block_id].clone();
+                let control_block = self.model.get_block(*block_id);
+                let live_in =
+                    &self.model.get_data_flow_result().unwrap().block_results[block_id].live_in;
 
                 for pred in &control_block.predecessors {
                     let pred_id = pred.source_block_id();
                     // Use the collected end_states map here
-                    if let Some(pred_end_state) = all_end_states.get(&pred_id) {
-                        // new_in should store SsaVarKind -> SsaVar
-                        for (var_kind, var) in pred_end_state.iter() {
-                            // Merge states: Keep the highest version if conflict occurs
-                            let entry = new_in.entry(*var_kind).or_insert(*var);
-                            if var.version > entry.version {
-                                *entry = *var;
-                            }
+                    let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
+                    // new_in should store SsaVarKind -> SsaVar
+                    for (var_kind, var) in pred_end_state {
+                        if !live_in.contains(&var_kind.to_operand_kind()) {
+                            // This var doesn't live from here, so no need to get it into start_state
+                            continue;
                         }
+                        if initial_start_states[block_id].contains_key(&var_kind) {
+                            // This block's phis write to the key, so both start_state and end_state can't affect from a predecessor
+                            continue;
+                        }
+
+                        println!("{:?}", ssa_blocks[block_id].phi_functions);
+                        println!("{:?}", initial_start_states[block_id]);
+                        // If we get multiple live value through the predecessor, some phi function
+                        // should have concsolidated them and then we wouldn't get here (since the
+                        // var would be in initial_start_states).
+                        assert!(
+                            ssa_blocks[block_id]
+                                .start_state
+                                .get(var_kind)
+                                .is_none_or(|x| x == var),
+                            "Predecessor {} provided {var} however start_state of {} already had {}",
+                            pred.source_block_id(),
+                            block_id,
+                            ssa_blocks[block_id].start_state.get(var_kind).unwrap()
+                        );
+
+                        new_in.insert(*var_kind, *var);
+
+                        // means we write to the key, so this can't affect the end_state
+                        if initial_end_states[block_id].contains_key(&var_kind) {
+                            continue;
+                        }
+                        assert!(!new_out.contains_key(&var_kind));
+                        new_out.insert(*var_kind, *var);
                     }
                 }
 
-                // Get mutable block reference *after* iterating predecessors
                 let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
-
-                // Update start_state if different
                 if ssa_block.start_state != new_in {
                     changed = true;
                     ssa_block.start_state = new_in; // Move new_in here
                 }
-
-                // Recompute end_state based on the potentially updated start_state and block's own definitions
-                let mut computed_out = ssa_block.start_state.clone();
-                // The block's `end_state` (computed during rename) contains the versions *after* its phis/instructions.
-                // We extend the start state with these, overwriting older versions.
-                computed_out.extend(ssa_block.end_state.iter());
-
-                // Update the global all_end_states map and the block's end_state if different
-                if *all_end_states.get(block_id).unwrap() != computed_out {
+                if ssa_block.end_state != new_out {
                     changed = true;
-                    ssa_block.end_state = computed_out.clone(); // Update block's state
-                    all_end_states.insert(*block_id, computed_out); // Update collected state
+                    ssa_block.end_state = new_out; // Move new_out here
                 }
             }
             if !changed {
@@ -852,6 +800,53 @@ impl<'a> SSAConversionState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    fn populate_reads_and_phis(
+        &self,
+        function: &Function,
+        ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
+    ) {
+        for block_id in &function.blocks {
+            let block = self.model.get_block(*block_id);
+            let ssa_block = ssa_blocks.get(&block_id).unwrap();
+            let mut phi_functions = vec![];
+            for phi in &ssa_block.phi_functions {
+                let mut phi_inputs = HashMap::new();
+                for pred in &block.predecessors {
+                    let pred_id = pred.source_block_id();
+                    let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
+                    if let Some(pred_var) = pred_ssa_block.end_state.get(&phi.result.kind) {
+                        phi_inputs.insert(pred.clone(), pred_var.clone());
+                    }
+                }
+                let mut phi = phi.clone();
+                phi.inputs = phi_inputs;
+                phi_functions.push(phi);
+            }
+            let mut instructions = vec![];
+            let mut state = ssa_block.start_state.clone();
+            for instr in &ssa_block.instructions {
+                let mut instr = instr.clone();
+                instr = instr.map_rw(
+                    &mut state,
+                    |c, op| Self::get_current_value_for(c, op.to_operand(), function.function_id),
+                    |_, op| op.clone(),
+                );
+                if let Some(write) = instr.writes() {
+                    if let Some(write) = write.as_variable() {
+                        state.insert(write.kind, write.clone());
+                    }
+                }
+                instructions.push(instr);
+            }
+            // ssa_block.instructions = instructions;
+            let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
+            ssa_block.phi_functions = phi_functions;
+            ssa_block.instructions = instructions;
+            ssa_block.next =
+                Self::create_ssa_next_kind(&ssa_block.end_state, &block.next, function.function_id);
         }
     }
 }
@@ -1423,13 +1418,14 @@ mod tests {
     fn test_end_state() {
         let ctx = TestContext::new(
             r#"
-        R += 3
-        [R-1] = [R-2] == 0
-        if [R-1] goto @end
+        R += 3                  ; 0
+        [R-1] = [R-2] == 0      ; 2
+        if [R-1] goto @end      ; 6
 
-        [R-1] = [R-2] < 0
+        [R-1] = [R-2] < 0       ; 9
     end:
-        output(48)
+        output(48)              ; 13
+        output([R-1])           ; 15
 
         R += -3
         goto [R]
@@ -1448,15 +1444,22 @@ mod tests {
             .functions
             .get(&FunctionId::from(0))
             .unwrap();
+        assert!(f0
+            .blocks
+            .get(&return_block_id)
+            .unwrap()
+            .end_state
+            .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
+            .is_none());
         assert_eq!(
             f0.blocks
-                .get(&return_block_id)
+                .get(&BlockId::from(13))
                 .unwrap()
                 .end_state
                 .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
                 .expect("End state should contain [R-1]")
                 .version, // Access version on the SsaVar
-            2 // Expecting version 2 based on the control flow
+            3 // Expecting version 3 based on the control flow
         );
     }
 
@@ -1527,6 +1530,5 @@ exit:
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
-        assert!(false);
     }
 }

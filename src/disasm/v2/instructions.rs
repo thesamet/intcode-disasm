@@ -529,8 +529,8 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
     pub fn map_rw<C, R, W, S>(
         &self,
         context: &mut C,
-        map_read: &mut R,
-        map_write: &mut W,
+        mut map_read: R,
+        mut map_write: W,
     ) -> GenericInstruction<S>
     where
         R: FnMut(&mut C, &T) -> S,

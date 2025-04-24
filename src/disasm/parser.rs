@@ -664,7 +664,7 @@ mod tests {
         assert_eq!(v.len(), 1, "Expected single instruction for test");
         // Map Operand -> OperandKind for comparison in tests
         v[0].1
-            .map_rw(&mut (), &mut |_, op| op.kind, &mut |_, op| op.kind)
+            .map_rw(&mut (), |_, op| op.kind, |_, op| op.kind)
             .kind
     }
 
@@ -673,7 +673,7 @@ mod tests {
         let program = parse_program(input).unwrap();
         program
             .into_iter()
-            .map(|(_, instr)| instr.map_rw(&mut (), &mut |_, op| op.kind, &mut |_, op| op.kind))
+            .map(|(_, instr)| instr.map_rw(&mut (), |_, op| op.kind, |_, op| op.kind))
             .map(|i| i.kind)
             .collect_vec()
     }

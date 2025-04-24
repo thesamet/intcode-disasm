@@ -432,9 +432,6 @@ mod type_inference_tests {
             Some(Type::Pointer(Box::new(Type::Int))),
             "Variable 'b' should be a pointer to an integer"
         );
-        for x in final_result.debug_markers.iter() {
-            println!("{:?}", x);
-        }
         assert_eq!(c_type, Some(Type::Int), "Variable 'c' should be an integer");
     }
 
