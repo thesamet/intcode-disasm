@@ -265,7 +265,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             self.translate_statements(ssa_func, context, block, &mut statements);
             match &block.next {
                 NextKind::Follows(next) => {
-                    current = *next;
+                    current = next;
                 }
                 NextKind::Goto(addr) => {
                     /* if Some(*addr) == func.return_block {
@@ -273,7 +273,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         break;
                     } else */
                     if let Some((start, _)) = context.in_loop {
-                        if *addr == start {
+                        if addr == start {
                             statements.push(HlrStatement::Continue);
                             break;
                         } else {
@@ -281,7 +281,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             break;
                         }
                     } else if let Some((_, merge_point)) = context.in_if {
-                        if *addr == merge_point {
+                        if addr == merge_point {
                             break;
                         }
                     }

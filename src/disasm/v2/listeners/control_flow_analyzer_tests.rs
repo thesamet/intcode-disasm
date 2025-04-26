@@ -4,7 +4,6 @@ use crate::disasm::hlr::ast::{
     BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
     HlrVariable,
 };
-use crate::disasm::parser;
 use crate::disasm::v2::dispatching::EventPublisher;
 use crate::disasm::v2::events::Event;
 use crate::disasm::v2::listeners::{
@@ -24,7 +23,7 @@ struct TestContext {
 impl TestContext {
     fn from_assembly(assembly: &str) -> Self {
         // Parse assembly to Intcode
-        let image = crate::disasm::parser::parse_to_image(assembly).unwrap();
+        let image = crate::disasm::parser::parse(assembly).unwrap();
 
         // Set up model and event publisher
         let mut model = ProgramModel::new();
