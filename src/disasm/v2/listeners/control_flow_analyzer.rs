@@ -262,7 +262,9 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     }
                 }
             }
-            let _ = self.translate_statements(ssa_func, context, block, &mut statements);
+            if let Err(e) = self.translate_statements(ssa_func, context, block, &mut statements) {
+                panic!("Error translating statements: {}", e);
+            }
             match &block.next {
                 NextKind::Follows(next) => {
                     current = *next;

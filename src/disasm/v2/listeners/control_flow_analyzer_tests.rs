@@ -597,6 +597,55 @@ mod tests {
         )]);
 
         assert_hlr_programs_equivalent(ctx.get_hlr_program().unwrap(), &expected);
+
+        let ctx = TestContext::from_assembly(assembly);
+
+        // Create expected HLR program
+        let expected = hlr_program(vec![hlr_function(
+            0,
+            vec![
+                hlr_assign(
+                    hlr_var_target("x", Type::Int),
+                    hlr_binop(
+                        BinaryOperator::Add,
+                        hlr_const(1, Type::Int),
+                        hlr_const(2, Type::Int),
+                        Type::Int,
+                    ),
+                ),
+                hlr_if(
+                    hlr_binop(
+                        BinaryOperator::Equals,
+                        hlr_var_expr("x", Type::Int),
+                        hlr_const(3, Type::Int),
+                        Type::Bool,
+                    ),
+                    // Then branch
+                    vec![hlr_assign(
+                        hlr_var_target("z", Type::Int),
+                        hlr_binop(
+                            BinaryOperator::Add,
+                            hlr_const(7, Type::Int),
+                            hlr_const(8, Type::Int),
+                            Type::Int,
+                        ),
+                    )],
+                    // Else branch
+                    vec![hlr_assign(
+                        hlr_var_target("z", Type::Int),
+                        hlr_binop(
+                            BinaryOperator::Add,
+                            hlr_const(5, Type::Int),
+                            hlr_const(6, Type::Int),
+                            Type::Int,
+                        ),
+                    )],
+                ),
+                HlrStatement::Halt,
+            ],
+        )]);
+
+        assert_hlr_programs_equivalent(ctx.get_hlr_program().unwrap(), &expected);
     }
 
     #[test]
@@ -654,7 +703,7 @@ mod tests {
     fn test_input_output() {
         let assembly = r#"
             R += 100           ; Initial R adjustment for main function
-            input([1])         ; x = input()
+            INPUT [1]          ; x = input()
             [2] = [1] + 10     ; y = x + 10
             output([2])        ; output(y)
             halt               ; Halt
