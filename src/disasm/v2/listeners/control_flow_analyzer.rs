@@ -56,7 +56,9 @@ impl ModelEventListener for ControlFlowStructureRecoveryListener {
         let program = ControlFlowStructureAnalyzer::new(model).recover_structures()?;
         println!("{}", pretty_print_program(&program));
 
-        // Call our recovery logic
+        // Store the recovered program
+        self.hlr_program = Some(program.clone());
+        model.set_hlr_program(program);
 
         println!("Control flow structure recovery finished.");
         Ok(())
