@@ -894,7 +894,7 @@ mod tests {
         // Skip this test for now as it requires more complex control flow analysis
         return;
 
-        let ctx = TestContext::from_assembly(assembly);
+        let ctx = TestContext::from_assembly(_assembly);
 
         // Create expected HLR program
         let expected = hlr_program(vec![hlr_function(
