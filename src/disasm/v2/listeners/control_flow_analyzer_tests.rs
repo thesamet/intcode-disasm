@@ -23,7 +23,7 @@ struct TestContext {
 impl TestContext {
     fn from_assembly(assembly: &str) -> Self {
         // Parse assembly to Intcode
-        let image = crate::disasm::parser::parse(assembly).unwrap();
+        let image = crate::disasm::parser::compile(assembly);
 
         // Set up model and event publisher
         let mut model = ProgramModel::new();

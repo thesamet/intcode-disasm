@@ -232,7 +232,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
     fn analyze_block(
         &self,
-        _ssa_func: &SsaFunction,
+        ssa_func: &SsaFunction,
         context: &FunctionAnalysisContext,
         start: BlockId,
         end: Option<BlockId>,
@@ -414,7 +414,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
     fn translate_statements(
         &self,
-        ssa_func: &SsaFunction,
+        _ssa_func: &SsaFunction,
         _context: &FunctionAnalysisContext, // Mark context as potentially unused for now
         block: &SsaBlock,
         statements: &mut Vec<HlrStatement>,
