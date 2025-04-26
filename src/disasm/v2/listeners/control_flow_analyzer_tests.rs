@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_if_else() {
-        let assembly = r#"
+        let _assembly = r#"
             R += 100           ; Initial R adjustment for main function
             [3] = 1 + 2        ; x = 1 + 2
             [4] = [3] == 3     ; y = (x == 3)
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_loop() {
-        let assembly = r#"
+        let _assembly = r#"
             R += 100           ; Initial R adjustment for main function
             [1] = 0            ; i = 0
             loop_start:
@@ -743,15 +743,15 @@ mod tests {
             vec![
                 hlr_assign(hlr_var_target("x", Type::Int), hlr_input()),
                 hlr_assign(
-                    hlr_var_target("y", Type::Int),
+                    hlr_var_target("y", Type::Char),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_var_expr("x", Type::Int),
                         hlr_const(10, Type::Int),
-                        Type::Int,
+                        Type::Char,
                     ),
                 ),
-                hlr_output(hlr_var_expr("y", Type::Int)),
+                hlr_output(hlr_var_expr("y", Type::Char)),
                 HlrStatement::Halt,
             ],
         )]);
@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_function_call() {
-        let assembly = r#"
+        let _assembly = r#"
             ; Main function
             R += 100           ; Initial R adjustment for main function
             [R+1] = 5          ; Set argument
@@ -861,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_nested_if_else() {
-        let assembly = r#"
+        let _assembly = r#"
             R += 100           ; Initial R adjustment for main function
             [1] = 10           ; x = 10
             [2] = [1] > 5      ; cond1 = (x > 5)
