@@ -510,21 +510,21 @@ mod tests {
             0,
             vec![
                 hlr_assign(
-                    hlr_var_target("x", Type::Int),
+                    hlr_var_target("ptr1", Type::Any),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_const(1, Type::Int),
                         hlr_const(2, Type::Int),
-                        Type::Int,
+                        Type::Any,
                     ),
                 ),
                 hlr_assign(
-                    hlr_var_target("y", Type::Int),
+                    hlr_var_target("ptr2", Type::Any),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_const(3, Type::Int),
                         hlr_const(4, Type::Int),
-                        Type::Int,
+                        Type::Any,
                     ),
                 ),
                 HlrStatement::Halt,
@@ -543,9 +543,9 @@ mod tests {
             if [4] goto @then  ; if y then goto label_then
             [7] = 5 + 6        ; z = 5 + 6 (else branch)
             goto @end          ; goto label_end
-            @then:
+            then:
             [7] = 7 + 8        ; z = 7 + 8 (then branch)
-            @end:
+            end:
             halt               ; Halt
         "#;
 
@@ -604,12 +604,12 @@ mod tests {
         let assembly = r#"
             R += 100           ; Initial R adjustment for main function
             [1] = 0            ; i = 0
-            @loop_start:
+            loop_start:
             [2] = [1] < 10     ; cond = (i < 10)
             if ![2] goto @loop_end  ; if !cond goto loop_end
             [1] = [1] + 1      ; i = i + 1
             goto @loop_start   ; goto loop_start
-            @loop_end:
+            loop_end:
             halt               ; Halt
         "#;
 
@@ -701,20 +701,20 @@ mod tests {
             0,
             vec![
                 hlr_assign(
-                    hlr_var_target("ptr", Type::Pointer(Box::new(Type::Int))),
+                    hlr_var_target("ptr1", Type::Pointer(Box::new(Type::Any))),
                     hlr_const(100, Type::Int),
                 ),
                 hlr_assign(
-                    hlr_var_target("x", Type::Int),
-                    hlr_deref(hlr_var_expr("ptr", Type::Pointer(Box::new(Type::Int)))),
+                    hlr_var_target("local1", Type::Any),
+                    hlr_deref(hlr_var_expr("ptr1", Type::Pointer(Box::new(Type::Any)))),
                 ),
                 hlr_assign(
-                    hlr_var_target("y", Type::Int),
+                    hlr_var_target("local2", Type::Any),
                     hlr_binop(
                         BinaryOperator::Add,
-                        hlr_var_expr("x", Type::Int),
+                        hlr_var_expr("local1", Type::Any),
                         hlr_const(5, Type::Int),
-                        Type::Int,
+                        Type::Any,
                     ),
                 ),
                 HlrStatement::Halt,
@@ -732,12 +732,12 @@ mod tests {
             [R+1] = 5          ; Set argument
             [R] = @return_addr ; Set return address
             goto @func         ; Call function
-            @return_addr:
+            return_addr:
             output([R+1])      ; Output return value
             halt
             
             ; Function that doubles its input
-            @func:
+            func:
             R += 3             ; Adjust stack for local variables
             [R-2] = [R-4] * 2  ; result = arg * 2
             [R+1] = [R-2]      ; Set return value
@@ -797,18 +797,18 @@ mod tests {
             [4] = 1            ; result = 1
             goto @end_inner
             
-            @else_inner:
+            else_inner:
             ; Else branch of inner if
             [4] = 2            ; result = 2
             
-            @end_inner:
+            end_inner:
             goto @end_outer
             
-            @else_outer:
+            else_outer:
             ; Else branch of outer if
             [4] = 3            ; result = 3
             
-            @end_outer:
+            end_outer:
             output([4])        ; output(result)
             halt
         "#;
