@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HlrVariable {
     pub name: String,
     pub type_info: Type,
@@ -18,8 +18,15 @@ pub struct HlrFunction {
 }
 
 #[derive(Debug, Clone)]
+pub enum HlrAssignmentTarget {
+    Variable(HlrVariable),
+    Deref(HlrExpression),
+    Ignored,
+}
+
+#[derive(Debug, Clone)]
 pub enum HlrStatement {
-    Assignment(HlrVariable, HlrExpression),
+    Assignment(HlrAssignmentTarget, HlrExpression),
     Loop(Vec<HlrStatement>),
     If(HlrExpression, Vec<HlrStatement>, Vec<HlrStatement>),
     While(HlrExpression, Vec<HlrStatement>),
@@ -36,9 +43,10 @@ pub struct HlrProgram {
     pub globals: Vec<HlrVariable>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HlrExpression {
     Variable(HlrVariable),
+    Deref(Box<HlrExpression>),
     Constant(i128, Type),
     BinaryOp {
         op: BinaryOperator,
@@ -58,6 +66,7 @@ pub enum BinaryOperator {
     Sub,
     LessThan,
     Equals,
+    NotEquals,
     GreaterThan,
 }
 
@@ -126,8 +135,15 @@ where
     F: CodeWriter,
 {
     match stmt {
-        HlrStatement::Assignment(var, expr) => {
-            line!(writer, "{} = {};", var.name, pretty_print_expression(expr));
+        HlrStatement::Assignment(target, expr) => {
+            let target = match target {
+                HlrAssignmentTarget::Variable(var) => format!("{} = ", var.name),
+                HlrAssignmentTarget::Deref(expr) => {
+                    format!("*{} = ", pretty_print_expression(expr))
+                }
+                HlrAssignmentTarget::Ignored => "".to_string(),
+            };
+            line!(writer, "{}{};", target, pretty_print_expression(expr));
         }
         HlrStatement::Loop(body) => {
             line!(writer, "loop {{");
@@ -156,7 +172,7 @@ where
             line!(writer, "return {};", pretty_print_expressions(exprs));
         }
         HlrStatement::Halt => line!(writer, "halt;"),
-        HlrStatement::Output(expr) => line!(writer, "output {};", pretty_print_expression(expr)),
+        HlrStatement::Output(expr) => line!(writer, "output({});", pretty_print_expression(expr)),
     }
 }
 
@@ -196,6 +212,7 @@ fn pretty_print_expression(expr: &HlrExpression) -> String {
             format!("({})", pretty_print_expressions(exprs))
         }
         HlrExpression::Input() => "input()".to_string(),
+        HlrExpression::Deref(var_expr) => format!("*{}", pretty_print_expression(var_expr)),
     }
 }
 
@@ -216,6 +233,7 @@ impl Display for BinaryOperator {
             BinaryOperator::LessThan => write!(f, "<"),
             BinaryOperator::Equals => write!(f, "=="),
             BinaryOperator::GreaterThan => write!(f, ">"),
+            BinaryOperator::NotEquals => write!(f, "!="),
         }
     }
 }

@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
-use petgraph::visit::{
-    GraphBase, IntoNeighbors, IntoNeighborsDirected, VisitMap, Visitable,
-};
+use petgraph::visit::{GraphBase, IntoNeighbors, IntoNeighborsDirected, VisitMap, Visitable};
 use petgraph::Direction;
 
 use crate::disasm::hlr::ast::{
-    pretty_print_program, BinaryOperator, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
-    HlrVariable,
+    pretty_print_program, BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction,
+    HlrProgram, HlrStatement, HlrVariable,
 };
 use crate::disasm::v2::events::ModelEventListener;
+use crate::disasm::v2::instructions::InstructionKind;
+use crate::disasm::v2::ssa_form::{SsaBlock, SsaOperand, SsaOperandKind, SsaVar};
 use crate::disasm::v2::type_inference::types::Type;
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -217,7 +217,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             }
         }
         let context = FunctionAnalysisContext::new(loops, ifs);
-        let stmts = self.analyze_block(ssa_func, &context, func.entry_block, func.return_block);
+        let stmts = self.analyze_block(ssa_func, &context, func.entry_block, None);
         let hlr = HlrFunction {
             original_id: func.function_id,
             name: format!("{}", func.function_id), // Generate a placeholder name
@@ -260,15 +260,17 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     }
                 }
             }
+            self.translate_statements(ssa_func, context, block, &mut statements);
             match &block.next {
                 NextKind::Follows(next) => {
                     current = *next;
                 }
                 NextKind::Goto(addr) => {
-                    if Some(*addr) == func.return_block {
+                    /* if Some(*addr) == func.return_block {
                         statements.push(HlrStatement::Return(vec![]));
                         break;
-                    } else if let Some((start, _)) = context.in_loop {
+                    } else */
+                    if let Some((start, _)) = context.in_loop {
                         if *addr == start {
                             statements.push(HlrStatement::Continue);
                             break;
@@ -285,10 +287,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 }
                 NextKind::FunctionCall(call) => {
                     statements.push(HlrStatement::Assignment(
-                        HlrVariable {
-                            name: "_".to_string(),
-                            type_info: Type::Any,
-                        },
+                        HlrAssignmentTarget::Ignored,
                         HlrExpression::FunctionCall(Box::new(HlrExpression::Variable(
                             HlrVariable {
                                 name: call.function_addr.to_string(),
@@ -318,11 +317,16 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             cond.follows_block,
                             Some(*merge_point),
                         );
+                        let op = if cond.jump_if_true {
+                            BinaryOperator::NotEquals
+                        } else {
+                            BinaryOperator::Equals
+                        };
                         statements.push(HlrStatement::If(
                             HlrExpression::BinaryOp {
-                                op: BinaryOperator::Equals,
-                                left: Box::new(HlrExpression::Constant(17, Type::Int)),
-                                right: Box::new(HlrExpression::Constant(18, Type::Int)),
+                                op,
+                                left: Box::new(self.op_expr(&cond.condition_operand)),
+                                right: Box::new(HlrExpression::Constant(0, Type::Int)),
                                 result_type: Type::Bool,
                             },
                             true_branch,
@@ -362,5 +366,165 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             }
         }
         statements
+    }
+
+    fn var_expr(&self, var: &SsaVar) -> HlrExpression {
+        HlrExpression::Variable(self.hlr_var(var))
+    }
+
+    fn hlr_var(&self, var: &SsaVar) -> HlrVariable {
+        let vars = self.model.get_variable_merger_result().unwrap();
+        let cluster_id = vars.variable_to_cluster[&var];
+        let cluster = &vars.clusters[&cluster_id];
+        let name = cluster.cluster_name.clone();
+        let typ = self.var_type(var);
+        HlrVariable {
+            name,
+            type_info: typ,
+        }
+    }
+
+    fn op_expr(&self, op: &SsaOperand) -> HlrExpression {
+        match op.kind {
+            SsaOperandKind::Constant(val) => HlrExpression::Constant(val, Type::Int),
+            SsaOperandKind::Variable(var) => self.var_expr(&var),
+            SsaOperandKind::Deref(var) => HlrExpression::Deref(Box::new(self.var_expr(&var))),
+        }
+    }
+
+    fn var_type(&self, var: &SsaVar) -> Type {
+        let vars = self.model.get_variable_merger_result().unwrap();
+        let cluster_id = vars.variable_to_cluster[&var];
+        let cluster = &vars.clusters[&cluster_id];
+        cluster.inferred_type.clone()
+    }
+
+    fn op_type(&self, op: &SsaOperand) -> Type {
+        match op.kind {
+            SsaOperandKind::Constant(_) => Type::Int, // Assuming Int
+            SsaOperandKind::Variable(var) => self.var_type(&var),
+            SsaOperandKind::Deref(var) => match self.var_type(&var) {
+                Type::Pointer(pointee) => *pointee,
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    fn translate_statements(
+        &self,
+        ssa_func: &SsaFunction,
+        _context: &FunctionAnalysisContext, // Mark context as potentially unused for now
+        block: &SsaBlock,
+        statements: &mut Vec<HlrStatement>,
+    ) -> Result<(), Error> {
+        // Closure to create an HLR assignment target for a variable
+        let hlr_assignment = |var: &SsaVar| HlrAssignmentTarget::Variable(self.hlr_var(var));
+
+        for instr in &block.instructions {
+            let stmt = match &instr.kind {
+                InstructionKind::Add(a, b, c) => {
+                    let result_var = c.as_variable().ok_or_else(|| {
+                        Error::AnalysisError("Add instruction expects variable target".to_string())
+                    })?;
+                    HlrStatement::Assignment(
+                        hlr_assignment(result_var),
+                        HlrExpression::BinaryOp {
+                            op: BinaryOperator::Add,
+                            left: Box::new(self.op_expr(a)),
+                            right: Box::new(self.op_expr(b)),
+                            result_type: self.var_type(result_var), // Use var_type of the result var
+                        },
+                    )
+                }
+                InstructionKind::Mul(a, b, c) => {
+                    let result_var = c.as_variable().ok_or_else(|| {
+                        Error::AnalysisError("Mul instruction expects variable target".to_string())
+                    })?;
+                    HlrStatement::Assignment(
+                        hlr_assignment(result_var),
+                        HlrExpression::BinaryOp {
+                            op: BinaryOperator::Mul,
+                            left: Box::new(self.op_expr(a)),
+                            right: Box::new(self.op_expr(b)),
+                            result_type: self.var_type(result_var), // Use var_type of the result var
+                        },
+                    )
+                }
+                InstructionKind::Input(a) => {
+                    let result_var = a.as_variable().ok_or_else(|| {
+                        Error::AnalysisError("Input instruction expects variable target".to_string())
+                    })?;
+                    HlrStatement::Assignment(hlr_assignment(result_var), HlrExpression::Input())
+                }
+                InstructionKind::Output(a) => HlrStatement::Output(self.op_expr(a)),
+                InstructionKind::LessThan(a, b, c) => {
+                    let result_var = c.as_variable().ok_or_else(|| Error::AnalysisError(
+                        "LessThan instruction expects variable target".to_string(),
+                    ))?;
+                    HlrStatement::Assignment(
+                        hlr_assignment(result_var),
+                        HlrExpression::BinaryOp {
+                            op: BinaryOperator::LessThan,
+                            left: Box::new(self.op_expr(a)),
+                            right: Box::new(self.op_expr(b)),
+                            result_type: Type::Bool, // Comparison result is Bool
+                        },
+                    )
+                }
+                InstructionKind::Equals(a, b, c) => {
+                    let result_var = c.as_variable().ok_or_else(|| {
+                        Error::AnalysisError("Equals instruction expects variable target".to_string())
+                    })?;
+                    HlrStatement::Assignment(
+                        hlr_assignment(result_var),
+                        HlrExpression::BinaryOp {
+                            op: BinaryOperator::Equals,
+                            left: Box::new(self.op_expr(a)),
+                            right: Box::new(self.op_expr(b)),
+                            result_type: Type::Bool, // Comparison result is Bool
+                        },
+                    )
+                }
+                InstructionKind::Assign(dst, src) => {
+                    let src = self.op_expr(src);
+                    let target = match dst.kind {
+                        SsaOperandKind::Deref(var) => HlrAssignmentTarget::Deref(self.var_expr(&var)),
+                        SsaOperandKind::Constant(_) => {
+                            return Err(Error::AnalysisError(
+                                "Cannot assign into a constant".to_string(),
+                            ))
+                        }
+                        SsaOperandKind::Variable(target_ssa_var) => {
+                            if target_ssa_var.get_relative_memory() == Some(0) {
+                                // We skip adjustments to R, not relevant in this level of abstraction
+                                continue;
+                            }
+                            let hlr_target_var = self.hlr_var(&target_ssa_var);
+                            if let HlrExpression::Variable(src_var) = &src {
+                                if *src_var == hlr_target_var {
+                                    continue;
+                                }
+                            }
+                            HlrAssignmentTarget::Variable(hlr_target_var)
+                        }
+                    };
+                    HlrStatement::Assignment(target, src)
+                }
+                InstructionKind::Data(_) => {
+                   // Data instructions are not executable code, skip.
+                   continue;
+                }
+                 // Control flow instructions are handled by the block's `next` field analysis, skip here.
+                InstructionKind::JumpIfTrue(_, _)
+                | InstructionKind::JumpIfFalse(_, _)
+                | InstructionKind::AdjustRelativeBase(_) // This might become an assignment, needs careful handling
+                | InstructionKind::Goto(_)
+                | InstructionKind::Halt => {
+                    continue; // Handled by block terminators or structure analysis
+                }
+            };
+            statements.push(stmt);
+        }
+        Ok(())
     }
 }
