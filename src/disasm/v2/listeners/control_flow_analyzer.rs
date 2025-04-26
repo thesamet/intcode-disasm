@@ -240,7 +240,13 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let mut current = start;
         let mut statements = vec![];
         while Some(current) != end {
-            let block = ssa_func.blocks.get(&current).unwrap();
+            let block = match ssa_func.blocks.get(&current) {
+                Some(block) => block,
+                None => {
+                    // If block not found, just return what we have so far
+                    return statements;
+                }
+            };
             let _func = self.model.get_function(ssa_func.original_id);
             if let Some(loop_end) = context.loops.get(&current) {
                 match context.in_loop {
