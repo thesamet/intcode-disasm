@@ -4,6 +4,7 @@ use std::hash::Hash;
 use disjoint_set::{DisjointSet, SetId};
 use itertools::Itertools;
 
+use crate::disasm::v2::events::VariableAnalysisComplete;
 use crate::disasm::v2::model::FunctionId;
 use crate::disasm::v2::ssa_form::SsaFunction;
 use crate::disasm::{
@@ -352,7 +353,7 @@ impl EventListener<Event, ProgramModel> for VariableAnalyzer {
         &mut self,
         model: &mut ProgramModel,
         event: Event,
-        _collector: &mut EventCollector<Event>,
+        collector: &mut EventCollector<Event>,
     ) -> Result<(), Error> {
         // Only process the event that indicates SSA conversion is complete
         if let Event::TypeInferenceComplete(_) = event {
@@ -378,7 +379,10 @@ impl EventListener<Event, ProgramModel> for VariableAnalyzer {
             model.set_variable_merger_result(VariableMergerResult {
                 variable_to_cluster: merger.variable_to_cluster,
                 clusters: merger.clusters,
-            })
+            });
+
+            // Emit event to indicate variable analysis is complete
+            collector.publish(VariableAnalysisComplete {});
         }
         Ok(())
     }

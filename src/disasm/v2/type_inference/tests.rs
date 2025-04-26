@@ -14,9 +14,9 @@ mod type_inference_tests {
         events::Event,
         instructions::{InstructionId, Operand, OperandKind},
         listeners::{
-            control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-            function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScanner,
-            ssa_converter::SsaConverter,
+            control_flow_graph_builder::ControlFlowGraphBuilder,
+            data_flow_analyzer::DataFlowAnalyzer, function_call_analyzer::FunctionCallAnalyzer,
+            image_scanner::ImageScanner, ssa_converter::SsaConverter,
         },
         model::{FunctionId, ProgramModel},
         ssa_form::SsaVar,

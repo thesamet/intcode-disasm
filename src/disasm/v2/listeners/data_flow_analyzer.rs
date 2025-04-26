@@ -418,7 +418,7 @@ mod tests {
             // Need to import OperandKind for assertions potentially
             instructions::{InstructionId, OperandKind},
             listeners::{
-                control_flow_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
+                control_flow_graph_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
             },
             model::*, // Bring model types into scope
         },

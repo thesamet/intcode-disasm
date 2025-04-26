@@ -45,4 +45,9 @@ event_types_enum! {Event, ProgramModel,
     pub struct TypeInferenceComplete {
         pub completed: bool,
     }
+    
+    /// Signals that variable analysis and clustering has completed
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct VariableAnalysisComplete {
+    }
 }

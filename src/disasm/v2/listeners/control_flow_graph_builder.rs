@@ -340,7 +340,9 @@ mod tests {
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
-        listeners::{control_flow_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner},
+        listeners::{
+            control_flow_graph_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
+        },
     };
     use itertools::Itertools;
 

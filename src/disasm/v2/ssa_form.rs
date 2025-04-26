@@ -291,6 +291,7 @@ pub struct SsaBlock {
     pub end_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
     /// Control flow information using SSA operands
     pub next: NextKind<SsaOperand>,
+    pub predecessors: Vec<PredecessorKind<SsaOperand>>,
 }
 
 /// Represents a function in SSA form
@@ -533,6 +534,7 @@ impl<'a> SSAConversionState<'a> {
                 start_state,
                 end_state,
                 next: NextKind::Halt,
+                predecessors: vec![],
             };
 
             ssa_blocks.insert(*block_id, ssa_block);
@@ -807,6 +809,46 @@ impl<'a> SSAConversionState<'a> {
             ssa_block.instructions = instructions;
             ssa_block.next =
                 Self::create_ssa_next_kind(&ssa_block.end_state, &block.next, function.function_id);
+            let next = ssa_block.next.clone();
+            match next {
+                NextKind::Follows(target_id) => {
+                    ssa_blocks
+                        .get_mut(&target_id)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::FollowsFrom(*block_id));
+                }
+                NextKind::Goto(target_block_id) => {
+                    ssa_blocks
+                        .get_mut(&target_block_id)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
+                }
+                NextKind::FunctionCall(call) => {
+                    // Add the current block as a predecessor to the function's entry block (this seems incorrect, handled elsewhere?)
+                    // Add the current block (call site) as predecessor to the return block
+                    ssa_blocks
+                        .get_mut(&call.return_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::FunctionCallReturns(call));
+                }
+                NextKind::Condition(cond) => {
+                    // Add current block as predecessor to the target block
+                    ssa_blocks
+                        .get_mut(&cond.target_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::ConditionalJump(cond.clone()));
+                    ssa_blocks
+                        .get_mut(&cond.follows_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::ConditionalFollow(cond));
+                }
+                NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
+            }
         }
     }
 }
@@ -822,8 +864,8 @@ mod tests {
         dispatching::EventPublisher,
         events::Event,
         listeners::{
-            control_flow_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-            image_scanner::ImageScanner,
+            control_flow_graph_builder::ControlFlowGraphBuilder,
+            data_flow_analyzer::DataFlowAnalyzer, image_scanner::ImageScanner,
         },
     };
     use pretty_assertions::assert_eq;

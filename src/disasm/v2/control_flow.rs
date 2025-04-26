@@ -97,6 +97,33 @@ impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> PredecessorKind<T> {
             _ => None,
         }
     }
+
+    pub fn goto_from(&self) -> Option<BlockId> {
+        match self {
+            PredecessorKind::GotoFrom(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    pub fn map<F, S>(&self, map: &mut F) -> PredecessorKind<S>
+    where
+        F: FnMut(T) -> S,
+        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+    {
+        match self {
+            PredecessorKind::FollowsFrom(id) => PredecessorKind::FollowsFrom(*id),
+            PredecessorKind::GotoFrom(id) => PredecessorKind::GotoFrom(*id),
+            PredecessorKind::FunctionCallReturns(call) => {
+                PredecessorKind::FunctionCallReturns(call.map(map))
+            }
+            PredecessorKind::ConditionalFollow(cond) => {
+                PredecessorKind::ConditionalFollow(cond.map(map))
+            }
+            PredecessorKind::ConditionalJump(cond) => {
+                PredecessorKind::ConditionalJump(cond.map(map))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

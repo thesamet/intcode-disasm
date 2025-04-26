@@ -1,4 +1,5 @@
 mod code_printer;
+pub mod hlr;
 pub mod parser;
 pub mod v2;
 
@@ -33,4 +34,6 @@ pub enum Error {
     },
     #[error("Invalid function pointer value {addr} for {}", TraceColors::format_constraint(.constraint))]
     InvalidFunctionPointerValue { addr: usize, constraint: Constraint },
+    #[error("Analysis failed: {0}")]
+    AnalysisError(String),
 }
