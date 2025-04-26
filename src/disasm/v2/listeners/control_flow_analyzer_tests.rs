@@ -11,9 +11,9 @@ use crate::disasm::v2::listeners::{
     control_flow_analyzer::ControlFlowStructureRecoveryListener,
     control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
     function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScanner,
-    ssa_converter::SsaConverter, type_inference::TypeInferenceAnalyzer,
-    variable_analyzer::VariableAnalyzer,
+    ssa_converter::SsaConverter, variable_analyzer::VariableAnalyzer,
 };
+use crate::disasm::v2::type_inference::analyzer::TypeInferenceAnalyzer;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
 use crate::disasm::v2::type_inference::types::Type;
 
@@ -24,7 +24,7 @@ struct TestContext {
 impl TestContext {
     fn from_assembly(assembly: &str) -> Self {
         // Parse assembly to Intcode
-        let image = parser::parse(assembly).unwrap();
+        let image = crate::disasm::parser::parse_to_image(assembly).unwrap();
 
         // Set up model and event publisher
         let mut model = ProgramModel::new();
@@ -131,7 +131,7 @@ fn hlr_var_target(name: &str, typ: Type) -> HlrAssignmentTarget {
 }
 
 fn hlr_deref_target(expr: HlrExpression) -> HlrAssignmentTarget {
-    HlrAssignmentTarget::Deref(Box::new(expr))
+    HlrAssignmentTarget::Deref(expr)
 }
 
 fn hlr_var_expr(name: &str, typ: Type) -> HlrExpression {

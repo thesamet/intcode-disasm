@@ -232,7 +232,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
     fn analyze_block(
         &self,
-        ssa_func: &SsaFunction,
+        _ssa_func: &SsaFunction,
         context: &FunctionAnalysisContext,
         start: BlockId,
         end: Option<BlockId>,
@@ -241,7 +241,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let mut statements = vec![];
         while Some(current) != end {
             let block = ssa_func.blocks.get(&current).unwrap();
-            let func = self.model.get_function(ssa_func.original_id);
+            let _func = self.model.get_function(ssa_func.original_id);
             if let Some(loop_end) = context.loops.get(&current) {
                 match context.in_loop {
                     // We are already processing a loop. Check for unsupported nesting.
