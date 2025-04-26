@@ -725,7 +725,7 @@ mod tests {
                         BinaryOperator::Add,
                         hlr_var_expr("ptr1", Type::Int),
                         hlr_const(10, Type::Int),
-                        Type::Char,
+                        Type::Int,
                     ),
                 ),
                 hlr_output(hlr_var_expr("ptr2", Type::Int)),
