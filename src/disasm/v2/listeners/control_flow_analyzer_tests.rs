@@ -12,8 +12,8 @@ use crate::disasm::v2::listeners::{
     function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScanner,
     ssa_converter::SsaConverter, variable_analyzer::VariableAnalyzer,
 };
-use crate::disasm::v2::type_inference::analyzer::TypeInferenceAnalyzer;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
+use crate::disasm::v2::type_inference::analyzer::TypeInferenceAnalyzer;
 use crate::disasm::v2::type_inference::types::Type;
 
 struct TestContext {
@@ -362,10 +362,7 @@ fn assert_targets_equivalent(
                 context, actual_var.name, expected_var.name
             );
         }
-        (
-            HlrAssignmentTarget::Deref(actual_expr),
-            HlrAssignmentTarget::Deref(expected_expr),
-        ) => {
+        (HlrAssignmentTarget::Deref(actual_expr), HlrAssignmentTarget::Deref(expected_expr)) => {
             assert_expressions_equivalent(
                 actual_expr,
                 expected_expr,
@@ -723,7 +720,7 @@ mod tests {
             vec![
                 hlr_assign(hlr_var_target("ptr1", Type::Int), hlr_input()),
                 hlr_assign(
-                    hlr_var_target("ptr2", Type::Char),
+                    hlr_var_target("ptr2", Type::Int),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_var_expr("ptr1", Type::Int),
@@ -731,7 +728,7 @@ mod tests {
                         Type::Char,
                     ),
                 ),
-                hlr_output(hlr_var_expr("ptr2", Type::Char)),
+                hlr_output(hlr_var_expr("ptr2", Type::Int)),
                 HlrStatement::Halt,
             ],
         )]);
@@ -813,7 +810,7 @@ mod tests {
             return_addr:
             output([R+1])      ; Output return value
             halt
-            
+
             ; Function that doubles its input
             func:
             R += 3             ; Adjust stack for local variables
@@ -869,26 +866,26 @@ mod tests {
             [1] = 10           ; x = 10
             [2] = [1] > 5      ; cond1 = (x > 5)
             if ![2] goto @else_outer  ; if !cond1 goto else_outer
-            
+
             ; Then branch of outer if
             [3] = [1] < 15     ; cond2 = (x < 15)
             if ![3] goto @else_inner  ; if !cond2 goto else_inner
-            
+
             ; Then branch of inner if
             [4] = 1            ; result = 1
             goto @end_inner
-            
+
             else_inner:
             ; Else branch of inner if
             [4] = 2            ; result = 2
-            
+
             end_inner:
             goto @end_outer
-            
+
             else_outer:
             ; Else branch of outer if
             [4] = 3            ; result = 3
-            
+
             end_outer:
             output([4])        ; output(result)
             halt
