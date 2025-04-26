@@ -262,7 +262,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     }
                 }
             }
-            self.translate_statements(ssa_func, context, block, &mut statements);
+            let _ = self.translate_statements(ssa_func, context, block, &mut statements);
             match &block.next {
                 NextKind::Follows(next) => {
                     current = *next;

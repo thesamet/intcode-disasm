@@ -497,10 +497,10 @@ mod tests {
     #[test]
     fn test_simple_sequential() {
         let assembly = r#"
-            R += 100           # Initial R adjustment for main function
-            [3] = 1 + 2        # Add 1+2 -> mem[3]
-            [5] = 3 + 4        # Add 3+4 -> mem[5]
-            halt               # Halt
+            R += 100           ; Initial R adjustment for main function
+            [3] = 1 + 2        ; Add 1+2 -> mem[3]
+            [5] = 3 + 4        ; Add 3+4 -> mem[5]
+            halt               ; Halt
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -537,16 +537,16 @@ mod tests {
     #[test]
     fn test_if_else() {
         let assembly = r#"
-            R += 100           # Initial R adjustment for main function
-            [3] = 1 + 2        # x = 1 + 2
-            [4] = [3] == 3     # y = (x == 3)
-            if [4] goto @then  # if y then goto label_then
-            [7] = 5 + 6        # z = 5 + 6 (else branch)
-            goto @end          # goto label_end
+            R += 100           ; Initial R adjustment for main function
+            [3] = 1 + 2        ; x = 1 + 2
+            [4] = [3] == 3     ; y = (x == 3)
+            if [4] goto @then  ; if y then goto label_then
+            [7] = 5 + 6        ; z = 5 + 6 (else branch)
+            goto @end          ; goto label_end
             @then:
-            [7] = 7 + 8        # z = 7 + 8 (then branch)
+            [7] = 7 + 8        ; z = 7 + 8 (then branch)
             @end:
-            halt               # Halt
+            halt               ; Halt
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -602,15 +602,15 @@ mod tests {
     #[test]
     fn test_loop() {
         let assembly = r#"
-            R += 100           # Initial R adjustment for main function
-            [1] = 0            # i = 0
+            R += 100           ; Initial R adjustment for main function
+            [1] = 0            ; i = 0
             @loop_start:
-            [2] = [1] < 10     # cond = (i < 10)
-            if ![2] goto @loop_end  # if !cond goto loop_end
-            [1] = [1] + 1      # i = i + 1
-            goto @loop_start   # goto loop_start
+            [2] = [1] < 10     ; cond = (i < 10)
+            if ![2] goto @loop_end  ; if !cond goto loop_end
+            [1] = [1] + 1      ; i = i + 1
+            goto @loop_start   ; goto loop_start
             @loop_end:
-            halt               # Halt
+            halt               ; Halt
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -653,11 +653,11 @@ mod tests {
     #[test]
     fn test_input_output() {
         let assembly = r#"
-            R += 100           # Initial R adjustment for main function
-            input([1])         # x = input()
-            [2] = [1] + 10     # y = x + 10
-            output([2])        # output(y)
-            halt               # Halt
+            R += 100           ; Initial R adjustment for main function
+            input([1])         ; x = input()
+            [2] = [1] + 10     ; y = x + 10
+            output([2])        ; output(y)
+            halt               ; Halt
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -687,11 +687,11 @@ mod tests {
     #[test]
     fn test_pointer_operations() {
         let assembly = r#"
-            R += 100           # Initial R adjustment for main function
-            ptr = 100          # ptr = 100 (address)
-            [R+1] = *ptr       # x = *ptr (value at address 100)
-            [R+2] = [R+1] + 5  # y = x + 5
-            halt               # Halt
+            R += 100           ; Initial R adjustment for main function
+            ptr = 100          ; ptr = 100 (address)
+            [R+1] = *ptr       ; x = *ptr (value at address 100)
+            [R+2] = [R+1] + 5  ; y = x + 5
+            halt               ; Halt
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -727,22 +727,22 @@ mod tests {
     #[test]
     fn test_function_call() {
         let assembly = r#"
-            # Main function
-            R += 100           # Initial R adjustment for main function
-            [R+1] = 5          # Set argument
-            [R] = @return_addr # Set return address
-            goto @func         # Call function
+            ; Main function
+            R += 100           ; Initial R adjustment for main function
+            [R+1] = 5          ; Set argument
+            [R] = @return_addr ; Set return address
+            goto @func         ; Call function
             @return_addr:
-            output([R+1])      # Output return value
+            output([R+1])      ; Output return value
             halt
             
-            # Function that doubles its input
+            ; Function that doubles its input
             @func:
-            R += 3             # Adjust stack for local variables
-            [R-2] = [R-4] * 2  # result = arg * 2
-            [R+1] = [R-2]      # Set return value
-            R -= 3             # Restore stack
-            goto [R]           # Return
+            R += 3             ; Adjust stack for local variables
+            [R-2] = [R-4] * 2  ; result = arg * 2
+            [R+1] = [R-2]      ; Set return value
+            R -= 3             ; Restore stack
+            goto [R]           ; Return
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -784,32 +784,32 @@ mod tests {
     #[test]
     fn test_nested_if_else() {
         let assembly = r#"
-            R += 100           # Initial R adjustment for main function
-            [1] = 10           # x = 10
-            [2] = [1] > 5      # cond1 = (x > 5)
-            if ![2] goto @else_outer  # if !cond1 goto else_outer
+            R += 100           ; Initial R adjustment for main function
+            [1] = 10           ; x = 10
+            [2] = [1] > 5      ; cond1 = (x > 5)
+            if ![2] goto @else_outer  ; if !cond1 goto else_outer
             
-            # Then branch of outer if
-            [3] = [1] < 15     # cond2 = (x < 15)
-            if ![3] goto @else_inner  # if !cond2 goto else_inner
+            ; Then branch of outer if
+            [3] = [1] < 15     ; cond2 = (x < 15)
+            if ![3] goto @else_inner  ; if !cond2 goto else_inner
             
-            # Then branch of inner if
-            [4] = 1            # result = 1
+            ; Then branch of inner if
+            [4] = 1            ; result = 1
             goto @end_inner
             
             @else_inner:
-            # Else branch of inner if
-            [4] = 2            # result = 2
+            ; Else branch of inner if
+            [4] = 2            ; result = 2
             
             @end_inner:
             goto @end_outer
             
             @else_outer:
-            # Else branch of outer if
-            [4] = 3            # result = 3
+            ; Else branch of outer if
+            [4] = 3            ; result = 3
             
             @end_outer:
-            output([4])        # output(result)
+            output([4])        ; output(result)
             halt
         "#;
 
