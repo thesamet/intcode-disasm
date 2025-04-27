@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use itertools::Itertools;
+
 use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,6 +32,7 @@ pub enum HlrStatement {
     Loop(Vec<HlrStatement>),
     If(HlrExpression, Vec<HlrStatement>, Vec<HlrStatement>),
     While(HlrExpression, Vec<HlrStatement>),
+    DoWhile(Vec<HlrStatement>, HlrExpression),
     Break,
     Continue,
     Return(Vec<HlrExpression>),
@@ -89,7 +92,7 @@ fn pretty_print_program_impl<F>(writer: &mut F, program: &HlrProgram)
 where
     F: CodeWriter,
 {
-    for func in &program.functions {
+    for func in program.functions.iter().sorted_by_key(|f| f.original_id) {
         pretty_print_function(writer, func);
         writer.line("")
     }
@@ -149,6 +152,11 @@ where
             line!(writer, "loop {{");
             pretty_print_statements(&mut writer.indented(), body);
             line!(writer, "}}");
+        }
+        HlrStatement::DoWhile(body, cond) => {
+            line!(writer, "do {{");
+            pretty_print_statements(&mut writer.indented(), body);
+            line!(writer, "}} while {};", pretty_print_expression(cond));
         }
         HlrStatement::If(cond, true_branch, false_branch) => {
             line!(writer, "if {} {{", pretty_print_expression(cond));

@@ -163,6 +163,10 @@ fn hlr_if(
     HlrStatement::If(condition, then_branch, else_branch)
 }
 
+fn hlr_do_while(body: Vec<HlrStatement>, condition: HlrExpression) -> HlrStatement {
+    HlrStatement::DoWhile(body, condition)
+}
+
 fn hlr_loop(body: Vec<HlrStatement>) -> HlrStatement {
     HlrStatement::Loop(body)
 }
@@ -321,6 +325,23 @@ fn assert_statements_equivalent(
             (HlrStatement::Halt, HlrStatement::Halt) => {}
             (HlrStatement::Continue, HlrStatement::Continue) => {}
             (HlrStatement::Break, HlrStatement::Break) => {}
+            (
+                HlrStatement::DoWhile(actual_body, actual_cond),
+                HlrStatement::DoWhile(expected_body, expected_cond),
+            ) => {
+                assert_statements_equivalent(
+                    actual_body,
+                    expected_body,
+                    mapping,
+                    &format!("{}:DoWhileBody", stmt_context),
+                );
+                assert_expressions_equivalent(
+                    actual_cond,
+                    expected_cond,
+                    mapping,
+                    &format!("{}:DoWhileCond", stmt_context),
+                );
+            }
             _ => {
                 assert!(
                     false,
@@ -660,6 +681,64 @@ mod tests {
                         ),
                     ),
                 ]),
+            ],
+        )]);
+
+        assert_hlr_programs_equivalent(ctx.get_hlr_program().unwrap(), &expected);
+    }
+
+    #[test]
+    fn test_do_while() {
+        let assembly = r#"
+            R += 100
+            [R-1] = 0
+            loop_start:
+            output([R-1])
+            [R-1] = [R-1] + 1
+            [R-2] = [R-1] < 10
+            if [R-2] goto @loop_start
+            output(10)
+            R -= 100
+            goto [R]
+            "#;
+
+        let ctx = TestContext::from_assembly(assembly);
+        pretty_print_ssa(&ctx.model);
+
+        // Create expected HLR program
+        let expected = hlr_program(vec![hlr_function(
+            0,
+            vec![
+                hlr_assign(hlr_var_target("i", Type::Char), hlr_const(0, Type::Int)),
+                hlr_do_while(
+                    vec![
+                        HlrStatement::Output(hlr_var_expr("i", Type::Char)),
+                        hlr_assign(
+                            hlr_var_target("i", Type::Char),
+                            hlr_binop(
+                                BinaryOperator::Add,
+                                hlr_var_expr("i", Type::Char),
+                                hlr_const(1, Type::Int),
+                                Type::Char,
+                            ),
+                        ),
+                        hlr_assign(
+                            hlr_var_target("tmp", Type::Bool),
+                            hlr_binop(
+                                BinaryOperator::LessThan,
+                                hlr_var_expr("i", Type::Char),
+                                hlr_const(10, Type::Int),
+                                Type::Bool,
+                            ),
+                        ),
+                    ],
+                    hlr_binop(
+                        BinaryOperator::NotEquals,
+                        hlr_var_expr("tmp", Type::Bool),
+                        hlr_const(0, Type::Int),
+                        Type::Bool,
+                    ),
+                ),
             ],
         )]);
 

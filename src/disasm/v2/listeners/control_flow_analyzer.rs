@@ -201,7 +201,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let post_doms: Option<petgraph::algo::dominators::Dominators<BlockId>> =
             func.return_block.map(|return_point| {
                 let rev = petgraph::visit::Reversed(ssa_func);
-                
+
                 petgraph::algo::dominators::simple_fast(&rev, return_point)
             });
 
@@ -299,7 +299,29 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         let mut inner_context = context.clone();
                         inner_context.in_loop = Some(*discovered_loop);
                         let loop_body = self.analyze_block(ssa_func, &inner_context, current, None);
-                        statements.push(HlrStatement::Loop(loop_body));
+                        if let NextKind::Condition(cond) =
+                            &ssa_func.blocks[&discovered_loop.jump_back].next
+                        {
+                            assert!(cond.target_block == discovered_loop.header);
+                            let op = if cond.jump_if_true {
+                                BinaryOperator::NotEquals
+                            } else {
+                                BinaryOperator::Equals
+                            };
+                            statements.push(HlrStatement::DoWhile(
+                                loop_body,
+                                HlrExpression::BinaryOp {
+                                    op,
+                                    left: Box::new(self.op_expr(&cond.condition_operand)),
+                                    right: Box::new(HlrExpression::Constant(0, Type::Int)),
+                                    result_type: Type::Bool,
+                                },
+                            ));
+                        } else {
+                            // If the loop jumps to a different block, we need to
+                            // negate the jump condition and make it a break.
+                            statements.push(HlrStatement::Loop(loop_body));
+                        }
                         return statements;
                     }
                 }
@@ -363,24 +385,27 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         result_type: Type::Bool,
                     };
                     if let Some(in_loop) = context.in_loop {
-                        // since it is not the final jump back in the block (caller handled that),
-                        // then only the target can be a jump to the header or exit.
-                        if cond.target_block == in_loop.header {
-                            statements.push(HlrStatement::If(
-                                cond_expr,
-                                vec![HlrStatement::Continue],
-                                vec![],
-                            ));
-                            current = cond.follows_block;
-                            continue;
-                        } else if Some(cond.target_block) == in_loop.exit {
-                            statements.push(HlrStatement::If(
-                                cond_expr,
-                                vec![HlrStatement::Break],
-                                vec![],
-                            ));
-                            current = cond.follows_block;
-                            continue;
+                        if current != in_loop.jump_back {
+                            // since it is not the final jump back in the block (caller handled that),
+                            // then only the target can be a jump to the header or exit.
+                            if cond.target_block == in_loop.header {
+                                statements.push(HlrStatement::If(
+                                    cond_expr,
+                                    vec![HlrStatement::Continue],
+                                    vec![],
+                                ));
+                                current = cond.follows_block;
+                                continue;
+                            } else if Some(cond.target_block) == in_loop.exit {
+                                statements.push(HlrStatement::If(
+                                    cond_expr,
+                                    vec![HlrStatement::Break],
+                                    vec![],
+                                ));
+                                current = cond.follows_block;
+                                continue;
+                            }
+                        } else {
                         }
                     }
                     if Some(cond.target_block) == func.return_block {
