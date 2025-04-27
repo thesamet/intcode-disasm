@@ -489,6 +489,8 @@ fn assert_expressions_equivalent(
 
 #[cfg(test)]
 mod tests {
+    use crate::disasm::v2::pretty_print::pretty_print_ssa;
+
     use super::*;
 
     #[test]
@@ -599,7 +601,6 @@ mod tests {
                         ),
                     )],
                 ),
-                HlrStatement::Return(vec![]),
             ],
         )]);
 
@@ -609,19 +610,20 @@ mod tests {
     #[test]
     fn test_loop() {
         let assembly = r#"
-            R += 100                  ; Initial R adjustment for main function
-            [R-1] = 0                 ; i = 0
+            R += 100                  ;  0: Initial R adjustment for main function
+            [R-1] = 0                 ;  2: i = 0
             loop_start:
-            [R-2] = [R-1] < 10        ; cond = (i < 10)
-            if ![R-2] goto @loop_end  ; if cond == 0 goto loop_end
-            [R-1] = [R-1] + 1         ; i = i + 1
-            goto @loop_start   ; goto loop_start
+            [R-2] = [R-1] < 10        ;  6: cond = (i < 10)
+            if ![R-2] goto @loop_end  ; 10: if cond == 0 goto loop_end
+            [R-1] = [R-1] + 1         ; 13: i = i + 1
+            goto @loop_start          ; 17: goto loop_start
             loop_end:
-            R -= 100
-            goto [R]
+            R -= 100                  ; 20
+            goto [R]                  ; 21
             "#;
 
         let ctx = TestContext::from_assembly(assembly);
+        pretty_print_ssa(&ctx.model);
 
         // Create expected HLR program
         let expected = hlr_program(vec![hlr_function(
@@ -658,7 +660,6 @@ mod tests {
                         ),
                     ),
                 ]),
-                hlr_return(vec![]),
             ],
         )]);
 
@@ -800,18 +801,15 @@ mod tests {
             ),
             hlr_function(
                 16,
-                vec![
-                    hlr_assign(
-                        hlr_var_target("arg1", Type::Char),
-                        hlr_binop(
-                            BinaryOperator::Add,
-                            hlr_var_expr("arg1", Type::Char),
-                            hlr_const(5, Type::Int),
-                            Type::Char,
-                        ),
+                vec![hlr_assign(
+                    hlr_var_target("arg1", Type::Char),
+                    hlr_binop(
+                        BinaryOperator::Add,
+                        hlr_var_expr("arg1", Type::Char),
+                        hlr_const(5, Type::Int),
+                        Type::Char,
                     ),
-                    hlr_return(vec![]), // vec![hlr_var_expr("temp", Type::Int)]),
-                ],
+                )],
             ),
         ]);
 

@@ -15,10 +15,7 @@ use crate::disasm::{
         instructions::{GenericInstruction, InstructionKind},
         model::{BlockId, ProgramModel},
         ssa_form::{SsaBlock, SsaOperand, SsaVar, SsaVarKind},
-        type_inference::{
-            types::{Type, VariableKind},
-            visuals::TraceColors,
-        },
+        type_inference::types::Type,
     },
     Error,
 };
@@ -313,7 +310,7 @@ impl<'a> VariableMerger<'a> {
     fn infer_type(&self, vars: &HashSet<SsaVar>) -> Type {
         let ti = self.model.get_type_inference_result().unwrap();
         let rep = vars.iter().max().unwrap();
-        ti.get_type_for_ssavar(&rep).unwrap().clone()
+        ti.get_type_for_ssavar(rep).unwrap().clone()
     }
 
     fn global_memory(model: &ProgramModel, v: &SsaVar) -> Option<usize> {
@@ -355,25 +352,10 @@ impl EventListener<Event, ProgramModel> for VariableAnalyzer {
     ) -> Result<(), Error> {
         // Only process the event that indicates SSA conversion is complete
         if let Event::TypeInferenceComplete(_) = event {
-            println!("Creating variable clusters");
             // Create variable clusters
             let mut merger = VariableMerger::new(model);
             merger.build_clusters()?;
 
-            // Store the result in the model
-            for cluster in merger.clusters.values() {
-                println!(
-                    "cluster for {}: {:?}:",
-                    cluster.cluster_name, cluster.inferred_type,
-                );
-                for var in &cluster.ssa_variables {
-                    print!(
-                        "{}, ",
-                        TraceColors::format_var(&VariableKind::from_ssavar(var))
-                    )
-                }
-                println!();
-            }
             model.set_variable_merger_result(VariableMergerResult {
                 variable_to_cluster: merger.variable_to_cluster,
                 clusters: merger.clusters,

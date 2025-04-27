@@ -1,7 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
-use petgraph::visit::{GraphBase, IntoNeighbors, IntoNeighborsDirected, VisitMap, Visitable};
+use log::trace;
+use petgraph::visit::{
+    depth_first_search, Control, GraphBase, IntoNeighbors, IntoNeighborsDirected, VisitMap,
+    Visitable, Walker,
+};
 use petgraph::Direction;
 
 use crate::disasm::hlr::ast::{
@@ -71,14 +75,14 @@ struct ControlFlowStructureAnalyzer<'a> {
 
 #[derive(Debug, Clone)]
 struct FunctionAnalysisContext {
-    loops: HashMap<BlockId, BlockId>,
+    loops: HashMap<BlockId, LoopStructure>,
     ifs: HashMap<BlockId, BlockId>,
-    in_loop: Option<(BlockId, BlockId)>,
+    in_loop: Option<LoopStructure>,
     in_if: Option<(BlockId, BlockId)>,
 }
 
 impl FunctionAnalysisContext {
-    fn new(loops: HashMap<BlockId, BlockId>, ifs: HashMap<BlockId, BlockId>) -> Self {
+    fn new(loops: HashMap<BlockId, LoopStructure>, ifs: HashMap<BlockId, BlockId>) -> Self {
         Self {
             loops,
             ifs,
@@ -141,14 +145,22 @@ impl Visitable for &SsaFunction {
     type Map = SsaVisitMap;
 
     #[doc = r" Create a new visitor map"]
-    fn visit_map(self: &Self) -> Self::Map {
+    fn visit_map(&self) -> Self::Map {
         SsaVisitMap(HashSet::new())
     }
 
     #[doc = r" Reset the visitor map (and resize to new size of graph if needed)"]
-    fn reset_map(self: &Self, map: &mut Self::Map) {
+    fn reset_map(&self, map: &mut Self::Map) {
         map.0.clear();
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoopStructure {
+    header: BlockId,    // loop entry point. 'continue' jumps here.
+    jump_back: BlockId, // the furthest block that has a jump back to the header.
+    exit: Option<BlockId>, // a block outside the loop that we possible jump to from the loop.
+                        // if None, the loop is infinite. If not, 'break' jumps here.
 }
 
 impl<'a> ControlFlowStructureAnalyzer<'a> {
@@ -166,7 +178,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let globals = Vec::new();
 
         // Process each function in the program
-        for (_, ssa_func) in &ssa_result.functions {
+        for ssa_func in ssa_result.functions.values() {
             // Get parameter types from function call analysis (if available)
             let hlr_function = self.analyze_function(ssa_func)?;
 
@@ -189,12 +201,12 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let post_doms: Option<petgraph::algo::dominators::Dominators<BlockId>> =
             func.return_block.map(|return_point| {
                 let rev = petgraph::visit::Reversed(ssa_func);
-                let post_doms = petgraph::algo::dominators::simple_fast(&rev, return_point);
-                post_doms
+                
+                petgraph::algo::dominators::simple_fast(&rev, return_point)
             });
 
         // Maps loop headers to the loop jump back
-        let mut loops: HashMap<BlockId, BlockId> = HashMap::new();
+        let mut loops: HashMap<BlockId, LoopStructure> = HashMap::new();
 
         // Maps if blocks to the merge point
         let mut ifs: HashMap<BlockId, BlockId> = HashMap::new();
@@ -203,9 +215,13 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             for potential_header in ssa_func.neighbors(*node) {
                 if doms.dominators(*node).unwrap().contains(&potential_header) {
                     has_back_edge = true;
-                    let current_loop = loops.entry(potential_header).or_insert(*node);
-                    if node > current_loop {
-                        *current_loop = *node;
+                    let current_loop = loops.entry(potential_header).or_insert(LoopStructure {
+                        header: potential_header,
+                        jump_back: *node,
+                        exit: None,
+                    });
+                    if *node > current_loop.jump_back {
+                        current_loop.jump_back = *node;
                     }
                 }
             }
@@ -217,6 +233,31 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     .unwrap_or_else(|| panic!("No immediate dominator for node {}", node));
                 ifs.insert(*node, merge_point);
             }
+        }
+        for (_, lp) in loops.iter_mut() {
+            let mut jump_outs = HashSet::new();
+            depth_first_search(ssa_func, Some(lp.header), |u| match u {
+                petgraph::visit::DfsEvent::Discover(v, _) if v > lp.jump_back => {
+                    Control::<()>::Prune
+                }
+                _ => Control::Continue,
+            });
+            let mut dfs = petgraph::visit::Dfs::new(&ssa_func, lp.header);
+            while let Some(u) = dfs.next(&ssa_func) {
+                for v in ssa_func.neighbors(u) {
+                    if v > lp.jump_back {
+                        println!("Adding jump out from {} to {}", u, v);
+                        jump_outs.insert(v);
+                    }
+                }
+            }
+            assert!(jump_outs.len() <= 2,);
+            if jump_outs.len() == 2 {
+                let function = self.model.get_function(ssa_func.original_id);
+                assert!(jump_outs.remove(&function.return_block.unwrap()));
+            }
+            lp.exit = jump_outs.iter().exactly_one().ok().cloned();
+            trace!("Function_i={} has loop: {:?}", func.function_id, lp);
         }
         let context = FunctionAnalysisContext::new(loops, ifs);
         let stmts = self.analyze_block(ssa_func, &context, func.entry_block, None);
@@ -239,20 +280,16 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
     ) -> Vec<HlrStatement> {
         let mut current = start;
         let mut statements = vec![];
+        let func = self.model.get_function(ssa_func.original_id);
         while Some(current) != end {
-            let block = match ssa_func.blocks.get(&current) {
-                Some(block) => block,
-                None => {
-                    // If block not found, just return what we have so far
-                    return statements;
-                }
-            };
-            let _func = self.model.get_function(ssa_func.original_id);
-            if let Some(loop_end) = context.loops.get(&current) {
+            println!("current={}", current);
+            let block = &ssa_func.blocks[&current];
+            if let Some(discovered_loop) = context.loops.get(&current) {
                 match context.in_loop {
-                    // We are already processing a loop. Check for unsupported nesting.
+                    // We are already processing a loop. We must be just starting to process it,
+                    // so we require the loop we are on to be the same loop as the one in the context.
                     Some(existing_loop) => {
-                        if existing_loop != (current, *loop_end) {
+                        if existing_loop != *discovered_loop {
                             // Found a different loop header while already processing `existing_loop`.
                             panic!("Nested loops not supported");
                         }
@@ -260,9 +297,8 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     // Not currently processing a loop, so start processing this one.
                     None => {
                         let mut inner_context = context.clone();
-                        inner_context.in_loop = Some((current, *loop_end));
-                        let loop_body =
-                            self.analyze_block(ssa_func, &inner_context, current, Some(*loop_end));
+                        inner_context.in_loop = Some(*discovered_loop);
+                        let loop_body = self.analyze_block(ssa_func, &inner_context, current, None);
                         statements.push(HlrStatement::Loop(loop_body));
                         return statements;
                     }
@@ -271,30 +307,37 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             if let Err(e) = self.translate_statements(ssa_func, context, block, &mut statements) {
                 panic!("Error translating statements: {}", e);
             }
+            if let Some(in_loop) = context.in_loop {
+                if current == in_loop.jump_back {
+                    // done processing the loop body. Jump back is handled by the caller.
+                    break;
+                }
+            }
             match &block.next {
                 NextKind::Follows(next) => {
                     current = *next;
                 }
-                NextKind::Goto(addr) => {
-                    /* if Some(*addr) == func.return_block {
+                NextKind::Goto(addr) => match (context.in_loop, context.in_if, func.return_block) {
+                    (Some(in_loop), _, _) if *addr == in_loop.header => {
+                        statements.push(HlrStatement::Continue);
+                        break;
+                    }
+                    (Some(in_loop), _, _) if Some(*addr) == in_loop.exit => {
+                        statements.push(HlrStatement::Break);
+                        break;
+                    }
+                    (_, Some((_, merge_point)), _) if *addr == merge_point => {
+                        break;
+                    }
+                    (_, _, Some(return_block)) if *addr == return_block => {
                         statements.push(HlrStatement::Return(vec![]));
                         break;
-                    } else */
-                    if let Some((start, _)) = context.in_loop {
-                        if *addr == start {
-                            statements.push(HlrStatement::Continue);
-                            break;
-                        } else {
-                            statements.push(HlrStatement::Break);
-                            break;
-                        }
-                    } else if let Some((_, merge_point)) = context.in_if {
-                        if *addr == merge_point {
-                            break;
-                        }
                     }
-                    panic!("Goto unknown from block {} to {}", current, addr);
-                }
+                    _ => panic!(
+                        "Goto unknown from block {} to {}. Return_block: {:?}",
+                        current, addr, func.return_block
+                    ),
+                },
                 NextKind::FunctionCall(call) => {
                     statements.push(HlrStatement::Assignment(
                         HlrAssignmentTarget::Ignored,
@@ -308,10 +351,47 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     current = call.return_block;
                 }
                 NextKind::Condition(cond) => {
-                    println!(
-                        "Found cond block {} with target {} and follow {}",
-                        current, cond.target_block, cond.follows_block
-                    );
+                    let op = if cond.jump_if_true {
+                        BinaryOperator::NotEquals
+                    } else {
+                        BinaryOperator::Equals
+                    };
+                    let cond_expr = HlrExpression::BinaryOp {
+                        op,
+                        left: Box::new(self.op_expr(&cond.condition_operand)),
+                        right: Box::new(HlrExpression::Constant(0, Type::Int)),
+                        result_type: Type::Bool,
+                    };
+                    if let Some(in_loop) = context.in_loop {
+                        // since it is not the final jump back in the block (caller handled that),
+                        // then only the target can be a jump to the header or exit.
+                        if cond.target_block == in_loop.header {
+                            statements.push(HlrStatement::If(
+                                cond_expr,
+                                vec![HlrStatement::Continue],
+                                vec![],
+                            ));
+                            current = cond.follows_block;
+                            continue;
+                        } else if Some(cond.target_block) == in_loop.exit {
+                            statements.push(HlrStatement::If(
+                                cond_expr,
+                                vec![HlrStatement::Break],
+                                vec![],
+                            ));
+                            current = cond.follows_block;
+                            continue;
+                        }
+                    }
+                    if Some(cond.target_block) == func.return_block {
+                        statements.push(HlrStatement::If(
+                            cond_expr,
+                            vec![HlrStatement::Return(vec![])],
+                            vec![],
+                        ));
+                        current = cond.follows_block;
+                        continue;
+                    }
                     if let Some(merge_point) = context.ifs.get(&current) {
                         let mut new_context = context.clone();
                         new_context.in_if = Some((current, *merge_point));
@@ -327,43 +407,16 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             cond.follows_block,
                             Some(*merge_point),
                         );
-                        let op = if cond.jump_if_true {
-                            BinaryOperator::NotEquals
-                        } else {
-                            BinaryOperator::Equals
-                        };
-                        statements.push(HlrStatement::If(
-                            HlrExpression::BinaryOp {
-                                op,
-                                left: Box::new(self.op_expr(&cond.condition_operand)),
-                                right: Box::new(HlrExpression::Constant(0, Type::Int)),
-                                result_type: Type::Bool,
-                            },
-                            true_branch,
-                            false_branch,
-                        ));
+                        statements.push(HlrStatement::If(cond_expr, true_branch, false_branch));
                         current = *merge_point;
                         continue;
                     }
-                    if let Some((start, _)) = context.in_loop {
-                        if cond.target_block == start {
-                            statements.push(HlrStatement::Continue);
-                            break;
-                        } else {
-                            statements.push(HlrStatement::Break);
-                            break;
-                        }
-                    } else {
-                        panic!(
-                            "Cond Goto unknown from block {} to {} {:?}",
-                            current,
-                            cond.target_block,
-                            context.ifs.get(&current)
-                        );
-                    }
+                    unreachable!(
+                        "Goto unknown from block {} to {}",
+                        current, cond.target_block
+                    );
                 }
                 NextKind::Return => {
-                    statements.push(HlrStatement::Return(vec![]));
                     break;
                 }
                 NextKind::Halt => {
@@ -384,7 +437,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
     fn hlr_var(&self, var: &SsaVar) -> HlrVariable {
         let vars = self.model.get_variable_merger_result().unwrap();
-        let cluster_id = vars.variable_to_cluster[&var];
+        let cluster_id = vars.variable_to_cluster[var];
         let cluster = &vars.clusters[&cluster_id];
         let name = cluster.cluster_name.clone();
         let typ = self.var_type(var);
@@ -404,7 +457,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
     fn var_type(&self, var: &SsaVar) -> Type {
         let vars = self.model.get_variable_merger_result().unwrap();
-        let cluster_id = vars.variable_to_cluster[&var];
+        let cluster_id = vars.variable_to_cluster[var];
         let cluster = &vars.clusters[&cluster_id];
         cluster.inferred_type.clone()
     }
