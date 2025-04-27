@@ -312,10 +312,8 @@ impl<'a> VariableMerger<'a> {
 
     fn infer_type(&self, vars: &HashSet<SsaVar>) -> Type {
         let ti = self.model.get_type_inference_result().unwrap();
-        println!("Inferring type for {:?}", vars);
-        ti.get_type_for_ssavar(vars.iter().next().unwrap())
-            .unwrap()
-            .clone()
+        let rep = vars.iter().max().unwrap();
+        ti.get_type_for_ssavar(&rep).unwrap().clone()
     }
 
     fn global_memory(model: &ProgramModel, v: &SsaVar) -> Option<usize> {

@@ -7,8 +7,7 @@ use super::{
     events::{Event, ImageAdded, ImageScannerComplete},
     id_types::define_id_type,
     listeners::{
-        function_call_analyzer::FunctionCallAnalysis,
-        image_scanner::ImageScannerResult,
+        function_call_analyzer::FunctionCallAnalysis, image_scanner::ImageScannerResult,
         variable_analyzer::VariableMergerResult,
     },
     ssa_form::SsaResult,
@@ -36,7 +35,7 @@ pub struct ProgramModel {
 
     // Variable clusters for high-level variable recovery
     variable_merger_result: Option<VariableMergerResult>,
-    
+
     // High-level representation of the program
     hlr_program: Option<HlrProgram>,
 }
@@ -161,11 +160,11 @@ impl ProgramModel {
     pub fn get_variable_merger_result(&self) -> Option<&VariableMergerResult> {
         self.variable_merger_result.as_ref()
     }
-    
+
     pub fn get_hlr_program(&self) -> Option<&HlrProgram> {
         self.hlr_program.as_ref()
     }
-    
+
     pub fn set_hlr_program(&mut self, program: HlrProgram) {
         self.hlr_program = Some(program);
     }

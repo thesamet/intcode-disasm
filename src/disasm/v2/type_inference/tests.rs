@@ -1109,4 +1109,28 @@ f1:
         assert_marker_type!(ctx, 'c', Type::Int);
         assert_marker_type!(ctx, 'd', Type::Int);
     }
+
+    #[test]
+    fn test_infers_func_types_based_on_main_usage() {
+        let assembly = r#"
+            ; Main function
+            R += 100           ; Initial R adjustment for main function
+            [R+1] = 5          ; Set argument
+            [R] = @return_addr ; Set return address
+            goto @func         ; Call function
+            return_addr:
+            output([R+1])      ; Output return value
+            halt
+
+            ; Function that adds 5 to its input
+            func:
+            R += 3             ; Adjust stack for local variables
+            'a [R-2] = 'b [R-2] + 5  ; result = arg + 5
+            R -= 3             ; Restore stack
+            goto [R]           ; Return
+        "#;
+        let ctx = TestContext::new(assembly);
+        assert_marker_type!(ctx, 'a', Type::Char);
+        assert_marker_type!(ctx, 'b', Type::Int);
+    }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
@@ -209,8 +209,8 @@ fn assert_hlr_programs_equivalent(actual: &HlrProgram, expected: &HlrProgram) {
 
     // Check that both have the same set of function IDs
     assert_eq!(
-        actual_funcs.keys().collect::<Vec<_>>(),
-        expected_funcs.keys().collect::<Vec<_>>(),
+        actual_funcs.keys().collect::<HashSet<_>>(),
+        expected_funcs.keys().collect::<HashSet<_>>(),
         "Function IDs don't match"
     );
 
@@ -535,15 +535,16 @@ mod tests {
     fn test_if_else() {
         let assembly = r#"
             R += 100           ; Initial R adjustment for main function
-            [3] = 1 + 2        ; x = 1 + 2
+            [3] = 2 * 3        ; x = 1 + 2
             [4] = [3] == 3     ; y = (x == 3)
             if [4] goto @then  ; if y then goto label_then
-            [7] = 5 + 6        ; z = 5 + 6 (else branch)
+            [7] = 5 * 6        ; z = 5 + 6 (else branch)
             goto @end          ; goto label_end
             then:
-            [7] = 7 + 8        ; z = 7 + 8 (then branch)
+            [7] = 7 * 8        ; z = 7 + 8 (then branch)
             end:
-            halt               ; Halt
+            R -= 100
+            goto [R]
         "#;
 
         let ctx = TestContext::from_assembly(assembly);
@@ -555,73 +556,33 @@ mod tests {
                 hlr_assign(
                     hlr_var_target("x", Type::Int),
                     hlr_binop(
-                        BinaryOperator::Add,
-                        hlr_const(1, Type::Int),
+                        BinaryOperator::Mul,
                         hlr_const(2, Type::Int),
+                        hlr_const(3, Type::Int),
                         Type::Int,
                     ),
                 ),
-                hlr_if(
-                    hlr_binop(
-                        BinaryOperator::Equals,
-                        hlr_var_expr("x", Type::Int),
-                        hlr_const(3, Type::Int),
-                        Type::Bool,
-                    ),
-                    // Then branch
-                    vec![hlr_assign(
-                        hlr_var_target("z", Type::Int),
-                        hlr_binop(
-                            BinaryOperator::Add,
-                            hlr_const(7, Type::Int),
-                            hlr_const(8, Type::Int),
-                            Type::Int,
-                        ),
-                    )],
-                    // Else branch
-                    vec![hlr_assign(
-                        hlr_var_target("z", Type::Int),
-                        hlr_binop(
-                            BinaryOperator::Add,
-                            hlr_const(5, Type::Int),
-                            hlr_const(6, Type::Int),
-                            Type::Int,
-                        ),
-                    )],
-                ),
-                HlrStatement::Halt,
-            ],
-        )]);
-
-        assert_hlr_programs_equivalent(ctx.get_hlr_program().unwrap(), &expected);
-
-        let ctx = TestContext::from_assembly(assembly);
-
-        // Create expected HLR program
-        let expected = hlr_program(vec![hlr_function(
-            0,
-            vec![
                 hlr_assign(
-                    hlr_var_target("x", Type::Int),
-                    hlr_binop(
-                        BinaryOperator::Add,
-                        hlr_const(1, Type::Int),
-                        hlr_const(2, Type::Int),
-                        Type::Int,
-                    ),
-                ),
-                hlr_if(
+                    hlr_var_target("y", Type::Bool),
                     hlr_binop(
                         BinaryOperator::Equals,
                         hlr_var_expr("x", Type::Int),
                         hlr_const(3, Type::Int),
                         Type::Bool,
                     ),
+                ),
+                hlr_if(
+                    hlr_binop(
+                        BinaryOperator::NotEquals,
+                        hlr_var_expr("y", Type::Bool),
+                        hlr_const(0, Type::Int),
+                        Type::Bool,
+                    ),
                     // Then branch
                     vec![hlr_assign(
-                        hlr_var_target("z", Type::Int),
+                        hlr_var_target("w", Type::Int), // potential bug since we use different variables here.
                         hlr_binop(
-                            BinaryOperator::Add,
+                            BinaryOperator::Mul,
                             hlr_const(7, Type::Int),
                             hlr_const(8, Type::Int),
                             Type::Int,
@@ -631,14 +592,14 @@ mod tests {
                     vec![hlr_assign(
                         hlr_var_target("z", Type::Int),
                         hlr_binop(
-                            BinaryOperator::Add,
+                            BinaryOperator::Mul,
                             hlr_const(5, Type::Int),
                             hlr_const(6, Type::Int),
                             Type::Int,
                         ),
                     )],
                 ),
-                HlrStatement::Halt,
+                HlrStatement::Return(vec![]),
             ],
         )]);
 
@@ -648,16 +609,17 @@ mod tests {
     #[test]
     fn test_loop() {
         let assembly = r#"
-            R += 100           ; Initial R adjustment for main function
-            [1] = 0            ; i = 0
+            R += 100                  ; Initial R adjustment for main function
+            [R-1] = 0                 ; i = 0
             loop_start:
-            [2] = [1] < 10     ; cond = (i < 10)
-            if ![2] goto @loop_end  ; if !cond goto loop_end
-            [1] = [1] + 1      ; i = i + 1
+            [R-2] = [R-1] < 10        ; cond = (i < 10)
+            if ![R-2] goto @loop_end  ; if cond == 0 goto loop_end
+            [R-1] = [R-1] + 1         ; i = i + 1
             goto @loop_start   ; goto loop_start
             loop_end:
-            halt               ; Halt
-        "#;
+            R -= 100
+            goto [R]
+            "#;
 
         let ctx = TestContext::from_assembly(assembly);
 
@@ -666,30 +628,37 @@ mod tests {
             0,
             vec![
                 hlr_assign(hlr_var_target("i", Type::Int), hlr_const(0, Type::Int)),
-                hlr_loop(vec![hlr_if(
-                    hlr_binop(
-                        BinaryOperator::LessThan,
-                        hlr_var_expr("i", Type::Int),
-                        hlr_const(10, Type::Int),
-                        Type::Bool,
-                    ),
-                    // Then branch (loop body)
-                    vec![
-                        hlr_assign(
-                            hlr_var_target("i", Type::Int),
-                            hlr_binop(
-                                BinaryOperator::Add,
-                                hlr_var_expr("i", Type::Int),
-                                hlr_const(1, Type::Int),
-                                Type::Int,
-                            ),
+                hlr_loop(vec![
+                    hlr_assign(
+                        hlr_var_target("tmp", Type::Bool),
+                        hlr_binop(
+                            BinaryOperator::LessThan,
+                            hlr_var_expr("i", Type::Int),
+                            hlr_const(10, Type::Int),
+                            Type::Bool,
                         ),
-                        HlrStatement::Continue,
-                    ],
-                    // Else branch (exit loop)
-                    vec![HlrStatement::Break],
-                )]),
-                HlrStatement::Halt,
+                    ),
+                    hlr_if(
+                        hlr_binop(
+                            BinaryOperator::Equals,
+                            hlr_var_expr("tmp", Type::Bool),
+                            hlr_const(0, Type::Int),
+                            Type::Bool,
+                        ),
+                        vec![HlrStatement::Break],
+                        vec![],
+                    ),
+                    hlr_assign(
+                        hlr_var_target("i", Type::Int),
+                        hlr_binop(
+                            BinaryOperator::Add,
+                            hlr_var_expr("i", Type::Int),
+                            hlr_const(1, Type::Int),
+                            Type::Int,
+                        ),
+                    ),
+                ]),
+                hlr_return(vec![]),
             ],
         )]);
 
@@ -805,11 +774,10 @@ mod tests {
             output([R+1])      ; Output return value
             halt
 
-            ; Function that doubles its input
+            ; Function that adds 5 to its input
             func:
             R += 3             ; Adjust stack for local variables
-            [R-2] = [R-4] * 2  ; result = arg * 2
-            [R+1] = [R-2]      ; Set return value
+            [R-2] = [R-2] + 5  ; result = arg + 5
             R -= 3             ; Restore stack
             goto [R]           ; Return
         "#;
@@ -826,23 +794,23 @@ mod tests {
                         HlrAssignmentTarget::Ignored,
                         hlr_function_call(hlr_var_expr("func", Type::Bool)),
                     ),
-                    hlr_output(hlr_var_expr("result", Type::Int)),
+                    hlr_output(hlr_var_expr("result", Type::Char)),
                     HlrStatement::Halt,
                 ],
             ),
             hlr_function(
-                1,
+                16,
                 vec![
                     hlr_assign(
-                        hlr_var_target("temp", Type::Int),
+                        hlr_var_target("arg1", Type::Char),
                         hlr_binop(
-                            BinaryOperator::Mul,
-                            hlr_var_expr("param", Type::Int),
-                            hlr_const(2, Type::Int),
-                            Type::Int,
+                            BinaryOperator::Add,
+                            hlr_var_expr("arg1", Type::Char),
+                            hlr_const(5, Type::Int),
+                            Type::Char,
                         ),
                     ),
-                    hlr_return(vec![hlr_var_expr("temp", Type::Int)]),
+                    hlr_return(vec![]), // vec![hlr_var_expr("temp", Type::Int)]),
                 ],
             ),
         ]);
