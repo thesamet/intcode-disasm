@@ -57,9 +57,32 @@ pub enum HlrExpression {
         right: Box<HlrExpression>,
         result_type: Type,
     },
-    FunctionCall(Box<HlrExpression>),
+    UnaryOperator {
+        op: UnaryOperator,
+        expr: Box<HlrExpression>,
+    },
+    FunctionCall(Box<HlrExpression>, Vec<HlrExpression>),
     Tuple(Vec<HlrExpression>),
     Input(),
+}
+
+impl HlrExpression {
+    pub fn logical_not(&self) -> Option<Self> {
+        match self {
+            HlrExpression::BinaryOp {
+                op,
+                left,
+                right,
+                result_type,
+            } => Some(HlrExpression::BinaryOp {
+                op: op.logical_not()?,
+                left: left.clone(),
+                right: right.clone(),
+                result_type: result_type.clone(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,6 +94,16 @@ pub enum BinaryOperator {
     Equals,
     NotEquals,
     GreaterThan,
+}
+
+impl BinaryOperator {
+    pub fn logical_not(&self) -> Option<Self> {
+        match self {
+            BinaryOperator::Equals => Some(BinaryOperator::NotEquals),
+            BinaryOperator::NotEquals => Some(BinaryOperator::Equals),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -177,7 +210,7 @@ where
         HlrStatement::Break => line!(writer, "break;"),
         HlrStatement::Continue => line!(writer, "continue;"),
         HlrStatement::Return(exprs) => {
-            line!(writer, "return {};", pretty_print_expressions(exprs));
+            line!(writer, "return{};", pretty_print_expressions(exprs));
         }
         HlrStatement::Halt => line!(writer, "halt;"),
         HlrStatement::Output(expr) => line!(writer, "output({});", pretty_print_expression(expr)),
@@ -211,10 +244,16 @@ fn pretty_print_expression(expr: &HlrExpression) -> String {
             pretty_print_expression(right),
             // result_type // Add back if type hint is desired: ": {}", result_type
         ),
-        HlrExpression::FunctionCall(func_expr) => {
-            // Assuming function calls take a tuple of arguments, need adjustment if call structure changes
-            // For now, just printing the expression being called.
-            format!("{}()", pretty_print_expression(func_expr)) // Simplified, needs args if Hlr supports them
+        HlrExpression::UnaryOperator { op, expr } => {
+            format!("{}{}", op, pretty_print_expression(expr))
+        }
+        HlrExpression::FunctionCall(func_expr, args) => {
+            let name = match **func_expr {
+                HlrExpression::Constant(var, _) => format!("fu{}", var),
+                _ => pretty_print_expression(func_expr),
+            };
+            let args = args.iter().map(pretty_print_expression).join(", ");
+            format!("{}({})", name, args)
         }
         HlrExpression::Tuple(exprs) => {
             format!("({})", pretty_print_expressions(exprs))

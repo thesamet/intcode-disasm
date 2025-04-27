@@ -9,7 +9,7 @@ use petgraph::visit::{
 use petgraph::Direction;
 
 use crate::disasm::hlr::ast::{
-    pretty_print_program, BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction,
+    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction,
     HlrProgram, HlrStatement, HlrVariable,
 };
 use crate::disasm::v2::events::ModelEventListener;
@@ -58,14 +58,13 @@ impl ModelEventListener for ControlFlowStructureRecoveryListener {
         );
 
         let program = ControlFlowStructureAnalyzer::new(model).recover_structures()?;
-        println!("{}", pretty_print_program(&program));
 
         // Store the recovered program
         self.hlr_program = Some(program.clone());
         model.set_hlr_program(program);
 
         println!("Control flow structure recovery finished.");
-        
+
         // Publish an event to signal that structure recovery is complete
         _sender.publish(crate::disasm::v2::events::StructureRecoveryComplete {});
         Ok(())
@@ -235,6 +234,12 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     .immediate_dominator(*node)
                     .unwrap_or_else(|| panic!("No immediate dominator for node {}", node));
                 ifs.insert(*node, merge_point);
+                trace!(
+                    "Function_i={} has if: {} -> {}",
+                    func.function_id,
+                    node,
+                    merge_point
+                );
             }
         }
         for (_, lp) in loops.iter_mut() {
@@ -249,7 +254,6 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             while let Some(u) = dfs.next(&ssa_func) {
                 for v in ssa_func.neighbors(u) {
                     if v > lp.jump_back {
-                        println!("Adding jump out from {} to {}", u, v);
                         jump_outs.insert(v);
                     }
                 }
@@ -342,36 +346,43 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 NextKind::Follows(next) => {
                     current = *next;
                 }
-                NextKind::Goto(addr) => match (context.in_loop, context.in_if, func.return_block) {
-                    (Some(in_loop), _, _) if *addr == in_loop.header => {
-                        statements.push(HlrStatement::Continue);
-                        break;
+                NextKind::Goto(addr) => {
+                    if func.function_id.index() == 1984 {
+                        println!("Goto from {} to {}", current, addr);
+                        println!(
+                            "in_loop={:?} in_if={:?} func.return_block={:?}",
+                            context.in_loop, context.in_if, func.return_block,
+                        );
                     }
-                    (Some(in_loop), _, _) if Some(*addr) == in_loop.exit => {
-                        statements.push(HlrStatement::Break);
-                        break;
+                    match (context.in_loop, context.in_if, func.return_block) {
+                        (Some(in_loop), _, _) if *addr == in_loop.header => {
+                            statements.push(HlrStatement::Continue);
+                            break;
+                        }
+                        (Some(in_loop), _, _) if Some(*addr) == in_loop.exit => {
+                            statements.push(HlrStatement::Break);
+                            break;
+                        }
+                        (_, _, Some(return_block)) if *addr == return_block => {
+                            statements.push(HlrStatement::Return(vec![]));
+                            break;
+                        }
+                        (_, Some((_, merge_point)), _) if *addr == merge_point => {
+                            break;
+                        }
+                        _ => panic!(
+                            "Goto unknown from block {} to {}. Return_block: {:?}",
+                            current, addr, func.return_block
+                        ),
                     }
-                    (_, Some((_, merge_point)), _) if *addr == merge_point => {
-                        break;
-                    }
-                    (_, _, Some(return_block)) if *addr == return_block => {
-                        statements.push(HlrStatement::Return(vec![]));
-                        break;
-                    }
-                    _ => panic!(
-                        "Goto unknown from block {} to {}. Return_block: {:?}",
-                        current, addr, func.return_block
-                    ),
-                },
+                }
                 NextKind::FunctionCall(call) => {
                     statements.push(HlrStatement::Assignment(
                         HlrAssignmentTarget::Ignored,
-                        HlrExpression::FunctionCall(Box::new(HlrExpression::Variable(
-                            HlrVariable {
-                                name: call.function_addr.to_string(),
-                                type_info: Type::Bool,
-                            },
-                        ))),
+                        HlrExpression::FunctionCall(
+                            Box::new(self.op_expr(&call.function_addr)),
+                            vec![],
+                        ),
                     ));
                     current = call.return_block;
                 }
@@ -465,7 +476,10 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
     fn hlr_var(&self, var: &SsaVar) -> HlrVariable {
         let vars = self.model.get_variable_merger_result().unwrap();
-        let cluster_id = vars.variable_to_cluster[var];
+        let cluster_id = vars
+            .variable_to_cluster
+            .get(var)
+            .unwrap_or_else(|| panic!("Could not find cluster for variable {}", var));
         let cluster = &vars.clusters[&cluster_id];
         let name = cluster.cluster_name.clone();
         let typ = self.var_type(var);

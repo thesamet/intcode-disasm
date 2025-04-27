@@ -36,6 +36,8 @@ pub fn run_analysis(image: Vec<i128>) {
     let res = publisher.process_events(&mut model);
     match res {
         Ok(_) => {
+            let program = model.get_optimized_hlr_program().unwrap();
+            println!("{}", pretty_print_program(&program));
             // pretty_print_with_vars(&model);
         }
         Err(e) => {
