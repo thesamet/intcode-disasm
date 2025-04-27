@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_if_else() {
-        let _assembly = r#"
+        let assembly = r#"
             R += 100           ; Initial R adjustment for main function
             [3] = 1 + 2        ; x = 1 + 2
             [4] = [3] == 3     ; y = (x == 3)
@@ -545,9 +545,6 @@ mod tests {
             end:
             halt               ; Halt
         "#;
-
-        // Skip this test for now as it requires more complex control flow analysis
-        return;
 
         let ctx = TestContext::from_assembly(assembly);
 
@@ -650,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_loop() {
-        let _assembly = r#"
+        let assembly = r#"
             R += 100           ; Initial R adjustment for main function
             [1] = 0            ; i = 0
             loop_start:
@@ -661,9 +658,6 @@ mod tests {
             loop_end:
             halt               ; Halt
         "#;
-
-        // Skip this test for now as it requires more complex loop analysis
-        return;
 
         let ctx = TestContext::from_assembly(assembly);
 
@@ -718,17 +712,17 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(hlr_var_target("ptr1", Type::Int), hlr_input()),
+                hlr_assign(hlr_var_target("m1", Type::Int), hlr_input()),
                 hlr_assign(
-                    hlr_var_target("ptr2", Type::Int),
+                    hlr_var_target("m2", Type::Char),
                     hlr_binop(
                         BinaryOperator::Add,
-                        hlr_var_expr("ptr1", Type::Int),
+                        hlr_var_expr("m1", Type::Int),
                         hlr_const(10, Type::Int),
-                        Type::Int,
+                        Type::Char,
                     ),
                 ),
-                hlr_output(hlr_var_expr("ptr2", Type::Int)),
+                hlr_output(hlr_var_expr("m2", Type::Char)),
                 HlrStatement::Halt,
             ],
         )]);
@@ -801,7 +795,7 @@ mod tests {
 
     #[test]
     fn test_function_call() {
-        let _assembly = r#"
+        let assembly = r#"
             ; Main function
             R += 100           ; Initial R adjustment for main function
             [R+1] = 5          ; Set argument
@@ -819,9 +813,6 @@ mod tests {
             R -= 3             ; Restore stack
             goto [R]           ; Return
         "#;
-
-        // Skip this test for now as it requires more complex function call analysis
-        return;
 
         let ctx = TestContext::from_assembly(assembly);
 
