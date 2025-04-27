@@ -74,13 +74,16 @@ pub struct CallSiteInfo {
     /// Only populated for direct calls.
     pub parameter_map: HashMap<SsaVar, SsaVar>,
 
-    /// Maps callee's return write SsaVar to caller's return read SsaVar.
+    /// Maps caller's return read SsaVar to callee's parameter entry SsaVar.
     /// Only populated for direct calls.
     pub return_map: HashMap<SsaVar, SsaVar>,
 }
 
 impl FunctionCallAnalysis {
-    pub fn get_effective_return_values(&self, function_id: FunctionId) -> Option<Vec<SsaVar>> {
+    pub fn get_effective_return_values(
+        &self,
+        function_id: FunctionId,
+    ) -> Option<Vec<(i128, SsaVar)>> {
         let callers_csi = self
             .call_site_info
             .values()
@@ -89,9 +92,13 @@ impl FunctionCallAnalysis {
         if callers_csi.is_empty() {
             None
         } else {
-            let mut return_reads = HashSet::new();
+            let mut return_reads: HashSet<(i128, SsaVar)> = HashSet::new();
             for csi in callers_csi {
-                return_reads.extend(csi.return_map.keys());
+                return_reads.extend(
+                    csi.return_reads
+                        .iter()
+                        .map(|(k, v)| (*k, csi.return_map[&v])),
+                );
             }
 
             Some(return_reads.iter().sorted().cloned().collect())
@@ -351,8 +358,8 @@ fn populate_call_site_maps(
         // Calculate the corresponding negative offset used by the callee for the write
         let callee_offset = caller_offset - k;
         if let Some(callee_ret_var) = callee_info.return_writes.get(&callee_offset) {
-            // Note the key/value order: Callee Write -> Caller Read
-            return_map.insert(*callee_ret_var, *caller_ret_var);
+            // Note the key/value order: Caller Read -> Callee Write
+            return_map.insert(*caller_ret_var, *callee_ret_var);
         }
     }
     (parameter_map, return_map)

@@ -272,60 +272,43 @@ impl<'a> PrettyPrinter<'a> {
     }
 
     pub fn format_call_info(&self, function: &SsaFunction) -> String {
-        let ca = self
+        let args_rets = self
             .model
-            .get_function_call_analysis()
-            .and_then(|m| m.callee_info.get(&function.original_id));
+            .get_type_inference_result()
+            .and_then(|m| m.get_function_signature(&function.original_id));
 
-        if let Some(ca) = ca {
-            let return_values = self
-                .model
-                .get_function_call_analysis()
-                .and_then(|m| m.get_effective_return_values(function.original_id));
-            let rets = match return_values {
-                Some(return_values) if return_values.len() > 1 => {
-                    format!(
-                        "({})",
-                        return_values
-                            .iter()
-                            // Return values are SsaVar, wrap for formatting
-                            .map(|v| self.format_ssa_operand(&SsaOperand {
-                                kind: SsaOperandKind::Variable(*v),
-                                origin_info: v.origin_info,
-                            }))
-                            .join(", "),
-                    )
-                }
-                Some(return_values) if return_values.len() == 1 => return_values
-                    .iter()
-                    // Return values are SsaVar, wrap for formatting
-                    .map(|v| {
-                        self.format_ssa_operand(&SsaOperand {
-                            kind: SsaOperandKind::Variable(*v),
-                            origin_info: v.origin_info,
-                        })
-                    })
-                    .join(", ")
-                    .to_string(),
-                Some(_) => "void".to_string().red().to_string(), // Empty return_values vec
-                None => "unknown".to_string(),
-            };
-            format!(
-                "({}) -> {}",
-                ca.parameter_entry_vars
-                    .values()
-                    .sorted()
-                    // Parameter entry vars are SsaVar, wrap for formatting
-                    .map(|v| self.format_ssa_operand(&SsaOperand {
+        let sig = if let Some((args, rets)) = args_rets {
+            let mut args = args.iter().map(|(_, v, _)| {
+                format!(
+                    "{}",
+                    self.format_ssa_operand(&SsaOperand {
                         kind: SsaOperandKind::Variable(*v),
                         origin_info: v.origin_info,
-                    }))
-                    .join(", "),
-                rets // Already formatted string
+                    }),
+                )
+            });
+            let mut rets = rets.iter().map(|(_, v, _)| {
+                format!(
+                    "{}",
+                    self.format_ssa_operand(&SsaOperand {
+                        kind: SsaOperandKind::Variable(*v),
+                        origin_info: v.origin_info,
+                    }),
+                )
+            });
+            format!(
+                "({}) -> {}",
+                args.join(", "),
+                match rets.len() {
+                    0 => "void".to_string(),
+                    1 => format!("{}", rets.exactly_one().unwrap()),
+                    _ => format!("({})", rets.join(", ")),
+                }
             )
         } else {
-            "".to_string()
-        }
+            "(unknown) -> (unknown)".to_string()
+        };
+        sig
     }
 
     pub fn format_callers_comment(&self, function: &SsaFunction) -> String {

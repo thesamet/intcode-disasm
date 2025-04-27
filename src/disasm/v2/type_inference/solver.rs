@@ -532,7 +532,7 @@ impl<'a> Solver<'a> {
 
     /// Create a TypeInferenceResult from the current state of bounds
     fn build_result(&self) -> TypeInferenceResult {
-        let inferred_types = self
+        let inferred_types: HashMap<VariableKind, Type> = self
             .state
             .bounds_map
             .iter()
@@ -549,22 +549,44 @@ impl<'a> Solver<'a> {
             })
             .collect();
 
-        // Collect inferred function signatures from function pointer variables
         let mut function_signatures = HashMap::new();
-
-        for (var_kind, fp_info) in &self.state.function_pointer_variables {
-            if let VariableKind::Const { value, .. } = var_kind {
-                let function_id = FunctionId::from(*value as usize);
-
-                let args = effective_lower_bound(&fp_info.args, &self.state.bounds_map);
-                let returns = effective_upper_bound(&fp_info.returns, &self.state.bounds_map);
-
-                let signature = Type::Function {
-                    args: Box::new(args),
-                    returns: Box::new(returns),
-                };
-
-                function_signatures.insert(function_id, signature);
+        if let Some(fca) = self.model.get_function_call_analysis() {
+            for (function_id, callee_info) in &fca.callee_info {
+                let args = callee_info
+                    .parameter_entry_vars
+                    .iter()
+                    .sorted()
+                    .map(|(k, v)| {
+                        (
+                            *k,
+                            *v,
+                            inferred_types
+                                .get(&VariableKind::from_ssavar(v))
+                                .unwrap()
+                                .clone(),
+                        )
+                    })
+                    .collect_vec();
+                let returns =
+                    if let Some(return_values) = fca.get_effective_return_values(*function_id) {
+                        return_values
+                            .iter()
+                            .sorted()
+                            .map(|(k, v)| {
+                                (
+                                    *k,
+                                    *v,
+                                    inferred_types
+                                        .get(&VariableKind::from_ssavar(v))
+                                        .unwrap()
+                                        .clone(),
+                                )
+                            })
+                            .collect_vec()
+                    } else {
+                        vec![]
+                    };
+                function_signatures.insert(*function_id, (args, returns));
             }
         }
 
@@ -656,6 +678,7 @@ impl<'a> Solver<'a> {
                     function_id: csi.calling_function_id,
                     reason: ConstraintReason::FunctionParameterBindingAtCallSite,
                 };
+                trace!("Adding constraint: {c}");
                 result.push(c);
                 let c = Constraint {
                     left: ptr_rets.clone(),
@@ -664,6 +687,7 @@ impl<'a> Solver<'a> {
                     function_id: csi.calling_function_id,
                     reason: ConstraintReason::FunctionReturnBinding,
                 };
+                trace!("Adding constraint: {c}");
                 result.push(c);
             }
         }
@@ -795,13 +819,15 @@ fn add_function_parameter_binding_constraint(
     let arg_left = func_ptr_info.args.clone();
     let arg_right = callee_args_type.clone();
 
-    result.push(Constraint {
+    let c = Constraint {
         left: arg_left,
         right: arg_right,
         addr: constraint.addr,
         function_id: constraint.function_id,
         reason: ConstraintReason::FunctionParameterBindingBetweenCalleeAndTypeVar,
-    });
+    };
+    trace!("Adding constraint: {:?}", c);
+    result.push(c);
 
     if let Some(ret_count) = func_ptr_info.ret_count {
         let mut tuple_elems = vec![];

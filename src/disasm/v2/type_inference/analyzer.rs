@@ -7,7 +7,8 @@ use crate::disasm::v2::{
     instructions::{InstructionId, InstructionKind},
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{
-        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult, SsaVarKind,
+        PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
+        SsaVarKind,
     },
     type_inference::visuals::TraceColors,
 };
@@ -92,7 +93,7 @@ impl TypeInferenceAnalyzer {
                     if let Some(csi) = fca.call_site_info.get(&call_info.calling_block) {
                         // Link the phi.result (caller's return read var) to the
                         // corresponding callee's return write var via the return_map.
-                        for (callee_ret_write_var, caller_ret_read_var) in &csi.return_map {
+                        for (caller_ret_read_var, callee_ret_write_var) in &csi.return_map {
                             // We are looking for the specific entry where the caller's read variable
                             // matches the input_var (which should be phi.result for this predecessor kind).
                             if caller_ret_read_var == input_var {

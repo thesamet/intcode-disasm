@@ -142,6 +142,15 @@ pub enum SsaOperandKind {
     Deref(SsaVar), // SsaVar must be a pointer.
 }
 
+impl SsaOperandKind {
+    pub fn constant_value(&self) -> Option<i128> {
+        match self {
+            SsaOperandKind::Constant(val) => Some(*val),
+            _ => None,
+        }
+    }
+}
+
 // Represents either a constant or a versioned SSA variable in an instruction
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SsaOperand {

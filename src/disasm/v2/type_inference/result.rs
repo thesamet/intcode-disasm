@@ -13,6 +13,8 @@ use super::{
 };
 use colored::Colorize;
 
+pub type FunctionSignature = (Vec<(i128, SsaVar, Type)>, Vec<(i128, SsaVar, Type)>);
+
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub inferred_types: HashMap<VariableKind, Type>,
@@ -20,8 +22,7 @@ pub struct TypeInferenceResult {
     pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
     /// Inferred function signatures, including those discovered through indirect calls
-    #[allow(dead_code)]
-    pub function_signatures: HashMap<FunctionId, Type>,
+    pub function_signatures: HashMap<FunctionId, FunctionSignature>,
 }
 
 #[allow(dead_code)]
@@ -34,7 +35,7 @@ impl TypeInferenceResult {
         self.inferred_types.get(&VariableKind::from_ssaoperand(op))
     }
 
-    pub fn get_function_signature(&self, function_id: &FunctionId) -> Option<&Type> {
+    pub fn get_function_signature(&self, function_id: &FunctionId) -> Option<&FunctionSignature> {
         self.function_signatures.get(function_id)
     }
 

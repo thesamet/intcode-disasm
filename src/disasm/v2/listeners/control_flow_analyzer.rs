@@ -9,8 +9,8 @@ use petgraph::visit::{
 use petgraph::Direction;
 
 use crate::disasm::hlr::ast::{
-    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction,
-    HlrProgram, HlrStatement, HlrVariable,
+    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
+    HlrVariable,
 };
 use crate::disasm::v2::events::ModelEventListener;
 use crate::disasm::v2::instructions::InstructionKind;
@@ -377,6 +377,27 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     }
                 }
                 NextKind::FunctionCall(call) => {
+                    if let Some(addr) = call.function_addr.kind.constant_value() {
+                        statements.push(HlrStatement::Assignment(
+                            HlrAssignmentTarget::Ignored,
+                            HlrExpression::FunctionCall(
+                                Box::new(self.op_expr(&call.function_addr)),
+                                vec![],
+                            ),
+                        ));
+                        current = call.return_block;
+                    }
+                    /*
+                    call.function_addr.kind.constant_value().map(|addr| {
+                        statements.push(HlrStatement::Assignment(
+                            HlrAssignmentTarget::Ignored,
+                            HlrExpression::FunctionCall(
+                                Box::new(self.op_expr(&call.function_addr)),
+                                vec![],
+                            ),
+                        ));
+                        current = call.return_block;
+                    });
                     statements.push(HlrStatement::Assignment(
                         HlrAssignmentTarget::Ignored,
                         HlrExpression::FunctionCall(
@@ -384,6 +405,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             vec![],
                         ),
                     ));
+                    */
                     current = call.return_block;
                 }
                 NextKind::Condition(cond) => {
