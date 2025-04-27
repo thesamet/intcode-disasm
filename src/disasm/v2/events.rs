@@ -50,4 +50,9 @@ event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct VariableAnalysisComplete {
     }
+    
+    /// Signals that control flow structure recovery has completed
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct StructureRecoveryComplete {
+    }
 }

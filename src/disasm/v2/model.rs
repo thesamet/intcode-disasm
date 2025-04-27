@@ -32,6 +32,12 @@ pub struct ProgramModel {
     function_call_analysis: Option<FunctionCallAnalysis>,
 
     type_inference_result: Option<TypeInferenceResult>,
+    
+    // High-level representation of the program
+    hlr_program: Option<HlrProgram>,
+    
+    // Optimized high-level representation of the program
+    optimized_hlr_program: Option<HlrProgram>,
 
     // Variable clusters for high-level variable recovery
     variable_merger_result: Option<VariableMergerResult>,
@@ -53,6 +59,7 @@ impl ProgramModel {
             function_call_analysis: None,
             variable_merger_result: None,
             hlr_program: None,
+            optimized_hlr_program: None,
         }
     }
 
@@ -167,6 +174,14 @@ impl ProgramModel {
 
     pub fn set_hlr_program(&mut self, program: HlrProgram) {
         self.hlr_program = Some(program);
+    }
+    
+    pub fn get_optimized_hlr_program(&self) -> Option<&HlrProgram> {
+        self.optimized_hlr_program.as_ref()
+    }
+
+    pub fn set_optimized_hlr_program(&mut self, program: HlrProgram) {
+        self.optimized_hlr_program = Some(program);
     }
 }
 
