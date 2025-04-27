@@ -10,8 +10,9 @@ use super::{
     listeners::{
         control_flow_analyzer::ControlFlowStructureRecoveryListener,
         control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScannerResult,
-        ssa_converter::SsaConverter, variable_analyzer::VariableAnalyzer,
+        function_call_analyzer::FunctionCallAnalyzer, hlr_optimization::HlrOptimizationListener,
+        image_scanner::ImageScannerResult, ssa_converter::SsaConverter,
+        variable_analyzer::VariableAnalyzer,
     },
     pretty_print::{pretty_print_ssa, pretty_print_with_types},
     type_inference::TypeInferenceAnalyzer,
@@ -29,6 +30,7 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     publisher.add_listener(Box::new(VariableAnalyzer::new()));
     publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
+    publisher.add_listener(Box::new(HlrOptimizationListener::new()));
     model.load_image(&image, &mut publisher);
     let res = publisher.process_events(&mut model);
     match res {

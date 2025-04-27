@@ -65,6 +65,9 @@ impl ModelEventListener for ControlFlowStructureRecoveryListener {
         model.set_hlr_program(program);
 
         println!("Control flow structure recovery finished.");
+        
+        // Publish an event to signal that structure recovery is complete
+        _sender.publish(crate::disasm::v2::events::StructureRecoveryComplete {});
         Ok(())
     }
 }

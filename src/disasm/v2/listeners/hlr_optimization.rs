@@ -1,5 +1,3 @@
-use log::debug;
-
 use crate::disasm::hlr::ast::HlrProgram;
 use crate::disasm::v2::dispatching::EventCollector;
 use crate::disasm::v2::events::{Event, StructureRecoveryComplete};

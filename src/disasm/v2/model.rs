@@ -41,9 +41,6 @@ pub struct ProgramModel {
 
     // Variable clusters for high-level variable recovery
     variable_merger_result: Option<VariableMergerResult>,
-
-    // High-level representation of the program
-    hlr_program: Option<HlrProgram>,
 }
 
 impl ProgramModel {
