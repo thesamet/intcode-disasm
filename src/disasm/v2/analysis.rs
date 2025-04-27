@@ -17,6 +17,7 @@ use super::{
     pretty_print::{pretty_print_ssa, pretty_print_with_types},
     type_inference::TypeInferenceAnalyzer,
 };
+use crate::disasm::hlr::ast::pretty_print_program;
 
 /// Run the analysis pipeline and print data flow information
 pub fn run_analysis(image: Vec<i128>) {
@@ -65,6 +66,42 @@ pub fn run_types(image: Vec<i128>) {
     match res {
         Ok(_) => {
             pretty_print_with_types(&model);
+        }
+        Err(e) => {
+            eprintln!("\nError: {}", e.to_string().red().bold());
+            if let Error::TypeConflict {
+                key,
+                partial_result,
+                ..
+            } = e
+            {
+                eprintln!("\n{}", partial_result.format_traces_for_var(key));
+            }
+        }
+    }
+}
+
+/// Run the analysis pipeline up to and including control flow structure recovery
+pub fn run_flow_recovery(image: Vec<i128>) {
+    let mut model = ProgramModel::new();
+    let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+    publisher.add_listener(Box::new(ImageScanner::new()));
+    publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+    publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+    publisher.add_listener(Box::new(SsaConverter::new()));
+    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
+    publisher.add_listener(Box::new(VariableAnalyzer::new()));
+    publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
+    model.load_image(&image, &mut publisher);
+    let res = publisher.process_events(&mut model);
+    match res {
+        Ok(_) => {
+            if let Some(hlr_program) = model.get_hlr_program() {
+                println!("{}", pretty_print_program(hlr_program));
+            } else {
+                println!("No HLR program was generated.");
+            }
         }
         Err(e) => {
             eprintln!("\nError: {}", e.to_string().red().bold());

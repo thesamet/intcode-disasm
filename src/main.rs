@@ -1,7 +1,7 @@
 mod disasm;
 
 use clap::{Parser, Subcommand};
-use disasm::v2::analysis::{self, run_analysis, run_analysis_ssa, run_types};
+use disasm::v2::analysis::{self, run_analysis, run_analysis_ssa, run_types, run_flow_recovery};
 use itertools::Itertools;
 
 #[derive(Parser)]
@@ -18,6 +18,7 @@ enum Command {
     Pipeline { input: String },
     Ssa { input: String },
     Types { input: String },
+    FlowRecovery { input: String },
 }
 
 fn main() {
@@ -33,6 +34,7 @@ fn main() {
         Command::Pipeline { input } => pipeline(input),
         Command::Ssa { input } => ssa(input),
         Command::Types { input } => types(input),
+        Command::FlowRecovery { input } => flow_recovery(input),
     }
 }
 
@@ -87,4 +89,14 @@ fn types(input: String) {
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
     run_types(prog);
+}
+
+fn flow_recovery(input: String) {
+    let prog = std::fs::read_to_string(input)
+        .unwrap()
+        .trim()
+        .split(',')
+        .map(|x| x.parse().unwrap())
+        .collect::<Vec<i128>>();
+    run_flow_recovery(prog);
 }
