@@ -196,7 +196,7 @@ fn hlr_var(name: &str, typ: Type) -> HlrVariable {
 }
 
 fn hlr_vardef(target: HlrVariable, expr: HlrExpression) -> HlrStatement {
-    HlrStatement::VarDef(target, expr)
+    HlrStatement::VarDef(vec![target], expr)
 }
 
 fn hlr_assign(target: HlrAssignmentTarget, expr: HlrExpression) -> HlrStatement {
@@ -346,7 +346,23 @@ fn assert_statements_equivalent(
                 HlrStatement::VarDef(actual_var, actual_expr),
                 HlrStatement::VarDef(expected_var, expected_expr),
             ) => {
-                assert_var_equivalent(actual_var, expected_var, mapping, context)?;
+                if actual_var.len() != expected_var.len() {
+                    Err(ComparisonError::unsupported_comparison(
+                        format!("{:?}", actual_var),
+                        format!("{:?}", expected_var),
+                        &format!("{}:Variable types don't match", stmt_context),
+                    ))?
+                }
+                for (i, (actual_var, expected_var)) in
+                    actual_var.iter().zip(expected_var.iter()).enumerate()
+                {
+                    assert_var_equivalent(
+                        actual_var,
+                        expected_var,
+                        mapping,
+                        &format!("{}:Expression[{}]", stmt_context, i),
+                    )?;
+                }
                 assert_expressions_equivalent(
                     actual_expr,
                     expected_expr,
@@ -945,8 +961,8 @@ mod tests {
                 0,
                 vec![
                     hlr_vardef(hlr_var("arg", Type::Int), hlr_const(5, Type::Int)),
-                    hlr_assign(
-                        HlrAssignmentTarget::Ignored,
+                    hlr_vardef(
+                        hlr_var("result", Type::Char),
                         hlr_function_call(hlr_const(16, Type::Int), vec![]),
                     ),
                     hlr_output(hlr_var_expr("result", Type::Char)),

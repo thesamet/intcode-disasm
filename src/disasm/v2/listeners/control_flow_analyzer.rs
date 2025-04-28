@@ -397,13 +397,25 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         .sorted()
                         .map(|(_, v)| self.var_expr(v))
                         .collect_vec();
-                    statements.push(HlrStatement::Assignment(
-                        HlrAssignmentTarget::Ignored,
-                        HlrExpression::FunctionCall(
-                            Box::new(self.op_expr(&call.function_addr)),
-                            args,
-                        ),
-                    ));
+                    let fcall = HlrExpression::FunctionCall(
+                        Box::new(self.op_expr(&call.function_addr)),
+                        args,
+                    );
+                    if csi.return_reads.is_empty() {
+                        statements.push(HlrStatement::Assignment(
+                            HlrAssignmentTarget::Ignored,
+                            fcall,
+                        ))
+                    } else {
+                        let rets = csi
+                            .return_reads
+                            .iter()
+                            .sorted()
+                            .map(|(_, v)| self.hlr_var(&v))
+                            .collect_vec();
+                        statements.push(HlrStatement::VarDef(rets, fcall))
+                    }
+
                     current = call.return_block;
                 }
                 NextKind::Condition(cond) => {
@@ -682,7 +694,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             HlrStatement::Assignment(HlrAssignmentTarget::Variable(hlr), expr)
         } else {
             context.vars.insert(hlr.clone());
-            HlrStatement::VarDef(hlr, expr)
+            HlrStatement::VarDef(vec![hlr], expr)
         }
     }
 }

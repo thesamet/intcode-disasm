@@ -22,13 +22,14 @@ pub struct HlrFunction {
 #[derive(Debug, Clone)]
 pub enum HlrAssignmentTarget {
     Variable(HlrVariable),
+    VariablePack(Vec<HlrVariable>),
     Deref(HlrExpression),
     Ignored,
 }
 
 #[derive(Debug, Clone)]
 pub enum HlrStatement {
-    VarDef(HlrVariable, HlrExpression),
+    VarDef(Vec<HlrVariable>, HlrExpression),
     Assignment(HlrAssignmentTarget, HlrExpression),
     Loop(Vec<HlrStatement>),
     If(HlrExpression, Vec<HlrStatement>, Vec<HlrStatement>),
@@ -181,18 +182,32 @@ where
     F: CodeWriter,
 {
     match stmt {
-        HlrStatement::VarDef(var, expr) => {
-            line!(
-                writer,
-                "let {}: {} = {};",
-                pretty_print_variable(var),
-                pretty_print_type(&var.type_info),
-                pretty_print_expression(expr)
-            );
+        HlrStatement::VarDef(vars, expr) => {
+            let e = if vars.len() == 1 {
+                format!(
+                    "{}: {}",
+                    pretty_print_variable(&vars[0]),
+                    pretty_print_type(&vars[0].type_info),
+                )
+            } else {
+                let vars = vars
+                    .iter()
+                    .map(|var| {
+                        format!(
+                            "{}: {}",
+                            pretty_print_variable(var),
+                            pretty_print_type(&var.type_info),
+                        )
+                    })
+                    .join(", ");
+                format!("({})", vars)
+            };
+            line!(writer, "let {} = {};", e, pretty_print_expression(expr));
         }
         HlrStatement::Assignment(target, expr) => {
             let target = match target {
                 HlrAssignmentTarget::Variable(var) => format!("{} = ", var.name),
+                HlrAssignmentTarget::VariablePack(..) => panic!("Not implemented"),
                 HlrAssignmentTarget::Deref(expr) => {
                     format!("*{} = ", pretty_print_expression(expr))
                 }
