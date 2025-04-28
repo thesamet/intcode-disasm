@@ -91,13 +91,39 @@ impl StatementTransformer {
 impl StatementVisitor for StatementTransformer {
     fn visit_statement(&mut self, stmt: &HlrStatement) -> Option<HlrStatement> {
         match stmt {
-            HlrStatement::VarDef(vars, _) => {
+            HlrStatement::VarDef(vars, expr) => {
                 // Check if this variable definition should be eliminated
                 if vars.iter().any(|v| self.eliminated_vars.contains(v)) {
                     // Skip this statement
                     None
                 } else {
+                    // Transform the expression but keep the variable definition
+                    let new_expr = self.visit_expression(expr);
+                    if *expr == new_expr {
+                        Some(stmt.clone())
+                    } else {
+                        Some(HlrStatement::VarDef(vars.clone(), new_expr))
+                    }
+                }
+            },
+            HlrStatement::Assignment(target, expr) => {
+                let new_expr = self.visit_expression(expr);
+                let new_target = match target {
+                    HlrAssignmentTarget::Deref(deref_expr) => {
+                        let new_deref = self.visit_expression(deref_expr);
+                        if *deref_expr == new_deref {
+                            target.clone()
+                        } else {
+                            HlrAssignmentTarget::Deref(new_deref)
+                        }
+                    },
+                    _ => target.clone(),
+                };
+                
+                if *expr == new_expr && *target == new_target {
                     Some(stmt.clone())
+                } else {
+                    Some(HlrStatement::Assignment(new_target, new_expr))
                 }
             },
             _ => Some(stmt.clone()),
@@ -143,8 +169,11 @@ impl VariableUsageCounter {
             },
             HlrStatement::Assignment(target, expr) => {
                 // Count the target if it's a variable
-                if let crate::disasm::hlr::ast::HlrAssignmentTarget::Variable(var) = target {
+                if let HlrAssignmentTarget::Variable(var) = target {
                     *self.usage_counts.entry(var.clone()).or_insert(0) += 1;
+                } else if let HlrAssignmentTarget::Deref(deref_expr) = target {
+                    // Count variables in the deref expression
+                    self.count_usages_in_expression(deref_expr);
                 }
                 
                 self.count_usages_in_expression(expr);
@@ -328,7 +357,19 @@ impl ExpressionBuilding {
             });
             
             if can_inline && new_expr != *expr {
-                replacements.add_replacement(var.clone(), new_expr);
+                // Avoid circular references
+                let mut has_circular_ref = false;
+                for_each_expression(&new_expr, &mut |e| {
+                    if let HlrExpression::Variable(inner_var) = e {
+                        if inner_var == var {
+                            has_circular_ref = true;
+                        }
+                    }
+                });
+                
+                if !has_circular_ref {
+                    replacements.add_replacement(var.clone(), new_expr);
+                }
             }
         }
         
