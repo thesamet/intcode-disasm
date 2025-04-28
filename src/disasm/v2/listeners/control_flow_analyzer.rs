@@ -466,6 +466,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             cond.follows_block,
                             Some(merge_point),
                         );
+                        context.in_if.pop();
                         statements.push(HlrStatement::If(cond_expr, true_branch, false_branch));
                         current = merge_point;
                         continue;
@@ -564,21 +565,18 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     let result_var = c.as_variable().ok_or_else(|| {
                         Error::AnalysisError("Mul instruction expects variable target".to_string())
                     })?;
-                    HlrStatement::Assignment(
-                        hlr_assignment(result_var),
-                        HlrExpression::BinaryOp {
-                            op: BinaryOperator::Mul,
-                            left: Box::new(self.op_expr(a)),
-                            right: Box::new(self.op_expr(b)),
-                            result_type: self.var_type(result_var), // Use var_type of the result var
-                        },
-                    )
+                    self.assign_or_def(context, result_var, HlrExpression::BinaryOp {
+                        op: BinaryOperator::Mul,
+                        left: Box::new(self.op_expr(a)),
+                        right: Box::new(self.op_expr(b)),
+                        result_type: self.var_type(result_var), // Use var_type of the result var
+                    })
                 }
                 InstructionKind::Input(a) => {
                     let result_var = a.as_variable().ok_or_else(|| {
                         Error::AnalysisError("Input instruction expects variable target".to_string())
                     })?;
-                    HlrStatement::Assignment(hlr_assignment(result_var), HlrExpression::Input())
+                    self.assign_or_def(context, result_var, HlrExpression::Input())
                 }
                 InstructionKind::Output(a) => HlrStatement::Output(self.op_expr(a)),
                 InstructionKind::LessThan(a, b, c) => {

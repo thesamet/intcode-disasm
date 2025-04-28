@@ -195,6 +195,10 @@ fn hlr_var(name: &str, typ: Type) -> HlrVariable {
     }
 }
 
+fn hlr_vardef(target: HlrVariable, expr: HlrExpression) -> HlrStatement {
+    HlrStatement::VarDef(target, expr)
+}
+
 fn hlr_assign(target: HlrAssignmentTarget, expr: HlrExpression) -> HlrStatement {
     HlrStatement::Assignment(target, expr)
 }
@@ -339,6 +343,18 @@ fn assert_statements_equivalent(
                 )?;
             }
             (
+                HlrStatement::VarDef(actual_var, actual_expr),
+                HlrStatement::VarDef(expected_var, expected_expr),
+            ) => {
+                assert_var_equivalent(actual_var, expected_var, mapping, context)?;
+                assert_expressions_equivalent(
+                    actual_expr,
+                    expected_expr,
+                    mapping,
+                    &format!("{}:Expression", stmt_context),
+                )?;
+            }
+            (
                 HlrStatement::If(actual_cond, actual_then, actual_else),
                 HlrStatement::If(expected_cond, expected_then, expected_else),
             ) => {
@@ -435,19 +451,7 @@ fn assert_targets_equivalent(
             HlrAssignmentTarget::Variable(actual_var),
             HlrAssignmentTarget::Variable(expected_var),
         ) => {
-            compare(
-                &actual_var.type_info,
-                &expected_var.type_info,
-                &format!("{}:Variable types don't match", context),
-            )?;
-
-            mapping.map_variable(
-                &actual_var.name,
-                &expected_var.name,
-                &actual_var.type_info,
-                &expected_var.type_info,
-                context,
-            )?
+            assert_var_equivalent(actual_var, expected_var, mapping, context)?;
         }
         (HlrAssignmentTarget::Deref(actual_expr), HlrAssignmentTarget::Deref(expected_expr)) => {
             assert_expressions_equivalent(
@@ -466,6 +470,28 @@ fn assert_targets_equivalent(
             ))?;
         }
     }
+    Ok(())
+}
+
+fn assert_var_equivalent(
+    actual: &HlrVariable,
+    expected: &HlrVariable,
+    mapping: &mut VariableMapping,
+    context: &str,
+) -> ComparisonResult {
+    compare(
+        &actual.type_info,
+        &expected.type_info,
+        &format!("{}:Variable types don't match", context),
+    )?;
+
+    mapping.map_variable(
+        &actual.name,
+        &expected.name,
+        &actual.type_info,
+        &expected.type_info,
+        context,
+    )?;
     Ok(())
 }
 
@@ -596,8 +622,8 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(
-                    hlr_var_target("ptr1", Type::Any),
+                hlr_vardef(
+                    hlr_var("ptr1", Type::Any),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_const(1, Type::Int),
@@ -605,8 +631,8 @@ mod tests {
                         Type::Any,
                     ),
                 ),
-                hlr_assign(
-                    hlr_var_target("ptr2", Type::Any),
+                hlr_vardef(
+                    hlr_var("ptr2", Type::Any),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_const(3, Type::Int),
@@ -643,8 +669,8 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(
-                    hlr_var_target("x", Type::Int),
+                hlr_vardef(
+                    hlr_var("x", Type::Int),
                     hlr_binop(
                         BinaryOperator::Mul,
                         hlr_const(2, Type::Int),
@@ -652,8 +678,8 @@ mod tests {
                         Type::Int,
                     ),
                 ),
-                hlr_assign(
-                    hlr_var_target("y", Type::Bool),
+                hlr_vardef(
+                    hlr_var("y", Type::Bool),
                     hlr_binop(
                         BinaryOperator::Equals,
                         hlr_var_expr("x", Type::Int),
@@ -669,8 +695,8 @@ mod tests {
                         Type::Bool,
                     ),
                     // Then branch
-                    vec![hlr_assign(
-                        hlr_var_target("w", Type::Int), // potential bug since we use different variables here.
+                    vec![hlr_vardef(
+                        hlr_var("w", Type::Int), // potential bug since we use different variables here.
                         hlr_binop(
                             BinaryOperator::Mul,
                             hlr_const(7, Type::Int),
@@ -680,8 +706,8 @@ mod tests {
                     )],
                     // Else branch
                     vec![
-                        hlr_assign(
-                            hlr_var_target("z", Type::Int),
+                        hlr_vardef(
+                            hlr_var("z", Type::Int),
                             hlr_binop(
                                 BinaryOperator::Mul,
                                 hlr_const(5, Type::Int),
@@ -721,10 +747,10 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(hlr_var_target("i", Type::Int), hlr_const(0, Type::Int)),
+                hlr_vardef(hlr_var("i", Type::Int), hlr_const(0, Type::Int)),
                 hlr_loop(vec![
-                    hlr_assign(
-                        hlr_var_target("tmp", Type::Bool),
+                    hlr_vardef(
+                        hlr_var("tmp", Type::Bool),
                         hlr_binop(
                             BinaryOperator::LessThan,
                             hlr_var_expr("i", Type::Int),
@@ -780,7 +806,7 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(hlr_var_target("i", Type::Char), hlr_const(0, Type::Int)),
+                hlr_vardef(hlr_var("i", Type::Char), hlr_const(0, Type::Int)),
                 hlr_do_while(
                     vec![
                         HlrStatement::Output(hlr_var_expr("i", Type::Char)),
@@ -793,8 +819,8 @@ mod tests {
                                 Type::Char,
                             ),
                         ),
-                        hlr_assign(
-                            hlr_var_target("tmp", Type::Bool),
+                        hlr_vardef(
+                            hlr_var("tmp", Type::Bool),
                             hlr_binop(
                                 BinaryOperator::LessThan,
                                 hlr_var_expr("i", Type::Char),
@@ -832,9 +858,9 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(hlr_var_target("m1", Type::Int), hlr_input()),
-                hlr_assign(
-                    hlr_var_target("m2", Type::Char),
+                hlr_vardef(hlr_var("m1", Type::Int), hlr_input()),
+                hlr_vardef(
+                    hlr_var("m2", Type::Char),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_var_expr("m1", Type::Int),
@@ -866,16 +892,16 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(
-                    hlr_var_target("ptr1", Type::Pointer(Box::new(Type::Any))),
+                hlr_vardef(
+                    hlr_var("ptr1", Type::Pointer(Box::new(Type::Any))),
                     hlr_const(100, Type::Int),
                 ),
-                hlr_assign(
-                    hlr_var_target("local1", Type::Any),
+                hlr_vardef(
+                    hlr_var("local1", Type::Any),
                     hlr_deref(hlr_var_expr("ptr1", Type::Pointer(Box::new(Type::Any)))),
                 ),
-                hlr_assign(
-                    hlr_var_target("local2", Type::Any),
+                hlr_vardef(
+                    hlr_var("local2", Type::Any),
                     hlr_binop(
                         BinaryOperator::Add,
                         hlr_var_expr("local1", Type::Any),
@@ -918,7 +944,7 @@ mod tests {
             hlr_function(
                 0,
                 vec![
-                    hlr_assign(hlr_var_target("arg", Type::Int), hlr_const(5, Type::Int)),
+                    hlr_vardef(hlr_var("arg", Type::Int), hlr_const(5, Type::Int)),
                     hlr_assign(
                         HlrAssignmentTarget::Ignored,
                         hlr_function_call(hlr_const(16, Type::Int), vec![]),
@@ -929,15 +955,18 @@ mod tests {
             ),
             hlr_function(
                 16,
-                vec![hlr_assign(
-                    hlr_var_target("arg1", Type::Char),
-                    hlr_binop(
-                        BinaryOperator::Add,
-                        hlr_var_expr("arg1", Type::Char),
-                        hlr_const(5, Type::Int),
-                        Type::Char,
+                vec![
+                    hlr_vardef(
+                        hlr_var("arg1", Type::Char),
+                        hlr_binop(
+                            BinaryOperator::Add,
+                            hlr_var_expr("arg1", Type::Char),
+                            hlr_const(5, Type::Int),
+                            Type::Char,
+                        ),
                     ),
-                )],
+                    hlr_return(vec![hlr_var_expr("arg1", Type::Char)]),
+                ],
             ),
         ]);
 
@@ -947,34 +976,34 @@ mod tests {
     #[test]
     fn test_nested_if_else() -> ComparisonResult {
         let _assembly = r#"
-            R += 100           ; Initial R adjustment for main function
-            [R-1] = 10           ; x = 10
-            [R-2] = [R-1] < 5      ; cond1 = (x < 5)
-            if ![R-2] goto @else_outer  ; if !cond1 goto else_outer
+            R += 100                      ; 0: Initial R adjustment for main function
+            [R-1] = 10                    ; 2: x = 10
+            [R-2] = [R-1] < 5             ; 6: cond1 = (x < 5)
+            if ![R-2] goto @else_outer    ; 10: if !cond1 goto else_outer
 
             ; Then branch of outer if
-            [R-3] = [R-1] < 15     ; cond2 = (x < 15)
-            if ![R-3] goto @else_inner  ; if !cond2 goto else_inner
+            [R-3] = [R-1] < 15            ; 13: cond2 = (x < 15)
+            if ![R-3] goto @else_inner    ; 17: if !cond2 goto else_inner
 
             ; Then branch of inner if
-            [R-4] = 1            ; result = 1
-            goto @end_inner
+            [R-4] = 1                     ; 20: result = 1
+            goto @end_inner               ; 24:
 
             else_inner:
             ; Else branch of inner if
-            [R-4] = 2            ; result = 2
+            [R-4] = 2                     ; 27: result = 2
 
             end_inner:
-            goto @end_outer
+            goto @end_outer               ; 31:
 
             else_outer:
             ; Else branch of outer if
-            [R-4] = 3            ; result = 3
+            [R-4] = 3                     ; 34: result = 3
 
             end_outer:
-            output([R-4])        ; output(result)
-            R -= 100
-            goto [R]
+            output([R-4])                 ; 38: output(result)
+            R -= 100                      ; 40:
+            goto [R]                      ; 42:
         "#;
 
         let ctx = TestContext::from_assembly(_assembly);
@@ -984,9 +1013,9 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_assign(hlr_var_target("x", Type::Int), hlr_const(10, Type::Int)),
-                hlr_assign(
-                    hlr_var_target("cond", Type::Bool),
+                hlr_vardef(hlr_var("x", Type::Int), hlr_const(10, Type::Int)),
+                hlr_vardef(
+                    hlr_var("cond", Type::Bool),
                     hlr_binop(
                         BinaryOperator::LessThan,
                         hlr_var_expr("x", Type::Int),
@@ -1002,13 +1031,13 @@ mod tests {
                         hlr_const(0, Type::Int),
                         Type::Bool,
                     ),
-                    vec![hlr_assign(
-                        hlr_var_target("result", Type::Char),
+                    vec![hlr_vardef(
+                        hlr_var("result", Type::Char),
                         hlr_const(3, Type::Int),
                     )],
                     vec![
-                        hlr_assign(
-                            hlr_var_target("cond2", Type::Bool),
+                        hlr_vardef(
+                            hlr_var("cond2", Type::Bool),
                             hlr_binop(
                                 BinaryOperator::LessThan,
                                 hlr_var_expr("x", Type::Int),
