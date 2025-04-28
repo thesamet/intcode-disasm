@@ -1,5 +1,9 @@
+use std::collections::HashMap;
+
+use crate::disasm::code_printer::CodePrinter;
 use crate::disasm::hlr::ast::{
-    BinaryOperator, HlrExpression, HlrFunction, HlrProgram, HlrStatement, UnaryOperator,
+    pretty_print_statement, BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction,
+    HlrProgram, HlrStatement, HlrVariable, UnaryOperator,
 };
 use crate::disasm::hlr::visitor::{visit_function, HlrNode, HlrVisitControlFlow, HlrVisitEvent};
 use crate::disasm::v2::model::ProgramModel;
@@ -28,7 +32,10 @@ impl<'a> HlrOptimizer<'a> {
     pub fn new(model: &'a ProgramModel) -> Self {
         Self {
             _model: model,
-            optimizations: vec![Box::new(InitialOptimization)],
+            optimizations: vec![
+                Box::new(InitialOptimization),
+                Box::new(IdentifyTemporaryVariables),
+            ],
         }
     }
 
@@ -104,6 +111,72 @@ impl OptimizationPass for InitialOptimization {
 
                     // TODO: Handle other cases
                     HlrVisitControlFlow::Continue
+                }
+                _ => HlrVisitControlFlow::Continue,
+            },
+            _ => HlrVisitControlFlow::Continue,
+        });
+        changed
+    }
+}
+
+struct IdentifyTemporaryVariables;
+
+impl OptimizationPass for IdentifyTemporaryVariables {
+    fn name(&self) -> &str {
+        "IdentifyTemporaryVariables"
+    }
+
+    fn run(&self, function: &mut HlrFunction) -> bool {
+        struct VarInfo {
+            read_count: usize,
+            update_count: usize,
+        }
+
+        impl Default for VarInfo {
+            fn default() -> Self {
+                Self {
+                    read_count: 0,
+                    update_count: 0,
+                }
+            }
+        }
+        let mut changed = false;
+        let mut usages: HashMap<HlrVariable, VarInfo> = HashMap::new();
+        let mut assignee_read_count = 0;
+        let mut in_assignment_of = None;
+        visit_function(function, |e| match e {
+            HlrVisitEvent::Enter(HlrNode::Statement(stmt)) => match stmt {
+                HlrStatement::Assignment(HlrAssignmentTarget::Variable(v), _) => {
+                    in_assignment_of = Some(v.clone());
+                    assignee_read_count = 0;
+                    return HlrVisitControlFlow::Continue;
+                }
+                _ => HlrVisitControlFlow::Continue,
+            },
+            HlrVisitEvent::Enter(HlrNode::Expression(expr)) => {
+                match expr {
+                    HlrExpression::Variable(v) => {
+                        if in_assignment_of.as_ref() == Some(v) {
+                            assignee_read_count += 1;
+                        }
+                        usages.entry(v.clone()).or_default().read_count += 1;
+                    }
+                    _ => (),
+                };
+                HlrVisitControlFlow::Continue
+            }
+            HlrVisitEvent::Finish(HlrNode::Statement(stmt)) => match stmt {
+                HlrStatement::Assignment(HlrAssignmentTarget::Variable(ref v), _) => {
+                    assert!(in_assignment_of.as_ref() == Some(v));
+                    if assignee_read_count == 1 {
+                        usages.entry(v.clone()).or_default().update_count += 1;
+                        let mut p = CodePrinter::new();
+                        pretty_print_statement(&mut p, stmt);
+                        println!("Found update of {} at {}", v.name, p.result());
+                    }
+                    in_assignment_of = None;
+                    return HlrVisitControlFlow::Continue;
                 }
                 _ => HlrVisitControlFlow::Continue,
             },

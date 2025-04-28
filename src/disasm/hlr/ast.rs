@@ -321,7 +321,7 @@ where
     line!(writer, "{}", SyntaxColors::close_brace());
 }
 
-fn pretty_print_statement<F>(writer: &mut F, stmt: &HlrStatement)
+pub fn pretty_print_statement<F>(writer: &mut F, stmt: &HlrStatement)
 where
     F: CodeWriter,
 {
