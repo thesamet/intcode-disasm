@@ -12,7 +12,7 @@ pub enum HlrNode<'a> {
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum HlrVisitEvent<'a> {
     Enter(HlrNode<'a>),
-    Exit(HlrNode<'a>),
+    Finish(HlrNode<'a>),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -27,11 +27,10 @@ macro_rules! do_control {
         match $nf(HlrVisitEvent::Enter($e)) {
             HlrVisitControlFlow::Continue => {
                 $c();
-                ()
             }
             HlrVisitControlFlow::Prune => (),
         }
-        match $nf(HlrVisitEvent::Exit($e)) {
+        match $nf(HlrVisitEvent::Finish($e)) {
             HlrVisitControlFlow::Continue => (),
             HlrVisitControlFlow::Prune => {
                 panic!("Pruned while visiting {:?}", $e);

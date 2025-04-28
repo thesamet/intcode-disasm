@@ -379,7 +379,7 @@ mod tests {
                             &format!("{}:Return[{}]", stmt_context, j),
                         )?;
                     }
-                    ()
+                    
                 }
                 (HlrStatement::Halt, HlrStatement::Halt) => {}
                 (HlrStatement::Continue, HlrStatement::Continue) => {}

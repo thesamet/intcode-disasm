@@ -33,7 +33,7 @@ impl crate::disasm::v2::events::ModelEventListener for HlrOptimizationListener {
 
         // Get the HLR program from the model
         let hlr_program = model.get_hlr_program().ok_or_else(|| {
-            Error::AnalysisError("HLR program not found for optimization".to_string())
+            Error::AnalysisFailure("HLR program not found for optimization".to_string())
         })?;
 
         // Create an optimizer and optimize the program

@@ -164,7 +164,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
     /// Recovers high-level control flow structures for the entire program.
     fn recover_structures(&self) -> Result<HlrProgram, Error> {
         let ssa_result = self.model.get_ssa_result().ok_or_else(|| {
-            Error::AnalysisError("SSA result not found for control flow recovery".to_string())
+            Error::AnalysisFailure("SSA result not found for control flow recovery".to_string())
         })?;
 
         let mut hlr_functions = Vec::new();
@@ -406,7 +406,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             .return_reads
                             .iter()
                             .sorted()
-                            .map(|(_, v)| self.hlr_var(&v))
+                            .map(|(_, v)| self.hlr_var(v))
                             .collect_vec();
                         statements.push(HlrStatement::VarDef(rets, fcall))
                     }
@@ -446,7 +446,6 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                                 current = cond.follows_block;
                                 continue;
                             }
-                        } else {
                         }
                     }
                     if Some(cond.target_block) == func.return_block {
@@ -508,7 +507,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             .variable_to_cluster
             .get(var)
             .unwrap_or_else(|| panic!("Could not find cluster for variable {}", var));
-        let cluster = &vars.clusters[&cluster_id];
+        let cluster = &vars.clusters[cluster_id];
         let name = cluster.cluster_name.clone();
         let typ = self.var_type(var);
         HlrVariable {
@@ -545,7 +544,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             let stmt = match &instr.kind {
                 InstructionKind::Add(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
-                        Error::AnalysisError("Add instruction expects variable target".to_string())
+                        Error::AnalysisFailure("Add instruction expects variable target".to_string())
                     })?;
                     self.assign_or_def(context,result_var,
                         HlrExpression::BinaryOp {
@@ -558,7 +557,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 }
                 InstructionKind::Mul(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
-                        Error::AnalysisError("Mul instruction expects variable target".to_string())
+                        Error::AnalysisFailure("Mul instruction expects variable target".to_string())
                     })?;
                     self.assign_or_def(context, result_var, HlrExpression::BinaryOp {
                         op: BinaryOperator::Mul,
@@ -569,13 +568,13 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 }
                 InstructionKind::Input(a) => {
                     let result_var = a.as_variable().ok_or_else(|| {
-                        Error::AnalysisError("Input instruction expects variable target".to_string())
+                        Error::AnalysisFailure("Input instruction expects variable target".to_string())
                     })?;
                     self.assign_or_def(context, result_var, HlrExpression::Input())
                 }
                 InstructionKind::Output(a) => HlrStatement::Output(self.op_expr(a)),
                 InstructionKind::LessThan(a, b, c) => {
-                    let result_var = c.as_variable().ok_or_else(|| Error::AnalysisError(
+                    let result_var = c.as_variable().ok_or_else(|| Error::AnalysisFailure(
                         "LessThan instruction expects variable target".to_string(),
                     ))?;
                     self.assign_or_def(context,result_var, HlrExpression::BinaryOp {
@@ -587,7 +586,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 }
                 InstructionKind::Equals(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
-                        Error::AnalysisError("Equals instruction expects variable target".to_string())
+                        Error::AnalysisFailure("Equals instruction expects variable target".to_string())
                     })?;
                     self.assign_or_def(context,result_var, HlrExpression::BinaryOp {
                         op: BinaryOperator::Equals,
@@ -605,7 +604,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                                     src,
                                 ),
                         SsaOperandKind::Constant(_) => {
-                            return Err(Error::AnalysisError(
+                            return Err(Error::AnalysisFailure(
                                 "Cannot assign into a constant".to_string(),
                             ))
                         }

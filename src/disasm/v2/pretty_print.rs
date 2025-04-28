@@ -279,29 +279,23 @@ impl<'a> PrettyPrinter<'a> {
 
         let sig = if let Some((args, rets)) = args_rets {
             let mut args = args.iter().map(|(_, v, _)| {
-                format!(
-                    "{}",
-                    self.format_ssa_operand(&SsaOperand {
+                self.format_ssa_operand(&SsaOperand {
                         kind: SsaOperandKind::Variable(*v),
                         origin_info: v.origin_info,
-                    }),
-                )
+                    }).to_string()
             });
             let mut rets = rets.iter().map(|(_, v, _)| {
-                format!(
-                    "{}",
-                    self.format_ssa_operand(&SsaOperand {
+                self.format_ssa_operand(&SsaOperand {
                         kind: SsaOperandKind::Variable(*v),
                         origin_info: v.origin_info,
-                    }),
-                )
+                    }).to_string()
             });
             format!(
                 "({}) -> {}",
                 args.join(", "),
                 match rets.len() {
                     0 => "void".to_string(),
-                    1 => format!("{}", rets.exactly_one().unwrap()),
+                    1 => rets.exactly_one().unwrap().to_string(),
                     _ => format!("({})", rets.join(", ")),
                 }
             )

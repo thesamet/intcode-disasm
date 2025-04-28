@@ -97,7 +97,7 @@ impl FunctionCallAnalysis {
                 return_reads.extend(
                     csi.return_reads
                         .iter()
-                        .map(|(k, v)| (*k, csi.return_map[&v])),
+                        .map(|(k, v)| (*k, csi.return_map[v])),
                 );
             }
 

@@ -65,20 +65,17 @@ impl OptimizationPass for InitialOptimization {
     fn run(&self, function: &mut HlrFunction) -> bool {
         let mut changed = false;
         visit_function(function, |e| match e {
-            HlrVisitEvent::Exit(HlrNode::Statement(stmt)) => {
-                match stmt {
-                    HlrStatement::If(cond, if_body, else_body) => {
-                        if if_body.is_empty() {
-                            *cond = cond.logical_not().unwrap();
-                            std::mem::swap(if_body, else_body);
-                            changed = true;
-                        }
+            HlrVisitEvent::Finish(HlrNode::Statement(stmt)) => {
+                if let HlrStatement::If(cond, if_body, else_body) = stmt {
+                    if if_body.is_empty() {
+                        *cond = cond.logical_not().unwrap();
+                        std::mem::swap(if_body, else_body);
+                        changed = true;
                     }
-                    _ => {}
                 }
                 HlrVisitControlFlow::Continue
             }
-            HlrVisitEvent::Exit(HlrNode::Expression(expr)) => match expr {
+            HlrVisitEvent::Finish(HlrNode::Expression(expr)) => match expr {
                 HlrExpression::BinaryOp {
                     op, left, right, ..
                 } => {

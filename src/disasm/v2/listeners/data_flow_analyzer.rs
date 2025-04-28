@@ -299,14 +299,14 @@ impl DataFlowAnalyzer {
 
         if Some(block_id) == model.get_function(function_id).return_block {
             for block in &function.blocks {
-                let dfr = df_result.block_results.get(&block).unwrap();
+                let dfr = df_result.block_results.get(block).unwrap();
                 new_live_out.extend(dfr.gen.keys().filter(|k| k.is_negative_relative_memory()));
             }
         }
         if matches!(block.next, NextKind::FunctionCall(_)) {
             // If this is a function call, we need to add the return arguments to live out
             for block in &function.blocks {
-                let dfr = df_result.block_results.get(&block).unwrap();
+                let dfr = df_result.block_results.get(block).unwrap();
                 new_live_out.extend(dfr.gen.keys().filter(|k| k.is_positive_relative_memory()));
             }
         }

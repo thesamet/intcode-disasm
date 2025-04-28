@@ -37,7 +37,7 @@ pub fn run_analysis(image: Vec<i128>) {
     match res {
         Ok(_) => {
             let program = model.get_optimized_hlr_program().unwrap();
-            println!("{}", pretty_print_program(&program));
+            println!("{}", pretty_print_program(program));
             // pretty_print_with_vars(&model);
         }
         Err(e) => {

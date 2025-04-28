@@ -197,33 +197,33 @@ impl SyntaxColors {
         }
     }
     fn open_paren() -> ColoredString {
-        format!("(").color(SyntaxColors::low_prio())
+        "(".to_string().color(SyntaxColors::low_prio())
     }
     fn close_paren() -> ColoredString {
-        format!(")").color(SyntaxColors::low_prio())
+        ")".to_string().color(SyntaxColors::low_prio())
     }
     fn open_brace() -> ColoredString {
-        format!("{{").color(SyntaxColors::low_prio())
+        "{".to_string().color(SyntaxColors::low_prio())
     }
     fn close_brace() -> ColoredString {
-        format!("}}").color(SyntaxColors::low_prio())
+        "}".to_string().color(SyntaxColors::low_prio())
     }
     fn colon() -> ColoredString {
-        format!(":").color(SyntaxColors::low_prio())
+        ":".to_string().color(SyntaxColors::low_prio())
     }
     fn comma() -> ColoredString {
-        format!(", ").color(SyntaxColors::low_prio())
+        ", ".to_string().color(SyntaxColors::low_prio())
     }
     fn eq() -> ColoredString {
-        format!("=").color(SyntaxColors::op_color())
+        "=".to_string().color(SyntaxColors::op_color())
     }
     fn semicolon() -> ColoredString {
-        format!(";").color(SyntaxColors::low_prio())
+        ";".to_string().color(SyntaxColors::low_prio())
     }
 }
 
 fn keyword(text: &str) -> ColoredString {
-    format!("{}", text).color(SyntaxColors::keyword())
+    text.to_string().color(SyntaxColors::keyword())
 }
 
 pub fn pretty_print_program(program: &HlrProgram) -> String {
