@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrExpression, HlrFunction, HlrProgram, HlrStatement, UnaryOperator,
 };
@@ -84,7 +86,18 @@ impl<'a> HlrOptimizer<'a> {
                     self.optimize_expression(cond)?,
                 ),
                 HlrStatement::Loop(body) => HlrStatement::Loop(self.optimize_statements(body)?),
-                _ => statement.clone(),
+                HlrStatement::VarDef(var, expr) => {
+                    HlrStatement::VarDef(var.clone(), self.optimize_expression(expr)?)
+                }
+                HlrStatement::Break | HlrStatement::Continue | HlrStatement::Halt => {
+                    statement.clone()
+                }
+                HlrStatement::Output(expr) => HlrStatement::Output(self.optimize_expression(expr)?),
+                HlrStatement::Return(expr) => HlrStatement::Return(
+                    expr.iter()
+                        .map(|x| self.optimize_expression(x))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
             };
             out.push(res);
         }
@@ -102,8 +115,11 @@ impl<'a> HlrOptimizer<'a> {
                 result_type,
             } => self.optimize_binary_op(*op, left, right, result_type),
             HlrExpression::FunctionCall(func_expr, func_args) => Ok(HlrExpression::FunctionCall(
-                func_expr.clone(),
-                func_args.clone(),
+                Box::new(self.optimize_expression(&func_expr)?),
+                func_args
+                    .iter()
+                    .map(|x| self.optimize_expression(x))
+                    .collect::<Result<Vec<HlrExpression>, Error>>()?,
             )),
             HlrExpression::Tuple(exprs) => Ok(HlrExpression::Tuple(
                 exprs
