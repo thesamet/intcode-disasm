@@ -18,7 +18,6 @@ pub enum HlrVisitEvent<'a> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HlrVisitControlFlow {
     Continue,
-    #[allow(dead_code)]
     Prune,
 }
 

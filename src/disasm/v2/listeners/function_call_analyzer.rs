@@ -45,7 +45,6 @@ pub struct CalleeInfo {
 
 /// Information about a specific location where a function call occurs (Caller's perspective).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CallSiteInfo {
     pub calling_block_id: BlockId, // Block containing the call instruction.
     pub calling_function_id: FunctionId, // Function containing the call.

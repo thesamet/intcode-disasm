@@ -47,7 +47,6 @@ where
         }
     }
 
-    #[allow(dead_code)]
     pub fn successors(&self) -> Vec<BlockId> {
         match self {
             NextKind::Follows(id) => vec![*id],

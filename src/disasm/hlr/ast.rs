@@ -33,7 +33,6 @@ pub enum HlrStatement {
     Assignment(HlrAssignmentTarget, HlrExpression),
     Loop(Vec<HlrStatement>),
     If(HlrExpression, Vec<HlrStatement>, Vec<HlrStatement>),
-    #[allow(dead_code)]
     While(HlrExpression, Vec<HlrStatement>),
     DoWhile(Vec<HlrStatement>, HlrExpression),
     Break,
@@ -109,7 +108,6 @@ pub enum BinaryOperator {
     LessThan,
     Equals,
     NotEquals,
-    #[allow(dead_code)]
     GreaterThan,
 }
 
@@ -125,7 +123,6 @@ impl BinaryOperator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
-    #[allow(dead_code)]
     LogicalNot,
     Minus,
 }

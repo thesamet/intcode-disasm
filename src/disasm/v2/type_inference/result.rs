@@ -18,14 +18,12 @@ pub type FunctionSignature = (Vec<(i128, SsaVar, Type)>, Vec<(i128, SsaVar, Type
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub inferred_types: HashMap<VariableKind, Type>,
-    #[allow(dead_code)]
     pub debug_markers: HashMap<char, SsaOperand>,
     pub traces: Vec<AnalysisTrace>,
     /// Inferred function signatures, including those discovered through indirect calls
     pub function_signatures: HashMap<FunctionId, FunctionSignature>,
 }
 
-#[allow(dead_code)]
 impl TypeInferenceResult {
     pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
         self.inferred_types.get(&VariableKind::SsaVar(*var))

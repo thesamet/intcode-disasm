@@ -12,7 +12,6 @@ use crate::disasm::v2::{
 #[derive(Debug, Clone)]
 pub struct ImageScannerResult {
     pub recognized_functions: Vec<RecognizedFunction>,
-    #[allow(dead_code)]
     pub data_segments: Vec<Span>,
 }
 

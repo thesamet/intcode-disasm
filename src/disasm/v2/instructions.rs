@@ -19,7 +19,6 @@ pub enum OperandKind {
 }
 
 impl OperandKind {
-    #[allow(dead_code)]
     pub fn get_memory(&self) -> Option<usize> {
         match self {
             OperandKind::Memory(value) => Some(*value),
@@ -27,7 +26,7 @@ impl OperandKind {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn get_pointer(&self) -> Option<usize> {
         match self {
             OperandKind::Pointer(offset) => Some(*offset),
@@ -35,7 +34,7 @@ impl OperandKind {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn get_deref(&self) -> Option<usize> {
         match self {
             OperandKind::Deref(offset) => Some(*offset),

@@ -34,7 +34,6 @@ pub struct VariableCluster {
     pub cluster_name: String,
 
     /// All SSA variables that are part of this cluster
-    #[allow(dead_code)]
     pub ssa_variables: HashSet<SsaVar>,
     /// The inferred type of this cluster
     pub inferred_type: Type,
@@ -61,7 +60,7 @@ pub struct VariableMerger<'a> {
     function_state: HashMap<FunctionId, FunctionVarNamingState>,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FunctionVarNamingState {
     next_input: usize,
     next_output: usize,
