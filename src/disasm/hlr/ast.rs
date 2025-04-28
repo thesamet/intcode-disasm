@@ -20,7 +20,7 @@ pub struct HlrFunction {
     pub body: Vec<HlrStatement>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HlrAssignmentTarget {
     Variable(HlrVariable),
     VariablePack(Vec<HlrVariable>),
@@ -28,7 +28,7 @@ pub enum HlrAssignmentTarget {
     Ignored,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HlrStatement {
     VarDef(Vec<HlrVariable>, HlrExpression),
     Assignment(HlrAssignmentTarget, HlrExpression),

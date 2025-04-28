@@ -1,5 +1,94 @@
 use crate::disasm::hlr::ast::{HlrAssignmentTarget, HlrExpression, HlrStatement};
 
+use super::ast::HlrFunction;
+
+#[derive(PartialEq, Eq, Hash)]
+enum HlrNode<'a> {
+    Block(&'a Vec<HlrStatement>),
+    Statement(&'a mut HlrStatement),
+    Expression(&'a mut HlrExpression),
+}
+
+enum HlrVisitEvent<T>
+where
+    T: Sized,
+{
+    Enter(T),
+    Exit(T),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+enum HlrVisitControlFlow {
+    Continue,
+    Prune,
+}
+
+macro_rules! do_control {
+    ($e:expr, $c:stmt) => {
+        match $e {
+            HlrVisitControlFlow::Continue => {
+                $c();
+                ()
+            }
+            HlrVisitControlFlow::Prune => (),
+        }
+    };
+}
+
+type BlockVisitEvent<'a> = HlrVisitEvent<&'a mut Vec<HlrStatement>>;
+type StatementVisitEvent<'a> = HlrVisitEvent<&'a mut HlrStatement>;
+type ExpressionVisitEvent<'a> = HlrVisitEvent<&'a mut HlrExpression>;
+
+fn visit_function<'a, BF, SF, EF>(func: &'a mut HlrFunction, bf: BF, sf: SF, ef: EF)
+where
+    BF: FnMut(BlockVisitEvent<'_>) -> HlrVisitControlFlow,
+    SF: FnMut(StatementVisitEvent<'_>) -> HlrVisitControlFlow,
+    EF: FnMut(ExpressionVisitEvent<'_>) -> HlrVisitControlFlow,
+{
+    visit_block(&mut func.body, bf, sf, ef);
+}
+
+fn visit_block<'a, BF, SF, EF>(block: &'a mut Vec<HlrStatement>, mut bf: BF, mut sf: SF, mut ef: EF)
+where
+    BF: FnMut(BlockVisitEvent<'_>) -> HlrVisitControlFlow,
+    SF: FnMut(StatementVisitEvent<'_>) -> HlrVisitControlFlow,
+    EF: FnMut(ExpressionVisitEvent<'_>) -> HlrVisitControlFlow,
+{
+    do_control!(bf(HlrVisitEvent::Enter(block)), {
+        for stmt in block.iter_mut() {
+            visit_statement(stmt, &mut bf, &mut sf, &mut ef);
+        }
+    });
+    bf(HlrVisitEvent::Exit(block));
+}
+
+fn visit_statement<'a, BF, SF, EF>(
+    stmt: &'a mut HlrStatement,
+    bf: &mut BF,
+    sf: &mut SF,
+    ef: &mut EF,
+) where
+    BF: FnMut(BlockVisitEvent<'a>) -> HlrVisitControlFlow,
+    SF: FnMut(StatementVisitEvent<'a>) -> HlrVisitControlFlow,
+    EF: FnMut(ExpressionVisitEvent<'a>) -> HlrVisitControlFlow,
+{
+}
+
+fn dodo(f: &mut HlrFunction) {
+    visit_function(
+        f,
+        |e| match e {
+            HlrVisitEvent::Enter(block) => {
+                block.clear();
+                HlrVisitControlFlow::Continue
+            }
+            _ => HlrVisitControlFlow::Continue,
+        },
+        |_| HlrVisitControlFlow::Continue,
+        |_| HlrVisitControlFlow::Continue,
+    );
+}
+
 /// Trait for visiting expressions in the HLR AST
 pub trait ExpressionVisitor {
     /// Visit an expression and potentially transform it
