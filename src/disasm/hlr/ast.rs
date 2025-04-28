@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use colored::{Color, ColoredString, Colorize};
 use itertools::Itertools;
 
 use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
@@ -117,6 +118,66 @@ pub enum UnaryOperator {
 use crate::disasm::code_printer::{CodePrinter, CodeWriter};
 use crate::line;
 
+struct SyntaxColors {}
+
+impl SyntaxColors {
+    fn keyword() -> Color {
+        Color::BrightBlue
+    }
+    fn variable() -> Color {
+        Color::BrightCyan
+    }
+    fn constant() -> Color {
+        Color::BrightYellow
+    }
+    fn op_color() -> Color {
+        Color::BrightMagenta
+    }
+    fn type_color() -> Color {
+        Color::BrightGreen
+    }
+    fn const_color() -> Color {
+        Color::BrightRed
+    }
+
+    fn low_prio() -> Color {
+        Color::BrightBlack
+    }
+
+    fn function() -> Color {
+        Color::BrightBlue
+    }
+
+    fn open_paren() -> ColoredString {
+        format!("(").color(SyntaxColors::low_prio())
+    }
+    fn close_paren() -> ColoredString {
+        format!(")").color(SyntaxColors::low_prio())
+    }
+    fn open_brace() -> ColoredString {
+        format!("{{").color(SyntaxColors::low_prio())
+    }
+    fn close_brace() -> ColoredString {
+        format!("}}").color(SyntaxColors::low_prio())
+    }
+    fn colon() -> ColoredString {
+        format!(":").color(SyntaxColors::low_prio())
+    }
+    fn comma() -> ColoredString {
+        format!(", ").color(SyntaxColors::low_prio())
+    }
+    fn eq() -> ColoredString {
+        format!("=").color(SyntaxColors::op_color())
+    }
+    fn semicolon() -> ColoredString {
+        format!(";").color(SyntaxColors::low_prio())
+    }
+}
+
+fn keyword(text: &str) -> ColoredString {
+    format!("{}", text).color(SyntaxColors::keyword())
+}
+
 pub fn pretty_print_program(program: &HlrProgram) -> String {
     let mut printer = CodePrinter::new();
     pretty_print_program_impl(&mut printer, program);
@@ -134,11 +195,28 @@ where
 }
 
 fn pretty_print_variable(var: &HlrVariable) -> String {
-    format!("{}", var.name)
+    format!("{}", var.name.color(SyntaxColors::variable()))
 }
 
-fn pretty_print_type(ty: &Type) -> String {
-    format!("{}", ty)
+fn pretty_print_type(ty: &Type) -> ColoredString {
+    match ty {
+        Type::Int => "int".color(SyntaxColors::type_color()),
+        Type::Bool => "bool".color(SyntaxColors::type_color()),
+        Type::Char => "char".color(SyntaxColors::type_color()),
+        Type::Pointer(ty) => {
+            format!("*{}", pretty_print_type(ty)).color(SyntaxColors::type_color())
+        }
+        Type::Tuple(ts) => {
+            let mut s = "Tuple(".to_string();
+            for (_, t) in ts.iter().with_position() {
+                s.push_str(&pretty_print_type(t));
+                s.push_str(", ");
+            }
+            s.push(')');
+            s.color(SyntaxColors::type_color())
+        }
+        _ => format!("{}", ty).color(SyntaxColors::type_color()),
+    }
 }
 
 fn pretty_print_function<F>(writer: &mut F, func: &HlrFunction)
@@ -150,8 +228,9 @@ where
         .iter()
         .map(|arg| {
             format!(
-                "{}: {}",
+                "{}{} {}",
                 pretty_print_variable(arg),
+                SyntaxColors::colon(),
                 pretty_print_type(&arg.type_info)
             )
         })
@@ -159,22 +238,30 @@ where
         .join(", ");
 
     let ret_str = match func.return_type.len() {
-        0 => "void".to_string(),
+        0 => keyword("void").color(SyntaxColors::type_color()),
         1 => pretty_print_type(&func.return_type[0].type_info),
         _ => format!(
             "({})",
             func.return_type
                 .iter()
                 .map(|ret| pretty_print_type(&ret.type_info))
-                .join(", ")
-        ),
+                .join(&SyntaxColors::comma().to_string()),
+        )
+        .color(SyntaxColors::low_prio()),
     };
 
-    let signature = format!("function {}({}) -> {} {{", func.name, args_str, ret_str);
+    let var_name = &format!(
+        "{} {}({}) -> {} {{",
+        keyword("function"),
+        func.name.color(SyntaxColors::function()),
+        args_str,
+        ret_str
+    );
+    let signature = var_name.color(SyntaxColors::low_prio());
 
     line!(writer, "{}", signature);
     pretty_print_statements(&mut writer.indented(), &func.body);
-    line!(writer, "}}");
+    line!(writer, "{}", SyntaxColors::close_brace());
 }
 
 fn pretty_print_statement<F>(writer: &mut F, stmt: &HlrStatement)
@@ -185,77 +272,145 @@ where
         HlrStatement::VarDef(vars, expr) => {
             let e = if vars.len() == 1 {
                 format!(
-                    "{}: {}",
+                    "{}{} {}",
                     pretty_print_variable(&vars[0]),
+                    SyntaxColors::colon(),
                     pretty_print_type(&vars[0].type_info),
                 )
+                .color(SyntaxColors::low_prio())
             } else {
                 let vars = vars
                     .iter()
                     .map(|var| {
                         format!(
-                            "{}: {}",
+                            "{}{} {}",
                             pretty_print_variable(var),
+                            SyntaxColors::colon(),
                             pretty_print_type(&var.type_info),
                         )
                     })
-                    .join(", ");
-                format!("({})", vars)
+                    .join(&SyntaxColors::comma().to_string());
+                format!("({})", vars).color(SyntaxColors::low_prio())
             };
-            line!(writer, "let {} = {};", e, pretty_print_expression(expr));
+            line!(
+                writer,
+                "{} {} {} {}{}",
+                keyword("let"),
+                e,
+                SyntaxColors::eq(),
+                pretty_print_expression(expr),
+                SyntaxColors::semicolon()
+            );
         }
         HlrStatement::Assignment(target, expr) => {
             let target = match target {
-                HlrAssignmentTarget::Variable(var) => format!("{} = ", var.name),
+                HlrAssignmentTarget::Variable(var) => {
+                    format!("{} {} ", pretty_print_variable(var), SyntaxColors::eq())
+                }
                 HlrAssignmentTarget::VariablePack(..) => panic!("Not implemented"),
                 HlrAssignmentTarget::Deref(expr) => {
-                    format!("*{} = ", pretty_print_expression(expr))
+                    format!("*{} {} ", pretty_print_expression(expr), SyntaxColors::eq())
                 }
                 HlrAssignmentTarget::Ignored => "".to_string(),
             };
-            line!(writer, "{}{};", target, pretty_print_expression(expr));
+            line!(
+                writer,
+                "{}{}{}",
+                target,
+                pretty_print_expression(expr),
+                SyntaxColors::semicolon()
+            );
         }
         HlrStatement::Loop(body) => {
-            line!(writer, "loop {{");
+            line!(writer, "{} {}", keyword("loop"), SyntaxColors::open_brace());
             pretty_print_statements(&mut writer.indented(), body);
-            line!(writer, "}}");
+            line!(writer, "{}", SyntaxColors::close_brace());
         }
         HlrStatement::DoWhile(body, cond) => {
-            line!(writer, "do {{");
+            line!(writer, "{} {}", keyword("do"), SyntaxColors::open_brace());
             pretty_print_statements(&mut writer.indented(), body);
-            line!(writer, "}} while {};", pretty_print_expression(cond));
+            line!(
+                writer,
+                "{} {} {};",
+                SyntaxColors::close_brace(),
+                keyword("while"),
+                pretty_print_expression(cond)
+            );
         }
         HlrStatement::If(cond, true_branch, false_branch) => {
-            line!(writer, "if {} {{", pretty_print_expression(cond));
+            line!(
+                writer,
+                "{} {} {}",
+                keyword("if"),
+                pretty_print_expression(cond),
+                SyntaxColors::open_brace()
+            );
             pretty_print_statements(&mut writer.indented(), true_branch);
             if false_branch.is_empty() {
-                line!(writer, "}}");
+                line!(writer, "{}", SyntaxColors::close_brace());
             } else {
-                line!(writer, "}} else {{");
+                line!(
+                    writer,
+                    "{} {} {}",
+                    SyntaxColors::close_brace(),
+                    keyword("else"),
+                    SyntaxColors::open_brace()
+                );
                 pretty_print_statements(&mut writer.indented(), false_branch);
-                line!(writer, "}}");
+                line!(writer, "{}", SyntaxColors::close_brace());
             }
         }
         HlrStatement::While(cond, body) => {
-            line!(writer, "while {} {{", pretty_print_expression(cond));
+            line!(
+                writer,
+                "{} {} {}",
+                keyword("while"),
+                pretty_print_expression(cond),
+                SyntaxColors::open_brace()
+            );
             pretty_print_statements(&mut writer.indented(), body);
-            line!(writer, "}}");
+            line!(writer, "{}", SyntaxColors::close_brace());
         }
-        HlrStatement::Break => line!(writer, "break;"),
-        HlrStatement::Continue => line!(writer, "continue;"),
+        HlrStatement::Break => line!(writer, "{}{}", keyword("break"), SyntaxColors::semicolon()),
+        HlrStatement::Continue => line!(
+            writer,
+            "{}{}",
+            keyword("continue"),
+            SyntaxColors::semicolon()
+        ),
         HlrStatement::Return(exprs) => {
             let rets = match exprs.len() {
                 0 => "".to_string(),
                 1 => format!(" {}", pretty_print_expression(&exprs[0])),
                 _ => format!(
-                    " ({})",
-                    exprs.iter().map(pretty_print_expression).join(", ")
+                    " {}{}{}",
+                    SyntaxColors::open_paren(),
+                    exprs
+                        .iter()
+                        .map(pretty_print_expression)
+                        .join(&SyntaxColors::comma().to_string())
+                        .color(SyntaxColors::low_prio()),
+                    SyntaxColors::close_paren()
                 ),
             };
-            line!(writer, "return{};", rets);
+            line!(
+                writer,
+                "{}{}{}",
+                keyword("return"),
+                rets,
+                SyntaxColors::semicolon()
+            );
         }
-        HlrStatement::Halt => line!(writer, "halt;"),
-        HlrStatement::Output(expr) => line!(writer, "output({});", pretty_print_expression(expr)),
+        HlrStatement::Halt => line!(writer, "{}{}", keyword("halt"), SyntaxColors::semicolon()),
+        HlrStatement::Output(expr) => line!(
+            writer,
+            "{}{}{}{}{}",
+            keyword("output"),
+            SyntaxColors::open_paren(),
+            pretty_print_expression(expr),
+            SyntaxColors::close_paren(),
+            SyntaxColors::semicolon()
+        ),
     }
 }
 
@@ -272,18 +427,22 @@ where
 // than passing the writer down. Indentation is handled by the statement printer.
 fn pretty_print_expression(expr: &HlrExpression) -> String {
     match expr {
-        HlrExpression::Variable(var) => var.name.clone(),
-        HlrExpression::Constant(val, _) => format!("{}", val),
+        HlrExpression::Variable(var) => pretty_print_variable(var),
+        HlrExpression::Constant(val, _) => {
+            format!("{}", val.to_string().color(SyntaxColors::const_color()))
+        }
         HlrExpression::BinaryOp {
             op,
             left,
             right,
             result_type: _, // Type hints can sometimes be omitted for brevity if desired
         } => format!(
-            "({} {} {})", // Removed type hint for potentially cleaner output
+            "{}{} {} {}{}", // Removed type hint for potentially cleaner output
+            SyntaxColors::open_paren(),
             pretty_print_expression(left),
-            op,
+            op.to_string().color(SyntaxColors::op_color()),
             pretty_print_expression(right),
+            SyntaxColors::close_paren()
         ),
         HlrExpression::UnaryOperator { op, expr } => {
             format!("{}{}", op, pretty_print_expression(expr))
