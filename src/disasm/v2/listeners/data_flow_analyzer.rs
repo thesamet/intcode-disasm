@@ -307,6 +307,13 @@ impl DataFlowAnalyzer {
                 new_live_out.extend(dfr.gen.keys().filter(|k| k.is_negative_relative_memory()));
             }
         }
+        if matches!(block.next, NextKind::FunctionCall(_)) {
+            // If this is a function call, we need to add the return arguments to live out
+            for block in &function.blocks {
+                let dfr = df_result.block_results.get(&block).unwrap();
+                new_live_out.extend(dfr.gen.keys().filter(|k| k.is_positive_relative_memory()));
+            }
+        }
 
         new_live_out
     }
@@ -353,10 +360,6 @@ impl ModelEventListener for DataFlowAnalyzer {
                 .filter(|&(n, _)| n > 0)
                 .collect_vec();
             if !return_usage_in_block.is_empty() {
-                println!(
-                    "Block {:?} has return usages: {:?}",
-                    block_id, return_usage_in_block
-                );
                 assert_eq!(br.function_returns_in.len(), 1);
                 let calling_block = br.function_returns_in.iter().next().unwrap().calling_block;
                 let calling_block = df_result_for_function
