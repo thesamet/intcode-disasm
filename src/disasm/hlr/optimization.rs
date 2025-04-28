@@ -126,6 +126,76 @@ impl StatementVisitor for StatementTransformer {
                     Some(HlrStatement::Assignment(new_target, new_expr))
                 }
             },
+            HlrStatement::If(cond, then_branch, else_branch) => {
+                let new_cond = self.visit_expression(cond);
+                let new_then = self.transform(then_branch);
+                let new_else = self.transform(else_branch);
+                
+                let changed = *cond != new_cond || 
+                    then_branch != &new_then || 
+                    else_branch != &new_else;
+                
+                if changed {
+                    Some(HlrStatement::If(new_cond, new_then, new_else))
+                } else {
+                    Some(stmt.clone())
+                }
+            },
+            HlrStatement::Loop(body) => {
+                let new_body = self.transform(body);
+                
+                if body != &new_body {
+                    Some(HlrStatement::Loop(new_body))
+                } else {
+                    Some(stmt.clone())
+                }
+            },
+            HlrStatement::While(cond, body) => {
+                let new_cond = self.visit_expression(cond);
+                let new_body = self.transform(body);
+                
+                let changed = *cond != new_cond || body != &new_body;
+                
+                if changed {
+                    Some(HlrStatement::While(new_cond, new_body))
+                } else {
+                    Some(stmt.clone())
+                }
+            },
+            HlrStatement::DoWhile(body, cond) => {
+                let new_body = self.transform(body);
+                let new_cond = self.visit_expression(cond);
+                
+                let changed = *cond != new_cond || body != &new_body;
+                
+                if changed {
+                    Some(HlrStatement::DoWhile(new_body, new_cond))
+                } else {
+                    Some(stmt.clone())
+                }
+            },
+            HlrStatement::Return(exprs) => {
+                let new_exprs = exprs.iter()
+                    .map(|expr| self.visit_expression(expr))
+                    .collect::<Vec<_>>();
+                
+                let changed = exprs.iter().zip(new_exprs.iter())
+                    .any(|(a, b)| a != b);
+                
+                if changed {
+                    Some(HlrStatement::Return(new_exprs))
+                } else {
+                    Some(stmt.clone())
+                }
+            },
+            HlrStatement::Output(expr) => {
+                let new_expr = self.visit_expression(expr);
+                if *expr == new_expr {
+                    Some(stmt.clone())
+                } else {
+                    Some(HlrStatement::Output(new_expr))
+                }
+            },
             _ => Some(stmt.clone()),
         }
     }
@@ -216,7 +286,7 @@ impl VariableUsageCounter {
             HlrStatement::Output(expr) => {
                 self.count_usages_in_expression(expr);
             },
-            _ => {},
+            HlrStatement::Break | HlrStatement::Continue | HlrStatement::Halt => {},
         }
     }
     
@@ -392,6 +462,10 @@ impl ExpressionBuilding {
                     }
                 });
                 is_simple
+            },
+            // Add more cases that are safe to inline
+            HlrExpression::UnaryOperator { op: _, expr: inner } => {
+                self.is_safe_to_inline(inner)
             },
             _ => false,
         }
