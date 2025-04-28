@@ -122,32 +122,65 @@ struct SyntaxColors {}
 
 impl SyntaxColors {
     fn keyword() -> Color {
-        Color::BrightBlue
+        Color::TrueColor {
+            r: 253,
+            g: 104,
+            b: 131,
+        }
     }
     fn variable() -> Color {
-        Color::BrightCyan
+        Color::TrueColor {
+            r: 255,
+            g: 241,
+            b: 243,
+        }
     }
-    fn constant() -> Color {
-        Color::BrightYellow
-    }
+
     fn op_color() -> Color {
-        Color::BrightMagenta
+        Color::TrueColor {
+            r: 253,
+            g: 104,
+            b: 131,
+        }
     }
     fn type_color() -> Color {
-        Color::BrightGreen
+        Color::TrueColor {
+            r: 133,
+            g: 218,
+            b: 204,
+        }
     }
     fn const_color() -> Color {
-        Color::BrightRed
+        Color::TrueColor {
+            r: 0xa8,
+            g: 0xa9,
+            b: 0xeb,
+        }
     }
 
     fn low_prio() -> Color {
-        Color::BrightBlack
+        Color::TrueColor {
+            r: 0x94,
+            g: 0x8a,
+            b: 0x8b,
+        }
     }
 
     fn function() -> Color {
-        Color::BrightBlue
+        Color::TrueColor {
+            r: 173,
+            g: 218,
+            b: 120,
+        }
     }
 
+    fn bg_color() -> Color {
+        Color::TrueColor {
+            r: 44,
+            g: 37,
+            b: 37,
+        }
+    }
     fn open_paren() -> ColoredString {
         format!("(").color(SyntaxColors::low_prio())
     }
@@ -181,7 +214,19 @@ fn keyword(text: &str) -> ColoredString {
 pub fn pretty_print_program(program: &HlrProgram) -> String {
     let mut printer = CodePrinter::new();
     pretty_print_program_impl(&mut printer, program);
-    printer.result()
+    let clear_to_end_code = "\x1b[K";
+
+    printer
+        .result()
+        .lines()
+        .map(|line| {
+            format!(
+                "{}{}",
+                line.on_color(SyntaxColors::bg_color()),
+                clear_to_end_code.on_color(SyntaxColors::bg_color())
+            )
+        })
+        .join("\n")
 }
 
 fn pretty_print_program_impl<F>(writer: &mut F, program: &HlrProgram)
