@@ -86,6 +86,20 @@ impl HlrExpression {
             _ => None,
         }
     }
+
+    pub fn as_constant(&self) -> Option<i128> {
+        match self {
+            HlrExpression::Constant(val, _) => Some(*val),
+            _ => None,
+        }
+    }
+
+    pub fn as_constant_mut(&mut self) -> Option<&mut i128> {
+        match self {
+            HlrExpression::Constant(val, _) => Some(val),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

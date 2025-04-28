@@ -1,10 +1,20 @@
+use std::ops::DerefMut;
 
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrExpression, HlrFunction, HlrProgram, HlrStatement, UnaryOperator,
 };
+use crate::disasm::hlr::visitor::{visit_function, HlrNode, HlrVisitControlFlow, HlrVisitEvent};
 use crate::disasm::v2::model::ProgramModel;
 use crate::disasm::v2::type_inference::types::Type;
 use crate::disasm::Error;
+
+pub trait OptimizationPass {
+    /// Apply the optimization pass to a function
+    fn run(&self, function: &mut HlrFunction) -> bool;
+
+    /// Name of the optimization for debugging/logging
+    fn name(&self) -> &str;
+}
 
 /// Optimizer for high-level representation (HLR) of the program.
 ///
@@ -14,21 +24,28 @@ use crate::disasm::Error;
 /// - Creating higher-level expressions from lower-level operations
 pub struct HlrOptimizer<'a> {
     model: &'a ProgramModel,
+    optimizations: Vec<Box<dyn OptimizationPass>>,
 }
 
 impl<'a> HlrOptimizer<'a> {
     pub fn new(model: &'a ProgramModel) -> Self {
-        Self { model }
+        Self {
+            model,
+            optimizations: vec![Box::new(InitialOptimization)],
+        }
     }
 
     /// Optimizes the given HLR program by applying various transformations
     pub fn optimize(&self, program: &HlrProgram) -> Result<HlrProgram, Error> {
         let mut optimized_functions = Vec::new();
-
-        // Process each function in the program
         for function in &program.functions {
-            let optimized_function = self.optimize_function(function)?;
-            optimized_functions.push(optimized_function);
+            let mut f = function.clone();
+            for pass in &self.optimizations {
+                if pass.run(&mut f) {
+                    println!("Pass {} made changes in function {}", pass.name(), f.name);
+                }
+            }
+            optimized_functions.push(f);
         }
 
         // Create and return the optimized HLR program
@@ -39,169 +56,65 @@ impl<'a> HlrOptimizer<'a> {
 
         Ok(optimized_program)
     }
+}
 
-    /// Optimizes a single function by applying transformations to its body
-    fn optimize_function(&self, function: &HlrFunction) -> Result<HlrFunction, Error> {
-        // Create a new function with the same metadata but optimized body
-        let optimized_function = HlrFunction {
-            original_id: function.original_id,
-            name: function.name.clone(),
-            args: function.args.clone(),
-            return_type: function.return_type.clone(),
-            body: self.optimize_statements(&function.body)?,
-        };
+struct InitialOptimization;
 
-        Ok(optimized_function)
+impl OptimizationPass for InitialOptimization {
+    fn name(&self) -> &str {
+        "InitialOptimization"
     }
 
-    /// Optimizes a list of statements by applying transformations
-    fn optimize_statements(&self, statements: &[HlrStatement]) -> Result<Vec<HlrStatement>, Error> {
-        let mut out = Vec::new();
-        for statement in statements.into_iter() {
-            let res = match statement {
-                HlrStatement::If(cond, if_body, else_body) => {
-                    if if_body.is_empty() {
-                        let new_cond = self.optimize_expression(&cond.logical_not().ok_or(
-                            Error::AnalysisError("Could not negate if cond".to_string()),
-                        )?)?;
-                        HlrStatement::If(new_cond, self.optimize_statements(else_body)?, vec![])
-                    } else {
-                        HlrStatement::If(
-                            self.optimize_expression(&cond.clone())?,
-                            self.optimize_statements(if_body)?,
-                            self.optimize_statements(else_body)?,
-                        )
-                    }
-                }
-                HlrStatement::Assignment(target, expr) => {
-                    HlrStatement::Assignment(target.clone(), self.optimize_expression(expr)?)
-                }
-                HlrStatement::While(cond, body) => HlrStatement::While(
-                    self.optimize_expression(cond)?,
-                    self.optimize_statements(body)?,
-                ),
-                HlrStatement::DoWhile(body, cond) => HlrStatement::DoWhile(
-                    self.optimize_statements(body)?,
-                    self.optimize_expression(cond)?,
-                ),
-                HlrStatement::Loop(body) => HlrStatement::Loop(self.optimize_statements(body)?),
-                HlrStatement::VarDef(var, expr) => {
-                    HlrStatement::VarDef(var.clone(), self.optimize_expression(expr)?)
-                }
-                HlrStatement::Break | HlrStatement::Continue | HlrStatement::Halt => {
-                    statement.clone()
-                }
-                HlrStatement::Output(expr) => HlrStatement::Output(self.optimize_expression(expr)?),
-                HlrStatement::Return(expr) => HlrStatement::Return(
-                    expr.iter()
-                        .map(|x| self.optimize_expression(x))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
-            };
-            out.push(res);
-        }
-        // For now, just return a clone of the original statements
-        // This will be expanded with actual optimizations in the future
-        Ok(out)
-    }
-
-    fn optimize_expression(&self, expr: &HlrExpression) -> Result<HlrExpression, Error> {
-        match expr {
-            HlrExpression::BinaryOp {
-                op,
-                left,
-                right,
-                result_type,
-            } => self.optimize_binary_op(*op, left, right, result_type),
-            HlrExpression::FunctionCall(func_expr, func_args) => Ok(HlrExpression::FunctionCall(
-                Box::new(self.optimize_expression(&func_expr)?),
-                func_args
-                    .iter()
-                    .map(|x| self.optimize_expression(x))
-                    .collect::<Result<Vec<HlrExpression>, Error>>()?,
-            )),
-            HlrExpression::Tuple(exprs) => Ok(HlrExpression::Tuple(
-                exprs
-                    .iter()
-                    .map(|expr| self.optimize_expression(expr))
-                    .collect::<Result<Vec<_>, _>>()?,
-            )),
-            HlrExpression::Input() => Ok(HlrExpression::Input()),
-            HlrExpression::Variable(var) => Ok(HlrExpression::Variable(var.clone())),
-            HlrExpression::Deref(var) => Ok(HlrExpression::Deref(var.clone())),
-            HlrExpression::Constant(val, ty) => Ok(HlrExpression::Constant(*val, ty.clone())),
-            HlrExpression::UnaryOperator { op, expr } => Ok(HlrExpression::UnaryOperator {
-                op: op.clone(),
-                expr: Box::new(self.optimize_expression(expr)?),
-            }),
-        }
-    }
-
-    fn optimize_binary_op(
-        &self,
-        op: BinaryOperator,
-        left: &HlrExpression,
-        right: &HlrExpression,
-        result_type: &Type,
-    ) -> Result<HlrExpression, Error> {
-        match op {
-            BinaryOperator::Add => {
-                match &right {
-                    HlrExpression::Constant(v, t) if *v < 0 => {
-                        return self.optimize_binary_op(
-                            BinaryOperator::Sub,
-                            left,
-                            &HlrExpression::Constant(-v, t.clone()),
-                            result_type,
-                        )
+    fn run(&self, function: &mut HlrFunction) -> bool {
+        let mut changed = false;
+        visit_function(function, |e| match e {
+            HlrVisitEvent::Exit(HlrNode::Statement(stmt)) => {
+                match stmt {
+                    HlrStatement::If(cond, if_body, else_body) => {
+                        if if_body.is_empty() {
+                            *cond = cond.logical_not().unwrap();
+                            std::mem::swap(if_body, else_body);
+                            changed = true;
+                        }
                     }
                     _ => {}
-                };
-                Ok(HlrExpression::BinaryOp {
-                    op: op.clone(),
-                    left: Box::new(self.optimize_expression(left)?),
-                    right: Box::new(self.optimize_expression(right)?),
-                    result_type: result_type.clone(),
-                })
+                }
+                HlrVisitControlFlow::Continue
             }
-            BinaryOperator::Mul => {
-                match &left {
-                    HlrExpression::Constant(v, _) if *v == -1 => {
-                        return self.optimize_expression(&HlrExpression::UnaryOperator {
-                            op: UnaryOperator::Minus,
-                            expr: Box::new(self.optimize_expression(right)?),
-                        })
+            HlrVisitEvent::Exit(HlrNode::Expression(expr)) => match expr {
+                HlrExpression::BinaryOp {
+                    op, left, right, ..
+                } => {
+                    if *op == BinaryOperator::Add {
+                        if let Some(right_num) = right.as_constant_mut().filter(|s| **s < 0) {
+                            *op = BinaryOperator::Sub;
+                            *right_num = -*right_num;
+                            changed = true;
+                        }
                     }
-                    _ => {}
-                };
-                match &right {
-                    HlrExpression::Constant(v, _) if *v == -1 => {
-                        return self.optimize_expression(&HlrExpression::UnaryOperator {
-                            op: UnaryOperator::Minus,
-                            expr: Box::new(self.optimize_expression(left)?),
-                        })
+                    if *op == BinaryOperator::Mul {
+                        if right.as_constant() == Some(-1) {
+                            *expr = HlrExpression::UnaryOperator {
+                                op: UnaryOperator::Minus,
+                                expr: left.clone(),
+                            };
+                            changed = true;
+                        } else if left.as_constant() == Some(-1) {
+                            *expr = HlrExpression::UnaryOperator {
+                                op: UnaryOperator::Minus,
+                                expr: right.clone(),
+                            };
+                            changed = true;
+                        }
                     }
-                    _ => {}
-                };
-                Ok(HlrExpression::BinaryOp {
-                    op: op.clone(),
-                    left: Box::new(self.optimize_expression(left)?),
-                    right: Box::new(self.optimize_expression(right)?),
-                    result_type: result_type.clone(),
-                })
-            }
-            BinaryOperator::Sub => Ok(HlrExpression::BinaryOp {
-                op: op.clone(),
-                left: Box::new(self.optimize_expression(left)?),
-                right: Box::new(self.optimize_expression(right)?),
-                result_type: result_type.clone(),
-            }),
-            _ => Ok(HlrExpression::BinaryOp {
-                op,
-                left: Box::new(self.optimize_expression(left)?),
-                right: Box::new(self.optimize_expression(right)?),
-                result_type: result_type.clone(),
-            }),
-        }
+
+                    // TODO: Handle other cases
+                    HlrVisitControlFlow::Continue
+                }
+                _ => HlrVisitControlFlow::Continue,
+            },
+            _ => HlrVisitControlFlow::Continue,
+        });
+        changed
     }
 }
