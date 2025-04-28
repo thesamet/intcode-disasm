@@ -53,17 +53,11 @@ impl ModelEventListener for ControlFlowStructureRecoveryListener {
         _event: VariableAnalysisComplete,
         _sender: &mut EventCollector<Event>,
     ) -> Result<(), Error> {
-        println!(
-            "Received VariableAnalysisComplete event. Starting control flow structure recovery..."
-        );
-
         let program = ControlFlowStructureAnalyzer::new(model).recover_structures()?;
 
         // Store the recovered program
         self.hlr_program = Some(program.clone());
         model.set_hlr_program(program);
-
-        println!("Control flow structure recovery finished.");
 
         // Publish an event to signal that structure recovery is complete
         _sender.publish(crate::disasm::v2::events::StructureRecoveryComplete {});
@@ -75,12 +69,13 @@ struct ControlFlowStructureAnalyzer<'a> {
     model: &'a ProgramModel,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct FunctionAnalysisContext {
     loops: HashMap<BlockId, LoopStructure>,
     ifs: HashMap<BlockId, BlockId>,
     in_loop: Option<LoopStructure>,
-    in_if: Option<(BlockId, BlockId)>,
+    in_if: Vec<(BlockId, BlockId)>,
+    vars: HashSet<HlrVariable>,
 }
 
 impl FunctionAnalysisContext {
@@ -89,7 +84,8 @@ impl FunctionAnalysisContext {
             loops,
             ifs,
             in_loop: None,
-            in_if: None,
+            in_if: vec![],
+            vars: HashSet::new(),
         }
     }
 }
@@ -266,13 +262,33 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             lp.exit = jump_outs.iter().exactly_one().ok().cloned();
             trace!("Function_i={} has loop: {:?}", func.function_id, lp);
         }
-        let context = FunctionAnalysisContext::new(loops, ifs);
-        let stmts = self.analyze_block(ssa_func, &context, func.entry_block, None);
+        let mut context = FunctionAnalysisContext::new(loops, ifs);
+        let mut stmts = self.analyze_block(ssa_func, &mut context, func.entry_block, None);
+        stmts.extend(self.maybe_return_statement(ssa_func, true));
+        let args = self
+            .model
+            .get_type_inference_result()
+            .unwrap()
+            .function_signatures[&func.function_id]
+            .0
+            .iter()
+            .map(|(_, t, _)| self.hlr_var(t))
+            .collect_vec();
+        let return_type = self
+            .model
+            .get_type_inference_result()
+            .unwrap()
+            .function_signatures[&func.function_id]
+            .1
+            .iter()
+            .map(|(_, t, _)| self.hlr_var(t))
+            .collect_vec();
+
         let hlr = HlrFunction {
             original_id: func.function_id,
             name: format!("{}", func.function_id), // Generate a placeholder name
-            args: vec![],
-            return_type: vec![],
+            args,
+            return_type,
             body: stmts,
         };
         Ok(hlr)
@@ -281,7 +297,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
     fn analyze_block(
         &self,
         ssa_func: &SsaFunction,
-        context: &FunctionAnalysisContext,
+        context: &mut FunctionAnalysisContext,
         start: BlockId,
         end: Option<BlockId>,
     ) -> Vec<HlrStatement> {
@@ -289,23 +305,21 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let mut statements = vec![];
         let func = self.model.get_function(ssa_func.original_id);
         while Some(current) != end {
-            println!("current={}", current);
             let block = &ssa_func.blocks[&current];
-            if let Some(discovered_loop) = context.loops.get(&current) {
+            if let Some(discovered_loop) = context.loops.get(&current).cloned() {
                 match context.in_loop {
                     // We are already processing a loop. We must be just starting to process it,
                     // so we require the loop we are on to be the same loop as the one in the context.
                     Some(existing_loop) => {
-                        if existing_loop != *discovered_loop {
+                        if existing_loop != discovered_loop {
                             // Found a different loop header while already processing `existing_loop`.
                             panic!("Nested loops not supported");
                         }
                     }
                     // Not currently processing a loop, so start processing this one.
                     None => {
-                        let mut inner_context = context.clone();
-                        inner_context.in_loop = Some(*discovered_loop);
-                        let loop_body = self.analyze_block(ssa_func, &inner_context, current, None);
+                        context.in_loop = Some(discovered_loop);
+                        let loop_body = self.analyze_block(ssa_func, context, current, None);
                         if let NextKind::Condition(cond) =
                             &ssa_func.blocks[&discovered_loop.jump_back].next
                         {
@@ -347,14 +361,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     current = *next;
                 }
                 NextKind::Goto(addr) => {
-                    if func.function_id.index() == 1984 {
-                        println!("Goto from {} to {}", current, addr);
-                        println!(
-                            "in_loop={:?} in_if={:?} func.return_block={:?}",
-                            context.in_loop, context.in_if, func.return_block,
-                        );
-                    }
-                    match (context.in_loop, context.in_if, func.return_block) {
+                    match (context.in_loop, context.in_if.last(), func.return_block) {
                         (Some(in_loop), _, _) if *addr == in_loop.header => {
                             statements.push(HlrStatement::Continue);
                             break;
@@ -364,10 +371,10 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             break;
                         }
                         (_, _, Some(return_block)) if *addr == return_block => {
-                            statements.push(HlrStatement::Return(vec![]));
+                            statements.extend(self.maybe_return_statement(ssa_func, false));
                             break;
                         }
-                        (_, Some((_, merge_point)), _) if *addr == merge_point => {
+                        (_, Some((_, merge_point)), _) if addr == merge_point => {
                             break;
                         }
                         _ => panic!(
@@ -377,35 +384,26 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     }
                 }
                 NextKind::FunctionCall(call) => {
-                    if let Some(addr) = call.function_addr.kind.constant_value() {
-                        statements.push(HlrStatement::Assignment(
-                            HlrAssignmentTarget::Ignored,
-                            HlrExpression::FunctionCall(
-                                Box::new(self.op_expr(&call.function_addr)),
-                                vec![],
-                            ),
-                        ));
-                        current = call.return_block;
-                    }
-                    /*
-                    call.function_addr.kind.constant_value().map(|addr| {
-                        statements.push(HlrStatement::Assignment(
-                            HlrAssignmentTarget::Ignored,
-                            HlrExpression::FunctionCall(
-                                Box::new(self.op_expr(&call.function_addr)),
-                                vec![],
-                            ),
-                        ));
-                        current = call.return_block;
-                    });
+                    let csi = self
+                        .model
+                        .get_function_call_analysis()
+                        .unwrap()
+                        .call_site_info
+                        .get(&call.calling_block)
+                        .unwrap();
+                    let args = csi
+                        .argument_writes
+                        .iter()
+                        .sorted()
+                        .map(|(_, v)| self.var_expr(v))
+                        .collect_vec();
                     statements.push(HlrStatement::Assignment(
                         HlrAssignmentTarget::Ignored,
                         HlrExpression::FunctionCall(
                             Box::new(self.op_expr(&call.function_addr)),
-                            vec![],
+                            args,
                         ),
                     ));
-                    */
                     current = call.return_block;
                 }
                 NextKind::Condition(cond) => {
@@ -450,26 +448,26 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                             vec![HlrStatement::Return(vec![])],
                             vec![],
                         ));
+                        self.maybe_return_statement(ssa_func, false);
                         current = cond.follows_block;
                         continue;
                     }
-                    if let Some(merge_point) = context.ifs.get(&current) {
-                        let mut new_context = context.clone();
-                        new_context.in_if = Some((current, *merge_point));
+                    if let Some(merge_point) = context.ifs.get(&current).cloned() {
+                        context.in_if.push((current, merge_point));
                         let true_branch = self.analyze_block(
                             ssa_func,
-                            &new_context,
+                            context,
                             cond.target_block,
-                            Some(*merge_point),
+                            Some(merge_point),
                         );
                         let false_branch = self.analyze_block(
                             ssa_func,
-                            &new_context,
+                            context,
                             cond.follows_block,
-                            Some(*merge_point),
+                            Some(merge_point),
                         );
                         statements.push(HlrStatement::If(cond_expr, true_branch, false_branch));
-                        current = *merge_point;
+                        current = merge_point;
                         continue;
                     }
                     unreachable!(
@@ -540,7 +538,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
     fn translate_statements(
         &self,
         _ssa_func: &SsaFunction,
-        _context: &FunctionAnalysisContext, // Mark context as potentially unused for now
+        context: &mut FunctionAnalysisContext, // Mark context as potentially unused for now
         block: &SsaBlock,
         statements: &mut Vec<HlrStatement>,
     ) -> Result<(), Error> {
@@ -553,8 +551,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     let result_var = c.as_variable().ok_or_else(|| {
                         Error::AnalysisError("Add instruction expects variable target".to_string())
                     })?;
-                    HlrStatement::Assignment(
-                        hlr_assignment(result_var),
+                    self.assign_or_def(context,result_var,
                         HlrExpression::BinaryOp {
                             op: BinaryOperator::Add,
                             left: Box::new(self.op_expr(a)),
@@ -588,34 +585,32 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     let result_var = c.as_variable().ok_or_else(|| Error::AnalysisError(
                         "LessThan instruction expects variable target".to_string(),
                     ))?;
-                    HlrStatement::Assignment(
-                        hlr_assignment(result_var),
-                        HlrExpression::BinaryOp {
-                            op: BinaryOperator::LessThan,
-                            left: Box::new(self.op_expr(a)),
-                            right: Box::new(self.op_expr(b)),
-                            result_type: Type::Bool, // Comparison result is Bool
-                        },
-                    )
+                    self.assign_or_def(context,result_var, HlrExpression::BinaryOp {
+                        op: BinaryOperator::LessThan,
+                        left: Box::new(self.op_expr(a)),
+                        right: Box::new(self.op_expr(b)),
+                        result_type: Type::Bool, // Comparison result is Bool
+                    })
                 }
                 InstructionKind::Equals(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
                         Error::AnalysisError("Equals instruction expects variable target".to_string())
                     })?;
-                    HlrStatement::Assignment(
-                        hlr_assignment(result_var),
-                        HlrExpression::BinaryOp {
-                            op: BinaryOperator::Equals,
-                            left: Box::new(self.op_expr(a)),
-                            right: Box::new(self.op_expr(b)),
-                            result_type: Type::Bool, // Comparison result is Bool
-                        },
-                    )
+                    self.assign_or_def(context,result_var, HlrExpression::BinaryOp {
+                        op: BinaryOperator::Equals,
+                        left: Box::new(self.op_expr(a)),
+                        right: Box::new(self.op_expr(b)),
+                        result_type: Type::Bool, // Comparison result is Bool
+                    })
                 }
                 InstructionKind::Assign(dst, src) => {
                     let src = self.op_expr(src);
-                    let target = match dst.kind {
-                        SsaOperandKind::Deref(var) => HlrAssignmentTarget::Deref(self.var_expr(&var)),
+                    match dst.kind {
+                        SsaOperandKind::Deref(var) =>
+                                HlrStatement::Assignment(
+                                    HlrAssignmentTarget::Deref(self.var_expr(&var)),
+                                    src,
+                                ),
                         SsaOperandKind::Constant(_) => {
                             return Err(Error::AnalysisError(
                                 "Cannot assign into a constant".to_string(),
@@ -632,11 +627,10 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                                     continue;
                                 }
                             }
-                            HlrAssignmentTarget::Variable(hlr_target_var)
+                            self.assign_or_def(context, &target_ssa_var, src)
                         }
-                    };
-                    HlrStatement::Assignment(target, src)
-                }
+                    }
+                },
                 InstructionKind::Data(_) => {
                    // Data instructions are not executable code, skip.
                    continue;
@@ -653,5 +647,44 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             statements.push(stmt);
         }
         Ok(())
+    }
+
+    // Returns some return statement if it's an early return or there are return values.
+    fn maybe_return_statement(&self, func: &SsaFunction, is_end: bool) -> Option<HlrStatement> {
+        let rets = self
+            .model
+            .get_type_inference_result()
+            .unwrap()
+            .function_signatures[&func.original_id]
+            .1
+            .iter()
+            .map(|(_, t, _)| self.var_expr(t))
+            .collect_vec();
+        let has_rets = !rets.is_empty();
+        let ret = HlrStatement::Return(rets);
+        if !has_rets {
+            if !is_end {
+                Some(ret)
+            } else {
+                None
+            }
+        } else {
+            Some(ret)
+        }
+    }
+
+    fn assign_or_def(
+        &self,
+        context: &mut FunctionAnalysisContext,
+        var: &SsaVar,
+        expr: HlrExpression,
+    ) -> HlrStatement {
+        let hlr = self.hlr_var(var);
+        if context.vars.contains(&hlr) {
+            HlrStatement::Assignment(HlrAssignmentTarget::Variable(hlr), expr)
+        } else {
+            context.vars.insert(hlr.clone());
+            HlrStatement::VarDef(hlr, expr)
+        }
     }
 }

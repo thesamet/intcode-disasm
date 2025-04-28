@@ -16,11 +16,15 @@ use crate::disasm::v2::{
     model::{BlockId, FunctionId, ProgramModel},
 };
 
-pub struct DataFlowAnalyzer {}
+pub struct DataFlowAnalyzer {
+    potential_return_values: HashSet<OperandKind>,
+}
 
 impl DataFlowAnalyzer {
     pub fn new() -> Self {
-        DataFlowAnalyzer {}
+        DataFlowAnalyzer {
+            potential_return_values: HashSet::new(),
+        }
     }
 
     /// Performs the main data flow analysis passes for a given function.
@@ -38,7 +42,7 @@ impl DataFlowAnalyzer {
         Self::run_reaching_definitions_analysis(model, block_ids, df_result);
 
         // Pass 4: Liveness Analysis (Backward Analysis)
-        Self::run_liveness_analysis(model, block_ids, df_result);
+        Self::run_liveness_analysis(model, func_id, block_ids, df_result);
 
         debug!("Data Flow Analysis passes complete for {}", func_id);
     }
@@ -236,6 +240,7 @@ impl DataFlowAnalyzer {
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
         model: &ProgramModel,
+        function_id: FunctionId,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -244,7 +249,8 @@ impl DataFlowAnalyzer {
             changed = false;
             // Iterate backwards - often converges faster for backward analyses like liveness
             for &block_id in block_ids.iter().rev() {
-                let new_live_out = Self::calculate_live_out(model, block_id, df_result);
+                let new_live_out =
+                    Self::calculate_live_out(model, function_id, block_id, df_result);
 
                 // Update block's OUT set if changed
                 let block_flow = df_result.block_results.get_mut(&block_id).unwrap();
@@ -279,6 +285,7 @@ impl DataFlowAnalyzer {
     /// Calculates the Live-Out set for a single block based on its successors' Live-In sets.
     fn calculate_live_out(
         model: &ProgramModel,
+        function_id: FunctionId,
         block_id: BlockId,
         df_result: &DataFlowResult, // Read-only access for successor IN sets
     ) -> HashSet<OperandKind> {
@@ -289,30 +296,15 @@ impl DataFlowAnalyzer {
             live_out.extend(&df_result.block_results.get(&succ_id).unwrap().live_in)
         };
 
-        match &block.next {
-            NextKind::Follows(succ_id) => {
-                add_live_in_from_successor(*succ_id, &mut new_live_out);
-            }
-            NextKind::Goto(target_block_id) => {
-                // Only consider immediate jumps for intra-procedural analysis
-                add_live_in_from_successor(*target_block_id, &mut new_live_out);
-            }
-            NextKind::Condition(cond) => {
-                add_live_in_from_successor(cond.target_block, &mut new_live_out);
-                add_live_in_from_successor(cond.follows_block, &mut new_live_out);
-            }
-            NextKind::FunctionCall(call) => {
-                // Live variables after a call are those live at the start of the return block.
-                add_live_in_from_successor(call.return_block, &mut new_live_out);
-                // We could potentially add arguments here if they are pointers/mutable,
-                // but basic liveness usually doesn't track that across calls.
-            }
-            NextKind::Return => {
-                // Intra-procedural liveness: Nothing is live *within this function* after return.
-                // Inter-procedural analysis would consider return values used by callers.
-            }
-            NextKind::Halt | NextKind::Unknown => {
-                // Nothing is live after Halt or Unknown paths within the function.
+        for succ_id in block.next.successors() {
+            add_live_in_from_successor(succ_id, &mut new_live_out);
+        }
+        let function = model.get_function(function_id);
+
+        if Some(block_id) == model.get_function(function_id).return_block {
+            for block in &function.blocks {
+                let dfr = df_result.block_results.get(&block).unwrap();
+                new_live_out.extend(dfr.gen.keys().filter(|k| k.is_negative_relative_memory()));
             }
         }
 

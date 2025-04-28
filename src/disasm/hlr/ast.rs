@@ -14,8 +14,8 @@ pub struct HlrVariable {
 pub struct HlrFunction {
     pub original_id: FunctionId,
     pub name: String,
-    pub args: Vec<Type>,
-    pub return_type: Vec<Type>,
+    pub args: Vec<HlrVariable>,
+    pub return_type: Vec<HlrVariable>,
     pub body: Vec<HlrStatement>,
 }
 
@@ -28,6 +28,7 @@ pub enum HlrAssignmentTarget {
 
 #[derive(Debug, Clone)]
 pub enum HlrStatement {
+    VarDef(HlrVariable, HlrExpression),
     Assignment(HlrAssignmentTarget, HlrExpression),
     Loop(Vec<HlrStatement>),
     If(HlrExpression, Vec<HlrStatement>, Vec<HlrStatement>),
@@ -131,6 +132,14 @@ where
     }
 }
 
+fn pretty_print_variable(var: &HlrVariable) -> String {
+    format!("{}", var.name)
+}
+
+fn pretty_print_type(ty: &Type) -> String {
+    format!("{}", ty)
+}
+
 fn pretty_print_function<F>(writer: &mut F, func: &HlrFunction)
 where
     F: CodeWriter,
@@ -138,28 +147,29 @@ where
     let args_str = func
         .args
         .iter()
-        .enumerate()
-        .map(|(i, arg)| format!("arg{}: {}", i, arg)) // Assuming simple arg names for now
+        .map(|arg| {
+            format!(
+                "{}: {}",
+                pretty_print_variable(arg),
+                pretty_print_type(&arg.type_info)
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
 
-    let ret_str = func
-        .return_type
-        .iter()
-        .enumerate()
-        .map(|(i, ret)| format!("ret{}: {}", i, ret)) // Assuming simple ret names for now
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let signature = if !func.args.is_empty() && !func.return_type.is_empty() {
-        format!("function {}({}) -> ({}) {{", func.name, args_str, ret_str)
-    } else if !func.args.is_empty() {
-        format!("function {}({}) {{", func.name, args_str)
-    } else if !func.return_type.is_empty() {
-        format!("function {}() -> ({}) {{", func.name, ret_str)
-    } else {
-        format!("function {}() {{", func.name)
+    let ret_str = match func.return_type.len() {
+        0 => "void".to_string(),
+        1 => pretty_print_type(&func.return_type[0].type_info),
+        _ => format!(
+            "({})",
+            func.return_type
+                .iter()
+                .map(|ret| pretty_print_type(&ret.type_info))
+                .join(", ")
+        ),
     };
+
+    let signature = format!("function {}({}) -> {} {{", func.name, args_str, ret_str);
 
     line!(writer, "{}", signature);
     pretty_print_statements(&mut writer.indented(), &func.body);
@@ -171,6 +181,15 @@ where
     F: CodeWriter,
 {
     match stmt {
+        HlrStatement::VarDef(var, expr) => {
+            line!(
+                writer,
+                "let {}: {} = {};",
+                pretty_print_variable(var),
+                pretty_print_type(&var.type_info),
+                pretty_print_expression(expr)
+            );
+        }
         HlrStatement::Assignment(target, expr) => {
             let target = match target {
                 HlrAssignmentTarget::Variable(var) => format!("{} = ", var.name),
@@ -210,7 +229,15 @@ where
         HlrStatement::Break => line!(writer, "break;"),
         HlrStatement::Continue => line!(writer, "continue;"),
         HlrStatement::Return(exprs) => {
-            line!(writer, "return{};", pretty_print_expressions(exprs));
+            let rets = match exprs.len() {
+                0 => "".to_string(),
+                1 => format!(" {}", pretty_print_expression(&exprs[0])),
+                _ => format!(
+                    " ({})",
+                    exprs.iter().map(pretty_print_expression).join(", ")
+                ),
+            };
+            line!(writer, "return{};", rets);
         }
         HlrStatement::Halt => line!(writer, "halt;"),
         HlrStatement::Output(expr) => line!(writer, "output({});", pretty_print_expression(expr)),
@@ -231,7 +258,7 @@ where
 fn pretty_print_expression(expr: &HlrExpression) -> String {
     match expr {
         HlrExpression::Variable(var) => var.name.clone(),
-        HlrExpression::Constant(val, ty) => format!("{}: {}", val, ty),
+        HlrExpression::Constant(val, _) => format!("{}", val),
         HlrExpression::BinaryOp {
             op,
             left,
@@ -242,7 +269,6 @@ fn pretty_print_expression(expr: &HlrExpression) -> String {
             pretty_print_expression(left),
             op,
             pretty_print_expression(right),
-            // result_type // Add back if type hint is desired: ": {}", result_type
         ),
         HlrExpression::UnaryOperator { op, expr } => {
             format!("{}{}", op, pretty_print_expression(expr))

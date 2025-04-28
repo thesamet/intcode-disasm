@@ -260,7 +260,6 @@ impl<'a> VariableMerger<'a> {
                     Self::related_from_instruction(model, function.original_id, instr)
                 {
                     ds.join(*v1, *v2);
-                    println!("Related: {} and {}", v1, v2);
                 }
             }
         }

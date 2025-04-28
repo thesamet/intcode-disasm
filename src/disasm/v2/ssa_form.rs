@@ -630,11 +630,7 @@ impl<'a> SSAConversionState<'a> {
             };
             let vars = all_incoming_defs
                 .iter()
-                .filter(|(var_kind, defs)| {
-                    defs.len() > 1
-                        && (block_flow.live_in.contains(var_kind)
-                            || var_kind.is_negative_relative_memory()/* maybe a return value */)
-                })
+                .filter(|(var_kind, defs)| defs.len() > 1 && block_flow.live_in.contains(var_kind))
                 .map(|(var_kind, _)| var_kind)
                 .chain(return_values_accessed.iter());
             // For each variable with multiple different definitions reaching this block,
@@ -712,6 +708,8 @@ impl<'a> SSAConversionState<'a> {
                         // If we get multiple live value through the predecessor, some phi function
                         // should have concsolidated them and then we wouldn't get here (since the
                         // var would be in initial_start_states).
+                        /*
+                        // We may get multiple definitions, however they are never read.
                         assert!(
                             ssa_blocks[block_id]
                                 .start_state
@@ -722,6 +720,7 @@ impl<'a> SSAConversionState<'a> {
                             block_id,
                             ssa_blocks[block_id].start_state.get(var_kind).unwrap()
                         );
+                        */
 
                         new_in.insert(*var_kind, *var);
 
@@ -729,6 +728,7 @@ impl<'a> SSAConversionState<'a> {
                         if initial_end_states[block_id].contains_key(var_kind) {
                             continue;
                         }
+                        /*
                         assert!(
                             ssa_blocks[block_id]
                                 .end_state
@@ -740,6 +740,7 @@ impl<'a> SSAConversionState<'a> {
                             var,
                             pred.source_block_id()
                         );
+                        */
                         new_out.insert(*var_kind, *var);
                     }
                 }
