@@ -1,7 +1,7 @@
-mod disasm;
-
 use clap::{Parser, Subcommand};
-use disasm::v2::analysis::{self, run_analysis, run_analysis_ssa, run_types, run_flow_recovery};
+use disasm::disasm::v2::analysis::{
+    self, run_analysis, run_analysis_ssa, run_flow_recovery, run_types,
+};
 use itertools::Itertools;
 
 #[derive(Parser)]
@@ -40,7 +40,7 @@ fn main() {
 
 fn compile(source: String) {
     let source = std::fs::read_to_string(source);
-    let out = disasm::parser::compile(&source.unwrap());
+    let out = disasm::disasm::parser::compile(&source.unwrap());
     println!("{}", out.iter().join(","))
 }
 
