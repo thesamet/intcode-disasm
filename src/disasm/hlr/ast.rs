@@ -23,7 +23,6 @@ pub struct HlrFunction {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HlrAssignmentTarget {
     Variable(HlrVariable),
-    VariablePack(Vec<HlrVariable>),
     Deref(HlrExpression),
     Ignored,
 }
@@ -34,6 +33,7 @@ pub enum HlrStatement {
     Assignment(HlrAssignmentTarget, HlrExpression),
     Loop(Vec<HlrStatement>),
     If(HlrExpression, Vec<HlrStatement>, Vec<HlrStatement>),
+    #[allow(dead_code)]
     While(HlrExpression, Vec<HlrStatement>),
     DoWhile(Vec<HlrStatement>, HlrExpression),
     Break,
@@ -65,7 +65,6 @@ pub enum HlrExpression {
         expr: Box<HlrExpression>,
     },
     FunctionCall(Box<HlrExpression>, Vec<HlrExpression>),
-    Tuple(Vec<HlrExpression>),
     Input(),
 }
 
@@ -110,6 +109,7 @@ pub enum BinaryOperator {
     LessThan,
     Equals,
     NotEquals,
+    #[allow(dead_code)]
     GreaterThan,
 }
 
@@ -125,6 +125,7 @@ impl BinaryOperator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOperator {
+    #[allow(dead_code)]
     LogicalNot,
     Minus,
 }
@@ -366,7 +367,6 @@ where
                 HlrAssignmentTarget::Variable(var) => {
                     format!("{} {} ", pretty_print_variable(var), SyntaxColors::eq())
                 }
-                HlrAssignmentTarget::VariablePack(..) => panic!("Not implemented"),
                 HlrAssignmentTarget::Deref(expr) => {
                     format!("*{} {} ", pretty_print_expression(expr), SyntaxColors::eq())
                 }
@@ -514,20 +514,10 @@ fn pretty_print_expression(expr: &HlrExpression) -> String {
             let args = args.iter().map(pretty_print_expression).join(", ");
             format!("{}({})", name, args)
         }
-        HlrExpression::Tuple(exprs) => {
-            format!("({})", pretty_print_expressions(exprs))
-        }
+
         HlrExpression::Input() => "input()".to_string(),
         HlrExpression::Deref(var_expr) => format!("*{}", pretty_print_expression(var_expr)),
     }
-}
-
-fn pretty_print_expressions(exprs: &[HlrExpression]) -> String {
-    exprs
-        .iter()
-        .map(pretty_print_expression)
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 impl Display for BinaryOperator {

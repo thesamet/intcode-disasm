@@ -4,7 +4,7 @@ use itertools::Itertools;
 use log::trace;
 use petgraph::visit::{
     depth_first_search, Control, GraphBase, IntoNeighbors, IntoNeighborsDirected, VisitMap,
-    Visitable, Walker,
+    Visitable,
 };
 use petgraph::Direction;
 
@@ -38,11 +38,6 @@ pub struct ControlFlowStructureRecoveryListener {
 impl ControlFlowStructureRecoveryListener {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Gets the recovered high-level representation of the program, if available
-    pub fn get_hlr_program(&self) -> Option<&HlrProgram> {
-        self.hlr_program.as_ref()
     }
 }
 
@@ -537,17 +532,6 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         cluster.inferred_type.clone()
     }
 
-    fn op_type(&self, op: &SsaOperand) -> Type {
-        match op.kind {
-            SsaOperandKind::Constant(_) => Type::Int, // Assuming Int
-            SsaOperandKind::Variable(var) => self.var_type(&var),
-            SsaOperandKind::Deref(var) => match self.var_type(&var) {
-                Type::Pointer(pointee) => *pointee,
-                _ => unreachable!(),
-            },
-        }
-    }
-
     fn translate_statements(
         &self,
         _ssa_func: &SsaFunction,
@@ -556,7 +540,6 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         statements: &mut Vec<HlrStatement>,
     ) -> Result<(), Error> {
         // Closure to create an HLR assignment target for a variable
-        let hlr_assignment = |var: &SsaVar| HlrAssignmentTarget::Variable(self.hlr_var(var));
 
         for instr in &block.instructions {
             let stmt = match &instr.kind {

@@ -1,628 +1,634 @@
-use std::collections::HashMap;
-use std::fmt::Display;
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::fmt::Display;
 
-use itertools::Itertools;
-use thiserror::Error;
+    use itertools::Itertools;
+    use thiserror::Error;
 
-use crate::disasm::hlr::ast::{
-    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
-    HlrVariable,
-};
-use crate::disasm::v2::dispatching::EventPublisher;
-use crate::disasm::v2::events::Event;
-use crate::disasm::v2::listeners::{
-    control_flow_analyzer::ControlFlowStructureRecoveryListener,
-    control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-    function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScanner,
-    ssa_converter::SsaConverter, variable_analyzer::VariableAnalyzer,
-};
-use crate::disasm::v2::model::{FunctionId, ProgramModel};
-use crate::disasm::v2::type_inference::analyzer::TypeInferenceAnalyzer;
-use crate::disasm::v2::type_inference::types::Type;
-
-struct TestContext {
-    model: ProgramModel,
-}
-
-impl TestContext {
-    fn from_assembly(assembly: &str) -> Self {
-        // Parse assembly to Intcode
-        let image = crate::disasm::parser::compile(assembly);
-
-        // Set up model and event publisher
-        let mut model = ProgramModel::new();
-        let mut publisher = EventPublisher::<Event, ProgramModel>::new();
-
-        // Add all required listeners in the correct order
-        publisher.add_listener(Box::new(ImageScanner::new()));
-        publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
-        publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
-        publisher.add_listener(Box::new(SsaConverter::new()));
-        publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
-        publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
-        publisher.add_listener(Box::new(VariableAnalyzer::new()));
-        publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
-
-        // Load the image and process events
-        model.load_image(&image, &mut publisher);
-        publisher
-            .process_events(&mut model)
-            .expect("Failed to process events");
-
-        TestContext { model }
+    use crate::disasm::hlr::ast::{
+        BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
+        HlrVariable,
+    };
+    use crate::disasm::v2::dispatching::EventPublisher;
+    use crate::disasm::v2::events::Event;
+    use crate::disasm::v2::model::{FunctionId, ProgramModel};
+    use crate::disasm::v2::type_inference::types::Type;
+    struct VariableMapping {
+        actual_to_expected: HashMap<String, String>,
+        expected_to_actual: HashMap<String, String>,
     }
 
-    fn get_hlr_program(&self) -> Option<&HlrProgram> {
-        self.model.get_hlr_program()
+    #[derive(Error)]
+    #[error("Comparison failed: {context}")]
+    enum ComparisonError {
+        #[error("At {context}: expected: {expected}, got: {actual}")]
+        DifferentValues {
+            actual: String,
+            expected: String,
+            context: String,
+        },
+        #[error("At {context}: expected: {expected}, got: {actual}")]
+        UnsupportedComparison {
+            actual: String,
+            expected: String,
+            context: String,
+        },
     }
-}
 
-struct VariableMapping {
-    actual_to_expected: HashMap<String, String>,
-    expected_to_actual: HashMap<String, String>,
-}
-
-#[derive(Error)]
-#[error("Comparison failed: {context}")]
-enum ComparisonError {
-    #[error("At {context}: expected: {expected}, got: {actual}")]
-    DifferentValues {
-        actual: String,
-        expected: String,
-        context: String,
-    },
-    #[error("At {context}: expected: {expected}, got: {actual}")]
-    UnsupportedComparison {
-        actual: String,
-        expected: String,
-        context: String,
-    },
-}
-
-impl std::fmt::Debug for ComparisonError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
-    }
-}
-
-impl ComparisonError {
-    fn new<T: Display>(actual: T, expected: T, context: &str) -> Self {
-        Self::DifferentValues {
-            actual: actual.to_string(),
-            expected: expected.to_string(),
-            context: context.to_string(),
+    impl std::fmt::Debug for ComparisonError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            std::fmt::Display::fmt(self, f)
         }
     }
 
-    fn unsupported_comparison<T: Display>(actual: T, expected: T, context: &str) -> Self {
-        Self::UnsupportedComparison {
-            actual: actual.to_string(),
-            expected: expected.to_string(),
-            context: context.to_string(),
+    impl ComparisonError {
+        fn new<T: Display>(actual: T, expected: T, context: &str) -> Self {
+            Self::DifferentValues {
+                actual: actual.to_string(),
+                expected: expected.to_string(),
+                context: context.to_string(),
+            }
+        }
+
+        fn unsupported_comparison<T: Display>(actual: T, expected: T, context: &str) -> Self {
+            Self::UnsupportedComparison {
+                actual: actual.to_string(),
+                expected: expected.to_string(),
+                context: context.to_string(),
+            }
         }
     }
-}
 
-fn compare<T>(actual: T, expected: T, context: &str) -> Result<(), ComparisonError>
-where
-    T: Display + PartialEq,
-{
-    if expected == actual {
+    fn compare<T>(actual: T, expected: T, context: &str) -> Result<(), ComparisonError>
+    where
+        T: Display + PartialEq,
+    {
+        if expected == actual {
+            Ok(())
+        } else {
+            Err(ComparisonError::new(expected, actual, context))
+        }
+    }
+
+    type ComparisonResult = Result<(), ComparisonError>;
+
+    impl VariableMapping {
+        fn new() -> Self {
+            Self {
+                actual_to_expected: HashMap::new(),
+                expected_to_actual: HashMap::new(),
+            }
+        }
+
+        fn map_variable(
+            &mut self,
+            actual_name: &str,
+            expected_name: &str,
+            actual_type: &Type,
+            expected_type: &Type,
+            context: &str,
+        ) -> ComparisonResult {
+            compare(
+                actual_type,
+                expected_type,
+                &format!("{}:Variable types don't match", context),
+            )?;
+
+            // Check if we already have a mapping
+            if let Some(mapped_expected) = self.actual_to_expected.get(actual_name) {
+                return compare(
+                    mapped_expected,
+                    &expected_name.to_string(),
+                    &format!(
+                        "{}:Variable name mapping inconsistent based on prior usage",
+                        context
+                    ),
+                );
+            }
+
+            if let Some(mapped_actual) = self.expected_to_actual.get(expected_name) {
+                return compare(
+                    mapped_actual,
+                    &actual_name.to_string(),
+                    &format!(
+                        "{}:Variable name mapping inconsistent based on prior usage",
+                        context
+                    ),
+                );
+            }
+
+            // Create a new mapping
+            self.actual_to_expected
+                .insert(actual_name.to_string(), expected_name.to_string());
+            self.expected_to_actual
+                .insert(expected_name.to_string(), actual_name.to_string());
+            Ok(())
+        }
+    }
+
+    // Helper functions to create HLR structures concisely
+    fn hlr_program(functions: Vec<HlrFunction>) -> HlrProgram {
+        HlrProgram {
+            functions,
+            globals: vec![],
+        }
+    }
+
+    fn hlr_function(id: usize, body: Vec<HlrStatement>) -> HlrFunction {
+        HlrFunction {
+            original_id: FunctionId::from(id),
+            name: id.to_string(),
+            args: vec![],
+            return_type: vec![],
+            body,
+        }
+    }
+
+    fn hlr_var(name: &str, typ: Type) -> HlrVariable {
+        HlrVariable {
+            name: name.to_string(),
+            type_info: typ,
+        }
+    }
+
+    fn hlr_vardef(target: HlrVariable, expr: HlrExpression) -> HlrStatement {
+        HlrStatement::VarDef(vec![target], expr)
+    }
+
+    fn hlr_assign(target: HlrAssignmentTarget, expr: HlrExpression) -> HlrStatement {
+        HlrStatement::Assignment(target, expr)
+    }
+
+    fn hlr_var_target(name: &str, typ: Type) -> HlrAssignmentTarget {
+        HlrAssignmentTarget::Variable(hlr_var(name, typ))
+    }
+
+    fn hlr_var_expr(name: &str, typ: Type) -> HlrExpression {
+        HlrExpression::Variable(hlr_var(name, typ))
+    }
+
+    fn hlr_const(value: i128, typ: Type) -> HlrExpression {
+        HlrExpression::Constant(value, typ)
+    }
+
+    fn hlr_binop(
+        op: BinaryOperator,
+        left: HlrExpression,
+        right: HlrExpression,
+        result_type: Type,
+    ) -> HlrExpression {
+        HlrExpression::BinaryOp {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+            result_type,
+        }
+    }
+
+    fn hlr_if(
+        condition: HlrExpression,
+        then_branch: Vec<HlrStatement>,
+        else_branch: Vec<HlrStatement>,
+    ) -> HlrStatement {
+        HlrStatement::If(condition, then_branch, else_branch)
+    }
+
+    fn hlr_do_while(body: Vec<HlrStatement>, condition: HlrExpression) -> HlrStatement {
+        HlrStatement::DoWhile(body, condition)
+    }
+
+    fn hlr_loop(body: Vec<HlrStatement>) -> HlrStatement {
+        HlrStatement::Loop(body)
+    }
+
+    fn hlr_deref(expr: HlrExpression) -> HlrExpression {
+        HlrExpression::Deref(Box::new(expr))
+    }
+
+    fn hlr_input() -> HlrExpression {
+        HlrExpression::Input()
+    }
+
+    fn hlr_output(expr: HlrExpression) -> HlrStatement {
+        HlrStatement::Output(expr)
+    }
+
+    fn hlr_return(exprs: Vec<HlrExpression>) -> HlrStatement {
+        HlrStatement::Return(exprs)
+    }
+
+    fn hlr_function_call(func_expr: HlrExpression, args: Vec<HlrExpression>) -> HlrExpression {
+        HlrExpression::FunctionCall(Box::new(func_expr), args)
+    }
+
+    // Assertion functions
+    fn assert_hlr_programs_equivalent(
+        actual: &HlrProgram,
+        expected: &HlrProgram,
+    ) -> ComparisonResult {
+        compare(
+            actual.functions.len(),
+            expected.functions.len(),
+            "Different number of functions",
+        )?;
+
+        // Create a map of function IDs to functions for both actual and expected
+        let actual_funcs: HashMap<_, _> = actual
+            .functions
+            .iter()
+            .map(|f| (f.original_id, f))
+            .collect();
+        let expected_funcs: HashMap<_, _> = expected
+            .functions
+            .iter()
+            .map(|f| (f.original_id, f))
+            .collect();
+
+        // Check that both have the same set of function IDs
+        compare(
+            actual_funcs.keys().sorted().join(", "),
+            expected_funcs.keys().sorted().join(", "),
+            "Function IDs don't match",
+        )?;
+
+        // Compare functions with the same ID
+        for (id, expected_func) in expected_funcs.iter() {
+            let actual_func = actual_funcs.get(id).unwrap();
+            let mut mapping = VariableMapping::new();
+            assert_statements_equivalent(
+                &actual_func.body,
+                &expected_func.body,
+                &mut mapping,
+                &format!("Function[{}]", id),
+            )?;
+        }
         Ok(())
-    } else {
-        Err(ComparisonError::new(expected, actual, context))
-    }
-}
-
-type ComparisonResult = Result<(), ComparisonError>;
-
-impl VariableMapping {
-    fn new() -> Self {
-        Self {
-            actual_to_expected: HashMap::new(),
-            expected_to_actual: HashMap::new(),
-        }
     }
 
-    fn map_variable(
-        &mut self,
-        actual_name: &str,
-        expected_name: &str,
-        actual_type: &Type,
-        expected_type: &Type,
+    fn assert_statements_equivalent(
+        actual: &[HlrStatement],
+        expected: &[HlrStatement],
+        mapping: &mut VariableMapping,
         context: &str,
     ) -> ComparisonResult {
         compare(
-            actual_type,
-            expected_type,
+            actual.len(),
+            expected.len(),
+            &format!("{}: Different number of statements", context),
+        )?;
+        for (i, (actual_stmt, expected_stmt)) in actual.iter().zip(expected.iter()).enumerate() {
+            let stmt_context = format!("{}:Statement[{}]", context, i);
+
+            match (actual_stmt, expected_stmt) {
+                (
+                    HlrStatement::Assignment(actual_target, actual_expr),
+                    HlrStatement::Assignment(expected_target, expected_expr),
+                ) => {
+                    assert_targets_equivalent(
+                        actual_target,
+                        expected_target,
+                        mapping,
+                        &format!("{}:Target", stmt_context),
+                    )?;
+                    assert_expressions_equivalent(
+                        actual_expr,
+                        expected_expr,
+                        mapping,
+                        &format!("{}:Expression", stmt_context),
+                    )?;
+                }
+                (
+                    HlrStatement::VarDef(actual_var, actual_expr),
+                    HlrStatement::VarDef(expected_var, expected_expr),
+                ) => {
+                    if actual_var.len() != expected_var.len() {
+                        Err(ComparisonError::unsupported_comparison(
+                            format!("{:?}", actual_var),
+                            format!("{:?}", expected_var),
+                            &format!("{}:Variable types don't match", stmt_context),
+                        ))?
+                    }
+                    for (i, (actual_var, expected_var)) in
+                        actual_var.iter().zip(expected_var.iter()).enumerate()
+                    {
+                        assert_var_equivalent(
+                            actual_var,
+                            expected_var,
+                            mapping,
+                            &format!("{}:Expression[{}]", stmt_context, i),
+                        )?;
+                    }
+                    assert_expressions_equivalent(
+                        actual_expr,
+                        expected_expr,
+                        mapping,
+                        &format!("{}:Expression", stmt_context),
+                    )?;
+                }
+                (
+                    HlrStatement::If(actual_cond, actual_then, actual_else),
+                    HlrStatement::If(expected_cond, expected_then, expected_else),
+                ) => {
+                    assert_expressions_equivalent(
+                        actual_cond,
+                        expected_cond,
+                        mapping,
+                        &format!("{}:Condition", stmt_context),
+                    )?;
+                    assert_statements_equivalent(
+                        actual_then,
+                        expected_then,
+                        mapping,
+                        &format!("{}:ThenBranch", stmt_context),
+                    )?;
+                    assert_statements_equivalent(
+                        actual_else,
+                        expected_else,
+                        mapping,
+                        &format!("{}:ElseBranch", stmt_context),
+                    )?;
+                }
+                (HlrStatement::Loop(actual_body), HlrStatement::Loop(expected_body)) => {
+                    assert_statements_equivalent(
+                        actual_body,
+                        expected_body,
+                        mapping,
+                        &format!("{}:LoopBody", stmt_context),
+                    )?;
+                }
+                (HlrStatement::Output(actual_expr), HlrStatement::Output(expected_expr)) => {
+                    assert_expressions_equivalent(
+                        actual_expr,
+                        expected_expr,
+                        mapping,
+                        &format!("{}:Output", stmt_context),
+                    )?;
+                }
+                (HlrStatement::Return(actual_exprs), HlrStatement::Return(expected_exprs)) => {
+                    compare(
+                        actual_exprs.len(),
+                        expected_exprs.len(),
+                        &format!("{}:Return: expression count mismatch", stmt_context),
+                    )?;
+                    for (j, (a, e)) in actual_exprs.iter().zip(expected_exprs.iter()).enumerate() {
+                        assert_expressions_equivalent(
+                            a,
+                            e,
+                            mapping,
+                            &format!("{}:Return[{}]", stmt_context, j),
+                        )?;
+                    }
+                    ()
+                }
+                (HlrStatement::Halt, HlrStatement::Halt) => {}
+                (HlrStatement::Continue, HlrStatement::Continue) => {}
+                (HlrStatement::Break, HlrStatement::Break) => {}
+                (
+                    HlrStatement::DoWhile(actual_body, actual_cond),
+                    HlrStatement::DoWhile(expected_body, expected_cond),
+                ) => {
+                    assert_statements_equivalent(
+                        actual_body,
+                        expected_body,
+                        mapping,
+                        &format!("{}:DoWhileBody", stmt_context),
+                    )?;
+                    assert_expressions_equivalent(
+                        actual_cond,
+                        expected_cond,
+                        mapping,
+                        &format!("{}:DoWhileCond", stmt_context),
+                    )?
+                }
+
+                _ => Err(ComparisonError::unsupported_comparison(
+                    format!("{:?}", actual_stmt),
+                    format!("{:?}", expected_stmt),
+                    &format!("{}:Statement types don't match", stmt_context),
+                ))?,
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_targets_equivalent(
+        actual: &HlrAssignmentTarget,
+        expected: &HlrAssignmentTarget,
+        mapping: &mut VariableMapping,
+        context: &str,
+    ) -> ComparisonResult {
+        match (actual, expected) {
+            (
+                HlrAssignmentTarget::Variable(actual_var),
+                HlrAssignmentTarget::Variable(expected_var),
+            ) => {
+                assert_var_equivalent(actual_var, expected_var, mapping, context)?;
+            }
+            (
+                HlrAssignmentTarget::Deref(actual_expr),
+                HlrAssignmentTarget::Deref(expected_expr),
+            ) => assert_expressions_equivalent(
+                actual_expr,
+                expected_expr,
+                mapping,
+                &format!("{}:Deref", context),
+            )?,
+            (HlrAssignmentTarget::Ignored, HlrAssignmentTarget::Ignored) => (),
+            _ => {
+                Err(ComparisonError::unsupported_comparison(
+                    format!("{:?}", actual),
+                    format!("{:?}", expected),
+                    &format!("{}:Assignment target types don't match", context),
+                ))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn assert_var_equivalent(
+        actual: &HlrVariable,
+        expected: &HlrVariable,
+        mapping: &mut VariableMapping,
+        context: &str,
+    ) -> ComparisonResult {
+        compare(
+            &actual.type_info,
+            &expected.type_info,
             &format!("{}:Variable types don't match", context),
         )?;
 
-        // Check if we already have a mapping
-        if let Some(mapped_expected) = self.actual_to_expected.get(actual_name) {
-            return compare(
-                mapped_expected,
-                &expected_name.to_string(),
-                &format!(
-                    "{}:Variable name mapping inconsistent based on prior usage",
-                    context
-                ),
-            );
-        }
-
-        if let Some(mapped_actual) = self.expected_to_actual.get(expected_name) {
-            return compare(
-                mapped_actual,
-                &actual_name.to_string(),
-                &format!(
-                    "{}:Variable name mapping inconsistent based on prior usage",
-                    context
-                ),
-            );
-        }
-
-        // Create a new mapping
-        self.actual_to_expected
-            .insert(actual_name.to_string(), expected_name.to_string());
-        self.expected_to_actual
-            .insert(expected_name.to_string(), actual_name.to_string());
+        mapping.map_variable(
+            &actual.name,
+            &expected.name,
+            &actual.type_info,
+            &expected.type_info,
+            context,
+        )?;
         Ok(())
     }
-}
 
-// Helper functions to create HLR structures concisely
-fn hlr_program(functions: Vec<HlrFunction>) -> HlrProgram {
-    HlrProgram {
-        functions,
-        globals: vec![],
-    }
-}
+    fn assert_expressions_equivalent(
+        actual: &HlrExpression,
+        expected: &HlrExpression,
+        mapping: &mut VariableMapping,
+        context: &str,
+    ) -> ComparisonResult {
+        match (actual, expected) {
+            (HlrExpression::Variable(actual_var), HlrExpression::Variable(expected_var)) => {
+                assert_eq!(
+                    &actual_var.type_info, &expected_var.type_info,
+                    "{}:Variable types don't match: {:?} vs {:?}",
+                    context, actual_var.type_info, expected_var.type_info
+                );
 
-fn hlr_function(id: usize, body: Vec<HlrStatement>) -> HlrFunction {
-    HlrFunction {
-        original_id: FunctionId::from(id),
-        name: id.to_string(),
-        args: vec![],
-        return_type: vec![],
-        body,
-    }
-}
-
-fn hlr_var(name: &str, typ: Type) -> HlrVariable {
-    HlrVariable {
-        name: name.to_string(),
-        type_info: typ,
-    }
-}
-
-fn hlr_vardef(target: HlrVariable, expr: HlrExpression) -> HlrStatement {
-    HlrStatement::VarDef(vec![target], expr)
-}
-
-fn hlr_assign(target: HlrAssignmentTarget, expr: HlrExpression) -> HlrStatement {
-    HlrStatement::Assignment(target, expr)
-}
-
-fn hlr_var_target(name: &str, typ: Type) -> HlrAssignmentTarget {
-    HlrAssignmentTarget::Variable(hlr_var(name, typ))
-}
-
-fn hlr_deref_target(expr: HlrExpression) -> HlrAssignmentTarget {
-    HlrAssignmentTarget::Deref(expr)
-}
-
-fn hlr_var_expr(name: &str, typ: Type) -> HlrExpression {
-    HlrExpression::Variable(hlr_var(name, typ))
-}
-
-fn hlr_const(value: i128, typ: Type) -> HlrExpression {
-    HlrExpression::Constant(value, typ)
-}
-
-fn hlr_binop(
-    op: BinaryOperator,
-    left: HlrExpression,
-    right: HlrExpression,
-    result_type: Type,
-) -> HlrExpression {
-    HlrExpression::BinaryOp {
-        op,
-        left: Box::new(left),
-        right: Box::new(right),
-        result_type,
-    }
-}
-
-fn hlr_if(
-    condition: HlrExpression,
-    then_branch: Vec<HlrStatement>,
-    else_branch: Vec<HlrStatement>,
-) -> HlrStatement {
-    HlrStatement::If(condition, then_branch, else_branch)
-}
-
-fn hlr_do_while(body: Vec<HlrStatement>, condition: HlrExpression) -> HlrStatement {
-    HlrStatement::DoWhile(body, condition)
-}
-
-fn hlr_loop(body: Vec<HlrStatement>) -> HlrStatement {
-    HlrStatement::Loop(body)
-}
-
-fn hlr_deref(expr: HlrExpression) -> HlrExpression {
-    HlrExpression::Deref(Box::new(expr))
-}
-
-fn hlr_input() -> HlrExpression {
-    HlrExpression::Input()
-}
-
-fn hlr_output(expr: HlrExpression) -> HlrStatement {
-    HlrStatement::Output(expr)
-}
-
-fn hlr_return(exprs: Vec<HlrExpression>) -> HlrStatement {
-    HlrStatement::Return(exprs)
-}
-
-fn hlr_function_call(func_expr: HlrExpression, args: Vec<HlrExpression>) -> HlrExpression {
-    HlrExpression::FunctionCall(Box::new(func_expr), args)
-}
-
-// Assertion functions
-fn assert_hlr_programs_equivalent(actual: &HlrProgram, expected: &HlrProgram) -> ComparisonResult {
-    compare(
-        actual.functions.len(),
-        expected.functions.len(),
-        "Different number of functions",
-    )?;
-
-    // Create a map of function IDs to functions for both actual and expected
-    let actual_funcs: HashMap<_, _> = actual
-        .functions
-        .iter()
-        .map(|f| (f.original_id, f))
-        .collect();
-    let expected_funcs: HashMap<_, _> = expected
-        .functions
-        .iter()
-        .map(|f| (f.original_id, f))
-        .collect();
-
-    // Check that both have the same set of function IDs
-    compare(
-        actual_funcs.keys().sorted().join(", "),
-        expected_funcs.keys().sorted().join(", "),
-        "Function IDs don't match",
-    )?;
-
-    // Compare functions with the same ID
-    for (id, expected_func) in expected_funcs.iter() {
-        let actual_func = actual_funcs.get(id).unwrap();
-        let mut mapping = VariableMapping::new();
-        assert_statements_equivalent(
-            &actual_func.body,
-            &expected_func.body,
-            &mut mapping,
-            &format!("Function[{}]", id),
-        )?;
-    }
-    Ok(())
-}
-
-fn assert_statements_equivalent(
-    actual: &[HlrStatement],
-    expected: &[HlrStatement],
-    mapping: &mut VariableMapping,
-    context: &str,
-) -> ComparisonResult {
-    compare(
-        actual.len(),
-        expected.len(),
-        &format!("{}: Different number of statements", context),
-    )?;
-    for (i, (actual_stmt, expected_stmt)) in actual.iter().zip(expected.iter()).enumerate() {
-        let stmt_context = format!("{}:Statement[{}]", context, i);
-
-        match (actual_stmt, expected_stmt) {
-            (
-                HlrStatement::Assignment(actual_target, actual_expr),
-                HlrStatement::Assignment(expected_target, expected_expr),
-            ) => {
-                assert_targets_equivalent(
-                    actual_target,
-                    expected_target,
-                    mapping,
-                    &format!("{}:Target", stmt_context),
-                )?;
-                assert_expressions_equivalent(
-                    actual_expr,
-                    expected_expr,
-                    mapping,
-                    &format!("{}:Expression", stmt_context),
-                )?;
+                mapping.map_variable(
+                    &actual_var.name,
+                    &expected_var.name,
+                    &actual_var.type_info,
+                    &expected_var.type_info,
+                    context,
+                )?
             }
             (
-                HlrStatement::VarDef(actual_var, actual_expr),
-                HlrStatement::VarDef(expected_var, expected_expr),
+                HlrExpression::Constant(actual_val, actual_type),
+                HlrExpression::Constant(expected_val, expected_type),
             ) => {
-                if actual_var.len() != expected_var.len() {
-                    Err(ComparisonError::unsupported_comparison(
-                        format!("{:?}", actual_var),
-                        format!("{:?}", expected_var),
-                        &format!("{}:Variable types don't match", stmt_context),
-                    ))?
-                }
-                for (i, (actual_var, expected_var)) in
-                    actual_var.iter().zip(expected_var.iter()).enumerate()
-                {
-                    assert_var_equivalent(
-                        actual_var,
-                        expected_var,
-                        mapping,
-                        &format!("{}:Expression[{}]", stmt_context, i),
-                    )?;
-                }
-                assert_expressions_equivalent(
-                    actual_expr,
-                    expected_expr,
-                    mapping,
-                    &format!("{}:Expression", stmt_context),
-                )?;
-            }
-            (
-                HlrStatement::If(actual_cond, actual_then, actual_else),
-                HlrStatement::If(expected_cond, expected_then, expected_else),
-            ) => {
-                assert_expressions_equivalent(
-                    actual_cond,
-                    expected_cond,
-                    mapping,
-                    &format!("{}:Condition", stmt_context),
-                )?;
-                assert_statements_equivalent(
-                    actual_then,
-                    expected_then,
-                    mapping,
-                    &format!("{}:ThenBranch", stmt_context),
-                )?;
-                assert_statements_equivalent(
-                    actual_else,
-                    expected_else,
-                    mapping,
-                    &format!("{}:ElseBranch", stmt_context),
-                )?;
-            }
-            (HlrStatement::Loop(actual_body), HlrStatement::Loop(expected_body)) => {
-                assert_statements_equivalent(
-                    actual_body,
-                    expected_body,
-                    mapping,
-                    &format!("{}:LoopBody", stmt_context),
-                )?;
-            }
-            (HlrStatement::Output(actual_expr), HlrStatement::Output(expected_expr)) => {
-                assert_expressions_equivalent(
-                    actual_expr,
-                    expected_expr,
-                    mapping,
-                    &format!("{}:Output", stmt_context),
-                )?;
-            }
-            (HlrStatement::Return(actual_exprs), HlrStatement::Return(expected_exprs)) => {
+                assert_eq!(
+                    actual_val, expected_val,
+                    "{}:Constant values don't match: {} vs {}",
+                    context, actual_val, expected_val
+                );
                 compare(
-                    actual_exprs.len(),
-                    expected_exprs.len(),
-                    &format!("{}:Return: expression count mismatch", stmt_context),
+                    &actual_val,
+                    &expected_val,
+                    &format!("{}:Constant values don't match", context),
                 )?;
-                for (j, (a, e)) in actual_exprs.iter().zip(expected_exprs.iter()).enumerate() {
+                compare(
+                    &actual_type,
+                    &expected_type,
+                    &format!("{}:Constant types don't match", context),
+                )?
+            }
+            (
+                HlrExpression::BinaryOp {
+                    op: actual_op,
+                    left: actual_left,
+                    right: actual_right,
+                    result_type: actual_type,
+                },
+                HlrExpression::BinaryOp {
+                    op: expected_op,
+                    left: expected_left,
+                    right: expected_right,
+                    result_type: expected_type,
+                },
+            ) => {
+                compare(
+                    actual_op,
+                    expected_op,
+                    &format!("{}:Binary operators don't match", context),
+                )?;
+                compare(
+                    actual_type,
+                    expected_type,
+                    &format!("{}:Result types don't match", context),
+                )?;
+                assert_expressions_equivalent(
+                    actual_left,
+                    expected_left,
+                    mapping,
+                    &format!("{}:Left", context),
+                )?;
+                assert_expressions_equivalent(
+                    actual_right,
+                    expected_right,
+                    mapping,
+                    &format!("{}:Right", context),
+                )?
+            }
+            (HlrExpression::Deref(actual_expr), HlrExpression::Deref(expected_expr)) => {
+                assert_expressions_equivalent(
+                    actual_expr,
+                    expected_expr,
+                    mapping,
+                    &format!("{}:Deref", context),
+                )?
+            }
+            (HlrExpression::Input(), HlrExpression::Input()) => {}
+            (
+                HlrExpression::FunctionCall(actual_func, actual_args),
+                HlrExpression::FunctionCall(expected_func, expected_args),
+            ) => {
+                assert_expressions_equivalent(
+                    actual_func,
+                    expected_func,
+                    mapping,
+                    &format!("{}:FunctionCall", context),
+                )?;
+                for (j, (a, e)) in actual_args.iter().zip(expected_args.iter()).enumerate() {
                     assert_expressions_equivalent(
                         a,
                         e,
                         mapping,
-                        &format!("{}:Return[{}]", stmt_context, j),
+                        &format!("{}:Arg[{}]", context, j),
                     )?;
                 }
-                ()
             }
-            (HlrStatement::Halt, HlrStatement::Halt) => {}
-            (HlrStatement::Continue, HlrStatement::Continue) => {}
-            (HlrStatement::Break, HlrStatement::Break) => {}
-            (
-                HlrStatement::DoWhile(actual_body, actual_cond),
-                HlrStatement::DoWhile(expected_body, expected_cond),
-            ) => {
-                assert_statements_equivalent(
-                    actual_body,
-                    expected_body,
-                    mapping,
-                    &format!("{}:DoWhileBody", stmt_context),
-                )?;
-                assert_expressions_equivalent(
-                    actual_cond,
-                    expected_cond,
-                    mapping,
-                    &format!("{}:DoWhileCond", stmt_context),
-                )?
-            }
-
             _ => Err(ComparisonError::unsupported_comparison(
-                format!("{:?}", actual_stmt),
-                format!("{:?}", expected_stmt),
-                &format!("{}:Statement types don't match", stmt_context),
-            ))?,
-        }
-    }
-    Ok(())
-}
-
-fn assert_targets_equivalent(
-    actual: &HlrAssignmentTarget,
-    expected: &HlrAssignmentTarget,
-    mapping: &mut VariableMapping,
-    context: &str,
-) -> ComparisonResult {
-    match (actual, expected) {
-        (
-            HlrAssignmentTarget::Variable(actual_var),
-            HlrAssignmentTarget::Variable(expected_var),
-        ) => {
-            assert_var_equivalent(actual_var, expected_var, mapping, context)?;
-        }
-        (HlrAssignmentTarget::Deref(actual_expr), HlrAssignmentTarget::Deref(expected_expr)) => {
-            assert_expressions_equivalent(
-                actual_expr,
-                expected_expr,
-                mapping,
-                &format!("{}:Deref", context),
-            )?
-        }
-        (HlrAssignmentTarget::Ignored, HlrAssignmentTarget::Ignored) => (),
-        _ => {
-            Err(ComparisonError::unsupported_comparison(
                 format!("{:?}", actual),
                 format!("{:?}", expected),
-                &format!("{}:Assignment target types don't match", context),
-            ))?;
+                &format!("{}:Expression types don't match", context),
+            ))?,
         }
+        Ok(())
     }
-    Ok(())
-}
 
-fn assert_var_equivalent(
-    actual: &HlrVariable,
-    expected: &HlrVariable,
-    mapping: &mut VariableMapping,
-    context: &str,
-) -> ComparisonResult {
-    compare(
-        &actual.type_info,
-        &expected.type_info,
-        &format!("{}:Variable types don't match", context),
-    )?;
-
-    mapping.map_variable(
-        &actual.name,
-        &expected.name,
-        &actual.type_info,
-        &expected.type_info,
-        context,
-    )?;
-    Ok(())
-}
-
-fn assert_expressions_equivalent(
-    actual: &HlrExpression,
-    expected: &HlrExpression,
-    mapping: &mut VariableMapping,
-    context: &str,
-) -> ComparisonResult {
-    match (actual, expected) {
-        (HlrExpression::Variable(actual_var), HlrExpression::Variable(expected_var)) => {
-            assert_eq!(
-                &actual_var.type_info, &expected_var.type_info,
-                "{}:Variable types don't match: {:?} vs {:?}",
-                context, actual_var.type_info, expected_var.type_info
-            );
-
-            mapping.map_variable(
-                &actual_var.name,
-                &expected_var.name,
-                &actual_var.type_info,
-                &expected_var.type_info,
-                context,
-            )?
-        }
-        (
-            HlrExpression::Constant(actual_val, actual_type),
-            HlrExpression::Constant(expected_val, expected_type),
-        ) => {
-            assert_eq!(
-                actual_val, expected_val,
-                "{}:Constant values don't match: {} vs {}",
-                context, actual_val, expected_val
-            );
-            compare(
-                &actual_val,
-                &expected_val,
-                &format!("{}:Constant values don't match", context),
-            )?;
-            compare(
-                &actual_type,
-                &expected_type,
-                &format!("{}:Constant types don't match", context),
-            )?
-        }
-        (
-            HlrExpression::BinaryOp {
-                op: actual_op,
-                left: actual_left,
-                right: actual_right,
-                result_type: actual_type,
-            },
-            HlrExpression::BinaryOp {
-                op: expected_op,
-                left: expected_left,
-                right: expected_right,
-                result_type: expected_type,
-            },
-        ) => {
-            compare(
-                actual_op,
-                expected_op,
-                &format!("{}:Binary operators don't match", context),
-            )?;
-            compare(
-                actual_type,
-                expected_type,
-                &format!("{}:Result types don't match", context),
-            )?;
-            assert_expressions_equivalent(
-                actual_left,
-                expected_left,
-                mapping,
-                &format!("{}:Left", context),
-            )?;
-            assert_expressions_equivalent(
-                actual_right,
-                expected_right,
-                mapping,
-                &format!("{}:Right", context),
-            )?
-        }
-        (HlrExpression::Deref(actual_expr), HlrExpression::Deref(expected_expr)) => {
-            assert_expressions_equivalent(
-                actual_expr,
-                expected_expr,
-                mapping,
-                &format!("{}:Deref", context),
-            )?
-        }
-        (HlrExpression::Input(), HlrExpression::Input()) => {}
-        (
-            HlrExpression::FunctionCall(actual_func, actual_args),
-            HlrExpression::FunctionCall(expected_func, expected_args),
-        ) => assert_expressions_equivalent(
-            actual_func,
-            expected_func,
-            mapping,
-            &format!("{}:FunctionCall", context),
-        )?,
-        _ => Err(ComparisonError::unsupported_comparison(
-            format!("{:?}", actual),
-            format!("{:?}", expected),
-            &format!("{}:Expression types don't match", context),
-        ))?,
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
+    use crate::disasm::v2::listeners::{
+        control_flow_analyzer::ControlFlowStructureRecoveryListener,
+        control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
+        function_call_analyzer::FunctionCallAnalyzer, image_scanner::ImageScanner,
+        ssa_converter::SsaConverter, variable_analyzer::VariableAnalyzer,
+    };
+    use crate::disasm::v2::type_inference::TypeInferenceAnalyzer;
     use crate::disasm::{hlr::ast::pretty_print_program, v2::pretty_print::pretty_print_ssa};
 
-    use super::*;
+    struct TestContext {
+        model: ProgramModel,
+    }
 
+    impl TestContext {
+        fn from_assembly(assembly: &str) -> Self {
+            // Parse assembly to Intcode
+            let image = crate::disasm::parser::compile(assembly);
+
+            // Set up model and event publisher
+            let mut model = ProgramModel::new();
+            let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+
+            // Add all required listeners in the correct order
+            publisher.add_listener(Box::new(ImageScanner::new()));
+            publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+            publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+            publisher.add_listener(Box::new(SsaConverter::new()));
+            publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+            publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
+            publisher.add_listener(Box::new(VariableAnalyzer::new()));
+            publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
+
+            // Load the image and process events
+            model.load_image(&image, &mut publisher);
+            publisher
+                .process_events(&mut model)
+                .expect("Failed to process events");
+
+            TestContext { model }
+        }
+
+        fn get_hlr_program(&self) -> Option<&HlrProgram> {
+            self.model.get_hlr_program()
+        }
+    }
     #[test]
     fn test_simple_sequential() -> ComparisonResult {
         let assembly = r#"

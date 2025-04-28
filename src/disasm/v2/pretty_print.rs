@@ -380,12 +380,3 @@ pub fn pretty_print_with_types(model: &ProgramModel) {
     };
     printer.print_ssa();
 }
-
-pub fn pretty_print_with_vars(model: &ProgramModel) {
-    let printer = PrettyPrinter {
-        model,
-        show_types: true,
-        show_vars: true,
-    };
-    printer.print_ssa();
-}

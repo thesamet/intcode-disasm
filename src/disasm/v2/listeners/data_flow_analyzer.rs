@@ -16,15 +16,11 @@ use crate::disasm::v2::{
     model::{BlockId, FunctionId, ProgramModel},
 };
 
-pub struct DataFlowAnalyzer {
-    potential_return_values: HashSet<OperandKind>,
-}
+pub struct DataFlowAnalyzer {}
 
 impl DataFlowAnalyzer {
     pub fn new() -> Self {
-        DataFlowAnalyzer {
-            potential_return_values: HashSet::new(),
-        }
+        DataFlowAnalyzer {}
     }
 
     /// Performs the main data flow analysis passes for a given function.

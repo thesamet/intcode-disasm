@@ -7,7 +7,7 @@ use crate::disasm::Error;
 
 /// Listener that optimizes the high-level representation (HLR) of the program
 /// to make it more readable by transforming control flow structures and expressions.
-/// 
+///
 /// This listener runs after the ControlFlowStructureRecoveryListener has completed
 /// its work and further refines the HLR program.
 #[derive(Debug, Default)]
@@ -20,11 +20,6 @@ impl HlrOptimizationListener {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// Gets the optimized high-level representation of the program, if available
-    pub fn get_optimized_hlr_program(&self) -> Option<&HlrProgram> {
-        self.optimized_hlr_program.as_ref()
-    }
 }
 
 impl crate::disasm::v2::events::ModelEventListener for HlrOptimizationListener {
@@ -34,9 +29,7 @@ impl crate::disasm::v2::events::ModelEventListener for HlrOptimizationListener {
         _event: StructureRecoveryComplete,
         _sender: &mut EventCollector<Event>,
     ) -> Result<(), Error> {
-        println!(
-            "Received StructureRecoveryComplete event. Starting HLR optimization..."
-        );
+        println!("Received StructureRecoveryComplete event. Starting HLR optimization...");
 
         // Get the HLR program from the model
         let hlr_program = model.get_hlr_program().ok_or_else(|| {

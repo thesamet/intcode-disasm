@@ -34,6 +34,7 @@ pub struct VariableCluster {
     pub cluster_name: String,
 
     /// All SSA variables that are part of this cluster
+    #[allow(dead_code)]
     pub ssa_variables: HashSet<SsaVar>,
     /// The inferred type of this cluster
     pub inferred_type: Type,

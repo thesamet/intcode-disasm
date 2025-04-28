@@ -1,11 +1,8 @@
-use std::ops::DerefMut;
-
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrExpression, HlrFunction, HlrProgram, HlrStatement, UnaryOperator,
 };
 use crate::disasm::hlr::visitor::{visit_function, HlrNode, HlrVisitControlFlow, HlrVisitEvent};
 use crate::disasm::v2::model::ProgramModel;
-use crate::disasm::v2::type_inference::types::Type;
 use crate::disasm::Error;
 
 pub trait OptimizationPass {
@@ -23,14 +20,14 @@ pub trait OptimizationPass {
 /// - Propagating expressions where possible
 /// - Creating higher-level expressions from lower-level operations
 pub struct HlrOptimizer<'a> {
-    model: &'a ProgramModel,
+    _model: &'a ProgramModel,
     optimizations: Vec<Box<dyn OptimizationPass>>,
 }
 
 impl<'a> HlrOptimizer<'a> {
     pub fn new(model: &'a ProgramModel) -> Self {
         Self {
-            model,
+            _model: model,
             optimizations: vec![Box::new(InitialOptimization)],
         }
     }

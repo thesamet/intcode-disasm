@@ -1,4 +1,4 @@
-use crate::disasm::hlr::ast::{HlrAssignmentTarget, HlrExpression, HlrStatement};
+use crate::disasm::hlr::ast::{HlrExpression, HlrStatement};
 
 use super::ast::HlrFunction;
 
@@ -18,6 +18,7 @@ pub enum HlrVisitEvent<'a> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HlrVisitControlFlow {
     Continue,
+    #[allow(dead_code)]
     Prune,
 }
 
@@ -114,11 +115,6 @@ where
                 visit_expression(func, visitor);
                 for arg in args {
                     visit_expression(arg, visitor);
-                }
-            }
-            HlrExpression::Tuple(elements) => {
-                for elem in elements {
-                    visit_expression(elem, visitor);
                 }
             }
             HlrExpression::Input() => (),
