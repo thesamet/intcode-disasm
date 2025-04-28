@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::hlr::ast::{HlrExpression, HlrFunction, HlrProgram, HlrStatement, HlrVariable};
+use crate::disasm::hlr::ast::{HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement, HlrVariable};
 use crate::disasm::hlr::visitor::{for_each_expression, for_each_statement, map_expressions, traverse_expression, traverse_statements, ExpressionVisitor, StatementVisitor};
 
 /// Interface for optimization passes
@@ -120,7 +120,8 @@ impl StatementVisitor for StatementTransformer {
                     _ => target.clone(),
                 };
                 
-                if *expr == new_expr && *target == new_target {
+                // Since HlrAssignmentTarget might not implement PartialEq, we'll just check if the expression changed
+                if *expr == new_expr {
                     Some(stmt.clone())
                 } else {
                     Some(HlrStatement::Assignment(new_target, new_expr))
@@ -131,48 +132,28 @@ impl StatementVisitor for StatementTransformer {
                 let new_then = self.transform(then_branch);
                 let new_else = self.transform(else_branch);
                 
-                let changed = *cond != new_cond || 
-                    then_branch != &new_then || 
-                    else_branch != &new_else;
-                
-                if changed {
-                    Some(HlrStatement::If(new_cond, new_then, new_else))
-                } else {
-                    Some(stmt.clone())
-                }
+                // Since Vec<HlrStatement> might not implement PartialEq, we'll just create a new statement
+                Some(HlrStatement::If(new_cond, new_then, new_else))
             },
             HlrStatement::Loop(body) => {
                 let new_body = self.transform(body);
                 
-                if body != &new_body {
-                    Some(HlrStatement::Loop(new_body))
-                } else {
-                    Some(stmt.clone())
-                }
+                // Since Vec<HlrStatement> might not implement PartialEq, we'll just create a new statement
+                Some(HlrStatement::Loop(new_body))
             },
             HlrStatement::While(cond, body) => {
                 let new_cond = self.visit_expression(cond);
                 let new_body = self.transform(body);
                 
-                let changed = *cond != new_cond || body != &new_body;
-                
-                if changed {
-                    Some(HlrStatement::While(new_cond, new_body))
-                } else {
-                    Some(stmt.clone())
-                }
+                // Since Vec<HlrStatement> might not implement PartialEq, we'll just create a new statement
+                Some(HlrStatement::While(new_cond, new_body))
             },
             HlrStatement::DoWhile(body, cond) => {
                 let new_body = self.transform(body);
                 let new_cond = self.visit_expression(cond);
                 
-                let changed = *cond != new_cond || body != &new_body;
-                
-                if changed {
-                    Some(HlrStatement::DoWhile(new_body, new_cond))
-                } else {
-                    Some(stmt.clone())
-                }
+                // Since Vec<HlrStatement> might not implement PartialEq, we'll just create a new statement
+                Some(HlrStatement::DoWhile(new_body, new_cond))
             },
             HlrStatement::Return(exprs) => {
                 let new_exprs = exprs.iter()

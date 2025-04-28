@@ -1,4 +1,3 @@
-use itertools::Itertools;
 
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrExpression, HlrFunction, HlrProgram, HlrStatement, UnaryOperator,
