@@ -40,6 +40,15 @@ pub enum HlrStatement {
     Return(Vec<HlrExpression>),
     Halt,
     Output(HlrExpression),
+    Nop,
+}
+
+impl Display for HlrStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut cp = CodePrinter::new();
+        pretty_print_statement(&mut cp.single_line_mode(), self);
+        f.write_str(&cp.result())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +74,12 @@ pub enum HlrExpression {
     },
     FunctionCall(Box<HlrExpression>, Vec<HlrExpression>),
     Input(),
+}
+
+impl Display for HlrExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&pretty_print_expression(self))
+    }
 }
 
 impl HlrExpression {
@@ -467,6 +482,7 @@ where
             SyntaxColors::close_paren(),
             SyntaxColors::semicolon()
         ),
+        HlrStatement::Nop => line!(writer, "{}", keyword("nop")),
     }
 }
 
@@ -546,5 +562,108 @@ impl Display for HlrVariable {
         // Adjust if type annotation on usage is desired.
         write!(f, "{}", self.name)
         // write!(f, "{}: {}", self.name, self.type_info) // Use this if type is needed
+    }
+}
+
+#[cfg(test)]
+pub mod test_utils {
+    use super::*;
+    // Helper functions to create HLR structures concisely
+    pub fn hlr_program(functions: Vec<HlrFunction>) -> HlrProgram {
+        HlrProgram {
+            functions,
+            globals: vec![],
+        }
+    }
+
+    pub fn hlr_function(id: usize, body: Vec<HlrStatement>) -> HlrFunction {
+        HlrFunction {
+            original_id: FunctionId::from(id),
+            name: id.to_string(),
+            args: vec![],
+            return_type: vec![],
+            body,
+        }
+    }
+
+    pub fn hlr_var(name: &str, typ: Type) -> HlrVariable {
+        HlrVariable {
+            name: name.to_string(),
+            type_info: typ,
+        }
+    }
+
+    pub fn hlr_vardef(target: HlrVariable, expr: HlrExpression) -> HlrStatement {
+        HlrStatement::VarDef(vec![target], expr)
+    }
+
+    pub fn hlr_assign(target: HlrAssignmentTarget, expr: HlrExpression) -> HlrStatement {
+        HlrStatement::Assignment(target, expr)
+    }
+
+    pub fn hlr_var_target(name: &str, typ: Type) -> HlrAssignmentTarget {
+        HlrAssignmentTarget::Variable(hlr_var(name, typ))
+    }
+
+    pub fn hlr_var_expr(name: &str, typ: Type) -> HlrExpression {
+        HlrExpression::Variable(hlr_var(name, typ))
+    }
+
+    pub fn hlr_const(value: i128, typ: Type) -> HlrExpression {
+        HlrExpression::Constant(value, typ)
+    }
+
+    pub fn hlr_binop(
+        op: BinaryOperator,
+        left: HlrExpression,
+        right: HlrExpression,
+        result_type: Type,
+    ) -> HlrExpression {
+        HlrExpression::BinaryOp {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+            result_type,
+        }
+    }
+
+    pub fn hlr_if(
+        condition: HlrExpression,
+        then_branch: Vec<HlrStatement>,
+        else_branch: Vec<HlrStatement>,
+    ) -> HlrStatement {
+        HlrStatement::If(condition, then_branch, else_branch)
+    }
+
+    pub fn hlr_while(condition: HlrExpression, body: Vec<HlrStatement>) -> HlrStatement {
+        HlrStatement::While(condition, body)
+    }
+
+    pub fn hlr_do_while(body: Vec<HlrStatement>, condition: HlrExpression) -> HlrStatement {
+        HlrStatement::DoWhile(body, condition)
+    }
+
+    pub fn hlr_loop(body: Vec<HlrStatement>) -> HlrStatement {
+        HlrStatement::Loop(body)
+    }
+
+    pub fn hlr_deref(expr: HlrExpression) -> HlrExpression {
+        HlrExpression::Deref(Box::new(expr))
+    }
+
+    pub fn hlr_input() -> HlrExpression {
+        HlrExpression::Input()
+    }
+
+    pub fn hlr_output(expr: HlrExpression) -> HlrStatement {
+        HlrStatement::Output(expr)
+    }
+
+    pub fn hlr_return(exprs: Vec<HlrExpression>) -> HlrStatement {
+        HlrStatement::Return(exprs)
+    }
+
+    pub fn hlr_function_call(func_expr: HlrExpression, args: Vec<HlrExpression>) -> HlrExpression {
+        HlrExpression::FunctionCall(Box::new(func_expr), args)
     }
 }

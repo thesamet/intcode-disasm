@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::disasm::hlr::ast::{HlrExpression, HlrStatement};
 
-use super::ast::HlrFunction;
+use super::ast::{HlrFunction, HlrVariable};
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum HlrNode<'a> {
@@ -67,48 +69,6 @@ macro_rules! do_control {
     }};
 }
 
-/*
-#[allow(unused_variables)]
-pub trait HlrFunctionVisitor {
-    fn enter_block(&mut self, event: &mut Vec<HlrStatement>) -> HlrVisitControlFlow {
-        HlrVisitControlFlow::Continue
-    }
-    fn finish_block(&mut self, event: &mut Vec<HlrStatement>) -> HlrVisitControlFlow {
-        HlrVisitControlFlow::Continue
-    }
-    fn enter_statement(&mut self, event: &mut HlrStatement) -> HlrVisitControlFlow {
-        HlrVisitControlFlow::Continue
-    }
-    fn finish_statement(&mut self, event: &mut HlrStatement) -> HlrVisitControlFlow {
-        HlrVisitControlFlow::Continue
-    }
-    fn enter_expression(&mut self, event: &mut HlrExpression) -> HlrVisitControlFlow {
-        HlrVisitControlFlow::Continue
-    }
-    fn finish_expression(&mut self, event: &mut HlrExpression) -> HlrVisitControlFlow {
-        HlrVisitControlFlow::Continue
-    }
-}
-
-pub fn visit_trait<T>(func: &mut HlrFunction, visitor: &mut T)
-where
-    T: HlrFunctionVisitor,
-{
-    visit_function(func, |event| match event {
-        HlrVisitEvent::Enter(node) => match node {
-            HlrNode::Block(block) => visitor.enter_block(block),
-            HlrNode::Statement(stmt) => visitor.enter_statement(stmt),
-            HlrNode::Expression(expr) => visitor.enter_expression(expr),
-        },
-        HlrVisitEvent::Finish(node) => match node {
-            HlrNode::Block(block) => visitor.finish_block(block),
-            HlrNode::Statement(stmt) => visitor.finish_statement(stmt),
-            HlrNode::Expression(expr) => visitor.finish_expression(expr),
-        },
-    });
-}
-*/
-
 pub fn visit_function<C, F>(func: &mut HlrFunction, mut visitor: F)
 where
     C: ControlFlow,
@@ -158,7 +118,10 @@ where
                 }
             }
             HlrStatement::Output(expr) => visit_expression(expr, visitor),
-            HlrStatement::Break | HlrStatement::Continue | HlrStatement::Halt => (),
+            HlrStatement::Break
+            | HlrStatement::Continue
+            | HlrStatement::Halt
+            | HlrStatement::Nop => (),
         }
     });
 }
@@ -203,68 +166,150 @@ where
 // 1. Be unique for each node in the HLR AST.
 // 2. Sortable in DFS order.
 // 3. Provide identical values for successive runs over the same HLR AST.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct BlockLocation {
-    block_id: usize,
+    pub block_id: usize,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+impl std::fmt::Debug for BlockLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Block({})", self.block_id)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct StatementLocation {
-    block_location: BlockLocation,
-    statement_id: usize,
+    pub block_location: BlockLocation,
+    pub statement_id: usize,
+}
+
+impl std::fmt::Debug for StatementLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Statement({}/{})",
+            self.block_location.block_id, self.statement_id
+        )
+    }
 }
 
 impl StatementLocation {
-    fn get_containing_block(&self) -> BlockLocation {
+    pub fn get_containing_block(&self) -> BlockLocation {
         self.block_location
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ExpressionLocation {
-    containing_statement: StatementLocation,
-    expression_id: usize,
+    pub containing_statement: StatementLocation,
+    pub expression_id: usize,
+}
+
+impl std::fmt::Debug for ExpressionLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Expression({}/{}/{})",
+            self.get_containing_block().block_id,
+            self.get_containing_statement().statement_id,
+            self.expression_id
+        )
+    }
 }
 
 impl ExpressionLocation {
-    fn get_containing_statement(&self) -> StatementLocation {
+    pub fn get_containing_statement(&self) -> StatementLocation {
         self.containing_statement
     }
 
-    fn get_containing_block(&self) -> BlockLocation {
+    pub fn get_containing_block(&self) -> BlockLocation {
         self.containing_statement.get_containing_block()
     }
 }
 
 #[allow(unused_variables)]
-pub trait HlrFunctionVisitor<C>
+/// A visitor trait for traversing the High-Level Representation (HLR) of a function's abstract syntax tree.
+///
+/// This trait allows custom traversal and analysis of HLR functions with fine-grained control over the visit process.
+///
+/// # Generic Parameters
+/// - `C`: Control flow type that determines how traversal proceeds (e.g., continue or prune)
+/// - `R`: Return type computed at the end of the traversal
+///
+/// # Control Flow
+/// Each method returns a `C` value that can:
+/// - Continue the traversal normally with `Control::Continue`
+/// - Skip descendant nodes with `Control::Prune`
+///
+/// Methods are called in a depth-first order for each node type:
+/// 1. `enter_*` method is called before processing child nodes
+/// 2. Child nodes are processed
+/// 3. `finish_*` method is called after processing child nodes
+///
+/// # Example Use Cases
+/// - Static analysis
+/// - Code transformation
+/// - Collecting metrics about the AST structure
+pub trait HlrFunctionVisitor<C, R>
 where
     C: ControlFlow,
 {
+    fn visit(self, func: &mut HlrFunction) -> R
+    where
+        Self: Sized,
+    {
+        visit(func, self)
+    }
+
+    fn visit_with_default(func: &mut HlrFunction) -> R
+    where
+        Self: Sized + Default,
+    {
+        Self::visit(Self::default(), func)
+    }
+
+    fn start(&mut self, func: &mut HlrFunction) -> C {
+        C::continuing()
+    }
+
+    /// Called when entering a block of statements, before processing its contents
     fn enter_block(&mut self, location: BlockLocation, block: &mut Vec<HlrStatement>) -> C {
         C::continuing()
     }
+
+    /// Called after processing all statements in a block
     fn finish_block(&mut self, location: BlockLocation, block: &mut Vec<HlrStatement>) -> C {
         C::continuing()
     }
+
+    /// Called when entering a statement, before processing its contents
     fn enter_statement(&mut self, location: StatementLocation, stmt: &mut HlrStatement) -> C {
         C::continuing()
     }
+
+    /// Called after processing a statement's contents
     fn finish_statement(&mut self, location: StatementLocation, stmt: &mut HlrStatement) -> C {
         C::continuing()
     }
+
+    /// Called when entering an expression, before processing its contents
     fn enter_expression(&mut self, location: ExpressionLocation, expr: &mut HlrExpression) -> C {
         C::continuing()
     }
+
+    /// Called after processing an expression's contents
     fn finish_expression(&mut self, location: ExpressionLocation, expr: &mut HlrExpression) -> C {
         C::continuing()
     }
+
+    /// Final method called to compute and return a result after traversal is complete
+    fn finish(self) -> R;
 }
 
-fn visit_with_locations<C, F>(func: &mut HlrFunction, visitor: &mut F)
+fn visit<C, R, F>(func: &mut HlrFunction, mut visitor: F) -> R
 where
     C: ControlFlow,
-    F: HlrFunctionVisitor<C>,
+    F: HlrFunctionVisitor<C, R>,
 {
     let mut next_block_id = 0;
     let mut next_statement_id = 0;
@@ -273,6 +318,7 @@ where
     let mut block_stack: Vec<BlockLocation> = Vec::new();
     let mut statement_stack: Vec<StatementLocation> = Vec::new();
     let mut expression_stack: Vec<ExpressionLocation> = Vec::new();
+    visitor.start(func);
 
     visit_function(func, |event| match event {
         HlrVisitEvent::Enter(node) => match node {
@@ -319,7 +365,8 @@ where
                 visitor.finish_expression(expression_location, expr)
             }
         },
-    })
+    });
+    visitor.finish()
 }
 
 #[cfg(test)]
@@ -352,15 +399,20 @@ mod tests {
             match event {
                 HlrVisitEvent::Enter(node) => match node {
                     HlrNode::Block(_) => visited.push(VisitedNode::Block),
-                    HlrNode::Statement(HlrStatement::VarDef(vars, _)) => {
-                        if !vars.is_empty() {
-                            visited.push(VisitedNode::Statement(vars[0].name.clone()))
+                    HlrNode::Statement(stmt) => match stmt {
+                        HlrStatement::VarDef(vars, _) => {
+                            if !vars.is_empty() {
+                                visited.push(VisitedNode::Statement(vars[0].name.clone()))
+                            }
                         }
-                    }
-                    HlrNode::Expression(HlrExpression::Constant(val, _)) => {
-                        visited.push(VisitedNode::Expression(format!("Constant({})", val)))
-                    }
-                    _ => {}
+                        _ => {}
+                    },
+                    HlrNode::Expression(expr) => match expr {
+                        HlrExpression::Constant(val, _) => {
+                            visited.push(VisitedNode::Expression(format!("Constant({})", val)))
+                        }
+                        _ => {}
+                    },
                 },
                 _ => {}
             }
@@ -398,17 +450,23 @@ mod tests {
         visit_function(&mut func, |event| {
             match event {
                 HlrVisitEvent::Enter(node) => match node {
-                    HlrNode::Statement(HlrStatement::VarDef(vars, _)) => {
-                        if !vars.is_empty() {
-                            visited.push(VisitedNode::Statement(vars[0].name.clone()))
+                    HlrNode::Statement(stmt) => match stmt {
+                        HlrStatement::VarDef(vars, _) => {
+                            if !vars.is_empty() {
+                                visited.push(VisitedNode::Statement(vars[0].name.clone()))
+                            }
                         }
-                    }
-                    HlrNode::Statement(HlrStatement::If(_, _, _)) => {
-                        visited.push(VisitedNode::Statement("if".to_string()))
-                    }
-                    HlrNode::Expression(HlrExpression::Constant(val, _)) => {
-                        visited.push(VisitedNode::Expression(format!("Constant({})", val)))
-                    }
+                        HlrStatement::If(_, _, _) => {
+                            visited.push(VisitedNode::Statement("if".to_string()))
+                        }
+                        _ => {}
+                    },
+                    HlrNode::Expression(expr) => match expr {
+                        HlrExpression::Constant(val, _) => {
+                            visited.push(VisitedNode::Expression(format!("Constant({})", val)))
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 _ => {}
@@ -449,23 +507,34 @@ mod tests {
 
         visit_function(&mut func, |event| {
             match event {
-                HlrVisitEvent::Enter(HlrNode::Statement(HlrStatement::VarDef(vars, _))) => {
-                    if !vars.is_empty() {
-                        // Prune after seeing the first variable
-                        if vars[0].name == "first" {
-                            return Control::Prune;
+                HlrVisitEvent::Enter(HlrNode::Statement(stmt)) => match stmt {
+                    HlrStatement::VarDef(vars, _) => {
+                        if !vars.is_empty() {
+                            // Prune after seeing the first variable
+                            if vars[0].name == "first" {
+                                return Control::Prune;
+                            }
                         }
+                        return Control::Continue;
                     }
-                }
-                HlrVisitEvent::Enter(HlrNode::Expression(HlrExpression::Constant(c, _))) => {
-                    visited.push(*c);
-                    return Control::Continue;
-                }
-                HlrVisitEvent::Finish(HlrNode::Statement(HlrStatement::VarDef(vars, _))) => {
-                    if !vars.is_empty() {
-                        statement_exits.push(vars[0].name.clone());
+                    _ => return Control::Continue,
+                },
+                HlrVisitEvent::Enter(HlrNode::Expression(expr)) => match expr {
+                    HlrExpression::Constant(c, _) => {
+                        visited.push(*c);
+                        return Control::Continue;
                     }
-                }
+                    _ => return Control::Continue,
+                },
+                HlrVisitEvent::Finish(HlrNode::Statement(stmt)) => match stmt {
+                    HlrStatement::VarDef(vars, _) => {
+                        if !vars.is_empty() {
+                            statement_exits.push(vars[0].name.clone());
+                        }
+                        return Control::Continue;
+                    }
+                    _ => return Control::Continue,
+                },
                 _ => {}
             }
             Control::Continue
@@ -526,7 +595,7 @@ mod tests {
         events: Vec<String>,
     }
 
-    impl HlrFunctionVisitor<Control> for TestVisitor {
+    impl HlrFunctionVisitor<Control, Vec<String>> for TestVisitor {
         fn enter_block(
             &mut self,
             location: BlockLocation,
@@ -554,7 +623,9 @@ mod tests {
         ) -> Control {
             let stmt_type = match stmt {
                 HlrStatement::VarDef(_, _) => "VarDef".to_string(),
-                _ => unreachable!(),
+                HlrStatement::If(_, _, _) => "If".to_string(),
+                HlrStatement::While(_, _) => "While".to_string(),
+                _ => format!("{:?}", stmt),
             };
 
             self.events.push(format!(
@@ -571,7 +642,9 @@ mod tests {
         ) -> Control {
             let stmt_type = match stmt {
                 HlrStatement::VarDef(_, _) => "VarDef".to_string(),
-                _ => unreachable!(),
+                HlrStatement::If(_, _, _) => "If".to_string(),
+                HlrStatement::While(_, _) => "While".to_string(),
+                _ => format!("{:?}", stmt),
             };
 
             self.events.push(format!(
@@ -586,7 +659,10 @@ mod tests {
             location: ExpressionLocation,
             expr: &mut HlrExpression,
         ) -> Control {
-            let expr_type = expr.to_string();
+            let expr_type = match expr {
+                HlrExpression::Constant(_val, _) => "Constant".to_string(),
+                _ => format!("{}", expr),
+            };
 
             self.events.push(format!(
                 "enter_expression: {} (stmt: {}, id: {})",
@@ -600,13 +676,20 @@ mod tests {
             location: ExpressionLocation,
             expr: &mut HlrExpression,
         ) -> Control {
-            let expr_type = expr.to_string();
+            let expr_type = match expr {
+                HlrExpression::Constant(_val, _) => "Constant".to_string(),
+                _ => format!("{}", expr),
+            };
 
             self.events.push(format!(
                 "finish_expression: {} (stmt: {}, id: {})",
                 expr_type, location.containing_statement.statement_id, location.expression_id
             ));
             Control::Continue
+        }
+
+        fn finish(self) -> Vec<String> {
+            self.events
         }
     }
 
@@ -620,28 +703,16 @@ mod tests {
             )],
         );
 
-        let mut visitor = TestVisitor { events: Vec::new() };
-        visit_with_locations(&mut func, &mut visitor);
+        let visitor = TestVisitor { events: Vec::new() };
+        let events = visit(&mut func, visitor);
 
-        assert_eq!(visitor.events.len(), 6);
-        assert_eq!(visitor.events[0], "enter_block: 0");
-        assert_eq!(
-            visitor.events[1],
-            "enter_statement: VarDef (block: 0, id: 0)"
-        );
-        assert_eq!(
-            visitor.events[2],
-            "enter_expression: Constant (stmt: 0, id: 0)"
-        );
-        assert_eq!(
-            visitor.events[3],
-            "finish_expression: Constant (stmt: 0, id: 0)"
-        );
-        assert_eq!(
-            visitor.events[4],
-            "finish_statement: VarDef (block: 0, id: 0)"
-        );
-        assert_eq!(visitor.events[5], "finish_block: 0");
+        assert_eq!(events.len(), 6);
+        assert_eq!(events[0], "enter_block: 0");
+        assert_eq!(events[1], "enter_statement: VarDef (block: 0, id: 0)");
+        assert_eq!(events[2], "enter_expression: Constant (stmt: 0, id: 0)");
+        assert_eq!(events[3], "finish_expression: Constant (stmt: 0, id: 0)");
+        assert_eq!(events[4], "finish_statement: VarDef (block: 0, id: 0)");
+        assert_eq!(events[5], "finish_block: 0");
     }
 
     #[test]
@@ -661,22 +732,19 @@ mod tests {
             )],
         );
 
-        let mut visitor = TestVisitor { events: Vec::new() };
-        visit_with_locations(&mut func, &mut visitor);
+        let visitor = TestVisitor { events: Vec::new() };
+        let events = visit(&mut func, visitor);
 
-        assert!(visitor.events.iter().any(|e| e == "enter_block: 0"));
-        assert!(visitor.events.iter().any(|e| e == "enter_block: 1"));
-        assert!(visitor.events.iter().any(|e| e == "enter_block: 2"));
-        assert!(visitor
-            .events
+        assert!(events.iter().any(|e| e == "enter_block: 0"));
+        assert!(events.iter().any(|e| e == "enter_block: 1"));
+        assert!(events.iter().any(|e| e == "enter_block: 2"));
+        assert!(events
             .iter()
             .any(|e| e == "enter_statement: If (block: 0, id: 0)"));
-        assert!(visitor
-            .events
+        assert!(events
             .iter()
             .any(|e| e == "enter_statement: VarDef (block: 1, id: 1)"));
-        assert!(visitor
-            .events
+        assert!(events
             .iter()
             .any(|e| e == "enter_statement: VarDef (block: 2, id: 2)"));
     }
@@ -697,11 +765,10 @@ mod tests {
             ],
         );
 
-        let mut visitor = TestVisitor { events: Vec::new() };
-        visit_with_locations(&mut func, &mut visitor);
+        let visitor = TestVisitor { events: Vec::new() };
+        let events = visit(&mut func, visitor);
 
-        let block_ids: Vec<usize> = visitor
-            .events
+        let block_ids: Vec<usize> = events
             .iter()
             .filter_map(|e| {
                 if e.starts_with("enter_block: ") {
@@ -718,77 +785,58 @@ mod tests {
     #[test]
     fn test_pruning_propagation() {
         struct PruningVisitor {
-            count: usize,
+            loop_count: usize,
+            defs: Vec<String>,
         }
 
-        impl HlrFunctionVisitor<Control> for PruningVisitor {
+        impl HlrFunctionVisitor<Control, (usize, Vec<String>)> for PruningVisitor {
             fn enter_statement(
                 &mut self,
                 _location: StatementLocation,
-                _stmt: &mut HlrStatement,
+                stmt: &mut HlrStatement,
             ) -> Control {
-                self.count += 1;
-                if self.count == 2 {
-                    Control::Prune
-                } else {
-                    Control::Continue
+                if let HlrStatement::Loop(..) = stmt {
+                    self.loop_count += 1;
+                    if self.loop_count == 2 {
+                        return Control::Prune;
+                    }
                 }
-            }
-
-            fn enter_block(
-                &mut self,
-                _location: BlockLocation,
-                _block: &mut Vec<HlrStatement>,
-            ) -> Control {
+                if let HlrStatement::VarDef(vs, ..) = stmt {
+                    self.defs.push(vs[0].name.clone());
+                }
                 Control::Continue
             }
 
-            fn finish_block(
-                &mut self,
-                _location: BlockLocation,
-                _block: &mut Vec<HlrStatement>,
-            ) -> Control {
-                Control::Continue
-            }
-
-            fn finish_statement(
-                &mut self,
-                _location: StatementLocation,
-                _stmt: &mut HlrStatement,
-            ) -> Control {
-                Control::Continue
-            }
-
-            fn enter_expression(
-                &mut self,
-                _location: ExpressionLocation,
-                _expr: &mut HlrExpression,
-            ) -> Control {
-                Control::Continue
-            }
-
-            fn finish_expression(
-                &mut self,
-                _location: ExpressionLocation,
-                _expr: &mut HlrExpression,
-            ) -> Control {
-                Control::Continue
+            fn finish(self) -> (usize, Vec<String>) {
+                (self.loop_count, self.defs)
             }
         }
 
         let mut func = hlr_function(
             0,
             vec![
-                hlr_vardef(hlr_var("x", Type::Int), hlr_const(0, Type::Int)),
-                hlr_vardef(hlr_var("y", Type::Int), hlr_const(1, Type::Int)),
-                hlr_vardef(hlr_var("z", Type::Int), hlr_const(2, Type::Int)),
+                hlr_loop(vec![
+                    hlr_vardef(hlr_var("x", Type::Int), hlr_const(0, Type::Int)),
+                    hlr_vardef(hlr_var("y", Type::Int), hlr_const(0, Type::Int)),
+                ]),
+                hlr_loop(vec![
+                    hlr_vardef(hlr_var("z", Type::Int), hlr_const(0, Type::Int)),
+                    hlr_vardef(hlr_var("w", Type::Int), hlr_const(0, Type::Int)),
+                ]),
+                hlr_loop(vec![
+                    hlr_vardef(hlr_var("a", Type::Int), hlr_const(0, Type::Int)),
+                    hlr_vardef(hlr_var("b", Type::Int), hlr_const(0, Type::Int)),
+                ]),
             ],
         );
 
-        let mut visitor = PruningVisitor { count: 0 };
-        visit_with_locations(&mut func, &mut visitor);
+        let visitor = PruningVisitor {
+            loop_count: 0,
+            defs: Vec::new(),
+        };
+        let (loop_count, defs) = visit(&mut func, visitor);
 
-        // Should only visit up to 2nd statement
-        assert_eq!(visitor.count, 2);
+        assert_eq!(loop_count, 3);
+        assert_eq!(defs, vec!["x", "y", "a", "b"]);
     }
 }

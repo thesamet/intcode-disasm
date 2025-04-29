@@ -2,17 +2,19 @@
 mod tests {
     use std::collections::HashMap;
     use std::fmt::Display;
+    use test_utils::*;
 
     use itertools::Itertools;
     use thiserror::Error;
 
+    use crate::disasm::hlr::ast::HlrAssignmentTarget;
     use crate::disasm::hlr::ast::{
-        BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
+        test_utils, BinaryOperator, HlrExpression, HlrProgram, HlrStatement,
         HlrVariable,
     };
     use crate::disasm::v2::dispatching::EventPublisher;
     use crate::disasm::v2::events::Event;
-    use crate::disasm::v2::model::{FunctionId, ProgramModel};
+    use crate::disasm::v2::model::ProgramModel;
     use crate::disasm::v2::type_inference::types::Type;
     struct VariableMapping {
         actual_to_expected: HashMap<String, String>,
@@ -125,101 +127,6 @@ mod tests {
                 .insert(expected_name.to_string(), actual_name.to_string());
             Ok(())
         }
-    }
-
-    // Helper functions to create HLR structures concisely
-    fn hlr_program(functions: Vec<HlrFunction>) -> HlrProgram {
-        HlrProgram {
-            functions,
-            globals: vec![],
-        }
-    }
-
-    fn hlr_function(id: usize, body: Vec<HlrStatement>) -> HlrFunction {
-        HlrFunction {
-            original_id: FunctionId::from(id),
-            name: id.to_string(),
-            args: vec![],
-            return_type: vec![],
-            body,
-        }
-    }
-
-    fn hlr_var(name: &str, typ: Type) -> HlrVariable {
-        HlrVariable {
-            name: name.to_string(),
-            type_info: typ,
-        }
-    }
-
-    fn hlr_vardef(target: HlrVariable, expr: HlrExpression) -> HlrStatement {
-        HlrStatement::VarDef(vec![target], expr)
-    }
-
-    fn hlr_assign(target: HlrAssignmentTarget, expr: HlrExpression) -> HlrStatement {
-        HlrStatement::Assignment(target, expr)
-    }
-
-    fn hlr_var_target(name: &str, typ: Type) -> HlrAssignmentTarget {
-        HlrAssignmentTarget::Variable(hlr_var(name, typ))
-    }
-
-    fn hlr_var_expr(name: &str, typ: Type) -> HlrExpression {
-        HlrExpression::Variable(hlr_var(name, typ))
-    }
-
-    fn hlr_const(value: i128, typ: Type) -> HlrExpression {
-        HlrExpression::Constant(value, typ)
-    }
-
-    fn hlr_binop(
-        op: BinaryOperator,
-        left: HlrExpression,
-        right: HlrExpression,
-        result_type: Type,
-    ) -> HlrExpression {
-        HlrExpression::BinaryOp {
-            op,
-            left: Box::new(left),
-            right: Box::new(right),
-            result_type,
-        }
-    }
-
-    fn hlr_if(
-        condition: HlrExpression,
-        then_branch: Vec<HlrStatement>,
-        else_branch: Vec<HlrStatement>,
-    ) -> HlrStatement {
-        HlrStatement::If(condition, then_branch, else_branch)
-    }
-
-    fn hlr_do_while(body: Vec<HlrStatement>, condition: HlrExpression) -> HlrStatement {
-        HlrStatement::DoWhile(body, condition)
-    }
-
-    fn hlr_loop(body: Vec<HlrStatement>) -> HlrStatement {
-        HlrStatement::Loop(body)
-    }
-
-    fn hlr_deref(expr: HlrExpression) -> HlrExpression {
-        HlrExpression::Deref(Box::new(expr))
-    }
-
-    fn hlr_input() -> HlrExpression {
-        HlrExpression::Input()
-    }
-
-    fn hlr_output(expr: HlrExpression) -> HlrStatement {
-        HlrStatement::Output(expr)
-    }
-
-    fn hlr_return(exprs: Vec<HlrExpression>) -> HlrStatement {
-        HlrStatement::Return(exprs)
-    }
-
-    fn hlr_function_call(func_expr: HlrExpression, args: Vec<HlrExpression>) -> HlrExpression {
-        HlrExpression::FunctionCall(Box::new(func_expr), args)
     }
 
     // Assertion functions
