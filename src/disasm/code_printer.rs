@@ -8,7 +8,6 @@ macro_rules! line {
     };
 }
 
-#[expect(dead_code)]
 pub trait CodeWriter {
     fn line(&mut self, s: &str);
 

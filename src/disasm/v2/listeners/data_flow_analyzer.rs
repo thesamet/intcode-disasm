@@ -1,14 +1,18 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use itertools::Itertools;
 use log::debug;
 
+use crate::disasm::v2::control_flow::Block;
 use crate::disasm::v2::control_flow::FunctionCall;
 use crate::disasm::v2::data_flow::BlockDataFlow;
 use crate::disasm::v2::data_flow::CallSiteInfo;
+use crate::disasm::v2::data_flow::OriginationPoint;
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
 use crate::disasm::v2::instructions::{Operand, OperandKind};
+use crate::disasm::v2::model::Function;
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::{DataFlowResult, Definition},
@@ -35,10 +39,10 @@ impl DataFlowAnalyzer {
         Self::run_function_returns_analysis(model, block_ids, df_result);
 
         // Pass 3: Reaching Definitions (Forward Analysis)
-        Self::run_reaching_definitions_analysis(model, block_ids, df_result);
+        Self::run_reaching_definitions_analysis(model, func, df_result);
 
         // Pass 4: Liveness Analysis (Backward Analysis)
-        Self::run_liveness_analysis(model, func_id, block_ids, df_result);
+        Self::run_liveness_analysis(model, func, block_ids, df_result);
 
         debug!("Data Flow Analysis passes complete for {}", func_id);
     }
@@ -154,14 +158,15 @@ impl DataFlowAnalyzer {
     /// Pass 3: Computes Reaching Definitions iteratively.
     fn run_reaching_definitions_analysis(
         model: &ProgramModel,
-        block_ids: &[BlockId],
+        func: &Function,
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
-            for &block_id in block_ids {
-                let new_defs_in = Self::calculate_defs_in(model, block_id, block_ids, df_result);
+            for block_id in &func.blocks {
+                let block = model.get_block(*block_id);
+                let new_defs_in = Self::calculate_defs_in(func, block, df_result);
 
                 // Update block's IN set if changed
                 // Use get_mut for direct modification
@@ -175,20 +180,20 @@ impl DataFlowAnalyzer {
                 // Calculate OUT set: OUT = (IN - KILL) U GEN
                 let killed_kinds: HashSet<&OperandKind> = block_flow.gen.keys().collect();
                 let mut current_defs_out = block_flow.defs_in.clone();
-                current_defs_out.retain(|def| !killed_kinds.contains(&def.location));
+                current_defs_out.retain(|def| !killed_kinds.contains(&def.kind));
 
                 // Add GEN set
-                for (location, (instruction_id, _)) in &block_flow.gen {
+                for (kind, (instruction_id, _)) in &block_flow.gen {
                     current_defs_out.insert(Definition {
-                        instruction_id: *instruction_id,
-                        location: *location,
-                        block_id,
+                        source: OriginationPoint::Instruction(*instruction_id),
+                        kind: *kind,
+                        block_id: *block_id,
                     });
                 }
                 // In we call a function at the end of the block, this block doesn't let [R+n]
                 // defintions flow forward.
-                if matches!(model.get_block(block_id).next, NextKind::FunctionCall(_)) {
-                    current_defs_out.retain(|d| !d.location.is_positive_relative_memory());
+                if matches!(block.next, NextKind::FunctionCall(_)) {
+                    current_defs_out.retain(|d| !d.kind.is_positive_relative_memory());
                 }
 
                 // Update block's OUT set if changed
@@ -203,25 +208,14 @@ impl DataFlowAnalyzer {
 
     /// Calculates the Defs-In set for a single block based on its predecessors.
     fn calculate_defs_in(
-        model: &ProgramModel,
-        block_id: BlockId,
-        function_block_ids: &[BlockId], // IDs of blocks within the current function
-        df_result: &DataFlowResult,     // Read-only access for predecessor OUT sets
+        function: &Function,
+        block: &Block,
+        df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
     ) -> HashSet<Definition> {
-        let block = model.get_block(block_id);
         let mut new_defs_in = HashSet::new();
 
         for pred_kind in &block.predecessors {
             let pred_block_id = pred_kind.source_block_id();
-
-            // Ensure predecessor is within the same function
-            assert!(
-                function_block_ids.contains(&pred_block_id),
-                "Predecessor {:?} of block {:?} is not in the same function!",
-                pred_block_id,
-                block_id
-            );
-
             let pred_flow = df_result
                 .block_results
                 .get(&pred_block_id)
@@ -230,13 +224,33 @@ impl DataFlowAnalyzer {
             new_defs_in.extend(&pred_flow.defs_out);
         }
 
+        if function.entry_block == block.id {
+            // Create synthetic definitions for any potential input parameters
+            // to this function. We take the union of all the use_before_def sets
+            // for all blocks in the function, since it is a superset (which is still
+            // smaller than all the reads).
+            for &other_block_id in &function.blocks {
+                let dfr = df_result.block_results.get(&other_block_id).unwrap();
+                new_defs_in.extend(
+                    dfr.use_before_def
+                        .keys()
+                        .filter(|k| k.is_negative_relative_memory())
+                        .map(|k| Definition {
+                            source: OriginationPoint::FunctionInput,
+                            kind: *k,
+                            block_id: block.id,
+                        }),
+                );
+            }
+        }
+
         new_defs_in
     }
 
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
         model: &ProgramModel,
-        function_id: FunctionId,
+        function: &Function,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -245,8 +259,7 @@ impl DataFlowAnalyzer {
             changed = false;
             // Iterate backwards - often converges faster for backward analyses like liveness
             for &block_id in block_ids.iter().rev() {
-                let new_live_out =
-                    Self::calculate_live_out(model, function_id, block_id, df_result);
+                let new_live_out = Self::calculate_live_out(model, function, block_id, df_result);
 
                 // Update block's OUT set if changed
                 let block_flow = df_result.block_results.get_mut(&block_id).unwrap();
@@ -262,8 +275,13 @@ impl DataFlowAnalyzer {
                 // Calculate IN set: IN = USE U (OUT - DEF)
                 let defined_kinds: HashSet<OperandKind> = block_flow.gen.keys().cloned().collect();
                 let mut current_live_in = block_flow.live_out.clone();
-                current_live_in.retain(|kind| !defined_kinds.contains(kind));
-                current_live_in.extend(block_flow.use_before_def.keys().cloned());
+                current_live_in.retain(|kind, _| !defined_kinds.contains(kind));
+                for (k, v) in &block_flow.use_before_def {
+                    current_live_in
+                        .entry(*k)
+                        .or_insert_with(HashSet::new)
+                        .insert(OriginationPoint::Instruction(*v));
+                }
 
                 // Update block's IN set if changed
                 if current_live_in != block_flow.live_in {
@@ -281,34 +299,56 @@ impl DataFlowAnalyzer {
     /// Calculates the Live-Out set for a single block based on its successors' Live-In sets.
     fn calculate_live_out(
         model: &ProgramModel,
-        function_id: FunctionId,
+        function: &Function,
         block_id: BlockId,
         df_result: &DataFlowResult, // Read-only access for successor IN sets
-    ) -> HashSet<OperandKind> {
+    ) -> HashMap<OperandKind, HashSet<OriginationPoint>> {
         let block = model.get_block(block_id);
-        let mut new_live_out = HashSet::new();
-
-        let add_live_in_from_successor = |succ_id: BlockId, live_out: &mut HashSet<OperandKind>| {
-            live_out.extend(&df_result.block_results.get(&succ_id).unwrap().live_in)
-        };
+        let mut new_live_out = HashMap::new();
 
         for succ_id in block.next.successors() {
-            add_live_in_from_successor(succ_id, &mut new_live_out);
-        }
-        let function = model.get_function(function_id);
-
-        if Some(block_id) == model.get_function(function_id).return_block {
-            for block in &function.blocks {
-                let dfr = df_result.block_results.get(block).unwrap();
-                new_live_out.extend(dfr.gen.keys().filter(|k| k.is_negative_relative_memory()));
+            for (k, v) in &df_result.block_results.get(&succ_id).unwrap().live_in {
+                new_live_out
+                    .entry(*k)
+                    .or_insert_with(HashSet::new)
+                    .extend(v);
             }
         }
+
+        if Some(block_id) == function.return_block {
+            // If this is a function return, we need to add the return arguments to live out
+            // So we will have phi's automatically created for them at the right junctions.
+            // We mark the live out as "FunctionOutput" to indicate that it is a return value.
+            // This prevents from potential return values to appear as function inputs by propogating
+            // to the entry point's live in.
+            for block in &function.blocks {
+                let dfr = df_result.block_results.get(block).unwrap();
+                for gen in dfr.gen.keys().filter(|k| k.is_negative_relative_memory()) {
+                    new_live_out
+                        .entry(*gen)
+                        .or_insert_with(HashSet::new)
+                        .insert(OriginationPoint::FunctionOutput);
+                }
+            }
+        }
+
         if matches!(block.next, NextKind::FunctionCall(_)) {
             // If this is a function call, we need to add the return arguments to live out
+            /* commented out since I am not sure why return argument reads are gen. Shouldn't we use liveliness for this?
+             */
+            /*
             for block in &function.blocks {
                 let dfr = df_result.block_results.get(block).unwrap();
+                for kind in dfr.gen.keys() {
+                    new_live_out
+                        .entry(*kind)
+                        .or_insert_with(HashSet::new)
+                        .insert();
+                }
+
                 new_live_out.extend(dfr.gen.keys().filter(|k| k.is_positive_relative_memory()));
             }
+            */
         }
 
         new_live_out
@@ -404,9 +444,9 @@ mod tests {
     use crate::disasm::{
         parser,
         v2::{
+            data_flow::OriginationPoint,
             dispatching::EventPublisher,
             events::Event,
-            // Need to import OperandKind for assertions potentially
             instructions::{InstructionId, OperandKind},
             listeners::{
                 control_flow_graph_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
@@ -448,8 +488,8 @@ mod tests {
     // Helper to create a Definition for assertions
     fn def(instr_id: usize, location: OperandKind, block_id: usize) -> Definition {
         Definition {
-            instruction_id: InstructionId::from(instr_id),
-            location,
+            source: OriginationPoint::Instruction(InstructionId::from(instr_id)),
+            kind: location,
             block_id: BlockId::from(block_id),
         }
     }
@@ -527,10 +567,14 @@ mod tests {
         assert_eq!(flow12.defs_out, flow12.defs_in, "DefsOut @ B12");
 
         // Liveness (Placeholder check)
-        assert!(flow12.live_out.is_empty(), "LiveOut @ B12"); // Nothing live after return
+        assert!(
+            flow12.live_out.is_empty(),
+            "LiveOut @ B12: {:?}",
+            flow12.live_out
+        ); // Nothing live after return
         assert_eq!(
-            flow12.live_in,
-            [rel_kind(0)].iter().cloned().collect(),
+            flow12.live_in.keys().cloned().collect_vec(),
+            [rel_kind(0)].to_vec(),
             "LiveIn @ B12"
         );
     }

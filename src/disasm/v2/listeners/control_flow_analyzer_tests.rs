@@ -379,7 +379,6 @@ mod tests {
                             &format!("{}:Return[{}]", stmt_context, j),
                         )?;
                     }
-                    
                 }
                 (HlrStatement::Halt, HlrStatement::Halt) => {}
                 (HlrStatement::Continue, HlrStatement::Continue) => {}
@@ -978,8 +977,8 @@ mod tests {
             hlr_function(
                 16,
                 vec![
-                    hlr_vardef(
-                        hlr_var("arg1", Type::Char),
+                    hlr_assign(
+                        hlr_var_target("arg1", Type::Char),
                         hlr_binop(
                             BinaryOperator::Add,
                             hlr_var_expr("arg1", Type::Char),
@@ -1029,6 +1028,7 @@ mod tests {
         "#;
 
         let ctx = TestContext::from_assembly(_assembly);
+        pretty_print_ssa(&ctx.model);
         println!("{}", pretty_print_program(ctx.get_hlr_program().unwrap()));
 
         // Create expected HLR program

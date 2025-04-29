@@ -257,9 +257,6 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             lp.exit = jump_outs.iter().exactly_one().ok().cloned();
             trace!("Function_i={} has loop: {:?}", func.function_id, lp);
         }
-        let mut context = FunctionAnalysisContext::new(loops, ifs);
-        let mut stmts = self.analyze_block(ssa_func, &mut context, func.entry_block, None);
-        stmts.extend(self.maybe_return_statement(ssa_func, true));
         let args = self
             .model
             .get_type_inference_result()
@@ -269,6 +266,16 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             .iter()
             .map(|(_, t, _)| self.hlr_var(t))
             .collect_vec();
+
+        let mut context = FunctionAnalysisContext::new(loops, ifs);
+
+        // Add args to the context so they do not get "let" statements on
+        // first write.
+        for arg in &args {
+            context.vars.insert(arg.clone());
+        }
+        let mut stmts = self.analyze_block(ssa_func, &mut context, func.entry_block, None);
+        stmts.extend(self.maybe_return_statement(ssa_func, true));
         let return_type = self
             .model
             .get_type_inference_result()

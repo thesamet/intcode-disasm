@@ -1,5 +1,6 @@
 use crate::disasm::v2::{
     control_flow::NextKind,
+    data_flow::OriginationPoint,
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
     instructions::OperandKind,
@@ -172,13 +173,17 @@ impl FunctionCallAnalyzer {
                 .block_results
                 .get(&entry_block_id)
                 .unwrap();
-            for live_kind in &entry_flow.live_in {
+            for (live_kind, points) in &entry_flow.live_in {
                 if let OperandKind::RelativeMemory(offset) = live_kind {
-                    if *offset < 0 {
+                    if *offset < 0
+                        && points
+                            .iter()
+                            .any(|p| *p != OriginationPoint::FunctionOutput)
+                    {
                         // Found a potential parameter offset `n`
                         // Now find the SsaVar with the lowest version for this kind in the function
-                        if let Some(entry_var) = find_lowest_version_ssa_var(function, live_kind) {
-                            parameter_entry_vars.insert(*offset + stack_size, entry_var);
+                        if let Some(entry_var) = find_lowest_version_ssa_var(function, &live_kind) {
+                            parameter_entry_vars.insert(offset + stack_size, entry_var);
                         } else {
                             panic!("Function {}: OperandKind {:?} is live_in at entry, but no corresponding SsaVar found.", function_id, live_kind);
                         }
@@ -385,5 +390,166 @@ impl EventListener<Event, ProgramModel> for FunctionCallAnalyzer {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::disasm::{
+        parser,
+        v2::{
+            dispatching::EventPublisher,
+            events::Event,
+            listeners::{
+                control_flow_graph_builder::ControlFlowGraphBuilder,
+                data_flow_analyzer::DataFlowAnalyzer, function_call_analyzer::FunctionCallAnalyzer,
+                image_scanner::ImageScanner, ssa_converter::SsaConverter,
+            },
+            model::{FunctionId, ProgramModel},
+            pretty_print::pretty_print_ssa,
+        },
+    };
+
+    struct TestContext {
+        model: ProgramModel,
+    }
+
+    impl TestContext {
+        fn new(assembly: &str) -> Self {
+            let model = setup_analyzed_model(assembly);
+
+            // Extract the main function (always at ID 0)
+
+            TestContext { model }
+        }
+    }
+
+    fn setup_analyzed_model(assembly: &str) -> ProgramModel {
+        let binary = parser::compile(assembly);
+        let mut model = ProgramModel::new();
+        let mut publisher = EventPublisher::<Event, ProgramModel>::new();
+
+        // Register listeners for the pipeline
+        publisher.add_listener(Box::new(ImageScanner::new()));
+        publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+        publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+        publisher.add_listener(Box::new(SsaConverter::new()));
+        publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+
+        // Run the pipeline
+        model.load_image(&binary, &mut publisher);
+        publisher.process_events(&mut model).unwrap();
+
+        model
+    }
+
+    #[test]
+    fn test_negative_write_not_adding_arg() {
+        let assembly = r#"
+            R += 3
+            [R-2] = 10
+            R -= 3
+            goto [R]
+            "#;
+        let ctx = TestContext::new(assembly);
+        let call_info = ctx
+            .model
+            .get_function_call_analysis()
+            .unwrap()
+            .callee_info
+            .get(&FunctionId::from(0))
+            .unwrap();
+        assert_eq!(call_info.parameter_entry_vars.len(), 0);
+    }
+
+    #[test]
+    fn test_negative_write_multiple_paths() {
+        let assembly = r#"
+            R += 3
+            [R-2] = 10
+            [R] = @end
+            goto @somefunc
+            end:
+            R -= 3
+            goto [R]
+
+        somefunc:
+            R += 2
+            R -= 2
+            goto [R]
+            "#;
+        let ctx = TestContext::new(assembly);
+        let call_info = ctx
+            .model
+            .get_function_call_analysis()
+            .unwrap()
+            .callee_info
+            .get(&FunctionId::from(0))
+            .unwrap();
+        pretty_print_ssa(&ctx.model);
+        assert_eq!(call_info.parameter_entry_vars.len(), 0);
+    }
+
+    #[test]
+    fn test_negative_write_adding_arg_if_is_read() {
+        let assembly = r#"
+            R += 3
+            [R-2] = [R-2] + 1
+            R -= 3
+            goto [R]
+            "#;
+        let ctx = TestContext::new(assembly);
+        let call_info = ctx
+            .model
+            .get_function_call_analysis()
+            .unwrap()
+            .callee_info
+            .get(&FunctionId::from(0))
+            .unwrap();
+        assert_eq!(call_info.parameter_entry_vars.len(), 1);
+    }
+
+    #[test]
+    fn test_nested_if_else() {
+        let _assembly = r#"
+            R += 100                      ; 0: Initial R adjustment for main function
+            [R-1] = 10                    ; 2: x = 10
+            [R-2] = [R-1] < 5             ; 6: cond1 = (x < 5)
+            if ![R-2] goto @else_outer    ; 10: if !cond1 goto else_outer
+
+            ; Then branch of outer if
+            [R-3] = [R-1] < 15            ; 13: cond2 = (x < 15)
+            if ![R-3] goto @else_inner    ; 17: if !cond2 goto else_inner
+
+            ; Then branch of inner if
+            [R-4] = 1                     ; 20: result = 1
+            goto @end_inner               ; 24:
+
+            else_inner:
+            ; Else branch of inner if
+            [R-4] = 2                     ; 27: result = 2
+
+            end_inner:
+            goto @end_outer               ; 31:
+
+            else_outer:
+            ; Else branch of outer if
+            [R-4] = 3                     ; 34: result = 3
+
+            end_outer:
+            output([R-4])                 ; 38: output(result)
+            R -= 100                      ; 40:
+            goto [R]                      ; 42:
+        "#;
+
+        let ctx = TestContext::new(_assembly);
+        pretty_print_ssa(&ctx.model);
+        let f_a = ctx.model.get_function_call_analysis().unwrap();
+        assert_eq!(
+            f_a.callee_info[&FunctionId::from(0)]
+                .parameter_entry_vars
+                .len(),
+            0
+        );
     }
 }

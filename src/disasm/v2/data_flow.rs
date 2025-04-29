@@ -11,16 +11,23 @@ use crate::disasm::v2::{
 use super::control_flow::FunctionCall;
 use super::instructions::Operand;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum OriginationPoint {
+    Instruction(InstructionId),
+    FunctionInput,
+    FunctionOutput,
+}
+
 /// Represents a specific definition site for an Operand.
 /// A definition occurs when an instruction writes a value to a memory location
 /// represented by the Operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Definition {
-    /// The ID of the instruction that performs the write operation,
+    /// The location where the definition originated from (from defs), or where it is read from for liveness.
     /// or the ID of the call instruction (`goto @func`) for return values.
-    pub instruction_id: InstructionId,
+    pub source: OriginationPoint,
     /// The location kind (memory or register) being defined.
-    pub location: OperandKind,
+    pub kind: OperandKind,
     /// The ID of the block containing the defining instruction or the call.
     pub block_id: BlockId,
 }
@@ -29,8 +36,8 @@ impl fmt::Display for Definition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Def({} in {} at i{})",
-            self.location, self.block_id, self.instruction_id
+            "Def({} in {} at {:?})",
+            self.kind, self.block_id, self.source
         )
     }
 }
@@ -44,13 +51,13 @@ pub struct BlockDataFlow {
     /// **Reaching Definitions (OUT):** The set of definitions that might reach the exit point(s) of this block.
     pub defs_out: HashSet<Definition>,
 
-    /// **Live Variables (IN):** The set of Operands whose current value might be used later in the execution path
-    /// starting from the entry of this block.
-    pub live_in: HashSet<OperandKind>,
+    /// **Live Variables (IN):** The set of Operands whose current value may be used later in any execution path
+    /// starting from the entry of this block. Each operand is associated with the points that it is read.
+    pub live_in: HashMap<OperandKind, HashSet<OriginationPoint>>,
 
-    /// **Live Variables (OUT):** The set of Operands whose current value might be used later in the execution path
+    /// **Live Variables (OUT):** The set of Operands whose current value may be used later in any execution path
     /// starting from the exit(s) of this block.
-    pub live_out: HashSet<OperandKind>,
+    pub live_out: HashMap<OperandKind, HashSet<OriginationPoint>>,
 
     /// **Generated Definitions (GEN):** Maps Operands defined within this block to the ID of the *last*
     /// instruction within the block that defines them. Definitions here "kill" definitions from `defs_in`.
@@ -58,7 +65,7 @@ pub struct BlockDataFlow {
     /// Value: The `InstructionId` of the defining instruction.
     pub gen: HashMap<OperandKind, (InstructionId, Operand)>,
 
-    /// **Used Before Defined (USE):** Maps memory locations (`OperandKind`) read within this block *before*
+    /// **Used Before Defined (USE):** Maps operand read within this block *before*
     /// they are possibly written to (defined) within the same block, to the ID of the *first* instruction
     /// performing such a read.
     pub use_before_def: HashMap<OperandKind, InstructionId>,

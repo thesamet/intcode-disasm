@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use crate::disasm::code_printer::CodePrinter;
 use crate::disasm::hlr::ast::{
-    pretty_print_statement, BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction,
-    HlrProgram, HlrStatement, HlrVariable, UnaryOperator,
+    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
+    HlrVariable, UnaryOperator,
 };
 use crate::disasm::hlr::visitor::{visit_function, HlrNode, HlrVisitControlFlow, HlrVisitEvent};
 use crate::disasm::v2::model::ProgramModel;
@@ -131,29 +130,57 @@ impl OptimizationPass for IdentifyTemporaryVariables {
         struct VarInfo {
             read_count: usize,
             update_count: usize,
+            expr: HlrExpression,
         }
 
-        impl Default for VarInfo {
-            fn default() -> Self {
+        impl VarInfo {
+            fn new(initial: HlrExpression) -> Self {
                 Self {
                     read_count: 0,
                     update_count: 0,
+                    expr: initial,
                 }
             }
         }
+
         let mut changed = false;
-        let mut usages: HashMap<HlrVariable, VarInfo> = HashMap::new();
+        let mut usage_stack: Vec<HashMap<HlrVariable, VarInfo>> = vec![];
+        let mut current_usage = HashMap::new();
         let mut assignee_read_count = 0;
         let mut in_assignment_of = None;
+        println!("Analayzing function {}", function.name);
         visit_function(function, |e| match e {
+            HlrVisitEvent::Enter(HlrNode::Block(_)) => {
+                let mut new_stack = HashMap::new();
+                std::mem::swap(&mut new_stack, &mut current_usage);
+                usage_stack.push(new_stack);
+                HlrVisitControlFlow::Continue
+            }
+            HlrVisitEvent::Finish(HlrNode::Block(_)) => {
+                // handle finish of current usage.
+                current_usage = usage_stack.pop().unwrap();
+                HlrVisitControlFlow::Continue
+            }
             HlrVisitEvent::Enter(HlrNode::Statement(stmt)) => match stmt {
+                HlrStatement::VarDef(vs, e) if vs.len() == 1 => {
+                    /*
+                    assert!(current_usage
+                        .insert(vs[0].clone(), VarInfo::new(e.clone()))
+                        .is_none());
+                        */
+                    HlrVisitControlFlow::Continue
+                }
                 HlrStatement::Assignment(HlrAssignmentTarget::Variable(v), _) => {
+                    if !current_usage.contains_key(v) {
+                        return HlrVisitControlFlow::Continue;
+                    }
                     in_assignment_of = Some(v.clone());
                     assignee_read_count = 0;
-                    return HlrVisitControlFlow::Continue;
+                    HlrVisitControlFlow::Continue
                 }
-                _ => HlrVisitControlFlow::Continue,
+                _ => HlrVisitControlFlow::Continue, // TODO: Handle other cases
             },
+            /*
             HlrVisitEvent::Enter(HlrNode::Expression(expr)) => {
                 match expr {
                     HlrExpression::Variable(v) => {
@@ -180,6 +207,7 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                 }
                 _ => HlrVisitControlFlow::Continue,
             },
+            */
             _ => HlrVisitControlFlow::Continue,
         });
         changed

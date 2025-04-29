@@ -9,10 +9,7 @@ use crate::disasm::v2::{
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::{
-    instructions::{GenericInstruction, InstructionId},
-    model::Function,
-};
+use super::{data_flow::OriginationPoint, instructions::GenericInstruction, model::Function};
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -513,6 +510,30 @@ impl<'a> SSAConversionState<'a> {
 
         for block_id in function.blocks.iter().sorted() {
             let mut end_state = HashMap::new();
+            if *block_id == function.entry_block {
+                self.model
+                    .get_data_flow_result()
+                    .unwrap()
+                    .block_results
+                    .get(&block_id)
+                    .unwrap()
+                    .defs_in
+                    .iter()
+                    .filter(|d| d.source == OriginationPoint::FunctionInput)
+                    .for_each({
+                        |d| {
+                            let kind = SsaVarKind::from_operand_kind(&d.kind).unwrap();
+                            end_state.insert(
+                                kind,
+                                SsaVar {
+                                    kind,
+                                    version: 0,
+                                    origin_info: SsaOriginInfo::new(function.function_id, 0, None),
+                                },
+                            );
+                        }
+                    });
+            }
             let block = self.model.get_block(*block_id);
             let mut phi_functions = phi_placements.get(block_id).unwrap_or(&Vec::new()).clone();
             for phi in phi_functions.iter_mut() {
@@ -581,29 +602,18 @@ impl<'a> SSAConversionState<'a> {
 
             // Get the data flow result for this block
             let block_flow = data_flow.block_results.get(&block_id).unwrap();
-
             // Find all variable definitions reaching this block from any predecessor
-            let mut all_incoming_defs: HashMap<OperandKind, HashSet<InstructionId>> =
-                HashMap::new();
-
-            // Collect definitions from predecessors
-            if block.predecessors.len() > 1 {
-                for pred in &block.predecessors {
-                    let pred_id = pred.source_block_id();
-
-                    assert!(function.blocks.contains(&pred_id));
-
-                    // Get the predecessor's defs_out from data flow
-                    if let Some(pred_flow) = data_flow.block_results.get(&pred_id) {
-                        for def in &pred_flow.defs_out {
-                            all_incoming_defs
-                                .entry(def.location)
-                                .or_default()
-                                .insert(def.instruction_id);
-                        }
-                    }
-                }
-            }
+            let all_incoming_defs: HashMap<OperandKind, HashSet<OriginationPoint>> =
+                if block.predecessors.len() > 1 {
+                    block_flow
+                        .defs_in
+                        .iter()
+                        .map(|d| (d.kind, d.source))
+                        .into_grouping_map()
+                        .collect()
+                } else {
+                    HashMap::new()
+                };
 
             let return_values_accessed = if let Some(PredecessorKind::FunctionCallReturns(fc)) =
                 block
@@ -628,11 +638,15 @@ impl<'a> SSAConversionState<'a> {
             } else {
                 vec![]
             };
+
             let vars = all_incoming_defs
                 .iter()
-                .filter(|(var_kind, defs)| defs.len() > 1 && block_flow.live_in.contains(var_kind))
+                .filter(|(var_kind, defs)| {
+                    defs.len() > 1 && block_flow.live_in.contains_key(var_kind)
+                })
                 .map(|(var_kind, _)| var_kind)
-                .chain(return_values_accessed.iter());
+                .chain(return_values_accessed.iter())
+                .unique();
             // For each variable with multiple different definitions reaching this block,
             // add a phi function
             for var_kind in vars {
@@ -668,7 +682,7 @@ impl<'a> SSAConversionState<'a> {
         let block_ids = ssa_blocks.keys().copied().collect_vec();
 
         // These are the variables that are updated by the block. No predecessor
-        // can affect the end staet of these variable.
+        // can affect the end state of these variable.
         let initial_end_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
             .iter()
             .map(|(id, block)| (*id, block.end_state.clone()))
@@ -694,7 +708,7 @@ impl<'a> SSAConversionState<'a> {
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
                     // new_in should store SsaVarKind -> SsaVar
                     for (var_kind, var) in pred_end_state {
-                        if !live_in.contains(&var_kind.to_operand_kind())
+                        if !live_in.contains_key(&var_kind.to_operand_kind())
                             && !var_kind.get_relative_memory().is_some_and(|r| r < 0)
                         {
                             // This var doesn't live from here and not a return value
@@ -1547,5 +1561,61 @@ exit:
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
+    }
+
+    #[test]
+    fn test_if_convergence_versioning() {
+        let ctx = TestContext::new(
+            r#"
+            R += 5
+            if [R-1] goto @true
+            ptr = 'a [R-4]
+            output(*ptr)
+            goto @join
+        true:
+            ptr = 'b [R-4]
+            ptr = ptr + 1
+        join:
+            'c [R-4] = 10
+            R -= 5
+            goto [R]
+            "#,
+        );
+        pretty_print_ssa(&ctx.model);
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
+    }
+
+    #[test]
+    fn test_if_convergence_versioning_with_phi() {
+        // [R-2] is a parameter that gets modified in a branch.
+        // we want to ensure that a phi function under br2 bumps up
+        // its version.
+        let ctx = TestContext::new(
+            r#"
+            R += 3
+            [R-1] = 'a [R-2] == 0
+            if [R-1] goto @exit
+                [R-1] = [R-2] < 0
+                if [R-1] goto @br1
+                    goto @br2
+                br1:    ; else
+                    output(45)
+                    'b [R-2] = [R-2] * -1
+            br2:
+                [R+1] = 'c [R-2]
+                [R] = @exit
+                goto 2909
+            exit:
+                R += -3
+                goto [R]
+
+          "#,
+        );
+        pretty_print_ssa(&ctx.model);
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
     }
 }
