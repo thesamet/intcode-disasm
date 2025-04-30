@@ -1,8 +1,6 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::disasm::hlr::ast::{HlrExpression, HlrStatement};
 
-use super::ast::{HlrFunction, HlrVariable};
+use super::ast::HlrFunction;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum HlrNode<'a> {

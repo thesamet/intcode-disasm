@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
+
 use super::{
-    ast::{HlrExpression, HlrFunction, HlrStatement, HlrVariable},
+    ast::{HlrAssignmentTarget, HlrExpression, HlrFunction, HlrStatement, HlrVariable},
     visitor::{BlockLocation, Control, ExpressionLocation, HlrFunctionVisitor, StatementLocation},
 };
 
@@ -85,6 +87,36 @@ impl HlrFunctionVisitor<Control, TransformationStats> for HlrTransformer {
     fn finish(self) -> TransformationStats {
         self.stats
     }
+}
+
+/// Replace a variable within the given expression with a new expression.
+/// The substitituion is not applied recursively: if the exppression contains references to the variable,
+/// they will remain unchanged.
+fn replace_variable(
+    expr: &HlrExpression,
+    var: &HlrVariable,
+    replacement: &HlrExpression,
+) -> HlrExpression {
+    let mut func = HlrFunction {
+        original_id: FunctionId::new(0),
+        name: "<replaced>".to_string(),
+        args: vec![],
+        return_type: vec![],
+        body: vec![HlrStatement::Assignment(
+            HlrAssignmentTarget::Variable(HlrVariable {
+                name: "_".to_string(),
+                type_info: Type::Any,
+            }),
+            expr.clone(),
+        )],
+    };
+    let mut m = HlrTransformer::new();
+    m.replace_variable(var, replacement.clone());
+    m.transform(&mut func);
+    let HlrStatement::Assignment(_, expr) = &func.body[0] else {
+        panic!("Expected Assignment");
+    };
+    expr.clone()
 }
 
 #[cfg(test)]

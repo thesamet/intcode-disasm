@@ -263,7 +263,6 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                 if def_block.is_some()
                     && Some(last_read_location.get_containing_block()) != def_block
                 {
-                    trace!("last_read_location is None");
                     continue 'outer;
                 }
             }
