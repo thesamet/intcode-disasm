@@ -201,8 +201,8 @@ pub struct Block {
     pub low_instructions: Vec<Instruction<Addressable>>,
 
     // CFG Information (added by ControlFlowGraphBuilder)
-    pub next: NextKind<Operand>,
-    pub predecessors: Vec<PredecessorKind<Operand>>,
+    pub native_next: NextKind<Operand>,
+    pub native_predecessors: Vec<PredecessorKind<Operand>>,
 }
 
 /// Information about a function call for control flow analysis.

@@ -164,8 +164,8 @@ impl ControlFlowGraphBuilder {
                 span: Span::new(start_addr, current_block_end),
                 native_instructions: current_block_instructions.clone(),
                 low_instructions: Instruction::convert_block(current_block_instructions),
-                predecessors: Vec::new(), // To be filled later
-                next: NextKind::Unknown,  // To be filled now
+                native_predecessors: Vec::new(), // To be filled later
+                native_next: NextKind::Unknown,  // To be filled now
             };
             model.add_block(block);
 
@@ -233,13 +233,13 @@ impl ControlFlowGraphBuilder {
             }
 
             // Update the block in the model (mutable borrow needed here)
-            model.get_block_mut(*block_id).next = next_kind;
+            model.get_block_mut(*block_id).native_next = next_kind;
         }
 
         // Apply predecessors
         for (block_id, preds) in predecessors_map {
             // block_id must exist since we created it and added it to function_block_ids
-            model.get_block_mut(block_id).predecessors = preds;
+            model.get_block_mut(block_id).native_predecessors = preds;
         }
 
         // Update the Function object
@@ -393,16 +393,16 @@ mod tests {
         assert_eq!(block0.containing_function_id, func_id);
         assert_eq!(block0.native_instructions.len(), 1);
         assert_eq!(block0.span, Span::new(0, 2));
-        assert_eq!(block0.next, NextKind::Follows(BlockId::from(2)));
+        assert_eq!(block0.native_next, NextKind::Follows(BlockId::from(2)));
 
         let block1 = model.get_block(BlockId::from(2));
         assert_eq!(block1.id, BlockId::from(2));
         assert_eq!(block1.containing_function_id, func_id);
         assert_eq!(block1.native_instructions.len(), 2);
         assert_eq!(block1.span, Span::new(2, 7));
-        assert_eq!(block1.next, NextKind::Return);
+        assert_eq!(block1.native_next, NextKind::Return);
         assert_eq!(
-            *block1.predecessors.iter().exactly_one().unwrap(),
+            *block1.native_predecessors.iter().exactly_one().unwrap(),
             PredecessorKind::FollowsFrom(BlockId::from(0))
         );
     }
@@ -435,16 +435,16 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.native_instructions.len(), 3); // R+=5, [R+1]=10, [R+2]=20
         assert_eq!(block0.span, Span::new(0, 10));
-        assert_eq!(block0.next, NextKind::Follows(BlockId::from(10)));
-        assert!(block0.predecessors.is_empty());
+        assert_eq!(block0.native_next, NextKind::Follows(BlockId::from(10)));
+        assert!(block0.native_predecessors.is_empty());
 
         let block6 = model.get_block(BlockId::from(10));
         assert_eq!(block6.native_instructions.len(), 2); // R-=5, goto [R]
         assert_eq!(block6.span, Span::new(10, 15));
-        assert_eq!(block6.next, NextKind::Return);
-        assert_eq!(block6.predecessors.len(), 1);
+        assert_eq!(block6.native_next, NextKind::Return);
+        assert_eq!(block6.native_predecessors.len(), 1);
         assert_eq!(
-            block6.predecessors[0],
+            block6.native_predecessors[0],
             PredecessorKind::FollowsFrom(BlockId::from(0))
         );
     }
@@ -483,26 +483,28 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.native_instructions.len(), 2);
         assert_eq!(block0.span, Span::new(0, 5));
-        assert!(matches!(block0.next, NextKind::Goto(address) if address == BlockId::from(6)));
-        assert!(block0.predecessors.is_empty());
+        assert!(
+            matches!(block0.native_next, NextKind::Goto(address) if address == BlockId::from(6))
+        );
+        assert!(block0.native_predecessors.is_empty());
 
         let block6 = model.get_block(BlockId::from(6));
         assert_eq!(block6.native_instructions.len(), 1); // [R+1]=30
         assert_eq!(block6.span, Span::new(6, 10));
-        assert_eq!(block6.next, NextKind::Follows(BlockId::from(10)));
-        assert_eq!(block6.predecessors.len(), 1);
+        assert_eq!(block6.native_next, NextKind::Follows(BlockId::from(10)));
+        assert_eq!(block6.native_predecessors.len(), 1);
         assert_eq!(
-            block6.predecessors[0],
+            block6.native_predecessors[0],
             PredecessorKind::GotoFrom(BlockId::from(0))
         );
 
         let block10 = model.get_block(BlockId::from(10));
         assert_eq!(block10.native_instructions.len(), 2); // R-=5, goto [R]
         assert_eq!(block10.span, Span::new(10, 15));
-        assert_eq!(block10.next, NextKind::Return);
-        assert_eq!(block10.predecessors.len(), 1);
+        assert_eq!(block10.native_next, NextKind::Return);
+        assert_eq!(block10.native_predecessors.len(), 1);
         assert_eq!(
-            block10.predecessors[0],
+            block10.native_predecessors[0],
             PredecessorKind::FollowsFrom(BlockId::from(6))
         );
     }
@@ -552,22 +554,22 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.native_instructions.len(), 2); // R+=5, if [R+1] goto @true_branch
         assert_eq!(block0.span, Span::new(0, 5));
-        if let NextKind::Condition(ref cond) = block0.next {
+        if let NextKind::Condition(ref cond) = block0.native_next {
             assert_eq!(cond.target_block, BlockId::from(12));
             assert_eq!(cond.follows_block, BlockId::from(5));
             assert!(cond.jump_if_true);
         } else {
             panic!("Expected NextKind::Condition");
         }
-        assert!(block0.predecessors.is_empty());
+        assert!(block0.native_predecessors.is_empty());
 
         // Block 5 (False branch)
         let block5 = model.get_block(BlockId::from(5));
         assert_eq!(block5.native_instructions.len(), 2); // [R+2]=100, goto @merge
         assert_eq!(block5.span, Span::new(5, 12));
-        assert!(matches!(block5.next, NextKind::Goto(b) if b == BlockId::from(16)));
-        assert_eq!(block5.predecessors.len(), 1);
-        if let PredecessorKind::ConditionalFollow(ref cond) = block5.predecessors[0] {
+        assert!(matches!(block5.native_next, NextKind::Goto(b) if b == BlockId::from(16)));
+        assert_eq!(block5.native_predecessors.len(), 1);
+        if let PredecessorKind::ConditionalFollow(ref cond) = block5.native_predecessors[0] {
             assert_eq!(cond.from_block, BlockId::from(0));
         } else {
             panic!("Expected PredecessorKind::ConditionalFollow");
@@ -577,9 +579,9 @@ mod tests {
         let block12 = model.get_block(BlockId::from(12));
         assert_eq!(block12.native_instructions.len(), 1); // [R+3]=200
         assert_eq!(block12.span, Span::new(12, 16));
-        assert_eq!(block12.next, NextKind::Follows(BlockId::from(16))); // Falls through to merge
-        assert_eq!(block12.predecessors.len(), 1);
-        if let PredecessorKind::ConditionalJump(ref cond) = block12.predecessors[0] {
+        assert_eq!(block12.native_next, NextKind::Follows(BlockId::from(16))); // Falls through to merge
+        assert_eq!(block12.native_predecessors.len(), 1);
+        if let PredecessorKind::ConditionalJump(ref cond) = block12.native_predecessors[0] {
             assert_eq!(cond.from_block, BlockId::from(0));
         } else {
             panic!("Expected PredecessorKind::ConditionalJump");
@@ -589,13 +591,13 @@ mod tests {
         let block16 = model.get_block(BlockId::from(16));
         assert_eq!(block16.native_instructions.len(), 2); // R-=5, goto [R]
         assert_eq!(block16.span, Span::new(16, 21));
-        assert_eq!(block16.next, NextKind::Return);
-        assert_eq!(block16.predecessors.len(), 2);
+        assert_eq!(block16.native_next, NextKind::Return);
+        assert_eq!(block16.native_predecessors.len(), 2);
         assert!(block16
-            .predecessors
+            .native_predecessors
             .contains(&PredecessorKind::GotoFrom(BlockId::from(5))));
         assert!(block16
-            .predecessors
+            .native_predecessors
             .contains(&PredecessorKind::FollowsFrom(BlockId::from(12))));
     }
 
@@ -630,8 +632,8 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.native_instructions.len(), 1); // R+=5
         assert_eq!(block0.span, Span::new(0, 2));
-        assert_eq!(block0.next, NextKind::Follows(BlockId::from(2)));
-        assert!(block0.predecessors.is_empty());
+        assert_eq!(block0.native_next, NextKind::Follows(BlockId::from(2)));
+        assert!(block0.native_predecessors.is_empty());
 
         // Block 2 (Loop Body)
         let block2 = model.get_block(BlockId::from(2));
@@ -641,19 +643,19 @@ mod tests {
             target_block,
             follows_block,
             ..
-        }) = block2.next
+        }) = block2.native_next
         else {
             panic!("Expected condition");
         };
         assert_eq!(target_block, BlockId::from(2));
         assert_eq!(follows_block, BlockId::from(9));
         assert!(block2
-            .predecessors
+            .native_predecessors
             .contains(&PredecessorKind::FollowsFrom(BlockId::from(0))));
         // Block 6 is just the jump, so the loop jump goes FROM 6 TO 2.
         // Block 2 predecessor should also include the loop back edge from Block 6.
         assert!(block2
-            .predecessors
+            .native_predecessors
             .contains(&PredecessorKind::ConditionalJump(Condition {
                 from_block: BlockId::from(2),
                 condition_operand: block2
@@ -734,8 +736,8 @@ mod tests {
         let block0 = model.get_block(BlockId::from(0)); // The call block
         assert_eq!(block0.native_instructions.len(), 5);
         assert_eq!(block0.span, Span::new(0, 17));
-        let NextKind::FunctionCall(call) = &block0.next else {
-            panic!("block0.next mismatch: {:?}", block0.next);
+        let NextKind::FunctionCall(call) = &block0.native_next else {
+            panic!("block0.next mismatch: {:?}", block0.native_next);
         };
 
         assert_eq!(call.return_block, BlockId::from(17));
@@ -750,15 +752,15 @@ mod tests {
 
         // Check Return Block Predecessor in Main
         let block17 = model.get_block(BlockId::from(17)); // The return block in main
-        assert_eq!(block17.predecessors.len(), 1);
+        assert_eq!(block17.native_predecessors.len(), 1);
         assert_eq!(
-            block17.predecessors[0],
+            block17.native_predecessors[0],
             PredecessorKind::FunctionCallReturns(call.clone())
         );
 
         // Check Call Block Predecessor in Callee
         let block24 = model.get_block(BlockId::from(24)); // The call block in callee
-        assert_eq!(block24.predecessors.len(), 0);
+        assert_eq!(block24.native_predecessors.len(), 0);
     }
 
     #[test]
@@ -777,6 +779,6 @@ mod tests {
 
         let block0 = model.get_block(BlockId::from(0));
         assert_eq!(block0.native_instructions.len(), 2);
-        assert_eq!(block0.next, NextKind::Halt);
+        assert_eq!(block0.native_next, NextKind::Halt);
     }
 }

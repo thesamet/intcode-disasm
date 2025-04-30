@@ -82,7 +82,7 @@ impl DataFlowAnalyzer {
                 }
             }
             block_flow.function_returns_in = block
-                .predecessors
+                .native_predecessors
                 .iter()
                 .filter_map(|p| p.get_function_call_returns())
                 .cloned()
@@ -136,11 +136,11 @@ impl DataFlowAnalyzer {
         // defintions from further away will be overridden by the immediate one.
         if !model
             .get_block(block_id)
-            .predecessors
+            .native_predecessors
             .iter()
             .any(|p| p.get_function_call_returns().is_some())
         {
-            for pred in model.get_block(block_id).predecessors.iter() {
+            for pred in model.get_block(block_id).native_predecessors.iter() {
                 // Update block's IN set if changed
                 let pred_block_id = pred.source_block_id();
                 let pred_function_returns_out = df_result
@@ -192,7 +192,7 @@ impl DataFlowAnalyzer {
                 }
                 // In we call a function at the end of the block, this block doesn't let [R+n]
                 // defintions flow forward.
-                if matches!(block.next, NextKind::FunctionCall(_)) {
+                if matches!(block.native_next, NextKind::FunctionCall(_)) {
                     current_defs_out.retain(|d| !d.kind.is_positive_relative_memory());
                 }
 
@@ -214,7 +214,7 @@ impl DataFlowAnalyzer {
     ) -> HashSet<Definition> {
         let mut new_defs_in = HashSet::new();
 
-        for pred_kind in &block.predecessors {
+        for pred_kind in &block.native_predecessors {
             let pred_block_id = pred_kind.source_block_id();
             let pred_flow = df_result
                 .block_results
@@ -278,7 +278,12 @@ impl DataFlowAnalyzer {
                 let defined_kinds: HashSet<OperandKind> = block_flow.gen.keys().cloned().collect();
                 let mut current_live_in = block_flow.live_out.clone();
                 // add potential_function_call_params.
-                if model.get_block(block_id).next.as_function_call().is_some() {
+                if model
+                    .get_block(block_id)
+                    .native_next
+                    .as_function_call()
+                    .is_some()
+                {
                     for d in &block_flow.defs_in {
                         if d.kind.is_positive_relative_memory() {
                             current_live_in
@@ -319,7 +324,7 @@ impl DataFlowAnalyzer {
         let block = model.get_block(block_id);
         let mut new_live_out = HashMap::new();
 
-        for succ_id in block.next.successors() {
+        for succ_id in block.native_next.successors() {
             for (k, v) in &df_result.block_results.get(&succ_id).unwrap().live_in {
                 new_live_out
                     .entry(*k)
@@ -345,7 +350,7 @@ impl DataFlowAnalyzer {
             }
         }
 
-        if matches!(block.next, NextKind::FunctionCall(_)) {
+        if matches!(block.native_next, NextKind::FunctionCall(_)) {
             // If this is a function call, we need to add the return arguments to live out
             /* commented out since I am not sure why return argument reads are gen. Shouldn't we use liveliness for this?
              */
@@ -386,7 +391,7 @@ impl ModelEventListener for DataFlowAnalyzer {
             df_result_for_function
                 .block_results
                 .insert(*block_id, BlockDataFlow::new());
-            if let NextKind::FunctionCall(_) = model.get_block(*block_id).next {
+            if let NextKind::FunctionCall(_) = model.get_block(*block_id).native_next {
                 df_result_for_function
                     .block_results
                     .get_mut(block_id)

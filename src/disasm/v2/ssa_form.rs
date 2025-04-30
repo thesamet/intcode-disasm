@@ -591,9 +591,9 @@ impl<'a> SSAConversionState<'a> {
             let block = self.model.get_block(block_id);
 
             // Only blocks with multiple predecessors or blocks that are function returns nee d phi functions.
-            if block.predecessors.len() <= 1
+            if block.native_predecessors.len() <= 1
                 && !block
-                    .predecessors
+                    .native_predecessors
                     .iter()
                     .any(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
             {
@@ -604,7 +604,7 @@ impl<'a> SSAConversionState<'a> {
             let block_flow = data_flow.block_results.get(&block_id).unwrap();
             // Find all variable definitions reaching this block from any predecessor
             let all_incoming_defs: HashMap<OperandKind, HashSet<OriginationPoint>> =
-                if block.predecessors.len() > 1 {
+                if block.native_predecessors.len() > 1 {
                     block_flow
                         .defs_in
                         .iter()
@@ -617,7 +617,7 @@ impl<'a> SSAConversionState<'a> {
 
             let return_values_accessed = if let Some(PredecessorKind::FunctionCallReturns(fc)) =
                 block
-                    .predecessors
+                    .native_predecessors
                     .iter()
                     .find(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
             {
@@ -702,7 +702,7 @@ impl<'a> SSAConversionState<'a> {
                 let live_in =
                     &self.model.get_data_flow_result().unwrap().block_results[block_id].live_in;
 
-                for pred in &control_block.predecessors {
+                for pred in &control_block.native_predecessors {
                     let pred_id = pred.source_block_id();
                     // Use the collected end_states map here
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
@@ -786,7 +786,7 @@ impl<'a> SSAConversionState<'a> {
             let mut phi_functions = vec![];
             for phi in &ssa_block.phi_functions {
                 let mut phi_inputs = HashMap::new();
-                for pred in &block.predecessors {
+                for pred in &block.native_predecessors {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
@@ -831,8 +831,11 @@ impl<'a> SSAConversionState<'a> {
             let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
             ssa_block.phi_functions = phi_functions;
             ssa_block.instructions = instructions;
-            ssa_block.next =
-                Self::create_ssa_next_kind(&ssa_block.end_state, &block.next, function.function_id);
+            ssa_block.next = Self::create_ssa_next_kind(
+                &ssa_block.end_state,
+                &block.native_next,
+                function.function_id,
+            );
             let next = ssa_block.next.clone();
             match next {
                 NextKind::Follows(target_id) => {
