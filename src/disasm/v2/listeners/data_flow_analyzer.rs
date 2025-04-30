@@ -6,11 +6,10 @@ use log::debug;
 
 use crate::disasm::v2::control_flow::Block;
 use crate::disasm::v2::control_flow::FunctionCall;
-use crate::disasm::v2::data_flow::BlockNativeDataFlow;
-use crate::disasm::v2::data_flow::NativeCallSiteInfo;
-use crate::disasm::v2::data_flow::NativeOriginationPoint;
+use crate::disasm::v2::data_flow::{BlockDataFlow, BlockNativeDataFlow, CallSiteInfo, Definition, NativeCallSiteInfo, NativeDefinition, NativeOriginationPoint, OriginationPoint};
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
+use crate::disasm::v2::instructions::{Addressable, InstructionId};
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::{
@@ -32,7 +31,12 @@ impl DataFlowAnalyzer {
         let func = model.get_function(func_id);
         let block_ids = &func.blocks;
 
-        // Pass 1: Initialize gen, use_before_def and function_returns_in  For each block
+        // Initialize low-level data flow structures for each block
+        for &block_id in block_ids {
+            model.get_block_mut(block_id).data_flow = Some(BlockDataFlow::new());
+        }
+
+        // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
         Self::initialize_gen_use_func_in(model, block_ids, df_result);
 
         // Pass 2: compute function_returns_out and function_returns_in for all blocks (forward analysis)
@@ -56,9 +60,14 @@ impl DataFlowAnalyzer {
         for &block_id in block_ids {
             let block = model.get_block(block_id);
             let block_flow = df_result.block_results.entry(block_id).or_default();
+            let low_flow = model.get_block_mut(block_id).data_flow.as_mut().unwrap();
 
             let mut defined_in_block = HashSet::new();
+            let mut low_defined_in_block = HashSet::new();
+            
             block_flow.writes_above_r = false;
+            low_flow.writes_above_r = false;
+            
             for instr in &block.native_instructions {
                 // Calculate USE for this instruction
                 for read_operand in instr.reads() {
@@ -66,27 +75,58 @@ impl DataFlowAnalyzer {
                         block_flow
                             .use_before_def
                             .insert(read_operand.kind, instr.id);
+                        
+                        // For low-level, only add addressable operands
+                        if let Some(addressable) = Self::try_convert_operand_kind_to_addressable(&read_operand.kind) {
+                            if !low_defined_in_block.contains(&addressable) {
+                                low_flow
+                                    .use_before_def
+                                    .insert(addressable, InstructionId::from(instr.id.as_usize()));
+                            }
+                        }
                     }
                 }
+                
                 // Calculate GEN for this instruction
                 if let Some(write_operand) = instr.writes() {
                     block_flow
                         .gen
-                        .insert(write_operand.kind, (instr.id, write_operand));
+                        .insert(write_operand.kind, (instr.id, write_operand.clone()));
                     defined_in_block.insert(write_operand.kind);
+                    
+                    // For low-level
+                    if let Some(addressable) = Self::try_convert_operand_kind_to_addressable(&write_operand.kind) {
+                        low_flow
+                            .gen
+                            .insert(addressable, (InstructionId::from(instr.id.as_usize()), write_operand.clone()));
+                        low_defined_in_block.insert(addressable);
+                    }
+                    
                     if let Some(n) = write_operand.kind.get_relative_memory() {
                         if n > 0 {
                             block_flow.writes_above_r = true;
+                            low_flow.writes_above_r = true;
                         }
                     }
                 }
             }
+            
+            // Native function returns
             block_flow.function_returns_in = block
                 .native_predecessors
                 .iter()
                 .filter_map(|p| p.get_function_call_returns())
                 .cloned()
                 .collect();
+                
+            // Low-level function returns
+            low_flow.function_returns_in = block
+                .native_predecessors
+                .iter()
+                .filter_map(|p| p.get_function_call_returns())
+                .map(|call| Self::convert_function_call_to_addressable(call))
+                .collect();
+                
             debug!(
                 "Block {}: GEN={:?}, USE={:?}",
                 block_id,
@@ -106,7 +146,9 @@ impl DataFlowAnalyzer {
         while changed {
             changed = false;
             for &block_id in block_ids {
+                // Native function returns
                 let new_func_in = Self::calculate_function_returns_in(model, block_id, df_result);
+                
                 // Update block's IN set if changed
                 let block_flow = df_result.block_results.get_mut(&block_id).unwrap(); // Must exist
                 if new_func_in != block_flow.function_returns_in {
@@ -119,6 +161,24 @@ impl DataFlowAnalyzer {
                 }
                 if !block_flow.writes_above_r && block_flow.function_returns_out != new_func_in {
                     block_flow.function_returns_out = new_func_in;
+                    changed = true;
+                }
+                
+                // Low-level function returns
+                let new_low_func_in = Self::calculate_low_function_returns_in(model, block_id);
+                
+                // Update low-level block's IN set if changed
+                let low_flow = model.get_block_mut(block_id).data_flow.as_mut().unwrap();
+                if new_low_func_in != low_flow.function_returns_in {
+                    debug!(
+                        "Block {:?}: Low FunctionReturnsIn changed",
+                        block_id
+                    );
+                    low_flow.function_returns_in = new_low_func_in.clone();
+                    changed = true;
+                }
+                if !low_flow.writes_above_r && low_flow.function_returns_out != new_low_func_in {
+                    low_flow.function_returns_out = new_low_func_in;
                     changed = true;
                 }
             }
@@ -154,6 +214,36 @@ impl DataFlowAnalyzer {
         }
         new_func_in
     }
+    
+    fn calculate_low_function_returns_in(
+        model: &ProgramModel,
+        block_id: BlockId,
+    ) -> HashSet<FunctionCall<Addressable>> {
+        let block = model.get_block(block_id);
+        let low_flow = block.data_flow.as_ref().unwrap();
+        let mut new_func_in = low_flow.function_returns_in.clone();
+        
+        // If this block is a return from a function call, we do not change new_func_in
+        if !block
+            .native_predecessors
+            .iter()
+            .any(|p| p.get_function_call_returns().is_some())
+        {
+            for pred in block.native_predecessors.iter() {
+                // Update block's IN set if changed
+                let pred_block_id = pred.source_block_id();
+                let pred_block = model.get_block(pred_block_id);
+                let pred_function_returns_out = pred_block
+                    .data_flow
+                    .as_ref()
+                    .unwrap()
+                    .function_returns_out
+                    .clone();
+                new_func_in.extend(pred_function_returns_out);
+            }
+        }
+        new_func_in
+    }
 
     /// Pass 3: Computes Reaching Definitions iteratively.
     fn run_reaching_definitions_analysis(
@@ -166,6 +256,8 @@ impl DataFlowAnalyzer {
             changed = false;
             for block_id in &func.blocks {
                 let block = model.get_block(*block_id);
+                
+                // Native definitions
                 let new_defs_in = Self::calculate_defs_in(func, block, df_result);
 
                 // Update block's IN set if changed
@@ -200,6 +292,44 @@ impl DataFlowAnalyzer {
                 if current_defs_out != block_flow.defs_out {
                     debug!("Block {:?}: DefsOut changed", block_id);
                     block_flow.defs_out = current_defs_out;
+                    changed = true;
+                }
+                
+                // Low-level definitions
+                let new_low_defs_in = Self::calculate_low_defs_in(func, block, model);
+                
+                // Update low-level block's IN set if changed
+                let low_flow = model.get_block_mut(*block_id).data_flow.as_mut().unwrap();
+                if new_low_defs_in != low_flow.defs_in {
+                    debug!("Block {:?}: Low DefsIn changed", block_id);
+                    low_flow.defs_in = new_low_defs_in;
+                    changed = true; // Continue iteration if IN changed
+                }
+                
+                // Calculate low-level OUT set: OUT = (IN - KILL) U GEN
+                let low_killed_kinds: HashSet<&Addressable> = low_flow.gen.keys().collect();
+                let mut low_current_defs_out = low_flow.defs_in.clone();
+                low_current_defs_out.retain(|def| !low_killed_kinds.contains(&def.kind));
+                
+                // Add low-level GEN set
+                for (kind, (instruction_id, _)) in &low_flow.gen {
+                    low_current_defs_out.insert(Definition {
+                        source: OriginationPoint::Instruction(*instruction_id),
+                        kind: *kind,
+                        block_id: *block_id,
+                    });
+                }
+                
+                // In we call a function at the end of the block, this block doesn't let [R+n]
+                // defintions flow forward.
+                if matches!(block.native_next, NextKind::FunctionCall(_)) {
+                    low_current_defs_out.retain(|d| !d.kind.is_positive_relative_memory());
+                }
+                
+                // Update low-level block's OUT set if changed
+                if low_current_defs_out != low_flow.defs_out {
+                    debug!("Block {:?}: Low DefsOut changed", block_id);
+                    low_flow.defs_out = low_current_defs_out;
                     changed = true;
                 }
             }
@@ -246,6 +376,46 @@ impl DataFlowAnalyzer {
 
         new_defs_in
     }
+    
+    /// Calculates the low-level Defs-In set for a single block based on its predecessors.
+    fn calculate_low_defs_in(
+        function: &Function,
+        block: &Block,
+        model: &ProgramModel, // Read-only access for predecessor OUT sets
+    ) -> HashSet<Definition> {
+        let mut new_defs_in = HashSet::new();
+
+        for pred_kind in &block.native_predecessors {
+            let pred_block_id = pred_kind.source_block_id();
+            let pred_block = model.get_block(pred_block_id);
+            let pred_flow = pred_block.data_flow.as_ref().unwrap();
+
+            new_defs_in.extend(&pred_flow.defs_out);
+        }
+
+        if function.entry_block == block.id {
+            // Create synthetic definitions for any potential input parameters
+            // to this function. We take the union of all the use_before_def sets
+            // for all blocks in the function, since it is a superset (which is still
+            // smaller than all the reads).
+            for &other_block_id in &function.blocks {
+                let other_block = model.get_block(other_block_id);
+                let other_flow = other_block.data_flow.as_ref().unwrap();
+                new_defs_in.extend(
+                    other_flow.use_before_def
+                        .keys()
+                        .filter(|k| k.is_negative_relative_memory())
+                        .map(|k| Definition {
+                            source: OriginationPoint::FunctionInput,
+                            kind: *k,
+                            block_id: block.id,
+                        }),
+                );
+            }
+        }
+
+        new_defs_in
+    }
 
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
@@ -259,6 +429,7 @@ impl DataFlowAnalyzer {
             changed = false;
             // Iterate backwards - often converges faster for backward analyses like liveness
             for &block_id in block_ids.iter().rev() {
+                // Native liveness
                 let new_live_out = Self::calculate_live_out(model, function, block_id, df_result);
 
                 // Update block's OUT set if changed
@@ -308,6 +479,59 @@ impl DataFlowAnalyzer {
                         block_id, current_live_in
                     );
                     block_flow.live_in = current_live_in;
+                    changed = true;
+                }
+                
+                // Low-level liveness
+                let new_low_live_out = Self::calculate_low_live_out(model, function, block_id);
+                
+                // Update low-level block's OUT set if changed
+                let low_flow = model.get_block_mut(block_id).data_flow.as_mut().unwrap();
+                if new_low_live_out != low_flow.live_out {
+                    debug!(
+                        "Block {:?}: Low LiveOut changed",
+                        block_id
+                    );
+                    low_flow.live_out = new_low_live_out;
+                    changed = true; // Continue iteration
+                }
+                
+                // Calculate low-level IN set
+                let low_defined_kinds: HashSet<Addressable> = low_flow.gen.keys().cloned().collect();
+                let mut low_current_live_in = low_flow.live_out.clone();
+                
+                // Add potential_function_call_params for low-level
+                if model
+                    .get_block(block_id)
+                    .native_next
+                    .as_function_call()
+                    .is_some()
+                {
+                    for d in &low_flow.defs_in {
+                        if d.kind.is_positive_relative_memory() {
+                            low_current_live_in
+                                .entry(d.kind)
+                                .or_insert_with(HashSet::new)
+                                .insert(d.source);
+                        }
+                    }
+                }
+                
+                low_current_live_in.retain(|kind, _| !low_defined_kinds.contains(kind));
+                for (k, v) in &low_flow.use_before_def {
+                    low_current_live_in
+                        .entry(*k)
+                        .or_insert_with(HashSet::new)
+                        .insert(OriginationPoint::Instruction(*v));
+                }
+                
+                // Update low-level block's IN set if changed
+                if low_current_live_in != low_flow.live_in {
+                    debug!(
+                        "Block {:?}: Low LiveIn changed",
+                        block_id
+                    );
+                    low_flow.live_in = low_current_live_in;
                     changed = true;
                 }
             }
@@ -371,6 +595,72 @@ impl DataFlowAnalyzer {
 
         new_live_out
     }
+    
+    /// Calculates the low-level Live-Out set for a single block based on its successors' Live-In sets.
+    fn calculate_low_live_out(
+        model: &ProgramModel,
+        function: &Function,
+        block_id: BlockId,
+    ) -> HashMap<Addressable, HashSet<OriginationPoint>> {
+        let block = model.get_block(block_id);
+        let mut new_live_out = HashMap::new();
+
+        for succ_id in block.native_next.successors() {
+            let succ_block = model.get_block(succ_id);
+            for (k, v) in &succ_block.data_flow.as_ref().unwrap().live_in {
+                new_live_out
+                    .entry(*k)
+                    .or_insert_with(HashSet::new)
+                    .extend(v);
+            }
+        }
+
+        if Some(block_id) == function.return_block {
+            // If this is a function return, add potential return arguments to live out
+            for &block_id in &function.blocks {
+                let block = model.get_block(block_id);
+                let low_flow = block.data_flow.as_ref().unwrap();
+                for gen in low_flow.gen.keys().filter(|k| k.is_negative_relative_memory()) {
+                    new_live_out
+                        .entry(*gen)
+                        .or_insert_with(HashSet::new)
+                        .insert(OriginationPoint::FunctionOutput);
+                }
+            }
+        }
+
+        new_live_out
+    }
+    /// Converts an operand kind to an addressable
+    fn convert_operand_kind_to_addressable(kind: &OperandKind) -> Addressable {
+        match kind {
+            OperandKind::Memory(addr) => Addressable::Memory(*addr),
+            OperandKind::RelativeMemory(offset) => Addressable::RelativeMemory(*offset),
+            OperandKind::Deref(addr) => Addressable::Deref(*addr),
+            OperandKind::Pointer(addr) => Addressable::Pointer(*addr),
+            OperandKind::Immediate(_) => panic!("Cannot convert immediate to addressable"),
+        }
+    }
+    
+    /// Tries to convert an operand kind to an addressable, returning None for immediates
+    fn try_convert_operand_kind_to_addressable(kind: &OperandKind) -> Option<Addressable> {
+        match kind {
+            OperandKind::Memory(addr) => Some(Addressable::Memory(*addr)),
+            OperandKind::RelativeMemory(offset) => Some(Addressable::RelativeMemory(*offset)),
+            OperandKind::Deref(addr) => Some(Addressable::Deref(*addr)),
+            OperandKind::Pointer(addr) => Some(Addressable::Pointer(*addr)),
+            OperandKind::Immediate(_) => None,
+        }
+    }
+    
+    /// Converts a function call with operands to a function call with addressables
+    fn convert_function_call_to_addressable(call: &FunctionCall<Operand>) -> FunctionCall<Addressable> {
+        FunctionCall {
+            calling_block: call.calling_block,
+            function_addr: Self::convert_operand_kind_to_addressable(&call.function_addr.kind),
+            return_block: call.return_block,
+        }
+    }
 }
 
 impl ModelEventListener for DataFlowAnalyzer {
@@ -397,6 +687,13 @@ impl ModelEventListener for DataFlowAnalyzer {
                     .get_mut(block_id)
                     .unwrap()
                     .call_site_info = Some(NativeCallSiteInfo::new());
+                
+                // Initialize low-level call site info
+                let block = model.get_block_mut(*block_id);
+                if block.data_flow.is_none() {
+                    block.data_flow = Some(BlockDataFlow::new());
+                }
+                block.data_flow.as_mut().unwrap().call_site_info = Some(CallSiteInfo::new());
             }
         }
 
@@ -416,16 +713,29 @@ impl ModelEventListener for DataFlowAnalyzer {
             if !return_usage_in_block.is_empty() {
                 assert_eq!(br.function_returns_in.len(), 1);
                 let calling_block = br.function_returns_in.iter().next().unwrap().calling_block;
-                let calling_block = df_result_for_function
+                
+                // Update native call site info
+                let calling_block_flow = df_result_for_function
                     .block_results
                     .get_mut(&calling_block)
                     .unwrap();
-                calling_block
+                calling_block_flow
                     .call_site_info
                     .as_mut()
                     .unwrap()
                     .return_values_accessed
-                    .extend(return_usage_in_block);
+                    .extend(return_usage_in_block.clone());
+                
+                // Update low-level call site info
+                let calling_block_data_flow = model.get_block_mut(calling_block).data_flow.as_mut().unwrap();
+                for (offset, instr_id) in return_usage_in_block {
+                    calling_block_data_flow
+                        .call_site_info
+                        .as_mut()
+                        .unwrap()
+                        .return_values_accessed
+                        .insert(offset, InstructionId::from(instr_id.as_usize()));
+                }
             }
         }
 
