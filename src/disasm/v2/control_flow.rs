@@ -1,4 +1,5 @@
 use super::{
+    instructions::{Addressable, Instruction},
     model::{BlockId, FunctionId},
     native::{NativeInstruction, Operand},
     Span,
@@ -197,6 +198,7 @@ pub struct Block {
     pub containing_function_id: FunctionId,
     pub span: Span,
     pub instructions: Vec<NativeInstruction>,
+    pub low_instructions: Vec<Instruction<Addressable>>,
 
     // CFG Information (added by ControlFlowGraphBuilder)
     pub next: NextKind<Operand>,

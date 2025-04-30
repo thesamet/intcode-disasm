@@ -12,7 +12,12 @@ pub enum Addressable {
     Pointer(usize),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instruction<A> {
+    kind: InstructionKind<A>,
+}
 /// Represents different kinds of low-level instructions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstructionKind<A> {
     /// Assigns the result of an expression to a target address.
     Assign {
@@ -41,7 +46,7 @@ pub enum InstructionKind<A> {
 }
 
 /// Represents a low-level expression that can be evaluated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LowExpr<A> {
     /// A literal constant value.
     Constant(i128),
@@ -63,6 +68,7 @@ pub enum LowExpr<A> {
         /// The operand argument.
         arg: Box<LowExpr<A>>,
     },
+    DebugMarker(char, Box<LowExpr<A>>),
 }
 
 /// Represents binary operations that can be performed on two operands.
