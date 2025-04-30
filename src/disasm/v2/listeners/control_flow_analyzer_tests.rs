@@ -9,8 +9,7 @@ mod tests {
 
     use crate::disasm::hlr::ast::HlrAssignmentTarget;
     use crate::disasm::hlr::ast::{
-        test_utils, BinaryOperator, HlrExpression, HlrProgram, HlrStatement,
-        HlrVariable,
+        test_utils, BinaryOperator, HlrExpression, HlrProgram, HlrStatement, HlrVariable,
     };
     use crate::disasm::v2::dispatching::EventPublisher;
     use crate::disasm::v2::events::Event;
@@ -69,7 +68,7 @@ mod tests {
         if expected == actual {
             Ok(())
         } else {
-            Err(ComparisonError::new(expected, actual, context))
+            Err(ComparisonError::new(actual, expected, context))
         }
     }
 
@@ -734,7 +733,7 @@ mod tests {
         let expected = hlr_program(vec![hlr_function(
             0,
             vec![
-                hlr_vardef(hlr_var("i", Type::Char), hlr_const(0, Type::Int)),
+                hlr_vardef(hlr_var("i", Type::Char), hlr_const(0, Type::Char)),
                 hlr_do_while(
                     vec![
                         HlrStatement::Output(hlr_var_expr("i", Type::Char)),
@@ -962,7 +961,7 @@ mod tests {
                     ),
                     vec![hlr_vardef(
                         hlr_var("result", Type::Char),
-                        hlr_const(3, Type::Int),
+                        hlr_const(3, Type::Char),
                     )],
                     vec![
                         hlr_vardef(
@@ -984,12 +983,12 @@ mod tests {
                             // Then branch of inner if
                             vec![hlr_assign(
                                 hlr_var_target("result", Type::Char),
-                                hlr_const(2, Type::Int),
+                                hlr_const(2, Type::Char),
                             )],
                             // Else branch of inner if
                             vec![hlr_assign(
                                 hlr_var_target("result", Type::Char),
-                                hlr_const(1, Type::Int),
+                                hlr_const(1, Type::Char),
                             )],
                         ),
                     ],
@@ -999,12 +998,6 @@ mod tests {
             ],
         )]);
         pretty_print_program(ctx.get_hlr_program().unwrap());
-        /*
-        assert_eq!(
-            pretty_print_program(&expected),
-        );
-        */
-
         assert_hlr_programs_equivalent(ctx.get_hlr_program().unwrap(), &expected)
     }
 }

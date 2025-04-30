@@ -5,8 +5,9 @@ use log::{debug, trace};
 
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
-    HlrVariable, UnaryOperator,
+    HlrVariable, Scope, UnaryOperator,
 };
+use crate::disasm::hlr::transformer::{replace_variable, HlrTransformer};
 use crate::disasm::hlr::visitor::{ExpressionLocation, HlrFunctionVisitor, StatementLocation};
 use crate::disasm::v2::model::ProgramModel;
 use crate::disasm::Error;
@@ -47,9 +48,14 @@ impl<'a> HlrOptimizer<'a> {
         for function in &program.functions {
             trace!("Optimizing function {}", function.name);
             let mut f = function.clone();
-            for pass in &self.optimizations {
-                if pass.run(&mut f) {
-                    trace!("Pass {} made changes in function {}", pass.name(), f.name);
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for pass in &self.optimizations {
+                    while pass.run(&mut f) {
+                        changed = true;
+                        trace!("Pass {} made changes in function {}", pass.name(), f.name);
+                    }
                 }
             }
             optimized_functions.push(f);
@@ -96,6 +102,10 @@ impl OptimizationPass for InitialOptimization {
                             if let Some(right_num) = right.as_constant_mut().filter(|s| **s < 0) {
                                 *op = BinaryOperator::Sub;
                                 *right_num = -*right_num;
+                                self.changed = true;
+                            } else if let Some(right_negated) = right.as_unary_minus() {
+                                *op = BinaryOperator::Sub;
+                                *right = Box::new(right_negated.clone());
                                 self.changed = true;
                             }
                         }
@@ -225,8 +235,11 @@ impl OptimizationPass for IdentifyTemporaryVariables {
         // and only read once after all the updates in the block:
         // Expected pattern is def, (write, read), final read.
         'outer: for (var, access_events) in var_access {
+            if var.scope != Scope::Local {
+                continue;
+            }
             let mut def_block = match &access_events[0] {
-                VariableAccessEvent::Define(loc, expr) => Some(loc.get_containing_block()),
+                VariableAccessEvent::Define(loc, _) => Some(loc.get_containing_block()),
                 VariableAccessEvent::PassedIn => None,
                 _ => continue,
             };
@@ -266,24 +279,25 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                     continue 'outer;
                 }
             }
-            debug!("Found a temporary variable var {}:", var);
-            for e in access_events {
-                match e {
-                    VariableAccessEvent::PassedIn => {
-                        debug!("  - passed in");
-                    }
-                    VariableAccessEvent::Define(loc, expr) => {
-                        debug!("  - define {:?} at {:?}", expr, loc);
-                    }
-                    VariableAccessEvent::Write(loc, expr) => {
-                        debug!("  - write {} at {:?}", expr, loc);
-                    }
-                    VariableAccessEvent::Read(loc) => {
-                        debug!("  - read at {:?}", loc);
-                    }
+
+            if let Some(VariableAccessEvent::Define(loc, expr)) = access_events.first() {
+                let mut expr = expr.clone();
+                let mut transformer = HlrTransformer::new();
+                transformer.delete_statement(*loc);
+                for (write_event, _read_event) in access_events.iter().skip(1).tuples() {
+                    let VariableAccessEvent::Write(write_location, write_expr) = write_event else {
+                        println!("Unexpected event: {:?}", write_event);
+                        unreachable!()
+                    };
+                    expr = replace_variable(write_expr, &var, &expr);
+                    transformer.delete_statement(*write_location);
                 }
+                transformer.replace_variable(&var, expr.clone());
+                transformer.transform(func);
+                debug!("Transformed temporary variable var {} to {}", var, expr);
+                return true;
             }
         }
-        true
+        false
     }
 }

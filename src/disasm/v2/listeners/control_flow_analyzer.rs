@@ -10,11 +10,11 @@ use petgraph::Direction;
 
 use crate::disasm::hlr::ast::{
     BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
-    HlrVariable,
+    HlrVariable, Scope,
 };
 use crate::disasm::v2::events::ModelEventListener;
 use crate::disasm::v2::instructions::InstructionKind;
-use crate::disasm::v2::ssa_form::{SsaBlock, SsaOperand, SsaOperandKind, SsaVar};
+use crate::disasm::v2::ssa_form::{SsaBlock, SsaOperand, SsaOperandKind, SsaVar, SsaVarKind};
 use crate::disasm::v2::type_inference::types::Type;
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -520,12 +520,32 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         HlrVariable {
             name,
             type_info: typ,
+            scope: match var.kind {
+                SsaVarKind::Memory(_) => Scope::Global,
+                _ => Scope::Local,
+            },
         }
     }
 
     fn op_expr(&self, op: &SsaOperand) -> HlrExpression {
         match op.kind {
-            SsaOperandKind::Constant(val) => HlrExpression::Constant(val, Type::Int),
+            SsaOperandKind::Constant(val) => {
+                match self
+                    .model
+                    .get_type_inference_result()
+                    .unwrap()
+                    .get_type_for_ssaoperand(op)
+                    .unwrap_or(&Type::Int)
+                {
+                    Type::Int => HlrExpression::Constant(val, Type::Int),
+                    Type::Bool => HlrExpression::Constant(val, Type::Bool),
+                    Type::Char => HlrExpression::Constant(val, Type::Char),
+                    Type::Function { .. } => {
+                        HlrExpression::StaticFunctionReference(format!("fu{}", val.to_string()))
+                    }
+                    _ => HlrExpression::Constant(val, Type::Int),
+                }
+            }
             SsaOperandKind::Variable(var) => self.var_expr(&var),
             SsaOperandKind::Deref(var) => HlrExpression::Deref(Box::new(self.var_expr(&var))),
         }

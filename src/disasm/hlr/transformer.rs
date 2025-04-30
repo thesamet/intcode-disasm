@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
 
 use super::{
-    ast::{HlrAssignmentTarget, HlrExpression, HlrFunction, HlrStatement, HlrVariable},
+    ast::{HlrAssignmentTarget, HlrExpression, HlrFunction, HlrStatement, HlrVariable, Scope},
     visitor::{BlockLocation, Control, ExpressionLocation, HlrFunctionVisitor, StatementLocation},
 };
 
@@ -92,7 +92,7 @@ impl HlrFunctionVisitor<Control, TransformationStats> for HlrTransformer {
 /// Replace a variable within the given expression with a new expression.
 /// The substitituion is not applied recursively: if the exppression contains references to the variable,
 /// they will remain unchanged.
-fn replace_variable(
+pub fn replace_variable(
     expr: &HlrExpression,
     var: &HlrVariable,
     replacement: &HlrExpression,
@@ -106,6 +106,7 @@ fn replace_variable(
             HlrAssignmentTarget::Variable(HlrVariable {
                 name: "_".to_string(),
                 type_info: Type::Any,
+                scope: Scope::Local,
             }),
             expr.clone(),
         )],
@@ -122,7 +123,7 @@ fn replace_variable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disasm::hlr::ast::test_utils::*;
+    use crate::disasm::hlr::ast::{test_utils::*, BinaryOperator};
     use crate::disasm::v2::type_inference::types::Type;
 
     #[test]
@@ -275,6 +276,200 @@ mod tests {
             }
         } else {
             panic!("Expected Assignment");
+        }
+    }
+    #[test]
+    fn test_replace_variable_in_expression() {
+        // Test replacing a variable within an expression
+        let original = hlr_binop(
+            BinaryOperator::Add,
+            hlr_var_expr("x", Type::Int),
+            hlr_const(5, Type::Int),
+            Type::Int,
+        );
+
+        let var_to_replace = hlr_var("x", Type::Int);
+        let replacement = hlr_const(10, Type::Int);
+
+        let result = replace_variable(&original, &var_to_replace, &replacement);
+
+        if let HlrExpression::BinaryOp {
+            op,
+            left,
+            right,
+            result_type,
+        } = result
+        {
+            assert_eq!(op, BinaryOperator::Add);
+            assert_eq!(*left, hlr_const(10, Type::Int));
+            assert_eq!(*right, hlr_const(5, Type::Int));
+            assert_eq!(result_type, Type::Int);
+        } else {
+            panic!("Expected BinaryOp expression");
+        }
+    }
+
+    #[test]
+    fn test_replace_variable_in_nested_expression() {
+        // Test replacing a variable in a nested expression
+        let inner_expr = hlr_binop(
+            BinaryOperator::Mul,
+            hlr_var_expr("x", Type::Int),
+            hlr_const(3, Type::Int),
+            Type::Int,
+        );
+
+        let outer_expr = hlr_binop(
+            BinaryOperator::Add,
+            inner_expr,
+            hlr_var_expr("y", Type::Int),
+            Type::Int,
+        );
+
+        let var_to_replace = hlr_var("x", Type::Int);
+        let replacement = hlr_const(7, Type::Int);
+
+        let result = replace_variable(&outer_expr, &var_to_replace, &replacement);
+
+        if let HlrExpression::BinaryOp {
+            op: outer_op,
+            left: outer_left,
+            right: outer_right,
+            ..
+        } = result
+        {
+            assert_eq!(outer_op, BinaryOperator::Add);
+
+            if let HlrExpression::BinaryOp {
+                op: inner_op,
+                left: inner_left,
+                right: inner_right,
+                ..
+            } = *outer_left
+            {
+                assert_eq!(inner_op, BinaryOperator::Mul);
+                assert_eq!(*inner_left, hlr_const(7, Type::Int));
+                assert_eq!(*inner_right, hlr_const(3, Type::Int));
+            } else {
+                panic!("Expected BinaryOp for inner expression");
+            }
+
+            assert!(matches!(*outer_right, HlrExpression::Variable(_)));
+        } else {
+            panic!("Expected BinaryOp for outer expression");
+        }
+    }
+
+    #[test]
+    fn test_replace_variable_no_match() {
+        // Test replacing a variable that doesn't exist in the expression
+        let original = hlr_binop(
+            BinaryOperator::Add,
+            hlr_var_expr("x", Type::Int),
+            hlr_const(5, Type::Int),
+            Type::Int,
+        );
+
+        let var_to_replace = hlr_var("z", Type::Int); // 'z' doesn't exist in the expression
+        let replacement = hlr_const(10, Type::Int);
+
+        let result = replace_variable(&original, &var_to_replace, &replacement);
+
+        // Expression should remain unchanged
+        if let HlrExpression::BinaryOp {
+            op,
+            left,
+            right,
+            result_type,
+        } = result
+        {
+            assert_eq!(op, BinaryOperator::Add);
+
+            if let HlrExpression::Variable(var) = *left {
+                assert_eq!(var.name, "x");
+            } else {
+                panic!("Expected Variable expression");
+            }
+
+            assert_eq!(*right, hlr_const(5, Type::Int));
+            assert_eq!(result_type, Type::Int);
+        } else {
+            panic!("Expected BinaryOp expression");
+        }
+    }
+    #[test]
+    fn test_replace_deeply_nested_variable() {
+        // Create a deeply nested expression with multiple levels
+        let nested_expr = hlr_binop(
+            BinaryOperator::Add,
+            hlr_binop(
+                BinaryOperator::Mul,
+                hlr_binop(
+                    BinaryOperator::Sub,
+                    hlr_var_expr("x", Type::Int),
+                    hlr_const(1, Type::Int),
+                    Type::Int,
+                ),
+                hlr_const(2, Type::Int),
+                Type::Int,
+            ),
+            hlr_binop(
+                BinaryOperator::Sub,
+                hlr_const(10, Type::Int),
+                hlr_var_expr("y", Type::Int),
+                Type::Int,
+            ),
+            Type::Int,
+        );
+
+        let var_to_replace = hlr_var("x", Type::Int);
+        let replacement = hlr_const(5, Type::Int);
+
+        let result = replace_variable(&nested_expr, &var_to_replace, &replacement);
+
+        // Verify that the variable was replaced at the deepest level
+        if let HlrExpression::BinaryOp {
+            left: outer_left, ..
+        } = &result
+        {
+            if let HlrExpression::BinaryOp {
+                left: middle_left, ..
+            } = &**outer_left
+            {
+                if let HlrExpression::BinaryOp {
+                    left: inner_left, ..
+                } = &**middle_left
+                {
+                    assert_eq!(**inner_left, hlr_const(5, Type::Int));
+                } else {
+                    panic!("Expected BinaryOp for inner expression");
+                }
+            } else {
+                panic!("Expected BinaryOp for middle expression");
+            }
+        } else {
+            panic!("Expected BinaryOp for outer expression");
+        }
+
+        // The "y" variable should remain unchanged
+        if let HlrExpression::BinaryOp {
+            right: outer_right, ..
+        } = &result
+        {
+            if let HlrExpression::BinaryOp {
+                right: div_right, ..
+            } = &**outer_right
+            {
+                if let HlrExpression::Variable(var) = &**div_right {
+                    assert_eq!(var.name, "y");
+                } else {
+                    panic!("Expected Variable expression for y");
+                }
+            } else {
+                panic!("Expected BinaryOp for division");
+            }
+        } else {
+            panic!("Expected BinaryOp for outer expression");
         }
     }
 }

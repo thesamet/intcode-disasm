@@ -6,9 +6,16 @@ use itertools::Itertools;
 use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Scope {
+    Local,
+    Global,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HlrVariable {
     pub name: String,
     pub type_info: Type,
+    pub scope: Scope,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +69,7 @@ pub enum HlrExpression {
     Variable(HlrVariable),
     Deref(Box<HlrExpression>),
     Constant(i128, Type),
+    StaticFunctionReference(String),
     BinaryOp {
         op: BinaryOperator,
         left: Box<HlrExpression>,
@@ -91,7 +99,7 @@ impl HlrExpression {
                 right,
                 result_type,
             } => Some(HlrExpression::BinaryOp {
-                op: op.logical_not()?,
+                op: op.logical_not(),
                 left: left.clone(),
                 right: right.clone(),
                 result_type: result_type.clone(),
@@ -113,6 +121,16 @@ impl HlrExpression {
             _ => None,
         }
     }
+
+    pub fn as_unary_minus(&self) -> Option<&HlrExpression> {
+        match self {
+            HlrExpression::UnaryOperator {
+                op: UnaryOperator::Minus,
+                expr,
+            } => Some(expr),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,17 +139,31 @@ pub enum BinaryOperator {
     Mul,
     Sub,
     LessThan,
+    LessThanOrEqual,
     Equals,
     NotEquals,
     GreaterThan,
+    GreaterThanOrEqual,
 }
 
 impl BinaryOperator {
-    pub fn logical_not(&self) -> Option<Self> {
+    pub fn logical_not(&self) -> Self {
         match self {
-            BinaryOperator::Equals => Some(BinaryOperator::NotEquals),
-            BinaryOperator::NotEquals => Some(BinaryOperator::Equals),
-            _ => None,
+            BinaryOperator::Equals => BinaryOperator::NotEquals,
+            BinaryOperator::NotEquals => BinaryOperator::Equals,
+            BinaryOperator::GreaterThan => BinaryOperator::LessThanOrEqual,
+            BinaryOperator::LessThan => BinaryOperator::GreaterThanOrEqual,
+            BinaryOperator::GreaterThanOrEqual => BinaryOperator::LessThan,
+            BinaryOperator::LessThanOrEqual => BinaryOperator::GreaterThan,
+            _ => panic!("Cannot logical not non-logical operator"),
+        }
+    }
+    pub fn is_logical(&self) -> bool {
+        match self {
+            BinaryOperator::Equals | BinaryOperator::NotEquals => true,
+            BinaryOperator::GreaterThan | BinaryOperator::LessThan => true,
+            BinaryOperator::GreaterThanOrEqual | BinaryOperator::LessThanOrEqual => true,
+            _ => false,
         }
     }
 }
@@ -231,6 +263,9 @@ impl SyntaxColors {
     }
     fn semicolon() -> ColoredString {
         ";".to_string().color(SyntaxColors::low_prio())
+    }
+    fn ampersand() -> ColoredString {
+        "&".to_string().color(SyntaxColors::op_color())
     }
 }
 
@@ -530,6 +565,11 @@ fn pretty_print_expression(expr: &HlrExpression) -> String {
 
         HlrExpression::Input() => "input()".to_string(),
         HlrExpression::Deref(var_expr) => format!("*{}", pretty_print_expression(var_expr)),
+        HlrExpression::StaticFunctionReference(name) => format!(
+            "{}{}",
+            SyntaxColors::ampersand(),
+            name.color(SyntaxColors::variable()),
+        ),
     }
 }
 
@@ -543,6 +583,8 @@ impl Display for BinaryOperator {
             BinaryOperator::Equals => write!(f, "=="),
             BinaryOperator::GreaterThan => write!(f, ">"),
             BinaryOperator::NotEquals => write!(f, "!="),
+            BinaryOperator::LessThanOrEqual => write!(f, "<="),
+            BinaryOperator::GreaterThanOrEqual => write!(f, ">="),
         }
     }
 }
@@ -590,6 +632,7 @@ pub mod test_utils {
         HlrVariable {
             name: name.to_string(),
             type_info: typ,
+            scope: Scope::Local,
         }
     }
 
