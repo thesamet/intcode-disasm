@@ -529,7 +529,7 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                 if opt_info.invalid {
                     continue;
                 }
-                let mut transformer = HlrTransformer::new();
+                let transformer = HlrTransformer::new();
                 if opt_info.reading_statements.is_empty() {
                     panic!("Updates with no reads for var={}: {:?}", var, opt_info);
                 }

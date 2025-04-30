@@ -10,7 +10,7 @@ use super::{
     listeners::{
         control_flow_analyzer::ControlFlowStructureRecoveryListener,
         control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        function_call_analyzer::FunctionCallAnalyzer, hlr_optimization::HlrOptimizationListener,
+        function_call_analyzer::FunctionCallAnalyzer,
         image_scanner::ImageScannerResult, ssa_converter::SsaConverter,
         variable_analyzer::VariableAnalyzer,
     },
