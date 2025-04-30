@@ -1,6 +1,6 @@
 use crate::disasm::v2::{
-    native::OperandKind,
     model::FunctionId,
+    native::OperandKind,
     ssa_form::SsaVar,
     type_inference::{
         analyzer::TypeInferenceAnalyzer, constraints::ConstraintReason, solver, types::Type,
@@ -14,8 +14,8 @@ mod tests {
     use crate::disasm::{
         test_utils::init_logging,
         v2::{
-            native::{InstructionId, Operand},
             model::BlockId,
+            native::{NativeInstructionId, Operand},
             ssa_form::{SsaOperand, SsaOperandKind},
         },
     };
@@ -81,21 +81,21 @@ mod tests {
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::AddRules,
         );
         type_inference.add_constraint(
             bool_type.clone(),
             Type::Bool,
-            InstructionId::from(2),
+            NativeInstructionId::from(2),
             FunctionId::from(0),
             ConstraintReason::CompareDstImpliesBool,
         );
         type_inference.add_constraint(
             char_type.clone(),
             Type::Char,
-            InstructionId::from(3),
+            NativeInstructionId::from(3),
             FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );
@@ -160,7 +160,7 @@ mod tests {
                 args: Box::new(Type::Tuple(vec![])),
                 returns: Box::new(Type::Tuple(vec![])),
             },
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall {
                 calling_block: BlockId::from(0),
@@ -211,21 +211,21 @@ mod tests {
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::AddRules,
         );
         type_inference.add_constraint(
             ptr_type.clone(),
             Type::Pointer(Box::new(int_type.clone())),
-            InstructionId::from(2),
+            NativeInstructionId::from(2),
             FunctionId::from(0),
             ConstraintReason::Assignment,
         );
         type_inference.add_constraint(
             deref_type.clone(),
             int_type.clone(),
-            InstructionId::from(3),
+            NativeInstructionId::from(3),
             FunctionId::from(0),
             ConstraintReason::Assignment,
         );

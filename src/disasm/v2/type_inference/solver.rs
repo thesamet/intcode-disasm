@@ -10,8 +10,8 @@ use super::result::TypeInferenceResult;
 use super::types::{is_concrete_type, VariableKind};
 use super::visuals::TraceColors;
 use crate::disasm;
-use crate::disasm::v2::native::InstructionId;
 use crate::disasm::v2::model::{FunctionId, ProgramModel};
+use crate::disasm::v2::native::NativeInstructionId;
 use crate::disasm::v2::ssa_form::SsaOperand;
 use crate::disasm::v2::type_inference::types::{glb, lub, Type};
 
@@ -674,7 +674,7 @@ impl<'a> Solver<'a> {
                 let c = Constraint {
                     left: caller_args_tuple,
                     right: ptr_args.clone(),
-                    addr: InstructionId::from(calling_block.index()),
+                    addr: NativeInstructionId::from(calling_block.index()),
                     function_id: csi.calling_function_id,
                     reason: ConstraintReason::FunctionParameterBindingAtCallSite,
                 };
@@ -683,7 +683,7 @@ impl<'a> Solver<'a> {
                 let c = Constraint {
                     left: ptr_rets.clone(),
                     right: caller_rets_tuple,
-                    addr: InstructionId::from(csi.return_block_id.index()),
+                    addr: NativeInstructionId::from(csi.return_block_id.index()),
                     function_id: csi.calling_function_id,
                     reason: ConstraintReason::FunctionReturnBinding,
                 };

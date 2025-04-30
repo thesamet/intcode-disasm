@@ -11,8 +11,8 @@ use crate::disasm::v2::data_flow::CallSiteInfo;
 use crate::disasm::v2::data_flow::OriginationPoint;
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
-use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::model::Function;
+use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::{DataFlowResult, Definition},
@@ -461,11 +461,11 @@ mod tests {
             data_flow::OriginationPoint,
             dispatching::EventPublisher,
             events::Event,
-            native::{InstructionId, OperandKind},
             listeners::{
                 control_flow_graph_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
             },
             model::*, // Bring model types into scope
+            native::{NativeInstructionId, OperandKind},
         },
     };
     use itertools::Itertools;
@@ -503,7 +503,7 @@ mod tests {
     // Helper to create a Definition for assertions
     fn def(instr_id: usize, location: OperandKind, block_id: usize) -> Definition {
         Definition {
-            source: OriginationPoint::Instruction(InstructionId::from(instr_id)),
+            source: OriginationPoint::Instruction(NativeInstructionId::from(instr_id)),
             kind: location,
             block_id: BlockId::from(block_id),
         }
@@ -543,12 +543,12 @@ mod tests {
         assert_eq!(flow0.gen.len(), 2, "GEN length should be 2");
         assert_eq!(
             flow0.gen[&mem_kind(100)].0,
-            InstructionId::from(2),
+            NativeInstructionId::from(2),
             "GEN[100] @ B0"
         );
         assert_eq!(
             flow0.gen[&mem_kind(101)].0,
-            InstructionId::from(6),
+            NativeInstructionId::from(6),
             "GEN[101] @ B0"
         );
         assert!(flow0.use_before_def.is_empty(), "USE @ B0");
@@ -651,7 +651,7 @@ mod tests {
         // --- Check GEN in branches ---
         assert_eq!(
             flow9.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
-            [(mem_kind(101), InstructionId::from(9))]
+            [(mem_kind(101), NativeInstructionId::from(9))]
                 .iter()
                 .cloned()
                 .collect_vec(),
@@ -659,7 +659,7 @@ mod tests {
         );
         assert_eq!(
             flow16.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
-            [(mem_kind(101), InstructionId::from(16))]
+            [(mem_kind(101), NativeInstructionId::from(16))]
                 .iter()
                 .cloned()
                 .collect_vec(),
@@ -730,7 +730,7 @@ mod tests {
         // The last write to [100] is at instruction 8
         assert_eq!(
             flow6.gen.iter().map(|(k, (i, _))| (*k, *i)).collect_vec(),
-            [(mem_kind(100), InstructionId::from(8))]
+            [(mem_kind(100), NativeInstructionId::from(8))]
                 .iter()
                 .cloned()
                 .collect_vec(),
@@ -839,7 +839,7 @@ mod tests {
         let gen_items: Vec<_> = flow0.gen.iter().map(|(k, (i, _))| (*k, *i)).collect();
         assert_eq!(gen_items.len(), 1);
         assert_eq!(gen_items[0].0, mem_kind(100));
-        assert_eq!(gen_items[0].1, InstructionId::from(6)); // Only Def B
+        assert_eq!(gen_items[0].1, NativeInstructionId::from(6)); // Only Def B
 
         // Defs Out should only contain Def B
         let expected_defs_out0: HashSet<_> = [def(6, mem_kind(100), 0)].iter().cloned().collect(); // Only Def B

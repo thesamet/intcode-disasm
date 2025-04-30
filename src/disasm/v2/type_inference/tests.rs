@@ -6,6 +6,7 @@ mod type_inference_tests {
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::model::BlockId;
+    use crate::disasm::v2::native::NativeInstructionId;
     use crate::disasm::v2::pretty_print::{pretty_print_ssa, pretty_print_with_types};
     use crate::disasm::v2::ssa_form::SsaOperand;
     use crate::disasm::v2::type_inference::solver;
@@ -13,13 +14,13 @@ mod type_inference_tests {
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
-        native::{InstructionId, Operand, OperandKind},
         listeners::{
             control_flow_graph_builder::ControlFlowGraphBuilder,
             data_flow_analyzer::DataFlowAnalyzer, function_call_analyzer::FunctionCallAnalyzer,
             image_scanner::ImageScanner, ssa_converter::SsaConverter,
         },
         model::{FunctionId, ProgramModel},
+        native::{Operand, OperandKind},
         ssa_form::SsaVar,
     };
 
@@ -235,7 +236,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             int_type,
             Type::Int,
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::AddRules,
         );
@@ -243,7 +244,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             bool_type,
             Type::Bool,
-            InstructionId::from(2),
+            NativeInstructionId::from(2),
             FunctionId::from(0),
             ConstraintReason::CompareDstImpliesBool,
         );
@@ -251,7 +252,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             char_type,
             Type::Char,
-            InstructionId::from(3),
+            NativeInstructionId::from(3),
             FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );
@@ -311,7 +312,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             func_ptr_type,
             function_pointer(&[], &[]),
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::IndirectFunctionCall {
                 calling_block: BlockId::from(0),
@@ -374,7 +375,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             int_type.clone(),
             Type::Int,
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::AddRules,
         );
@@ -383,7 +384,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             ptr_type,
             Type::Pointer(Box::new(int_type.clone())),
-            InstructionId::from(2),
+            NativeInstructionId::from(2),
             FunctionId::from(0),
             ConstraintReason::Assignment,
         );
@@ -392,7 +393,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             deref_type,
             int_type,
-            InstructionId::from(3),
+            NativeInstructionId::from(3),
             FunctionId::from(0),
             ConstraintReason::Assignment,
         );
@@ -489,7 +490,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             var_type.clone(),
             Type::Int,
-            InstructionId::from(1),
+            NativeInstructionId::from(1),
             FunctionId::from(0),
             ConstraintReason::AddRules,
         );
@@ -498,7 +499,7 @@ mod type_inference_tests {
         type_inference.add_constraint(
             var_type.clone(),
             Type::Char,
-            InstructionId::from(2),
+            NativeInstructionId::from(2),
             FunctionId::from(0),
             ConstraintReason::OutputImpliesChar,
         );

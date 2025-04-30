@@ -5,7 +5,7 @@ use crate::disasm::v2::{
     dispatching::EventCollector,
     events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
     model::{BlockId, FunctionId, ProgramModel},
-    native::{InstructionId, NativeInstructionKind},
+    native::{NativeInstructionId, NativeInstructionKind},
     ssa_form::{
         PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
         SsaVarKind,
@@ -33,7 +33,7 @@ pub struct TypeInferenceAnalyzer {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AddInstruction {
     /// The instruction ID
-    pub instruction_id: InstructionId,
+    pub instruction_id: NativeInstructionId,
     pub function_id: FunctionId,
     pub op1: VariableKind,
     pub op2: VariableKind,
@@ -55,7 +55,7 @@ impl TypeInferenceAnalyzer {
         &mut self,
         left: Type,
         right: Type,
-        addr: InstructionId,
+        addr: NativeInstructionId,
         function_id: FunctionId,
         reason: ConstraintReason,
     ) {
@@ -78,7 +78,7 @@ impl TypeInferenceAnalyzer {
         block_id: BlockId,
     ) {
         let result_type = Type::from_ssavar(&phi.result);
-        let result_addr = InstructionId::from(block_id.index());
+        let result_addr = NativeInstructionId::from(block_id.index());
 
         // Add constraints between each input source and the result
         for (pred_kind, input_var) in &phi.inputs {
@@ -328,7 +328,7 @@ impl TypeInferenceAnalyzer {
             .instructions
             .last()
             .map(|instr| instr.id)
-            .unwrap_or_else(|| InstructionId::from(block_id.index()));
+            .unwrap_or_else(|| NativeInstructionId::from(block_id.index()));
 
         match &block.next {
             NextKind::Condition(cond) => {

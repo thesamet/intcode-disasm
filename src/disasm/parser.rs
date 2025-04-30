@@ -11,7 +11,7 @@ use nom::{
 use std::collections::HashMap;
 
 use super::v2::native::{
-    simplify_instruction, GenericNativeInstruction, InstructionId, NativeInstruction,
+    simplify_instruction, GenericNativeInstruction, NativeInstruction, NativeInstructionId,
     NativeInstructionKind, Operand, OperandKind,
 };
 use super::v2::Span;
@@ -497,7 +497,7 @@ pub fn parse_program(
             // Create a temporary GenericInstruction to use map_rw_result
             // Span and ID are temporary here, will be set correctly on the final instruction
             let temp_instr = GenericNativeInstruction {
-                id: InstructionId::from(offset), // Use offset for temp ID
+                id: NativeInstructionId::from(offset), // Use offset for temp ID
                 span: Span::new(offset, offset + instruction_kind_size(&instr_kind)), // Temp span
                 kind: instr_kind,
             };

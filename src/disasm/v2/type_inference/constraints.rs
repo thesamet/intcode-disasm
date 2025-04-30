@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::disasm::v2::{
-    native::InstructionId,
     model::{BlockId, FunctionId},
+    native::NativeInstructionId,
 };
 
 use super::{types::Type, visuals::TraceColors};
@@ -78,7 +78,7 @@ pub struct Constraint {
     pub right: Type,
 
     /// The instruction address where this constraint was generated
-    pub addr: InstructionId,
+    pub addr: NativeInstructionId,
     pub function_id: FunctionId,
 
     /// The reason for this constraint

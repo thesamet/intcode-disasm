@@ -1,6 +1,6 @@
 use super::{
-    native::{NativeInstruction, Operand},
     model::{BlockId, FunctionId},
+    native::{NativeInstruction, Operand},
     Span,
 };
 

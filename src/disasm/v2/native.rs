@@ -7,7 +7,7 @@ use super::{id_types::define_id_type, Span};
 
 // Debug information is now stored in the operands themselves via debug_marker
 
-define_id_type!(InstructionId);
+define_id_type!(NativeInstructionId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, PartialOrd, Ord)]
 pub enum OperandKind {
@@ -194,7 +194,7 @@ impl<T> NativeInstructionKind<T> {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct GenericNativeInstruction<T> {
     /// The instruction ID
-    pub id: InstructionId,
+    pub id: NativeInstructionId,
     /// The span of the instruction in the image
     pub span: Span,
     /// The instruction kind with its operands
@@ -421,7 +421,7 @@ impl<T: Into<Operand> + Clone> GenericNativeInstruction<T> {
         };
 
         let instruction = NativeInstruction {
-            id: InstructionId::from(offset),
+            id: NativeInstructionId::from(offset),
             span: Span::new(offset, offset + operand_count + 1),
             kind: simplify_instruction(kind),
         };

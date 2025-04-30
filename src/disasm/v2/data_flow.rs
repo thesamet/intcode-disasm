@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::disasm::v2::{
-    native::{InstructionId, OperandKind},
     model::BlockId,
+    native::{NativeInstructionId, OperandKind},
 };
 
 use super::control_flow::FunctionCall;
@@ -13,7 +13,7 @@ use super::native::Operand;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum OriginationPoint {
-    Instruction(InstructionId),
+    Instruction(NativeInstructionId),
     FunctionInput,
     FunctionOutput,
 }
@@ -63,12 +63,12 @@ pub struct BlockDataFlow {
     /// instruction within the block that defines them. Definitions here "kill" definitions from `defs_in`.
     /// Key: The `OperandKind` representing the location being defined.
     /// Value: The `InstructionId` of the defining instruction.
-    pub gen: HashMap<OperandKind, (InstructionId, Operand)>,
+    pub gen: HashMap<OperandKind, (NativeInstructionId, Operand)>,
 
     /// **Used Before Defined (USE):** Maps operand read within this block *before*
     /// they are possibly written to (defined) within the same block, to the ID of the *first* instruction
     /// performing such a read.
-    pub use_before_def: HashMap<OperandKind, InstructionId>,
+    pub use_before_def: HashMap<OperandKind, NativeInstructionId>,
 
     // Instructions in this block that write to [R+n] and thus invalidate all incoming function return values.
     pub writes_above_r: bool,
@@ -93,7 +93,7 @@ pub struct BlockDataFlow {
 pub struct CallSiteInfo {
     // The set of positive offsets `n` identifying return value locations `[R+n]`
     // that are read by subsequent blocks having access to the function's return state.
-    pub return_values_accessed: HashMap<i128, InstructionId>,
+    pub return_values_accessed: HashMap<i128, NativeInstructionId>,
 }
 
 impl CallSiteInfo {
