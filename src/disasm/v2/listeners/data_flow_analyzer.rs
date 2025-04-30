@@ -59,7 +59,7 @@ impl DataFlowAnalyzer {
 
             let mut defined_in_block = HashSet::new();
             block_flow.writes_above_r = false;
-            for instr in &block.instructions {
+            for instr in &block.native_instructions {
                 // Calculate USE for this instruction
                 for read_operand in instr.reads() {
                     if !defined_in_block.contains(&read_operand.kind) {

@@ -197,7 +197,7 @@ pub struct Block {
     // To which function does this block belong?
     pub containing_function_id: FunctionId,
     pub span: Span,
-    pub instructions: Vec<NativeInstruction>,
+    pub native_instructions: Vec<NativeInstruction>,
     pub low_instructions: Vec<Instruction<Addressable>>,
 
     // CFG Information (added by ControlFlowGraphBuilder)

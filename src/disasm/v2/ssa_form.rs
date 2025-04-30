@@ -548,7 +548,7 @@ impl<'a> SSAConversionState<'a> {
             // we have without variables flowing from predecessors.
             let start_state = end_state.clone();
             let mut instructions = Vec::new();
-            for instr in &block.instructions {
+            for instr in &block.native_instructions {
                 let mut state: (_, &mut HashMap<_, _>, &mut HashMap<_, _>) = (
                     function.function_id,
                     current_versions as &mut HashMap<_, _>,

@@ -49,7 +49,7 @@ impl From<UnresolvedArgument> for Operand {
 
 // Helper to get the expected size of an instruction kind for offset calculation
 // Note: Relies on the structure before simplification (e.g., Assign is size 4 because it becomes Add)
-fn instruction_kind_size<T>(kind: &NativeInstructionKind<T>) -> usize {
+pub fn instruction_kind_size<T>(kind: &NativeInstructionKind<T>) -> usize {
     match kind {
         NativeInstructionKind::Add(..)
         | NativeInstructionKind::Mul(..)
