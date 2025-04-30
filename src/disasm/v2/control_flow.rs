@@ -58,6 +58,13 @@ where
             NextKind::Unknown => vec![],
         }
     }
+
+    pub fn as_function_call(&self) -> Option<&FunctionCall<T>> {
+        match self {
+            NextKind::FunctionCall(call) => Some(call),
+            _ => None,
+        }
+    }
 }
 
 // Describes how control flow enters a block

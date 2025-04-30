@@ -32,10 +32,10 @@ pub struct ProgramModel {
     function_call_analysis: Option<FunctionCallAnalysis>,
 
     type_inference_result: Option<TypeInferenceResult>,
-    
+
     // High-level representation of the program
     hlr_program: Option<HlrProgram>,
-    
+
     // Optimized high-level representation of the program
     optimized_hlr_program: Option<HlrProgram>,
 
@@ -121,6 +121,10 @@ impl ProgramModel {
         self.blocks.insert(block.id, block);
     }
 
+    pub fn get_blocks(&self) -> &HashMap<BlockId, Block> {
+        &self.blocks
+    }
+
     pub fn has_block(&self, block_id: BlockId) -> bool {
         self.blocks.contains_key(&block_id)
     }
@@ -172,7 +176,7 @@ impl ProgramModel {
     pub fn set_hlr_program(&mut self, program: HlrProgram) {
         self.hlr_program = Some(program);
     }
-    
+
     pub fn get_optimized_hlr_program(&self) -> Option<&HlrProgram> {
         self.optimized_hlr_program.as_ref()
     }

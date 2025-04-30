@@ -1,6 +1,7 @@
 mod code_printer;
 pub mod hlr;
 pub mod parser;
+mod test_utils;
 pub mod v2;
 
 use thiserror::Error;

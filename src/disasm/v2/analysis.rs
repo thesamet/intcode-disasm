@@ -31,7 +31,7 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     publisher.add_listener(Box::new(VariableAnalyzer::new()));
     publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
-    publisher.add_listener(Box::new(HlrOptimizationListener::new()));
+    //    publisher.add_listener(Box::new(HlrOptimizationListener::new()));
     model.load_image(&image, &mut publisher);
     let res = publisher.process_events(&mut model);
     match res {

@@ -269,7 +269,7 @@ impl fmt::Display for SsaOperand {
 }
 
 /// Represents a phi function in SSA form
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PhiFunction {
     /// The resulting SSA variable (must be a Variable)
     pub result: SsaVar,
@@ -881,6 +881,7 @@ impl<'a> SSAConversionState<'a> {
 mod tests {
     use super::*;
     use crate::disasm::parser;
+    use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::instructions::InstructionKind;
     use crate::disasm::v2::listeners::ssa_converter::SsaConverter;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
@@ -892,7 +893,7 @@ mod tests {
             data_flow_analyzer::DataFlowAnalyzer, image_scanner::ImageScanner,
         },
     };
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_matches};
 
     // Define SSA macros for creating expected SsaOperand values with Variable kinds
     macro_rules! ssa_var_rel {
@@ -968,6 +969,7 @@ mod tests {
 
     impl TestContext {
         fn new(assembly: &str) -> Self {
+            init_logging();
             let model = setup_analyzed_model(assembly);
 
             // Extract the main function (always at ID 0)
@@ -1617,5 +1619,46 @@ exit:
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
+    }
+
+    #[test]
+    fn function_call_with_arg_that_is_branched() {
+        let ctx = TestContext::new(
+            r#"
+            R += 3                  ; blocks[0]
+            if [R-1] goto @true
+            'a [R+1] = 5            ; blocks[1] v1
+            goto @merge
+        true:                       ; blocks[2]
+            'b [R+1] = 7            ; v2
+        merge:                      ; blocks[3]
+                                    ; v3: we expect a phi for [R+1] here.
+            [R] = @ret
+            goto 2222
+        ret:
+            'c [R+1] = 8            ; v4
+            R -= 3
+            goto [R]
+            "#,
+        );
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
+        let merge_block = ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)]
+            .blocks
+            .iter()
+            .sorted_by_key(|(k, _)| *k)
+            .nth(3)
+            .unwrap()
+            .1;
+        assert_eq!(merge_block.phi_functions.len(), 1);
+        assert_matches!(
+            merge_block.phi_functions[0].result,
+            SsaVar {
+                kind: SsaVarKind::RelativeMemory(1),
+                version: 3,
+                ..
+            }
+        );
     }
 }

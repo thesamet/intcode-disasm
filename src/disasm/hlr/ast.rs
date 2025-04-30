@@ -108,9 +108,31 @@ impl HlrExpression {
         }
     }
 
+    pub fn negate_inplace(&mut self) {
+        if let HlrExpression::BinaryOp { op, .. } = self {
+            *op = op.logical_not()
+        } else {
+            let mut original = HlrExpression::Input();
+            std::mem::swap(self, &mut original);
+            *self = HlrExpression::UnaryOperator {
+                op: UnaryOperator::LogicalNot,
+                expr: Box::new(original),
+            };
+        }
+    }
+
     pub fn as_constant(&self) -> Option<i128> {
         match self {
             HlrExpression::Constant(val, _) => Some(*val),
+            _ => None,
+        }
+    }
+
+    pub fn as_binary_op(&self) -> Option<(BinaryOperator, &HlrExpression, &HlrExpression)> {
+        match self {
+            HlrExpression::BinaryOp {
+                op, left, right, ..
+            } => Some((*op, left.as_ref(), right.as_ref())),
             _ => None,
         }
     }
@@ -158,7 +180,7 @@ impl BinaryOperator {
             _ => panic!("Cannot logical not non-logical operator"),
         }
     }
-    pub fn is_logical(&self) -> bool {
+    pub fn is_logical_operator(&self) -> bool {
         match self {
             BinaryOperator::Equals | BinaryOperator::NotEquals => true,
             BinaryOperator::GreaterThan | BinaryOperator::LessThan => true,

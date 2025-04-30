@@ -272,9 +272,22 @@ impl DataFlowAnalyzer {
                     changed = true; // Continue iteration
                 }
 
-                // Calculate IN set: IN = USE U (OUT - DEF)
+                // Calculate IN set: IN = USE U ((OUT U potential_function_call_params) - DEF)
+                // potential_function_call_params are all incoming positive relative memory operands
+                // if there is a function call at this block.
                 let defined_kinds: HashSet<OperandKind> = block_flow.gen.keys().cloned().collect();
                 let mut current_live_in = block_flow.live_out.clone();
+                // add potential_function_call_params.
+                if model.get_block(block_id).next.as_function_call().is_some() {
+                    for d in &block_flow.defs_in {
+                        if d.kind.is_positive_relative_memory() {
+                            current_live_in
+                                .entry(d.kind)
+                                .or_insert_with(HashSet::new)
+                                .insert(d.source);
+                        }
+                    }
+                }
                 current_live_in.retain(|kind, _| !defined_kinds.contains(kind));
                 for (k, v) in &block_flow.use_before_def {
                     current_live_in
@@ -316,8 +329,8 @@ impl DataFlowAnalyzer {
         }
 
         if Some(block_id) == function.return_block {
-            // If this is a function return, we need to add the return arguments to live out
-            // So we will have phi's automatically created for them at the right junctions.
+            // If this is a function return, we need to add all potential return arguments
+            // to live out So we will have phi's automatically created for them at the right junctions.
             // We mark the live out as "FunctionOutput" to indicate that it is a return value.
             // This prevents from potential return values to appear as function inputs by propogating
             // to the entry point's live in.
@@ -443,6 +456,7 @@ mod tests {
     use super::*;
     use crate::disasm::{
         parser,
+        test_utils::init_logging,
         v2::{
             data_flow::OriginationPoint,
             dispatching::EventPublisher,
@@ -460,6 +474,7 @@ mod tests {
 
     // Helper to setup model, run CFG build, and then data flow analysis
     fn setup_and_analyze(assembly_code: &str) -> ProgramModel {
+        init_logging();
         let binary = parser::compile(assembly_code);
         let mut model = ProgramModel::new();
         let mut publisher = EventPublisher::<Event, ProgramModel>::new();

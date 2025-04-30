@@ -11,21 +11,16 @@ use crate::disasm::v2::model::ProgramModel;
 
 #[cfg(test)]
 mod tests {
-    use crate::disasm::v2::{
-        instructions::{InstructionId, Operand},
-        model::BlockId,
-        ssa_form::{SsaOperand, SsaOperandKind},
+    use crate::disasm::{
+        test_utils::init_logging,
+        v2::{
+            instructions::{InstructionId, Operand},
+            model::BlockId,
+            ssa_form::{SsaOperand, SsaOperandKind},
+        },
     };
 
     use super::*;
-
-    fn init() {
-        use std::io::Write;
-        let _ = env_logger::builder()
-            .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
-            .is_test(true)
-            .try_init();
-    }
 
     fn memory_operand(offset: usize) -> Operand {
         Operand {
@@ -62,7 +57,7 @@ mod tests {
     /// Simplified test for type inference using direct API calls
     #[test]
     fn test_type_inference_basics() {
-        init();
+        init_logging();
         let model = ProgramModel::new();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -138,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_function_pointer_types() {
-        init();
+        init_logging();
         let model = ProgramModel::new();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -193,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_pointer_types() {
-        init();
+        init_logging();
         let mut type_inference = TypeInferenceAnalyzer::new();
 
         // Create variables for testing pointer relationships

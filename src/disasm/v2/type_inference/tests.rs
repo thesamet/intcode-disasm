@@ -4,6 +4,7 @@ mod type_inference_tests {
     use log::error;
 
     use crate::disasm::parser;
+    use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::model::BlockId;
     use crate::disasm::v2::pretty_print::{pretty_print_ssa, pretty_print_with_types};
     use crate::disasm::v2::ssa_form::SsaOperand;
@@ -69,19 +70,11 @@ mod type_inference_tests {
         model: ProgramModel,
     }
 
-    fn init() {
-        use std::io::Write;
-        let _ = env_logger::builder()
-            .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
-            .is_test(true)
-            .try_init();
-    }
-
     impl TestContext {
         /// Try to create a new test context with the given assembly code, returning errors.
         fn try_new(assembly: &str) -> Result<Self, crate::disasm::Error> {
             // Parse the assembly code
-            init();
+            init_logging();
             // Assuming parser::compile returns Result<Vec<u8>, crate::disasm::Error> or compatible
             let binary = parser::compile(assembly);
 
@@ -217,7 +210,7 @@ mod type_inference_tests {
     /// Direct API test for type inference (no assembly parsing)
     #[test]
     fn test_basic_type_inference_api() {
-        init();
+        init_logging();
         // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -299,7 +292,7 @@ mod type_inference_tests {
     /// Direct API test for function pointer type inference
     #[test]
     fn test_function_pointer_types_api() {
-        init();
+        init_logging();
         // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -351,7 +344,7 @@ mod type_inference_tests {
     /// Direct API test for pointer type inference
     #[test]
     fn test_pointer_types_api() {
-        init();
+        init_logging();
         // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -480,7 +473,7 @@ mod type_inference_tests {
 
     #[test]
     fn test_type_refinement_with_subtyping() {
-        init();
+        init_logging();
         // Create a manual type inference engine
         let mut type_inference = TypeInferenceAnalyzer::new();
 
@@ -608,7 +601,6 @@ f1:
 
     #[test]
     fn test_function_addr_with_debug() {
-        init();
         let ctx = TestContext::new(
             r#"
                     R += 1000
@@ -655,7 +647,6 @@ f1:
 
     #[test]
     fn test_link_function_params_to_argument_types_multi() {
-        init();
         let ctx = TestContext::new(
             r#"
                 R += 1000
@@ -899,7 +890,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case1() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000
@@ -926,7 +916,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case2() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000
@@ -953,7 +942,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case3() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000
@@ -983,7 +971,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case4() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000
@@ -1013,7 +1000,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case5() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000
@@ -1050,7 +1036,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case6() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000
@@ -1087,7 +1072,6 @@ f1:
 
     #[test]
     fn test_pointer_arithmetic_case7() {
-        init();
         let ctx = TestContext::new(
             r#"
             R += 1000

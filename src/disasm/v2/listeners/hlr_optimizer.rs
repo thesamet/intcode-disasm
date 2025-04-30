@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 use log::{debug, trace};
@@ -8,8 +8,11 @@ use crate::disasm::hlr::ast::{
     HlrVariable, Scope, UnaryOperator,
 };
 use crate::disasm::hlr::transformer::{replace_variable, HlrTransformer};
-use crate::disasm::hlr::visitor::{ExpressionLocation, HlrFunctionVisitor, StatementLocation};
+use crate::disasm::hlr::visitor::{
+    BlockLocation, ExpressionLocation, HlrFunctionVisitor, StatementLocation,
+};
 use crate::disasm::v2::model::ProgramModel;
+use crate::disasm::v2::type_inference::types::Type;
 use crate::disasm::Error;
 
 pub trait OptimizationPass {
@@ -36,7 +39,7 @@ impl<'a> HlrOptimizer<'a> {
         Self {
             _model: model,
             optimizations: vec![
-                Box::new(InitialOptimization),
+                Box::new(PatternMatchingOptimizations),
                 Box::new(IdentifyTemporaryVariables),
             ],
         }
@@ -71,11 +74,11 @@ impl<'a> HlrOptimizer<'a> {
     }
 }
 
-struct InitialOptimization;
+struct PatternMatchingOptimizations;
 
-impl OptimizationPass for InitialOptimization {
+impl OptimizationPass for PatternMatchingOptimizations {
     fn name(&self) -> &str {
-        "InitialOptimization"
+        "PatternMatchingOptimizations"
     }
 
     fn run(&self, function: &mut HlrFunction) -> bool {
@@ -97,34 +100,60 @@ impl OptimizationPass for InitialOptimization {
                 match expr {
                     HlrExpression::BinaryOp {
                         op, left, right, ..
-                    } => {
-                        if *op == BinaryOperator::Add {
-                            if let Some(right_num) = right.as_constant_mut().filter(|s| **s < 0) {
+                    } => match op {
+                        BinaryOperator::Add => match right.as_constant_mut().filter(|s| **s < 0) {
+                            Some(right_num) => {
                                 *op = BinaryOperator::Sub;
                                 *right_num = -*right_num;
                                 self.changed = true;
-                            } else if let Some(right_negated) = right.as_unary_minus() {
-                                *op = BinaryOperator::Sub;
-                                *right = Box::new(right_negated.clone());
-                                self.changed = true;
                             }
+                            None => match right.as_unary_minus() {
+                                Some(right_negated) => {
+                                    *op = BinaryOperator::Sub;
+                                    *right = Box::new(right_negated.clone());
+                                    self.changed = true;
+                                }
+                                None => {}
+                            },
+                        },
+                        BinaryOperator::Equals
+                            if right.as_constant() == Some(0)
+                                && left
+                                    .as_binary_op()
+                                    .map_or(false, |(op, _, _)| op.is_logical_operator()) =>
+                        {
+                            left.negate_inplace();
+                            *expr = *left.clone();
+                            self.changed = true;
                         }
-                        if *op == BinaryOperator::Mul {
-                            if right.as_constant() == Some(-1) {
+                        BinaryOperator::NotEquals
+                            if right.as_constant() == Some(0)
+                                && left
+                                    .as_binary_op()
+                                    .map_or(false, |(op, _, _)| op.is_logical_operator()) =>
+                        {
+                            *expr = *left.clone();
+                            self.changed = true;
+                        }
+                        BinaryOperator::Mul => match (left.as_constant(), right.as_constant()) {
+                            (_, Some(-1)) => {
                                 *expr = HlrExpression::UnaryOperator {
                                     op: UnaryOperator::Minus,
                                     expr: left.clone(),
                                 };
                                 self.changed = true;
-                            } else if left.as_constant() == Some(-1) {
+                            }
+                            (Some(-1), _) => {
                                 *expr = HlrExpression::UnaryOperator {
                                     op: UnaryOperator::Minus,
                                     expr: right.clone(),
                                 };
                                 self.changed = true;
                             }
-                        }
-                    }
+                            _ => {}
+                        },
+                        _ => {}
+                    },
                     _ => (),
                 }
             }
@@ -142,57 +171,76 @@ impl OptimizationPass for InitialOptimization {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-enum VariableAccessEvent {
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum VariableAccessKind {
     // Marks a variable that is passed in to the function
     PassedIn,
-    // Point where a variable is defined.
-    Define(StatementLocation, HlrExpression),
-    // Statement where a variable is written to.
-    Write(StatementLocation, HlrExpression),
+    Write {
+        // Statement where a variable is written to.
+        location: StatementLocation,
+        // Expression that is written to the variable
+        expr: HlrExpression,
+        // All variables this expression depends on. A variable
+        // will appear here as many times as it appears in the expression.
+        deps: Vec<HlrVariable>,
+    },
+    // Variable is written to within a tuple, therefore
+    // its value is unknown.
+    WriteWithinTuple {
+        location: StatementLocation,
+    },
+    // A function call occurs. This invalidates all variables
+    // that depend on a global variable.
+    FunctionCall {
+        location: StatementLocation,
+    },
     // Statement where a variable is read.
-    Read(ExpressionLocation),
+    Read {
+        // Statement where a variable is read.
+        location: ExpressionLocation,
+    },
 }
 
-struct VariableAccessAnalyzer {
-    variable_access_events: HashMap<HlrVariable, Vec<VariableAccessEvent>>,
+type VariableAccessEvent = (HlrVariable, VariableAccessKind);
+
+struct VariableAccessLogger {
+    variable_access_log: Vec<VariableAccessEvent>,
+    in_write: Option<(HlrVariable, Vec<HlrVariable>, HlrExpression)>,
 }
 
-impl VariableAccessAnalyzer {
-    fn new() -> Self {
+impl Default for VariableAccessLogger {
+    fn default() -> Self {
         Self {
-            variable_access_events: HashMap::new(),
+            variable_access_log: vec![],
+            in_write: None,
         }
     }
 }
 
-impl HlrFunctionVisitor<(), HashMap<HlrVariable, Vec<VariableAccessEvent>>>
-    for VariableAccessAnalyzer
-{
+impl HlrFunctionVisitor<(), Vec<VariableAccessEvent>> for VariableAccessLogger {
     fn start(&mut self, func: &mut HlrFunction) -> () {
         for var in &func.args {
-            self.variable_access_events
-                .entry(var.clone())
-                .or_default()
-                .push(VariableAccessEvent::PassedIn);
+            self.variable_access_log
+                .push((var.clone(), VariableAccessKind::PassedIn));
         }
     }
 
     fn enter_statement(&mut self, location: StatementLocation, stmt: &mut HlrStatement) {
         match stmt {
-            HlrStatement::VarDef(vs, e) => {
+            HlrStatement::VarDef(vs, expr) => {
                 if vs.len() == 1 {
-                    self.variable_access_events
-                        .entry(vs[0].clone())
-                        .or_default()
-                        .push(VariableAccessEvent::Define(location, e.clone()));
+                    assert!(self.in_write.is_none());
+                    self.in_write = Some((vs[0].clone(), vec![], expr.clone()));
+                } else {
+                    self.variable_access_log.push((
+                        vs[0].clone(),
+                        VariableAccessKind::WriteWithinTuple { location },
+                    ));
                 }
             }
-            HlrStatement::Assignment(HlrAssignmentTarget::Variable(v), e) => {
-                self.variable_access_events
-                    .entry(v.clone())
-                    .or_default()
-                    .push(VariableAccessEvent::Write(location, e.clone()));
+            HlrStatement::Assignment(HlrAssignmentTarget::Variable(v), expr) => {
+                assert!(self.in_write.is_none());
+                self.in_write = Some((v.clone(), vec![], expr.clone()));
             }
             _ => (),
         }
@@ -200,24 +248,56 @@ impl HlrFunctionVisitor<(), HashMap<HlrVariable, Vec<VariableAccessEvent>>>
 
     fn enter_expression(&mut self, location: ExpressionLocation, expr: &mut HlrExpression) {
         match expr {
-            HlrExpression::Variable(v) => {
-                self.variable_access_events
-                    .entry(v.clone())
-                    .or_default()
-                    .push(VariableAccessEvent::Read(location));
+            HlrExpression::Variable(var_read) => {
+                // If we write to a variable we record this read as a dependency.
+                // If the variable we read is exactly the same one we are writing to,
+                // it is "a read for update". We do not add this to the access log, but we
+                // still record it as a dependency. This is because we want to
+                // to make it easy to distingguish between reads for updates and other reads.
+                let read_for_update = if let Some((var_written, deps, _)) = self.in_write.as_mut() {
+                    // Record dpendency for the currently written variable.
+                    deps.push(var_read.clone());
+                    var_written.name == var_read.name
+                } else {
+                    false
+                };
+
+                if !read_for_update {
+                    self.variable_access_log
+                        .push((var_read.clone(), VariableAccessKind::Read { location }));
+                }
+            }
+            HlrExpression::FunctionCall(..) => {
+                self.variable_access_log.push((
+                    HlrVariable {
+                        name: "DUMMY".to_string(),
+                        type_info: Type::Nothing,
+                        scope: Scope::Global,
+                    },
+                    VariableAccessKind::FunctionCall {
+                        location: location.get_containing_statement(),
+                    },
+                ));
             }
             _ => {}
         }
     }
 
-    fn finish(self) -> HashMap<HlrVariable, Vec<VariableAccessEvent>> {
-        self.variable_access_events
+    fn finish_statement(&mut self, location: StatementLocation, _: &mut HlrStatement) {
+        if let Some((var, deps, expr)) = self.in_write.take() {
+            self.variable_access_log.push((
+                var,
+                VariableAccessKind::Write {
+                    location,
+                    expr,
+                    deps,
+                },
+            ));
+        }
     }
-}
 
-impl Default for VariableAccessAnalyzer {
-    fn default() -> Self {
-        Self::new()
+    fn finish(self) -> Vec<VariableAccessEvent> {
+        self.variable_access_log
     }
 }
 
@@ -229,7 +309,234 @@ impl OptimizationPass for IdentifyTemporaryVariables {
     }
 
     fn run(&self, func: &mut HlrFunction) -> bool {
-        let var_access = VariableAccessAnalyzer::visit_with_default(func);
+        #[derive(Clone, Debug)]
+        struct OptInfo {
+            // Number of updates following the initial definition.
+            update_count: usize,
+            // Statement that sets the variable v=f(deps) where x not in deps. May not exist
+            // if X has reads before writes.
+            defining_statement: Option<StatementLocation>,
+            // Statements that update the variable v = f(deps) where x in deps exactly once.
+            updating_statements: Vec<StatementLocation>,
+            // Reads that happen to most recent value outside of updates.
+            reading_statements: Vec<StatementLocation>,
+            // Aggregated set of dependencies, without multiplicities.
+            deps: HashSet<HlrVariable>,
+            // Latest expression that is assigned to the variable.
+            expr: HlrExpression,
+            // sets to true means that the candidate is invalid and will not be processed.
+            invalid: bool,
+            // is the variable being read in this block before it is being written to?
+            has_read_before_write: bool,
+        }
+        let var_access_log = VariableAccessLogger::visit_with_default(func);
+        for v in &var_access_log {
+            debug!("v={:?}", v);
+        }
+        let by_block = var_access_log
+            .into_iter()
+            .into_group_map_by(|(_, access_kind)| match access_kind {
+                VariableAccessKind::Write { location, .. } => location.get_containing_block(),
+                VariableAccessKind::WriteWithinTuple { location } => {
+                    location.get_containing_block()
+                }
+                VariableAccessKind::Read { location } => location.get_containing_block(),
+                VariableAccessKind::FunctionCall { location } => location.get_containing_block(),
+                VariableAccessKind::PassedIn => BlockLocation { block_id: 0 },
+            });
+        fn finalize_var(var: HlrVariable, opt_info: OptInfo) {
+            todo!()
+        }
+        let mut candidates_at_block: HashMap<BlockLocation, HashMap<HlrVariable, OptInfo>> =
+            HashMap::new();
+        for (block, access_events) in by_block {
+            let mut candidates: HashMap<HlrVariable, OptInfo> = HashMap::new();
+            for access_event in access_events {
+                match access_event {
+                    (
+                        var,
+                        VariableAccessKind::Write {
+                            location,
+                            expr,
+                            deps,
+                        },
+                    ) => {
+                        if var.scope != Scope::Local {
+                            continue;
+                        }
+                        match deps.iter().filter(|v| v.name == var.name).count() {
+                            0 => {
+                                // variable gets reset to a new value.
+                                if candidates.contains_key(&var)
+                                    && candidates[&var].reading_statements.len() > 0
+                                {
+                                    // This happens due to a bug in the SSA converter. See fu2173
+                                    // where a phi function unites multiple copies of local1. For now
+                                    // we can't optimize since this would destroy the unrelated copy
+                                    // and lead to incorrect code. We mark this candidate as invalid
+                                    // to prevent it from being re-added by another assignment.
+                                    candidates.get_mut(&var).unwrap().invalid = true;
+                                } else {
+                                    candidates.insert(
+                                        var.clone(),
+                                        OptInfo {
+                                            update_count: 0,
+                                            defining_statement: Some(location),
+                                            updating_statements: vec![],
+                                            reading_statements: vec![],
+                                            expr: expr.clone(),
+                                            deps: HashSet::new(),
+                                            invalid: false,
+                                            has_read_before_write: false,
+                                        },
+                                    );
+                                }
+                                trace!("Created candidate for {}: {}", var, expr);
+                            }
+                            1 => {
+                                // variable gets updated once. If it is in candidates
+                                // for expression propagation we update the expression
+                                if let Some(opt_info) = candidates.get_mut(&var) {
+                                    if !opt_info.reading_statements.is_empty() {
+                                        // Can be implemented later.
+                                        unimplemented!(
+                                            "Variable {} is updated after read of an update...",
+                                            var
+                                        );
+                                    }
+                                    opt_info.update_count += 1;
+                                    opt_info.deps.extend(deps);
+                                    opt_info.updating_statements.push(location);
+                                    opt_info.expr = replace_variable(&expr, &var, &opt_info.expr);
+                                } else {
+                                    // We have an update before a definition.
+                                    candidates.insert(
+                                        var.clone(),
+                                        OptInfo {
+                                            update_count: 0,
+                                            defining_statement: None,
+                                            updating_statements: vec![],
+                                            reading_statements: vec![],
+                                            expr: expr.clone(),
+                                            deps: HashSet::new(),
+                                            invalid: false,
+                                            has_read_before_write: true,
+                                        },
+                                    );
+                                }
+                            }
+                            _ => {
+                                trace!("Variable {} is updated more than once: {:?}", var, deps);
+                                // variable depends on itself more than once. We do not handle this
+                                // for now since it could lead to unintended side effects such as
+                                // calling a function twice.
+                                candidates.remove(&var);
+                            }
+                        }
+                    }
+                    (_, VariableAccessKind::FunctionCall { .. }) => {
+                        for (var, opt_info) in &candidates {
+                            // On a function call, invalidate all variables that depend on a global
+                            // (since function calls can update the global)
+                            if opt_info.deps.iter().any(|d| d.scope == Scope::Global) {
+                                // finalize_var(var, opt_info)
+                            }
+                        }
+                    }
+                    (var, VariableAccessKind::Read { location }) => {
+                        if let Some(opt_info) = candidates.get_mut(&var) {
+                            opt_info
+                                .reading_statements
+                                .push(location.get_containing_statement());
+                        } else {
+                            candidates.insert(
+                                var.clone(),
+                                OptInfo {
+                                    update_count: 0,
+                                    defining_statement: None,
+                                    updating_statements: vec![],
+                                    reading_statements: vec![], // we don't count this as reading statement.
+                                    expr: HlrExpression::Variable(var.clone()),
+                                    deps: HashSet::new(),
+                                    invalid: false,
+                                    has_read_before_write: true,
+                                },
+                            );
+                        }
+                    }
+                    (var, VariableAccessKind::PassedIn) => {
+                        candidates.insert(
+                            var.clone(),
+                            OptInfo {
+                                update_count: 0,
+                                defining_statement: None,
+                                updating_statements: vec![],
+                                reading_statements: vec![],
+                                expr: HlrExpression::Variable(var.clone()),
+                                deps: HashSet::new(),
+                                invalid: false,
+                                has_read_before_write: false,
+                            },
+                        );
+                    }
+                    (var, VariableAccessKind::WriteWithinTuple { location }) => {
+                        candidates.insert(
+                            var.clone(),
+                            OptInfo {
+                                update_count: 0,
+                                defining_statement: None,
+                                updating_statements: vec![],
+                                reading_statements: vec![],
+                                expr: HlrExpression::Variable(var.clone()),
+                                deps: HashSet::new(),
+                                invalid: true,
+                                has_read_before_write: false,
+                            },
+                        );
+                    }
+                };
+            }
+            candidates_at_block.insert(block.clone(), candidates);
+        }
+        // let's rule out candidates that have read-before-write on another block.
+        let mut to_invalidate = vec![];
+        for (block_i, vars_i) in &candidates_at_block {
+            for (block_j, vars_j) in &candidates_at_block {
+                if block_i == block_j {
+                    continue;
+                }
+                for (var, opt_info) in vars_i {
+                    if opt_info.has_read_before_write {
+                        // Block i reads the value before assigning to it.
+                        // which means that if we optimize at any j, we may
+                        // make block i incorrect.
+                        if let Some(opt_info) = vars_j.get(var) {
+                            to_invalidate.push((*block_j, var.clone()))
+                        }
+                    }
+                }
+            }
+        }
+        for (block, var) in to_invalidate {
+            candidates_at_block.get_mut(&block).unwrap().remove(&var);
+        }
+        // For now just one var at a time...
+        for (block, vars) in candidates_at_block {
+            for (var, opt_info) in vars {
+                if var.scope == Scope::Global {
+                    continue;
+                }
+                if opt_info.invalid {
+                    continue;
+                }
+                let mut transformer = HlrTransformer::new();
+                if opt_info.reading_statements.is_empty() {
+                    panic!("Updates with no reads for var={}: {:?}", var, opt_info);
+                }
+            }
+        }
+
+        /*
         // We are looking for variables that are defined and accessed in a single block.
         // They may be updated (written and read in the same statement) any number of times,
         // and only read once after all the updates in the block:
@@ -239,18 +546,18 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                 continue;
             }
             let mut def_block = match &access_events[0] {
-                VariableAccessEvent::Define(loc, _) => Some(loc.get_containing_block()),
-                VariableAccessEvent::PassedIn => None,
+                VariableAccessLog::Define(loc, _) => Some(loc.get_containing_block()),
+                VariableAccessLog::PassedIn => None,
                 _ => continue,
             };
             if access_events.len() % 2 != 0 {
                 continue;
             }
             for (write, read) in access_events.iter().skip(1).tuples() {
-                let VariableAccessEvent::Write(write_statement, write_expr) = write else {
+                let VariableAccessLog::Write(write_statement, write_expr) = write else {
                     continue 'outer;
                 };
-                let VariableAccessEvent::Read(expr_read_location) = read else {
+                let VariableAccessLog::Read(expr_read_location) = read else {
                     continue 'outer;
                 };
 
@@ -272,7 +579,7 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                     continue 'outer;
                 }
             }
-            if let VariableAccessEvent::Read(last_read_location) = access_events.last().unwrap() {
+            if let VariableAccessLog::Read(last_read_location) = access_events.last().unwrap() {
                 if def_block.is_some()
                     && Some(last_read_location.get_containing_block()) != def_block
                 {
@@ -280,12 +587,12 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                 }
             }
 
-            if let Some(VariableAccessEvent::Define(loc, expr)) = access_events.first() {
+            if let Some(VariableAccessLog::Define(loc, expr)) = access_events.first() {
                 let mut expr = expr.clone();
                 let mut transformer = HlrTransformer::new();
                 transformer.delete_statement(*loc);
                 for (write_event, _read_event) in access_events.iter().skip(1).tuples() {
-                    let VariableAccessEvent::Write(write_location, write_expr) = write_event else {
+                    let VariableAccessLog::Write(write_location, write_expr) = write_event else {
                         println!("Unexpected event: {:?}", write_event);
                         unreachable!()
                     };
@@ -298,6 +605,7 @@ impl OptimizationPass for IdentifyTemporaryVariables {
                 return true;
             }
         }
+        */
         false
     }
 }
