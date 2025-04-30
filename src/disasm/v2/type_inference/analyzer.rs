@@ -4,8 +4,8 @@ use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},
     dispatching::EventCollector,
     events::{Event, FunctionCallAnalysisComplete, ModelEventListener, TypeInferenceComplete},
-    instructions::{InstructionId, InstructionKind},
     model::{BlockId, FunctionId, ProgramModel},
+    native::{InstructionId, NativeInstructionKind},
     ssa_form::{
         PhiFunction, SsaBlock, SsaFunction, SsaInstruction, SsaOperand, SsaOperandKind, SsaResult,
         SsaVarKind,
@@ -143,7 +143,7 @@ impl TypeInferenceAnalyzer {
         let instr_id = instruction.id;
 
         match &instruction.kind {
-            InstructionKind::Assign(target, source) => {
+            NativeInstructionKind::Assign(target, source) => {
                 let dst_type = Type::from_ssaoperand(target);
                 let src_type = Type::from_ssaoperand(source);
                 if source.to_operand().kind.get_immediate().is_some() {
@@ -163,7 +163,7 @@ impl TypeInferenceAnalyzer {
                     ConstraintReason::Assignment,
                 );
             }
-            InstructionKind::Add(op1, op2, result) => {
+            NativeInstructionKind::Add(op1, op2, result) => {
                 let op1 = VariableKind::from_ssaoperand(op1);
                 let op2 = VariableKind::from_ssaoperand(op2);
                 let result = VariableKind::from_ssaoperand(result);
@@ -175,7 +175,7 @@ impl TypeInferenceAnalyzer {
                     result,
                 });
             }
-            InstructionKind::Mul(src1, src2, dst) => {
+            NativeInstructionKind::Mul(src1, src2, dst) => {
                 // It's a real addition/multiplication
                 let src1_type = Type::from_ssaoperand(src1);
                 let src2_type = Type::from_ssaoperand(src2);
@@ -187,7 +187,7 @@ impl TypeInferenceAnalyzer {
                 self.add_constraint(Type::Int, src2_type, instr_id, function_id, reason);
             }
 
-            InstructionKind::Input(dst) => {
+            NativeInstructionKind::Input(dst) => {
                 let dst_type = Type::from_ssaoperand(dst);
                 self.add_constraint(
                     Type::Char,
@@ -198,7 +198,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            InstructionKind::Output(src) => {
+            NativeInstructionKind::Output(src) => {
                 let src_type = Type::from_ssaoperand(src);
                 self.add_constraint(
                     src_type,
@@ -209,7 +209,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            InstructionKind::LessThan(src1, src2, dst) => {
+            NativeInstructionKind::LessThan(src1, src2, dst) => {
                 let src1_type = Type::from_ssaoperand(src1);
                 let src2_type = Type::from_ssaoperand(src2);
                 let dst_type = Type::from_ssaoperand(dst);
@@ -237,7 +237,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            InstructionKind::Equals(src1, src2, dst) => {
+            NativeInstructionKind::Equals(src1, src2, dst) => {
                 let src1_type = Type::from_ssaoperand(src1);
                 let src2_type = Type::from_ssaoperand(src2);
                 let dst_type = Type::from_ssaoperand(dst);
@@ -266,7 +266,8 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            InstructionKind::JumpIfTrue(cond, _) | InstructionKind::JumpIfFalse(cond, _) => {
+            NativeInstructionKind::JumpIfTrue(cond, _)
+            | NativeInstructionKind::JumpIfFalse(cond, _) => {
                 let cond_type = Type::from_ssaoperand(cond);
                 self.add_constraint(
                     cond_type,
@@ -277,7 +278,7 @@ impl TypeInferenceAnalyzer {
                 );
             }
 
-            InstructionKind::AdjustRelativeBase(offset) => {
+            NativeInstructionKind::AdjustRelativeBase(offset) => {
                 // The offset operand must be an integer
                 let offset_type = Type::from_ssaoperand(offset);
                 self.add_constraint(
@@ -288,9 +289,9 @@ impl TypeInferenceAnalyzer {
                     ConstraintReason::ImmediateIsSubtypeOfInt, // Re-use reason? Or new one?
                 );
             }
-            InstructionKind::Halt => { /* No operands */ }
-            InstructionKind::Goto(_) => { /* No operands with types */ }
-            InstructionKind::Data(_) => { /* Data doesn't participate in type inference this way */
+            NativeInstructionKind::Halt => { /* No operands */ }
+            NativeInstructionKind::Goto(_) => { /* No operands with types */ }
+            NativeInstructionKind::Data(_) => { /* Data doesn't participate in type inference this way */
             }
         }
         instruction.reads().iter().for_each(|operand| {

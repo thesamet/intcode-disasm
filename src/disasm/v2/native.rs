@@ -104,7 +104,7 @@ impl fmt::Display for Operand {
 
 /// An enumeration of all instruction types, with their operands
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum InstructionKind<T> {
+pub enum NativeInstructionKind<T> {
     Add(T, T, T),
     Mul(T, T, T),
     Input(T),
@@ -129,53 +129,53 @@ macro_rules! generate_operand_match {
         // depends on how $kind_expr was borrowed *before* calling the macro.
         match $kind_expr {
             // 3-operand instructions (arg1, arg2, destination)
-            InstructionKind::Add(a, b, c) |
-            InstructionKind::Mul(a, b, c) |
-            InstructionKind::LessThan(a, b, c) |
-            InstructionKind::Equals(a, b, c) => match $index {
+            NativeInstructionKind::Add(a, b, c) |
+            NativeInstructionKind::Mul(a, b, c) |
+            NativeInstructionKind::LessThan(a, b, c) |
+            NativeInstructionKind::Equals(a, b, c) => match $index {
                 0 => Some(a), // arg1
                 1 => Some(b), // arg2
                 2 => Some(c), // destination
                 _ => None,
             },
             // 1-operand instructions (destination)
-            InstructionKind::Input(a) => match $index {
+            NativeInstructionKind::Input(a) => match $index {
                 0 => Some(a), // destination
                 _ => None,
             },
             // 1-operand instructions (source/value)
-            InstructionKind::Output(a) |
-            InstructionKind::AdjustRelativeBase(a) => match $index {
+            NativeInstructionKind::Output(a) |
+            NativeInstructionKind::AdjustRelativeBase(a) => match $index {
                 0 => Some(a), // source/value
                 _ => None,
             },
             // 2-operand instructions (condition, target)
-            InstructionKind::JumpIfTrue(a, b) |
-            InstructionKind::JumpIfFalse(a, b) => match $index {
+            NativeInstructionKind::JumpIfTrue(a, b) |
+            NativeInstructionKind::JumpIfFalse(a, b) => match $index {
                 0 => Some(a), // condition
                 1 => Some(b), // target
                 _ => None,
             },
             // Synthetic: Goto(target) derives from JumpIfTrue(1, target)
-            InstructionKind::Goto(target) => match $index {
+            NativeInstructionKind::Goto(target) => match $index {
                 // index 0 would be the constant 1 (not stored), index 1 is target
                 1 => Some(target),
                 _ => None,
             },
              // Synthetic: Assign(target, source) derives from Add(0, source, target) or Mul(1, source, target)
-            InstructionKind::Assign(target, source) => match $index {
+            NativeInstructionKind::Assign(target, source) => match $index {
                  // index 0 is source, index 1 is constant 0/1 (not stored), index 2 is target
                 0 => Some(source), // source operand
                 2 => Some(target), // target operand (destination)
                 _ => None,
             },
             // No positional operands for Halt or Data
-            InstructionKind::Halt | InstructionKind::Data(_) => None,
+            NativeInstructionKind::Halt | NativeInstructionKind::Data(_) => None,
         }
     };
 }
 
-impl<T> InstructionKind<T> {
+impl<T> NativeInstructionKind<T> {
     /// Gets an immutable reference to the operand at the given *positional index*.
     /// Use `read_positions` and `write_positions` to understand context.
     pub fn operand_at(&self, index: usize) -> Option<&T> {
@@ -192,16 +192,16 @@ impl<T> InstructionKind<T> {
 }
 /// A generic instruction that can use different operand types
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct GenericInstruction<T> {
+pub struct GenericNativeInstruction<T> {
     /// The instruction ID
     pub id: InstructionId,
     /// The span of the instruction in the image
     pub span: Span,
     /// The instruction kind with its operands
-    pub kind: InstructionKind<T>,
+    pub kind: NativeInstructionKind<T>,
 }
 
-pub type Instruction = GenericInstruction<Operand>;
+pub type NativeInstruction = GenericNativeInstruction<Operand>;
 
 // Legacy enum for backward compatibility, to be phased out
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -262,47 +262,47 @@ pub struct Assignment<T> {
     pub source: T,
 }
 
-impl<T: Into<Operand> + Clone> GenericInstruction<T> {
+impl<T: Into<Operand> + Clone> GenericNativeInstruction<T> {
     pub fn opcode(&self) -> Opcode {
         match &self.kind {
-            InstructionKind::Add(_, _, _) => Opcode::Add,
-            InstructionKind::Mul(_, _, _) => Opcode::Mul,
-            InstructionKind::Input(_) => Opcode::Input,
-            InstructionKind::Output(_) => Opcode::Output,
-            InstructionKind::JumpIfTrue(_, _) => Opcode::JumpIfTrue,
-            InstructionKind::JumpIfFalse(_, _) => Opcode::JumpIfFalse,
-            InstructionKind::LessThan(_, _, _) => Opcode::LessThan,
-            InstructionKind::Equals(_, _, _) => Opcode::Equals,
-            InstructionKind::AdjustRelativeBase(_) => Opcode::AdjustRelativeBase,
-            InstructionKind::Halt => Opcode::Halt,
-            InstructionKind::Data(_) => Opcode::Add, // Default to Add for backward compatibility
-            InstructionKind::Goto(_) => Opcode::JumpIfTrue,
-            InstructionKind::Assign(_, _) => Opcode::Add,
+            NativeInstructionKind::Add(_, _, _) => Opcode::Add,
+            NativeInstructionKind::Mul(_, _, _) => Opcode::Mul,
+            NativeInstructionKind::Input(_) => Opcode::Input,
+            NativeInstructionKind::Output(_) => Opcode::Output,
+            NativeInstructionKind::JumpIfTrue(_, _) => Opcode::JumpIfTrue,
+            NativeInstructionKind::JumpIfFalse(_, _) => Opcode::JumpIfFalse,
+            NativeInstructionKind::LessThan(_, _, _) => Opcode::LessThan,
+            NativeInstructionKind::Equals(_, _, _) => Opcode::Equals,
+            NativeInstructionKind::AdjustRelativeBase(_) => Opcode::AdjustRelativeBase,
+            NativeInstructionKind::Halt => Opcode::Halt,
+            NativeInstructionKind::Data(_) => Opcode::Add, // Default to Add for backward compatibility
+            NativeInstructionKind::Goto(_) => Opcode::JumpIfTrue,
+            NativeInstructionKind::Assign(_, _) => Opcode::Add,
         }
     }
 
     pub fn is_jump(&self) -> bool {
         matches!(
             self.kind,
-            InstructionKind::JumpIfTrue(_, _)
-                | InstructionKind::JumpIfFalse(_, _)
-                | InstructionKind::Goto(_)
+            NativeInstructionKind::JumpIfTrue(_, _)
+                | NativeInstructionKind::JumpIfFalse(_, _)
+                | NativeInstructionKind::Goto(_)
         )
     }
 
     pub fn goto_address(&self) -> Option<T> {
         match &self.kind {
-            InstructionKind::Goto(target) => Some(target.clone()),
+            NativeInstructionKind::Goto(target) => Some(target.clone()),
             _ => None,
         }
     }
 
     pub fn is_halt(&self) -> bool {
-        matches!(self.kind, InstructionKind::Halt)
+        matches!(self.kind, NativeInstructionKind::Halt)
     }
 
     pub fn is_goto(&self) -> bool {
-        matches!(self.kind, InstructionKind::Goto(_))
+        matches!(self.kind, NativeInstructionKind::Goto(_))
     }
 
     pub fn immediate_goto(&self) -> Option<usize> {
@@ -313,24 +313,22 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
     pub fn is_conditional_jump(&self) -> bool {
         matches!(
             self.kind,
-            InstructionKind::JumpIfTrue(_, _) | InstructionKind::JumpIfFalse(_, _)
+            NativeInstructionKind::JumpIfTrue(_, _) | NativeInstructionKind::JumpIfFalse(_, _)
         )
     }
 
     pub fn conditional_jump_address(&self) -> Option<T> {
         match &self.kind {
-            InstructionKind::JumpIfTrue(_, target) | InstructionKind::JumpIfFalse(_, target) => {
-                Some(target.clone())
-            }
+            NativeInstructionKind::JumpIfTrue(_, target)
+            | NativeInstructionKind::JumpIfFalse(_, target) => Some(target.clone()),
             _ => None,
         }
     }
 
     pub fn conditional_jump_condition(&self) -> Option<T> {
         match &self.kind {
-            InstructionKind::JumpIfTrue(cond, _) | InstructionKind::JumpIfFalse(cond, _) => {
-                Some(cond.clone())
-            }
+            NativeInstructionKind::JumpIfTrue(cond, _)
+            | NativeInstructionKind::JumpIfFalse(cond, _) => Some(cond.clone()),
             _ => None,
         }
     }
@@ -342,14 +340,14 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
 
     pub fn relative_base_adjustment(&self) -> Option<i128> {
         match &self.kind {
-            InstructionKind::AdjustRelativeBase(op) => op.clone().into().kind.get_immediate(),
+            NativeInstructionKind::AdjustRelativeBase(op) => op.clone().into().kind.get_immediate(),
             _ => None,
         }
     }
 
     pub fn as_assignment(&self) -> Option<Assignment<T>> {
         match &self.kind {
-            InstructionKind::Assign(target, source) => Some(Assignment {
+            NativeInstructionKind::Assign(target, source) => Some(Assignment {
                 target: target.clone(),
                 source: source.clone(),
             }),
@@ -357,7 +355,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         }
     }
 
-    pub fn parse(input: &[i128], offset: usize) -> Result<Instruction, ParseError> {
+    pub fn parse(input: &[i128], offset: usize) -> Result<NativeInstruction, ParseError> {
         if offset >= input.len() {
             return Err(ParseError::EndOfFile(offset));
         }
@@ -408,19 +406,21 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
 
         // Create the instruction kind based on the opcode
         let kind = match opcode {
-            Opcode::Add => InstructionKind::Add(operands[0], operands[1], operands[2]),
-            Opcode::Mul => InstructionKind::Mul(operands[0], operands[1], operands[2]),
-            Opcode::Input => InstructionKind::Input(operands[0]),
-            Opcode::Output => InstructionKind::Output(operands[0]),
-            Opcode::JumpIfTrue => InstructionKind::JumpIfTrue(operands[0], operands[1]),
-            Opcode::JumpIfFalse => InstructionKind::JumpIfFalse(operands[0], operands[1]),
-            Opcode::LessThan => InstructionKind::LessThan(operands[0], operands[1], operands[2]),
-            Opcode::Equals => InstructionKind::Equals(operands[0], operands[1], operands[2]),
-            Opcode::AdjustRelativeBase => InstructionKind::AdjustRelativeBase(operands[0]),
-            Opcode::Halt => InstructionKind::Halt,
+            Opcode::Add => NativeInstructionKind::Add(operands[0], operands[1], operands[2]),
+            Opcode::Mul => NativeInstructionKind::Mul(operands[0], operands[1], operands[2]),
+            Opcode::Input => NativeInstructionKind::Input(operands[0]),
+            Opcode::Output => NativeInstructionKind::Output(operands[0]),
+            Opcode::JumpIfTrue => NativeInstructionKind::JumpIfTrue(operands[0], operands[1]),
+            Opcode::JumpIfFalse => NativeInstructionKind::JumpIfFalse(operands[0], operands[1]),
+            Opcode::LessThan => {
+                NativeInstructionKind::LessThan(operands[0], operands[1], operands[2])
+            }
+            Opcode::Equals => NativeInstructionKind::Equals(operands[0], operands[1], operands[2]),
+            Opcode::AdjustRelativeBase => NativeInstructionKind::AdjustRelativeBase(operands[0]),
+            Opcode::Halt => NativeInstructionKind::Halt,
         };
 
-        let instruction = Instruction {
+        let instruction = NativeInstruction {
             id: InstructionId::from(offset),
             span: Span::new(offset, offset + operand_count + 1),
             kind: simplify_instruction(kind),
@@ -431,35 +431,39 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
 
     pub fn read_positions(&self) -> Vec<usize> {
         match &self.kind {
-            InstructionKind::Add(_, _, _)
-            | InstructionKind::Mul(_, _, _)
-            | InstructionKind::LessThan(_, _, _)
-            | InstructionKind::Equals(_, _, _) => vec![0, 1],
-            InstructionKind::Input(_) => vec![],
-            InstructionKind::Output(_) | InstructionKind::AdjustRelativeBase(_) => vec![0],
-            InstructionKind::JumpIfTrue(_, _) | InstructionKind::JumpIfFalse(_, _) => vec![0, 1],
-            InstructionKind::Halt => vec![],
-            InstructionKind::Data(_) => vec![],
-            InstructionKind::Goto(_) => vec![0, 1],
-            InstructionKind::Assign(_, _) => vec![0, 1],
+            NativeInstructionKind::Add(_, _, _)
+            | NativeInstructionKind::Mul(_, _, _)
+            | NativeInstructionKind::LessThan(_, _, _)
+            | NativeInstructionKind::Equals(_, _, _) => vec![0, 1],
+            NativeInstructionKind::Input(_) => vec![],
+            NativeInstructionKind::Output(_) | NativeInstructionKind::AdjustRelativeBase(_) => {
+                vec![0]
+            }
+            NativeInstructionKind::JumpIfTrue(_, _) | NativeInstructionKind::JumpIfFalse(_, _) => {
+                vec![0, 1]
+            }
+            NativeInstructionKind::Halt => vec![],
+            NativeInstructionKind::Data(_) => vec![],
+            NativeInstructionKind::Goto(_) => vec![0, 1],
+            NativeInstructionKind::Assign(_, _) => vec![0, 1],
         }
     }
 
     pub fn write_positions(&self) -> Vec<usize> {
         match &self.kind {
-            InstructionKind::Add(_, _, _)
-            | InstructionKind::Mul(_, _, _)
-            | InstructionKind::LessThan(_, _, _)
-            | InstructionKind::Equals(_, _, _) => vec![2],
-            InstructionKind::Input(_) => vec![0],
-            InstructionKind::Output(_)
-            | InstructionKind::AdjustRelativeBase(_)
-            | InstructionKind::JumpIfTrue(_, _)
-            | InstructionKind::JumpIfFalse(_, _)
-            | InstructionKind::Halt
-            | InstructionKind::Data(_)
-            | InstructionKind::Goto(_) => vec![],
-            InstructionKind::Assign(_, _) => vec![2],
+            NativeInstructionKind::Add(_, _, _)
+            | NativeInstructionKind::Mul(_, _, _)
+            | NativeInstructionKind::LessThan(_, _, _)
+            | NativeInstructionKind::Equals(_, _, _) => vec![2],
+            NativeInstructionKind::Input(_) => vec![0],
+            NativeInstructionKind::Output(_)
+            | NativeInstructionKind::AdjustRelativeBase(_)
+            | NativeInstructionKind::JumpIfTrue(_, _)
+            | NativeInstructionKind::JumpIfFalse(_, _)
+            | NativeInstructionKind::Halt
+            | NativeInstructionKind::Data(_)
+            | NativeInstructionKind::Goto(_) => vec![],
+            NativeInstructionKind::Assign(_, _) => vec![2],
         }
     }
 
@@ -469,55 +473,61 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         context: &mut C,
         map_read: &mut R,
         map_write: &mut W,
-    ) -> Result<GenericInstruction<S>, E>
+    ) -> Result<GenericNativeInstruction<S>, E>
     where
         R: FnMut(&mut C, &T) -> Result<S, E>,
         W: FnMut(&mut C, &T) -> Result<S, E>,
     {
         let kind_result = match &self.kind {
-            InstructionKind::Add(a, b, c) => Ok(InstructionKind::Add(
+            NativeInstructionKind::Add(a, b, c) => Ok(NativeInstructionKind::Add(
                 map_read(context, a)?,
                 map_read(context, b)?,
                 map_write(context, c)?,
             )),
-            InstructionKind::Mul(a, b, c) => Ok(InstructionKind::Mul(
+            NativeInstructionKind::Mul(a, b, c) => Ok(NativeInstructionKind::Mul(
                 map_read(context, a)?,
                 map_read(context, b)?,
                 map_write(context, c)?,
             )),
-            InstructionKind::Input(a) => Ok(InstructionKind::Input(map_write(context, a)?)),
-            InstructionKind::Output(a) => Ok(InstructionKind::Output(map_read(context, a)?)),
-            InstructionKind::JumpIfTrue(a, b) => Ok(InstructionKind::JumpIfTrue(
-                map_read(context, a)?,
-                map_read(context, b)?,
-            )),
-            InstructionKind::JumpIfFalse(a, b) => Ok(InstructionKind::JumpIfFalse(
-                map_read(context, a)?,
-                map_read(context, b)?,
-            )),
-            InstructionKind::LessThan(a, b, c) => Ok(InstructionKind::LessThan(
-                map_read(context, a)?,
-                map_read(context, b)?,
-                map_write(context, c)?,
-            )),
-            InstructionKind::Equals(a, b, c) => Ok(InstructionKind::Equals(
-                map_read(context, a)?,
-                map_read(context, b)?,
-                map_write(context, c)?,
-            )),
-            InstructionKind::AdjustRelativeBase(a) => {
-                Ok(InstructionKind::AdjustRelativeBase(map_read(context, a)?))
+            NativeInstructionKind::Input(a) => {
+                Ok(NativeInstructionKind::Input(map_write(context, a)?))
             }
-            InstructionKind::Halt => Ok(InstructionKind::Halt),
-            InstructionKind::Data(values) => Ok(InstructionKind::Data(values.clone())),
-            InstructionKind::Goto(a) => Ok(InstructionKind::Goto(map_read(context, a)?)),
-            InstructionKind::Assign(a, b) => Ok(InstructionKind::Assign(
+            NativeInstructionKind::Output(a) => {
+                Ok(NativeInstructionKind::Output(map_read(context, a)?))
+            }
+            NativeInstructionKind::JumpIfTrue(a, b) => Ok(NativeInstructionKind::JumpIfTrue(
+                map_read(context, a)?,
+                map_read(context, b)?,
+            )),
+            NativeInstructionKind::JumpIfFalse(a, b) => Ok(NativeInstructionKind::JumpIfFalse(
+                map_read(context, a)?,
+                map_read(context, b)?,
+            )),
+            NativeInstructionKind::LessThan(a, b, c) => Ok(NativeInstructionKind::LessThan(
+                map_read(context, a)?,
+                map_read(context, b)?,
+                map_write(context, c)?,
+            )),
+            NativeInstructionKind::Equals(a, b, c) => Ok(NativeInstructionKind::Equals(
+                map_read(context, a)?,
+                map_read(context, b)?,
+                map_write(context, c)?,
+            )),
+            NativeInstructionKind::AdjustRelativeBase(a) => Ok(
+                NativeInstructionKind::AdjustRelativeBase(map_read(context, a)?),
+            ),
+            NativeInstructionKind::Halt => Ok(NativeInstructionKind::Halt),
+            NativeInstructionKind::Data(values) => Ok(NativeInstructionKind::Data(values.clone())),
+            NativeInstructionKind::Goto(a) => {
+                Ok(NativeInstructionKind::Goto(map_read(context, a)?))
+            }
+            NativeInstructionKind::Assign(a, b) => Ok(NativeInstructionKind::Assign(
                 map_write(context, a)?,
                 map_read(context, b)?,
             )),
         };
 
-        kind_result.map(|kind| GenericInstruction {
+        kind_result.map(|kind| GenericNativeInstruction {
             id: self.id,
             span: self.span,
             kind,
@@ -530,7 +540,7 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
         context: &mut C,
         mut map_read: R,
         mut map_write: W,
-    ) -> GenericInstruction<S>
+    ) -> GenericNativeInstruction<S>
     where
         R: FnMut(&mut C, &T) -> S,
         W: FnMut(&mut C, &T) -> S,
@@ -586,40 +596,40 @@ impl<T: Into<Operand> + Clone> GenericInstruction<T> {
 
 // Helper function to simplify certain instruction patterns
 pub fn simplify_instruction<T: Into<Operand> + Clone>(
-    kind: InstructionKind<T>,
-) -> InstructionKind<T> {
+    kind: NativeInstructionKind<T>,
+) -> NativeInstructionKind<T> {
     match kind.clone() {
-        InstructionKind::JumpIfTrue(cond, target) => {
+        NativeInstructionKind::JumpIfTrue(cond, target) => {
             if let OperandKind::Immediate(val) = cond.into().kind {
                 if val != 0 {
-                    return InstructionKind::Goto(target);
+                    return NativeInstructionKind::Goto(target);
                 }
             }
             kind
         }
-        InstructionKind::JumpIfFalse(cond, target) => {
+        NativeInstructionKind::JumpIfFalse(cond, target) => {
             if let OperandKind::Immediate(val) = cond.into().kind {
                 if val == 0 {
-                    return InstructionKind::Goto(target);
+                    return NativeInstructionKind::Goto(target);
                 }
             }
             kind
         }
-        InstructionKind::Add(a, b, target) => {
+        NativeInstructionKind::Add(a, b, target) => {
             if let OperandKind::Immediate(0) = a.clone().into().kind {
-                return InstructionKind::Assign(target, b);
+                return NativeInstructionKind::Assign(target, b);
             }
             if let OperandKind::Immediate(0) = b.into().kind {
-                return InstructionKind::Assign(target, a);
+                return NativeInstructionKind::Assign(target, a);
             }
             kind
         }
-        InstructionKind::Mul(a, b, target) => {
+        NativeInstructionKind::Mul(a, b, target) => {
             if let OperandKind::Immediate(1) = a.clone().into().kind {
-                return InstructionKind::Assign(target, b);
+                return NativeInstructionKind::Assign(target, b);
             }
             if let OperandKind::Immediate(1) = b.into().kind {
-                return InstructionKind::Assign(target, a);
+                return NativeInstructionKind::Assign(target, a);
             }
             kind
         }
@@ -627,22 +637,22 @@ pub fn simplify_instruction<T: Into<Operand> + Clone>(
     }
 }
 
-impl<T: fmt::Display> fmt::Display for GenericInstruction<T> {
+impl<T: fmt::Display> fmt::Display for GenericNativeInstruction<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            InstructionKind::Add(a, b, c) => write!(f, "{} = {} + {}", c, a, b),
-            InstructionKind::Mul(a, b, c) => write!(f, "{} = {} * {}", c, a, b),
-            InstructionKind::Input(a) => write!(f, "{} = input()", a),
-            InstructionKind::Output(a) => write!(f, "output({})", a),
-            InstructionKind::JumpIfTrue(a, b) => write!(f, "if {} goto {}", a, b),
-            InstructionKind::JumpIfFalse(a, b) => write!(f, "if !{} goto {}", a, b),
-            InstructionKind::LessThan(a, b, c) => write!(f, "{} = {} < {}", c, a, b),
-            InstructionKind::Equals(a, b, c) => write!(f, "{} = {} == {}", c, a, b),
-            InstructionKind::AdjustRelativeBase(a) => write!(f, "R += {}", a),
-            InstructionKind::Halt => write!(f, "halt"),
-            InstructionKind::Data(values) => write!(f, "DATA {}", values.iter().format(", ")),
-            InstructionKind::Goto(a) => write!(f, "goto {}", a),
-            InstructionKind::Assign(a, b) => write!(f, "{} = {}", a, b),
+            NativeInstructionKind::Add(a, b, c) => write!(f, "{} = {} + {}", c, a, b),
+            NativeInstructionKind::Mul(a, b, c) => write!(f, "{} = {} * {}", c, a, b),
+            NativeInstructionKind::Input(a) => write!(f, "{} = input()", a),
+            NativeInstructionKind::Output(a) => write!(f, "output({})", a),
+            NativeInstructionKind::JumpIfTrue(a, b) => write!(f, "if {} goto {}", a, b),
+            NativeInstructionKind::JumpIfFalse(a, b) => write!(f, "if !{} goto {}", a, b),
+            NativeInstructionKind::LessThan(a, b, c) => write!(f, "{} = {} < {}", c, a, b),
+            NativeInstructionKind::Equals(a, b, c) => write!(f, "{} = {} == {}", c, a, b),
+            NativeInstructionKind::AdjustRelativeBase(a) => write!(f, "R += {}", a),
+            NativeInstructionKind::Halt => write!(f, "halt"),
+            NativeInstructionKind::Data(values) => write!(f, "DATA {}", values.iter().format(", ")),
+            NativeInstructionKind::Goto(a) => write!(f, "goto {}", a),
+            NativeInstructionKind::Assign(a, b) => write!(f, "{} = {}", a, b),
         }
     }
 }

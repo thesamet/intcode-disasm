@@ -6,7 +6,7 @@ use crate::disasm::v2::{
         self, ControlFlowAnalysisPhaseComplete, FunctionCfgBuilt, ImageScannerComplete,
         ModelEventListener,
     }, // + FunctionCfgBuilt
-    instructions::{Instruction, Operand},
+    native::{NativeInstruction, Operand},
     model::{BlockId, FunctionId, ProgramModel},
     Span,
 };
@@ -288,7 +288,7 @@ impl ModelEventListener for ControlFlowGraphBuilder {
 // Helper to determine NextKind based on the last instruction and context
 fn determine_next_kind(
     block_id: BlockId,
-    last_instr: &Instruction,
+    last_instr: &NativeInstruction,
     block_end_addr: usize,
     func: &RecognizedFunction,
 ) -> NextKind<Operand> {
@@ -316,7 +316,7 @@ fn determine_next_kind(
         );
     } else if let Some(target_addr) = last_instr.conditional_jump_immediate_address() {
         let jump_if_true =
-            last_instr.opcode() == crate::disasm::v2::instructions::Opcode::JumpIfTrue;
+            last_instr.opcode() == crate::disasm::v2::native::Opcode::JumpIfTrue;
         let condition_operand = last_instr.conditional_jump_condition().unwrap();
         NextKind::Condition(Condition {
             from_block: block_id,

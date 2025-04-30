@@ -4,12 +4,12 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::disasm::v2::{
-    instructions::{InstructionId, OperandKind},
+    native::{InstructionId, OperandKind},
     model::BlockId,
 };
 
 use super::control_flow::FunctionCall;
-use super::instructions::Operand;
+use super::native::Operand;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum OriginationPoint {

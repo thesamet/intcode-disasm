@@ -13,7 +13,7 @@ mod type_inference_tests {
     use crate::disasm::v2::{
         dispatching::EventPublisher,
         events::Event,
-        instructions::{InstructionId, Operand, OperandKind},
+        native::{InstructionId, Operand, OperandKind},
         listeners::{
             control_flow_graph_builder::ControlFlowGraphBuilder,
             data_flow_analyzer::DataFlowAnalyzer, function_call_analyzer::FunctionCallAnalyzer,

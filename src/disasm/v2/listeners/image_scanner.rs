@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::disasm::v2::{
     events::{self, ImageAdded, ModelEventListener},
-    instructions::{Instruction, Opcode, Operand, OperandKind, ParseError},
+    native::{NativeInstruction, Opcode, Operand, OperandKind, ParseError},
     model::ProgramModel,
     Span,
 };
@@ -31,12 +31,12 @@ impl ImageScanner {
 pub struct RecognizedFunction {
     pub span: Span,
     pub stack_size: usize,
-    pub instructions: Vec<Instruction>,
+    pub instructions: Vec<NativeInstruction>,
     // The span of the return starts at the R adjustment, and ends after the goto.
     pub return_span: Option<Span>,
     pub jump_targets: HashSet<usize>,
     // Locations from which a jump (conditional or unconditional) is taken.
-    pub jump_instructions: Vec<Instruction>,
+    pub jump_instructions: Vec<NativeInstruction>,
     pub function_calls: Vec<BaseFunctionCall>,
     pub halts: Vec<Span>,
 }
@@ -98,7 +98,7 @@ impl ModelEventListener for ImageScanner {
 }
 
 fn recognize_function_start(image: &[i128], offset: usize) -> Option<i128> {
-    let Ok(instruction) = Instruction::parse(image, offset) else {
+    let Ok(instruction) = NativeInstruction::parse(image, offset) else {
         return None;
     };
     if instruction.opcode() != Opcode::AdjustRelativeBase {
@@ -111,8 +111,8 @@ fn recognize_return(
     image: &[i128],
     offset: usize,
     stack_size: i128,
-) -> Result<(Instruction, Instruction), ParseError> {
-    let adj_r = Instruction::parse(image, offset)?;
+) -> Result<(NativeInstruction, NativeInstruction), ParseError> {
+    let adj_r = NativeInstruction::parse(image, offset)?;
     if adj_r.opcode() != Opcode::AdjustRelativeBase {
         return Err(ParseError::NoMatch);
     }
@@ -123,7 +123,7 @@ fn recognize_return(
         return Err(ParseError::InvalidStackAdjustment(offset));
     }
     let offset = offset + 2;
-    let goto = Instruction::parse(image, offset)?;
+    let goto = NativeInstruction::parse(image, offset)?;
     let Some(goto_address) = goto.goto_address() else {
         return Err(ParseError::UnexpectedOpAfterAdjustment);
     };
@@ -136,8 +136,8 @@ fn recognize_return(
 fn recognize_function_call(
     image: &[i128],
     offset: usize,
-) -> Result<(Instruction, Instruction, BaseFunctionCall), ParseError> {
-    let set_r = Instruction::parse(image, offset)?;
+) -> Result<(NativeInstruction, NativeInstruction, BaseFunctionCall), ParseError> {
+    let set_r = NativeInstruction::parse(image, offset)?;
     let assignment = set_r.as_assignment().ok_or(ParseError::NoMatch)?;
     if assignment.target.kind.get_relative_memory() != Some(0) {
         return Err(ParseError::NoMatch);
@@ -147,7 +147,7 @@ fn recognize_function_call(
         .kind
         .get_immediate()
         .ok_or(ParseError::NoMatch)? as usize;
-    let goto_op = Instruction::parse(image, set_r.span.end)?;
+    let goto_op = NativeInstruction::parse(image, set_r.span.end)?;
     if !goto_op.is_goto() {
         return Err(ParseError::NoMatch);
     }
@@ -191,7 +191,7 @@ fn scan_from(
             instructions.push(i2);
             function_calls.push(fc);
         } else {
-            let instruction = Instruction::parse(image, offset)?;
+            let instruction = NativeInstruction::parse(image, offset)?;
             if instruction.is_jump() {
                 let address = instruction
                     .immediate_goto()

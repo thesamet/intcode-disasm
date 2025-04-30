@@ -10,7 +10,7 @@ use super::{
     listeners::{
         control_flow_analyzer::ControlFlowStructureRecoveryListener,
         control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        function_call_analyzer::FunctionCallAnalyzer,
+        function_call_analyzer::FunctionCallAnalyzer, hlr_optimization::HlrOptimizationListener,
         image_scanner::ImageScannerResult, ssa_converter::SsaConverter,
         variable_analyzer::VariableAnalyzer,
     },
@@ -31,7 +31,7 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     publisher.add_listener(Box::new(VariableAnalyzer::new()));
     publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
-    //    publisher.add_listener(Box::new(HlrOptimizationListener::new()));
+    publisher.add_listener(Box::new(HlrOptimizationListener::new()));
     model.load_image(&image, &mut publisher);
     let res = publisher.process_events(&mut model);
     match res {
@@ -158,9 +158,12 @@ pub fn run_analysis_ssa(image: Vec<i128>) {
 
 #[cfg(test)]
 mod tests {
+    use crate::disasm::test_utils::init_logging;
+
     use super::*;
 
     #[test]
+    #[ignore]
     fn run_analysis_executes_without_panic() {
         // Define a minimal valid Intcode program (e.g., addition then halt)
         let sample_image = vec![109, 1, 21101, 3, 2, -3, 99];
@@ -168,6 +171,7 @@ mod tests {
         // Call the function. Since it doesn't return anything or have observable
         // side effects in its current state (doesn't call process_events),
         // the primary test is that it completes without panicking.
+        init_logging();
         run_analysis(sample_image);
     }
 

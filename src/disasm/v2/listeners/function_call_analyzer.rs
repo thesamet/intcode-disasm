@@ -3,7 +3,7 @@ use crate::disasm::v2::{
     data_flow::OriginationPoint,
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
-    instructions::OperandKind,
+    native::OperandKind,
     model::{BlockId, FunctionId, ProgramModel},
     ssa_form::{SsaFunction, SsaOperand, SsaOperandKind, SsaResult, SsaVar},
 };

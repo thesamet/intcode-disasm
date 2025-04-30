@@ -1,5 +1,5 @@
 use crate::disasm::v2::{
-    instructions::OperandKind,
+    native::OperandKind,
     model::FunctionId,
     ssa_form::SsaVar,
     type_inference::{
@@ -14,7 +14,7 @@ mod tests {
     use crate::disasm::{
         test_utils::init_logging,
         v2::{
-            instructions::{InstructionId, Operand},
+            native::{InstructionId, Operand},
             model::BlockId,
             ssa_form::{SsaOperand, SsaOperandKind},
         },

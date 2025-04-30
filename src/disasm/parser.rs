@@ -10,9 +10,9 @@ use nom::{
 };
 use std::collections::HashMap;
 
-use super::v2::instructions::{
-    simplify_instruction, GenericInstruction, Instruction, InstructionId, InstructionKind, Operand,
-    OperandKind,
+use super::v2::native::{
+    simplify_instruction, GenericNativeInstruction, InstructionId, NativeInstruction,
+    NativeInstructionKind, Operand, OperandKind,
 };
 use super::v2::Span;
 
@@ -49,24 +49,24 @@ impl From<UnresolvedArgument> for Operand {
 
 // Helper to get the expected size of an instruction kind for offset calculation
 // Note: Relies on the structure before simplification (e.g., Assign is size 4 because it becomes Add)
-fn instruction_kind_size<T>(kind: &InstructionKind<T>) -> usize {
+fn instruction_kind_size<T>(kind: &NativeInstructionKind<T>) -> usize {
     match kind {
-        InstructionKind::Add(..)
-        | InstructionKind::Mul(..)
-        | InstructionKind::LessThan(..)
-        | InstructionKind::Equals(..)
-        | InstructionKind::Assign(..) => 4,
+        NativeInstructionKind::Add(..)
+        | NativeInstructionKind::Mul(..)
+        | NativeInstructionKind::LessThan(..)
+        | NativeInstructionKind::Equals(..)
+        | NativeInstructionKind::Assign(..) => 4,
 
-        InstructionKind::JumpIfTrue(..)
-        | InstructionKind::JumpIfFalse(..)
-        | InstructionKind::Goto(..) => 3,
+        NativeInstructionKind::JumpIfTrue(..)
+        | NativeInstructionKind::JumpIfFalse(..)
+        | NativeInstructionKind::Goto(..) => 3,
 
-        InstructionKind::Input(_)
-        | InstructionKind::Output(_)
-        | InstructionKind::AdjustRelativeBase(_) => 2,
+        NativeInstructionKind::Input(_)
+        | NativeInstructionKind::Output(_)
+        | NativeInstructionKind::AdjustRelativeBase(_) => 2,
 
-        InstructionKind::Halt => 1,
-        InstructionKind::Data(v) => v.len(),
+        NativeInstructionKind::Halt => 1,
+        NativeInstructionKind::Data(v) => v.len(),
     }
 }
 
@@ -165,7 +165,7 @@ fn parse_argument(input: &str) -> IResult<&str, UnresolvedArgument> {
 }
 
 // Parse instructions returning InstructionKind<UnresolvedArgument>
-fn parse_add(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_add(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -178,12 +178,12 @@ fn parse_add(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> 
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| InstructionKind::Add(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| NativeInstructionKind::Add(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_mul(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_mul(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -196,40 +196,40 @@ fn parse_mul(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> 
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| InstructionKind::Mul(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| NativeInstructionKind::Mul(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_assign(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_assign(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (parse_argument, space0, char('='), space0, parse_argument),
-        |(c, _, _, _, a)| InstructionKind::Assign(c, a),
+        |(c, _, _, _, a)| NativeInstructionKind::Assign(c, a),
     )
     .parse(input)
 }
 
-fn parse_input(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_input(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map((tag("INPUT"), space1, parse_argument), |(_, _, a)| {
-        InstructionKind::Input(a)
+        NativeInstructionKind::Input(a)
     })
     .parse(input)
 }
 
-fn parse_output(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_output(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     alt((
         map((tag("output"), space1, parse_argument), |(_, _, a)| {
-            InstructionKind::Output(a)
+            NativeInstructionKind::Output(a)
         }),
         map(
             delimited(tag("output("), parse_argument, char(')')),
-            InstructionKind::Output,
+            NativeInstructionKind::Output,
         ),
     ))
     .parse(input)
 }
 
-fn parse_if_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_if_goto(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (
             tag("if"),
@@ -240,12 +240,12 @@ fn parse_if_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgumen
             space1,
             parse_argument,
         ),
-        |(_, _, a, _, _, _, b)| InstructionKind::JumpIfTrue(a, b),
+        |(_, _, a, _, _, _, b)| NativeInstructionKind::JumpIfTrue(a, b),
     )
     .parse(input)
 }
 
-fn parse_if_not_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_if_not_goto(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (
             tag("if"),
@@ -257,19 +257,19 @@ fn parse_if_not_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArg
             space1,
             parse_argument,
         ),
-        |(_, _, _, a, _, _, _, b)| InstructionKind::JumpIfFalse(a, b),
+        |(_, _, _, a, _, _, _, b)| NativeInstructionKind::JumpIfFalse(a, b),
     )
     .parse(input)
 }
 
-fn parse_goto(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_goto(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(preceded(pair(tag("goto"), space1), parse_argument), |a| {
-        InstructionKind::Goto(a)
+        NativeInstructionKind::Goto(a)
     })
     .parse(input)
 }
 
-fn parse_less_than(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_less_than(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -282,12 +282,12 @@ fn parse_less_than(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgum
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| InstructionKind::LessThan(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| NativeInstructionKind::LessThan(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_equals(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_equals(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         (
             parse_argument,
@@ -300,16 +300,16 @@ fn parse_equals(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument
             space0,
             parse_argument,
         ),
-        |(c, _, _, _, a, _, _, _, b)| InstructionKind::Equals(a, b, c),
+        |(c, _, _, _, a, _, _, _, b)| NativeInstructionKind::Equals(a, b, c),
     )
     .parse(input)
 }
 
-fn parse_adjust_r(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_adjust_r(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     alt((
         map(
             (tag("R"), space0, tag("+="), space0, parse_argument),
-            |(_, _, _, _, a)| InstructionKind::AdjustRelativeBase(a),
+            |(_, _, _, _, a)| NativeInstructionKind::AdjustRelativeBase(a),
         ),
         map(
             (tag("R"), space0, tag("-="), space0, parse_argument),
@@ -320,7 +320,7 @@ fn parse_adjust_r(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgume
                         kind: OperandKind::Immediate(val),
                         offset: _, // Offset doesn't matter for this transformation
                         debug_marker,
-                    } } => InstructionKind::AdjustRelativeBase(UnresolvedArgument::Resolved{op:
+                    } } => NativeInstructionKind::AdjustRelativeBase(UnresolvedArgument::Resolved{op:
                          // Create a resolved Operand directly
                         Operand { kind: OperandKind::Immediate(-val), offset: 0, debug_marker }
                     }),
@@ -334,8 +334,8 @@ fn parse_adjust_r(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgume
     .parse(input)
 }
 
-fn parse_halt(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
-    map(tag("halt"), |_| InstructionKind::Halt).parse(input)
+fn parse_halt(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
+    map(tag("halt"), |_| NativeInstructionKind::Halt).parse(input)
 }
 
 fn parse_data_values(input: &str) -> IResult<&str, Vec<i128>> {
@@ -347,15 +347,15 @@ fn parse_data_values(input: &str) -> IResult<&str, Vec<i128>> {
     .parse(input)
 }
 
-fn parse_data(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_data(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     map(
         preceded(pair(tag("DATA"), space1), parse_data_values),
-        InstructionKind::Data,
+        NativeInstructionKind::Data,
     )
     .parse(input)
 }
 
-fn parse_instruction(input: &str) -> IResult<&str, InstructionKind<UnresolvedArgument>> {
+fn parse_instruction(input: &str) -> IResult<&str, NativeInstructionKind<UnresolvedArgument>> {
     alt((
         // Order matters: Match longer/more specific patterns first
         parse_add,
@@ -393,7 +393,9 @@ fn ws_or_comment(input: &str) -> IResult<&str, ()> {
 }
 
 // Parse a line: optional label + optional instruction
-fn parse_line(input: &str) -> IResult<&str, (Option<String>, InstructionKind<UnresolvedArgument>)> {
+fn parse_line(
+    input: &str,
+) -> IResult<&str, (Option<String>, NativeInstructionKind<UnresolvedArgument>)> {
     // Consume leading whitespace and any number of comment lines
     let (input, _) = ws_or_comment(input)?;
     let (input, label) = opt(parse_label_def).parse(input)?;
@@ -456,7 +458,7 @@ fn resolve_argument(
 // Main parser function
 pub fn parse_program(
     input: &str,
-) -> Result<Vec<(usize, Instruction)>, nom::Err<nom::error::Error<&str>>> {
+) -> Result<Vec<(usize, NativeInstruction)>, nom::Err<nom::error::Error<&str>>> {
     let (input, lines) = many1(parse_line).parse(input)?;
     let (input, _) = ws_or_comment(input)?;
     let (_, _) = eof.parse(input)?;
@@ -464,7 +466,7 @@ pub fn parse_program(
     let mut label_offsets = HashMap::new();
     let mut pointers = HashMap::new();
     let mut current_offset = 0;
-    let mut intermediate_instructions: Vec<(usize, InstructionKind<UnresolvedArgument>)> =
+    let mut intermediate_instructions: Vec<(usize, NativeInstructionKind<UnresolvedArgument>)> =
         Vec::new();
 
     // First pass: Collect labels and pointer definitions
@@ -475,7 +477,7 @@ pub fn parse_program(
 
         // Store pointer definitions: map name to the memory address *of the argument*
         // that will be modified by the pointer assignment.
-        if !matches!(instruction, InstructionKind::Data(_)) {
+        if !matches!(instruction, NativeInstructionKind::Data(_)) {
             for i in 0..=2 {
                 if let Some(UnresolvedArgument::PointerDeref { name, .. }) =
                     instruction.operand_at(i)
@@ -494,7 +496,7 @@ pub fn parse_program(
         .map(|(offset, instr_kind)| {
             // Create a temporary GenericInstruction to use map_rw_result
             // Span and ID are temporary here, will be set correctly on the final instruction
-            let temp_instr = GenericInstruction {
+            let temp_instr = GenericNativeInstruction {
                 id: InstructionId::from(offset), // Use offset for temp ID
                 span: Span::new(offset, offset + instruction_kind_size(&instr_kind)), // Temp span
                 kind: instr_kind,
@@ -533,7 +535,7 @@ pub fn parse_program(
 
             Ok((offset, instruction))
         })
-        .collect::<Result<Vec<(usize, Instruction)>, String>>()
+        .collect::<Result<Vec<(usize, NativeInstruction)>, String>>()
         .map_err(|t| {
             // Convert String error to nom::Err
             error!("Parsing error: {}", t);
@@ -554,40 +556,40 @@ pub fn compile(code: &str) -> Vec<i128> {
         let mut modes: Vec<i128> = vec![];
 
         match &instruction.kind {
-            InstructionKind::Data(v) => {
+            NativeInstructionKind::Data(v) => {
                 out.extend(v);
                 continue; // Skip normal serialization
             }
-            InstructionKind::Halt => { /* No args */ }
-            InstructionKind::Add(a, b, c) => {
+            NativeInstructionKind::Halt => { /* No args */ }
+            NativeInstructionKind::Add(a, b, c) => {
                 args_to_serialize = vec![*a, *b, *c];
             }
-            InstructionKind::Mul(a, b, c) => {
+            NativeInstructionKind::Mul(a, b, c) => {
                 args_to_serialize = vec![*a, *b, *c];
             }
-            InstructionKind::Input(a) => {
+            NativeInstructionKind::Input(a) => {
                 args_to_serialize = vec![*a];
             }
-            InstructionKind::Output(a) => {
+            NativeInstructionKind::Output(a) => {
                 args_to_serialize = vec![*a];
             }
-            InstructionKind::JumpIfTrue(a, b) => {
+            NativeInstructionKind::JumpIfTrue(a, b) => {
                 args_to_serialize = vec![*a, *b];
             }
-            InstructionKind::JumpIfFalse(a, b) => {
+            NativeInstructionKind::JumpIfFalse(a, b) => {
                 args_to_serialize = vec![*a, *b];
             }
-            InstructionKind::LessThan(a, b, c) => {
+            NativeInstructionKind::LessThan(a, b, c) => {
                 args_to_serialize = vec![*a, *b, *c];
             }
-            InstructionKind::Equals(a, b, c) => {
+            NativeInstructionKind::Equals(a, b, c) => {
                 args_to_serialize = vec![*a, *b, *c];
             }
-            InstructionKind::AdjustRelativeBase(a) => {
+            NativeInstructionKind::AdjustRelativeBase(a) => {
                 args_to_serialize = vec![*a];
             }
             // Synthetic instructions serialized as underlying Intcode
-            InstructionKind::Goto(target) => {
+            NativeInstructionKind::Goto(target) => {
                 // Need an immediate '1' operand first
                 let cond_operand = Operand {
                     kind: OperandKind::Immediate(1),
@@ -597,7 +599,7 @@ pub fn compile(code: &str) -> Vec<i128> {
                 args_to_serialize = vec![cond_operand, *target];
                 // base_opcode is already 5 via instruction.opcode()
             }
-            InstructionKind::Assign(target, source) => {
+            NativeInstructionKind::Assign(target, source) => {
                 // Need an immediate '0' operand
                 let zero_operand = Operand {
                     kind: OperandKind::Immediate(0),
@@ -655,11 +657,11 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::disasm::v2::instructions::{InstructionKind, OperandKind};
+    use crate::disasm::v2::native::{NativeInstructionKind, OperandKind};
     use pretty_assertions::assert_eq;
 
     // Helper function to parse a single instruction kind for testing
-    fn parse_single_instruction_kind(input: &str) -> InstructionKind<OperandKind> {
+    fn parse_single_instruction_kind(input: &str) -> NativeInstructionKind<OperandKind> {
         let v = parse_program(input).unwrap();
         assert_eq!(v.len(), 1, "Expected single instruction for test");
         // Map Operand -> OperandKind for comparison in tests
@@ -669,7 +671,7 @@ mod tests {
     }
 
     // Helper to parse a complete program and return just the instruction kinds
-    fn parse_test_program_kinds(input: &str) -> Vec<InstructionKind<OperandKind>> {
+    fn parse_test_program_kinds(input: &str) -> Vec<NativeInstructionKind<OperandKind>> {
         let program = parse_program(input).unwrap();
         program
             .into_iter()
@@ -681,12 +683,15 @@ mod tests {
     #[test]
     fn test_single_instructions() {
         // Test halt
-        assert_eq!(parse_single_instruction_kind("halt"), InstructionKind::Halt);
+        assert_eq!(
+            parse_single_instruction_kind("halt"),
+            NativeInstructionKind::Halt
+        );
 
         // Test basic arithmetic with new syntax
         assert_eq!(
             parse_single_instruction_kind("[0] = 1 + 2"),
-            InstructionKind::Add(
+            NativeInstructionKind::Add(
                 OperandKind::Immediate(1),
                 OperandKind::Immediate(2),
                 OperandKind::Memory(0)
@@ -695,7 +700,7 @@ mod tests {
 
         assert_eq!(
             parse_single_instruction_kind("[10] = [20] * 5"),
-            InstructionKind::Mul(
+            NativeInstructionKind::Mul(
                 OperandKind::Memory(20),
                 OperandKind::Immediate(5),
                 OperandKind::Memory(10)
@@ -705,63 +710,69 @@ mod tests {
         // Test assignment simplification
         assert_eq!(
             parse_single_instruction_kind("[10] = [20] + 0"),
-            InstructionKind::Assign(OperandKind::Memory(10), OperandKind::Memory(20)) // simplify applied
+            NativeInstructionKind::Assign(OperandKind::Memory(10), OperandKind::Memory(20)) // simplify applied
         );
         assert_eq!(
             parse_single_instruction_kind("[10] = 1 * [20]"),
-            InstructionKind::Assign(OperandKind::Memory(10), OperandKind::Memory(20)) // simplify applied
+            NativeInstructionKind::Assign(OperandKind::Memory(10), OperandKind::Memory(20)) // simplify applied
         );
 
         // Test INPUT/output
         assert_eq!(
             parse_single_instruction_kind("INPUT [0]"),
-            InstructionKind::Input(OperandKind::Memory(0))
+            NativeInstructionKind::Input(OperandKind::Memory(0))
         );
 
         assert_eq!(
             parse_single_instruction_kind("output 42"),
-            InstructionKind::Output(OperandKind::Immediate(42))
+            NativeInstructionKind::Output(OperandKind::Immediate(42))
         );
 
         // Test the alternative output syntax
         assert_eq!(
             parse_single_instruction_kind("output(100)"),
-            InstructionKind::Output(OperandKind::Immediate(100))
+            NativeInstructionKind::Output(OperandKind::Immediate(100))
         );
 
         // Test conditional jumps
         assert_eq!(
             parse_single_instruction_kind("if [0] goto 100"),
-            InstructionKind::JumpIfTrue(OperandKind::Memory(0), OperandKind::Immediate(100))
+            NativeInstructionKind::JumpIfTrue(OperandKind::Memory(0), OperandKind::Immediate(100))
         );
 
         assert_eq!(
             parse_single_instruction_kind("if ![5] goto 200"),
-            InstructionKind::JumpIfFalse(OperandKind::Memory(5), OperandKind::Immediate(200))
+            NativeInstructionKind::JumpIfFalse(OperandKind::Memory(5), OperandKind::Immediate(200))
         );
 
         // Test jump simplification
         assert_eq!(
             parse_single_instruction_kind("if 1 goto 100"), // Non-zero constant
-            InstructionKind::Goto(OperandKind::Immediate(100))  // simplify applied
+            NativeInstructionKind::Goto(OperandKind::Immediate(100))  // simplify applied
         );
         assert_eq!(
             parse_single_instruction_kind("if 0 goto 100"), // Zero constant -> no jump
-            InstructionKind::JumpIfTrue(OperandKind::Immediate(0), OperandKind::Immediate(100)) // Expected: Not simplified
+            NativeInstructionKind::JumpIfTrue(
+                OperandKind::Immediate(0),
+                OperandKind::Immediate(100)
+            )  // Expected: Not simplified
         );
         assert_eq!(
             parse_single_instruction_kind("if !0 goto 100"), // Not zero constant
-            InstructionKind::Goto(OperandKind::Immediate(100))  // simplify applied
+            NativeInstructionKind::Goto(OperandKind::Immediate(100))  // simplify applied
         );
         assert_eq!(
             parse_single_instruction_kind("if !1 goto 100"), // Not non-zero constant -> no jump
-            InstructionKind::JumpIfFalse(OperandKind::Immediate(1), OperandKind::Immediate(100)) // Expected: Not simplified
+            NativeInstructionKind::JumpIfFalse(
+                OperandKind::Immediate(1),
+                OperandKind::Immediate(100)
+            )  // Expected: Not simplified
         );
 
         // Test comparison operations
         assert_eq!(
             parse_single_instruction_kind("[0] = [1] < [2]"),
-            InstructionKind::LessThan(
+            NativeInstructionKind::LessThan(
                 OperandKind::Memory(1),
                 OperandKind::Memory(2),
                 OperandKind::Memory(0)
@@ -770,7 +781,7 @@ mod tests {
 
         assert_eq!(
             parse_single_instruction_kind("[0] = [1] == [2]"),
-            InstructionKind::Equals(
+            NativeInstructionKind::Equals(
                 OperandKind::Memory(1),
                 OperandKind::Memory(2),
                 OperandKind::Memory(0)
@@ -779,7 +790,7 @@ mod tests {
 
         assert_eq!(
             parse_single_instruction_kind("[R-1] = [R-3] == [R-2]"),
-            InstructionKind::Equals(
+            NativeInstructionKind::Equals(
                 OperandKind::RelativeMemory(-3),
                 OperandKind::RelativeMemory(-2),
                 OperandKind::RelativeMemory(-1)
@@ -789,18 +800,18 @@ mod tests {
         // Test R adjustment
         assert_eq!(
             parse_single_instruction_kind("R += 10"),
-            InstructionKind::AdjustRelativeBase(OperandKind::Immediate(10))
+            NativeInstructionKind::AdjustRelativeBase(OperandKind::Immediate(10))
         );
 
         assert_eq!(
             parse_single_instruction_kind("R -= 5"),
-            InstructionKind::AdjustRelativeBase(OperandKind::Immediate(-5)) // Check negation
+            NativeInstructionKind::AdjustRelativeBase(OperandKind::Immediate(-5)) // Check negation
         );
 
         // Test relative memory addressing
         assert_eq!(
             parse_single_instruction_kind("[0] = [R+5] + [R-3]"),
-            InstructionKind::Add(
+            NativeInstructionKind::Add(
                 OperandKind::RelativeMemory(5),
                 OperandKind::RelativeMemory(-3),
                 OperandKind::Memory(0)
@@ -819,15 +830,15 @@ mod tests {
         ";
 
         let expected = vec![
-            InstructionKind::Input(OperandKind::Memory(0)),
-            InstructionKind::Input(OperandKind::Memory(1)),
-            InstructionKind::Add(
+            NativeInstructionKind::Input(OperandKind::Memory(0)),
+            NativeInstructionKind::Input(OperandKind::Memory(1)),
+            NativeInstructionKind::Add(
                 OperandKind::Memory(0),
                 OperandKind::Memory(1),
                 OperandKind::Memory(2),
             ),
-            InstructionKind::Output(OperandKind::Memory(2)),
-            InstructionKind::Halt,
+            NativeInstructionKind::Output(OperandKind::Memory(2)),
+            NativeInstructionKind::Halt,
         ];
 
         assert_eq!(parse_test_program_kinds(program), expected);
@@ -853,26 +864,26 @@ mod tests {
         // loop: starts at offset 6
 
         let expected = vec![
-            InstructionKind::Input(OperandKind::Memory(0)), // 0
-            InstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(1)), // 2
-            InstructionKind::Mul(
+            NativeInstructionKind::Input(OperandKind::Memory(0)), // 0
+            NativeInstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(1)), // 2
+            NativeInstructionKind::Mul(
                 OperandKind::Memory(1),
                 OperandKind::Memory(0),
                 OperandKind::Memory(2),
             ), // 6 (loop)
-            InstructionKind::Output(OperandKind::Memory(2)), // 10
-            InstructionKind::Add(
+            NativeInstructionKind::Output(OperandKind::Memory(2)), // 10
+            NativeInstructionKind::Add(
                 OperandKind::Memory(1),
                 OperandKind::Immediate(1),
                 OperandKind::Memory(1),
             ), // 12
-            InstructionKind::LessThan(
+            NativeInstructionKind::LessThan(
                 OperandKind::Memory(1),
                 OperandKind::Immediate(5),
                 OperandKind::Memory(3),
             ), // 16
-            InstructionKind::JumpIfTrue(OperandKind::Memory(3), OperandKind::Immediate(6)), // 20 -> jumps to 6
-            InstructionKind::Halt,                                                          // 23
+            NativeInstructionKind::JumpIfTrue(OperandKind::Memory(3), OperandKind::Immediate(6)), // 20 -> jumps to 6
+            NativeInstructionKind::Halt, // 23
         ];
 
         assert_eq!(instructions, expected);
@@ -918,38 +929,38 @@ mod tests {
 
         // Check key instructions (addresses calculated based on sizes)
         let expected = vec![
-            InstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(0)), // 0
-            InstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(1)), // 4
-            InstructionKind::Assign(OperandKind::Memory(10), OperandKind::Immediate(10)), // 8
-            InstructionKind::LessThan(
+            NativeInstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(0)), // 0
+            NativeInstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(1)), // 4
+            NativeInstructionKind::Assign(OperandKind::Memory(10), OperandKind::Immediate(10)), // 8
+            NativeInstructionKind::LessThan(
                 OperandKind::Memory(1),
                 OperandKind::Memory(10),
                 OperandKind::Memory(2),
             ), // 12 (loop)
-            InstructionKind::Equals(
+            NativeInstructionKind::Equals(
                 OperandKind::Memory(1),
                 OperandKind::Memory(10),
                 OperandKind::Memory(3),
             ), // 16
-            InstructionKind::Add(
+            NativeInstructionKind::Add(
                 OperandKind::Memory(2),
                 OperandKind::Memory(3),
                 OperandKind::Memory(4),
             ), // 20
-            InstructionKind::JumpIfFalse(OperandKind::Memory(4), OperandKind::Immediate(38)), // 24 -> jumps to done (38)
-            InstructionKind::Add(
+            NativeInstructionKind::JumpIfFalse(OperandKind::Memory(4), OperandKind::Immediate(38)), // 24 -> jumps to done (38)
+            NativeInstructionKind::Add(
                 OperandKind::Memory(0),
                 OperandKind::Memory(1),
                 OperandKind::Memory(0),
             ), // 27
-            InstructionKind::Add(
+            NativeInstructionKind::Add(
                 OperandKind::Memory(1),
                 OperandKind::Immediate(1),
                 OperandKind::Memory(1),
             ), // 31
-            InstructionKind::Goto(OperandKind::Immediate(12)), // 35 -> jumps to loop (12)
-            InstructionKind::Output(OperandKind::Memory(0)),   // 38 (done)
-            InstructionKind::Halt,                             // 40
+            NativeInstructionKind::Goto(OperandKind::Immediate(12)), // 35 -> jumps to loop (12)
+            NativeInstructionKind::Output(OperandKind::Memory(0)),   // 38 (done)
+            NativeInstructionKind::Halt,                             // 40
         ];
 
         assert_eq!(instructions, expected);
@@ -982,7 +993,7 @@ mod tests {
         ";
         let instructions = parse_test_program_kinds(program);
         assert_eq!(instructions.len(), 16);
-        assert_eq!(instructions.last().unwrap(), &InstructionKind::Halt);
+        assert_eq!(instructions.last().unwrap(), &NativeInstructionKind::Halt);
     }
 
     #[test]
@@ -1004,14 +1015,14 @@ mod tests {
         ";
 
         let expected = vec![
-            InstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(5)),
-            InstructionKind::Add(
+            NativeInstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(5)),
+            NativeInstructionKind::Add(
                 OperandKind::Memory(0),
                 OperandKind::Immediate(7),
                 OperandKind::Memory(0),
             ),
-            InstructionKind::Output(OperandKind::Memory(0)),
-            InstructionKind::Halt,
+            NativeInstructionKind::Output(OperandKind::Memory(0)),
+            NativeInstructionKind::Halt,
         ];
 
         assert_eq!(parse_test_program_kinds(program), expected);
@@ -1046,27 +1057,27 @@ mod tests {
         let ops = parse_test_program_kinds(program);
 
         let expected = vec![
-            InstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(1)), // 0
-            InstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(2)), // 4
-            InstructionKind::Goto(OperandKind::Immediate(26)),                          // 8
-            InstructionKind::Add(
+            NativeInstructionKind::Assign(OperandKind::Memory(0), OperandKind::Immediate(1)), // 0
+            NativeInstructionKind::Assign(OperandKind::Memory(1), OperandKind::Immediate(2)), // 4
+            NativeInstructionKind::Goto(OperandKind::Immediate(26)),                          // 8
+            NativeInstructionKind::Add(
                 OperandKind::Immediate(11),
                 OperandKind::Immediate(10),
                 OperandKind::Memory(2),
             ), // 11 (loop)
-            InstructionKind::LessThan(
+            NativeInstructionKind::LessThan(
                 OperandKind::Immediate(5),
                 OperandKind::Immediate(26),
                 OperandKind::Memory(3),
             ), // 15
-            InstructionKind::Add(
+            NativeInstructionKind::Add(
                 OperandKind::Immediate(100),
                 OperandKind::Immediate(200),
                 OperandKind::Memory(4),
             ), // 19
-            InstructionKind::Goto(OperandKind::Immediate(11)),                          // 23
-            InstructionKind::Output(OperandKind::Memory(0)),                            // 26 (done)
-            InstructionKind::Halt,                                                      // 28
+            NativeInstructionKind::Goto(OperandKind::Immediate(11)),                          // 23
+            NativeInstructionKind::Output(OperandKind::Memory(0)), // 26 (done)
+            NativeInstructionKind::Halt,                           // 28
         ];
 
         assert_eq!(ops, expected);
@@ -1086,7 +1097,7 @@ mod tests {
         let instructions = instructions.into_iter().map(|(_, inst)| inst).collect_vec();
 
         // Check first instruction: 'x [0] = 0 + 0 -> Assign([0], 0) -> Add(0, 0, [0])
-        if let InstructionKind::Assign(target, source) = &instructions[0].kind {
+        if let NativeInstructionKind::Assign(target, source) = &instructions[0].kind {
             assert_eq!(source.debug_marker, None); // Source 0 (arg 0)
             assert_eq!(target.debug_marker, Some('x')); // Target [0] (arg 2)
         } else {
@@ -1094,7 +1105,7 @@ mod tests {
         }
 
         // Check second instruction: [1] = 'y 10 + 0 -> Assign([1], 'y 10) -> Add('y 10, 0, [1])
-        if let InstructionKind::Assign(target, source) = &instructions[1].kind {
+        if let NativeInstructionKind::Assign(target, source) = &instructions[1].kind {
             assert_eq!(source.debug_marker, Some('y')); // Source 'y 10 (arg 0)
             assert_eq!(target.debug_marker, None); // Target [1] (arg 2)
         } else {
@@ -1102,7 +1113,7 @@ mod tests {
         }
 
         // Check third instruction: [2] = 0 + 'z 5
-        if let InstructionKind::Assign(arg0, arg1) = &instructions[2].kind {
+        if let NativeInstructionKind::Assign(arg0, arg1) = &instructions[2].kind {
             assert_eq!(arg0.debug_marker, None);
             assert_eq!(arg1.debug_marker, Some('z'));
         } else {
@@ -1111,7 +1122,7 @@ mod tests {
 
         // Next assign [3]=*ptr starts at 16. The *ptr operand is at 16+0+1=17 (using underlying Add indices).
         // So 'a ptr = 350' -> Assign(Mem(13), Imm(350)) -> Target Mem(17) gets marker 'a'.
-        if let InstructionKind::Assign(target, source) = &instructions[3].kind {
+        if let NativeInstructionKind::Assign(target, source) = &instructions[3].kind {
             assert!(
                 matches!(target.kind, OperandKind::Pointer(17)),
                 "Expected target to be Pointer(17), got {:?}",
@@ -1128,7 +1139,7 @@ mod tests {
         }
 
         // Check fifth instruction: [3] = 'b *ptr -> Assign([3], 'b Mem(0)) -> Add('b Mem(0), 0, [3])
-        if let InstructionKind::Assign(target, source) = &instructions[4].kind {
+        if let NativeInstructionKind::Assign(target, source) = &instructions[4].kind {
             assert_eq!(source.debug_marker, Some('b')); // Source '*ptr' (arg 0) has marker 'b'
             assert!(
                 matches!(source.kind, OperandKind::Memory(0)),
@@ -1164,7 +1175,7 @@ mod tests {
     #[test]
     fn test_data_instruction() {
         let program = "DATA 10, 20, -30";
-        let expected = InstructionKind::Data(vec![10, 20, -30]);
+        let expected = NativeInstructionKind::Data(vec![10, 20, -30]);
         assert_eq!(parse_single_instruction_kind(program), expected);
     }
 
@@ -1185,16 +1196,16 @@ mod tests {
         let instructions = parse_test_program_kinds(program);
 
         let expected = vec![
-            InstructionKind::Add(
+            NativeInstructionKind::Add(
                 OperandKind::Immediate(1),
                 OperandKind::Immediate(2),
                 OperandKind::Memory(0),
             ), // Offset 0
-            InstructionKind::Goto(OperandKind::Immediate(8)), // Offset 4
-            InstructionKind::Halt,                            // Offset 7 (unreachable)
-            InstructionKind::Data(vec![100, 200, 300]),       // Offset 8
-            InstructionKind::Output(OperandKind::Memory(0)),  // Offset 11
-            InstructionKind::Halt,                            // Offset 13
+            NativeInstructionKind::Goto(OperandKind::Immediate(8)), // Offset 4
+            NativeInstructionKind::Halt,                            // Offset 7 (unreachable)
+            NativeInstructionKind::Data(vec![100, 200, 300]),       // Offset 8
+            NativeInstructionKind::Output(OperandKind::Memory(0)),  // Offset 11
+            NativeInstructionKind::Halt,                            // Offset 13
         ];
 
         assert_eq!(instructions, expected);
@@ -1243,7 +1254,10 @@ mod tests {
         ";
         let instructions = parse_test_program_kinds(program);
         assert_eq!(instructions.len(), 2);
-        assert!(matches!(instructions[0], InstructionKind::Add(_, _, _)));
-        assert!(matches!(instructions[1], InstructionKind::Halt));
+        assert!(matches!(
+            instructions[0],
+            NativeInstructionKind::Add(_, _, _)
+        ));
+        assert!(matches!(instructions[1], NativeInstructionKind::Halt));
     }
 }

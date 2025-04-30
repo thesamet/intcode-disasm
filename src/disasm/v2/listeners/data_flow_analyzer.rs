@@ -11,7 +11,7 @@ use crate::disasm::v2::data_flow::CallSiteInfo;
 use crate::disasm::v2::data_flow::OriginationPoint;
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
-use crate::disasm::v2::instructions::{Operand, OperandKind};
+use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::{
     control_flow::NextKind,
@@ -461,7 +461,7 @@ mod tests {
             data_flow::OriginationPoint,
             dispatching::EventPublisher,
             events::Event,
-            instructions::{InstructionId, OperandKind},
+            native::{InstructionId, OperandKind},
             listeners::{
                 control_flow_graph_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
             },

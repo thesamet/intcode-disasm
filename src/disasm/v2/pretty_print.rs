@@ -3,8 +3,8 @@ use itertools::Itertools;
 
 use super::{
     control_flow::PredecessorKind,
-    instructions::{GenericInstruction, InstructionKind},
     model::ProgramModel,
+    native::{GenericNativeInstruction, NativeInstructionKind},
     // Import SsaOperand and related types
     ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind},
 };
@@ -139,10 +139,10 @@ impl<'a> PrettyPrinter<'a> {
     }
 
     // Update to take GenericInstruction<SsaOperand>
-    fn format_instruction(&self, instr: &GenericInstruction<SsaOperand>) -> String {
+    fn format_instruction(&self, instr: &GenericNativeInstruction<SsaOperand>) -> String {
         // Use format_ssa_operand for all operands
         match &instr.kind {
-            InstructionKind::Add(a, b, c) => {
+            NativeInstructionKind::Add(a, b, c) => {
                 format!(
                     "{} = {} + {}",
                     self.format_ssa_operand(c),
@@ -150,7 +150,7 @@ impl<'a> PrettyPrinter<'a> {
                     self.format_ssa_operand(b)
                 )
             }
-            InstructionKind::Mul(a, b, c) => {
+            NativeInstructionKind::Mul(a, b, c) => {
                 format!(
                     "{} = {} * {}",
                     self.format_ssa_operand(c),
@@ -158,27 +158,27 @@ impl<'a> PrettyPrinter<'a> {
                     self.format_ssa_operand(b)
                 )
             }
-            InstructionKind::Input(a) => {
+            NativeInstructionKind::Input(a) => {
                 format!("{} = input()", self.format_ssa_operand(a))
             }
-            InstructionKind::Output(a) => {
+            NativeInstructionKind::Output(a) => {
                 format!("output({})", self.format_ssa_operand(a))
             }
-            InstructionKind::JumpIfTrue(cond, target) => {
+            NativeInstructionKind::JumpIfTrue(cond, target) => {
                 format!(
                     "if {} goto {}",
                     self.format_ssa_operand(cond),
                     self.format_ssa_operand(target)
                 )
             }
-            InstructionKind::JumpIfFalse(cond, target) => {
+            NativeInstructionKind::JumpIfFalse(cond, target) => {
                 format!(
                     "if !{} goto {}",
                     self.format_ssa_operand(cond),
                     self.format_ssa_operand(target)
                 )
             }
-            InstructionKind::LessThan(a, b, c) => {
+            NativeInstructionKind::LessThan(a, b, c) => {
                 format!(
                     "{} = {} < {}",
                     self.format_ssa_operand(c),
@@ -186,7 +186,7 @@ impl<'a> PrettyPrinter<'a> {
                     self.format_ssa_operand(b)
                 )
             }
-            InstructionKind::Equals(a, b, c) => {
+            NativeInstructionKind::Equals(a, b, c) => {
                 format!(
                     "{} = {} == {}",
                     self.format_ssa_operand(c),
@@ -194,20 +194,20 @@ impl<'a> PrettyPrinter<'a> {
                     self.format_ssa_operand(b)
                 )
             }
-            InstructionKind::AdjustRelativeBase(a) => {
+            NativeInstructionKind::AdjustRelativeBase(a) => {
                 format!("R += {}", self.format_ssa_operand(a))
             }
-            InstructionKind::Halt => "halt".red().to_string(),
-            InstructionKind::Data(values) => {
+            NativeInstructionKind::Halt => "halt".red().to_string(),
+            NativeInstructionKind::Data(values) => {
                 format!(
                     "DATA {}",
                     values.iter().map(|v| v.to_string().green()).join(", ")
                 )
             }
-            InstructionKind::Goto(target) => {
+            NativeInstructionKind::Goto(target) => {
                 format!("goto {}", self.format_ssa_operand(target))
             }
-            InstructionKind::Assign(target, source) => {
+            NativeInstructionKind::Assign(target, source) => {
                 format!(
                     "{} = {}",
                     self.format_ssa_operand(target),
@@ -237,7 +237,7 @@ impl<'a> PrettyPrinter<'a> {
         for instr in &block.instructions {
             if self.show_vars {
                 match instr.kind {
-                    InstructionKind::Assign(a, b) => {
+                    NativeInstructionKind::Assign(a, b) => {
                         // skip a == b where a and b are the same variable
                         if let (Some(a), Some(b)) = (a.as_variable(), b.as_variable()) {
                             let var_to_cluster = &self
@@ -252,7 +252,7 @@ impl<'a> PrettyPrinter<'a> {
                             }
                         }
                     }
-                    InstructionKind::AdjustRelativeBase(_) => {
+                    NativeInstructionKind::AdjustRelativeBase(_) => {
                         continue;
                     }
                     _ => {}
@@ -280,15 +280,17 @@ impl<'a> PrettyPrinter<'a> {
         let sig = if let Some((args, rets)) = args_rets {
             let mut args = args.iter().map(|(_, v, _)| {
                 self.format_ssa_operand(&SsaOperand {
-                        kind: SsaOperandKind::Variable(*v),
-                        origin_info: v.origin_info,
-                    }).to_string()
+                    kind: SsaOperandKind::Variable(*v),
+                    origin_info: v.origin_info,
+                })
+                .to_string()
             });
             let mut rets = rets.iter().map(|(_, v, _)| {
                 self.format_ssa_operand(&SsaOperand {
-                        kind: SsaOperandKind::Variable(*v),
-                        origin_info: v.origin_info,
-                    }).to_string()
+                    kind: SsaOperandKind::Variable(*v),
+                    origin_info: v.origin_info,
+                })
+                .to_string()
             });
             format!(
                 "({}) -> {}",

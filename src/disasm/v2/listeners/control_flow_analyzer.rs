@@ -13,7 +13,7 @@ use crate::disasm::hlr::ast::{
     HlrVariable, Scope,
 };
 use crate::disasm::v2::events::ModelEventListener;
-use crate::disasm::v2::instructions::InstructionKind;
+use crate::disasm::v2::native::NativeInstructionKind;
 use crate::disasm::v2::ssa_form::{SsaBlock, SsaOperand, SsaOperandKind, SsaVar, SsaVarKind};
 use crate::disasm::v2::type_inference::types::Type;
 use crate::disasm::v2::{
@@ -569,7 +569,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
 
         for instr in &block.instructions {
             let stmt = match &instr.kind {
-                InstructionKind::Add(a, b, c) => {
+                NativeInstructionKind::Add(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
                         Error::AnalysisFailure("Add instruction expects variable target".to_string())
                     })?;
@@ -582,7 +582,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         },
                     )
                 }
-                InstructionKind::Mul(a, b, c) => {
+                NativeInstructionKind::Mul(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
                         Error::AnalysisFailure("Mul instruction expects variable target".to_string())
                     })?;
@@ -593,14 +593,14 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         result_type: self.var_type(result_var), // Use var_type of the result var
                     })
                 }
-                InstructionKind::Input(a) => {
+                NativeInstructionKind::Input(a) => {
                     let result_var = a.as_variable().ok_or_else(|| {
                         Error::AnalysisFailure("Input instruction expects variable target".to_string())
                     })?;
                     self.assign_or_def(context, result_var, HlrExpression::Input())
                 }
-                InstructionKind::Output(a) => HlrStatement::Output(self.op_expr(a)),
-                InstructionKind::LessThan(a, b, c) => {
+                NativeInstructionKind::Output(a) => HlrStatement::Output(self.op_expr(a)),
+                NativeInstructionKind::LessThan(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| Error::AnalysisFailure(
                         "LessThan instruction expects variable target".to_string(),
                     ))?;
@@ -611,7 +611,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         result_type: Type::Bool, // Comparison result is Bool
                     })
                 }
-                InstructionKind::Equals(a, b, c) => {
+                NativeInstructionKind::Equals(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {
                         Error::AnalysisFailure("Equals instruction expects variable target".to_string())
                     })?;
@@ -622,7 +622,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         result_type: Type::Bool, // Comparison result is Bool
                     })
                 }
-                InstructionKind::Assign(dst, src) => {
+                NativeInstructionKind::Assign(dst, src) => {
                     let src = self.op_expr(src);
                     match dst.kind {
                         SsaOperandKind::Deref(var) =>
@@ -650,16 +650,16 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         }
                     }
                 },
-                InstructionKind::Data(_) => {
+                NativeInstructionKind::Data(_) => {
                    // Data instructions are not executable code, skip.
                    continue;
                 }
                  // Control flow instructions are handled by the block's `next` field analysis, skip here.
-                InstructionKind::JumpIfTrue(_, _)
-                | InstructionKind::JumpIfFalse(_, _)
-                | InstructionKind::AdjustRelativeBase(_) // This might become an assignment, needs careful handling
-                | InstructionKind::Goto(_)
-                | InstructionKind::Halt => {
+                NativeInstructionKind::JumpIfTrue(_, _)
+                | NativeInstructionKind::JumpIfFalse(_, _)
+                | NativeInstructionKind::AdjustRelativeBase(_) // This might become an assignment, needs careful handling
+                | NativeInstructionKind::Goto(_)
+                | NativeInstructionKind::Halt => {
                     continue; // Handled by block terminators or structure analysis
                 }
             };

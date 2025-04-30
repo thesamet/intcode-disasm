@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::disasm::v2::{
-    instructions::InstructionId,
+    native::InstructionId,
     model::{BlockId, FunctionId},
 };
 

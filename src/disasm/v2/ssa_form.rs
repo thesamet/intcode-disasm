@@ -3,13 +3,13 @@ use std::convert::From;
 
 use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},
-    instructions::{Operand, OperandKind},
     model::{BlockId, FunctionId, ProgramModel},
+    native::{Operand, OperandKind},
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::{data_flow::OriginationPoint, instructions::GenericInstruction, model::Function};
+use super::{data_flow::OriginationPoint, model::Function, native::GenericNativeInstruction};
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -280,7 +280,7 @@ pub struct PhiFunction {
     pub inputs: HashMap<PredecessorKind<Operand>, SsaVar>,
 }
 
-pub type SsaInstruction = GenericInstruction<SsaOperand>;
+pub type SsaInstruction = GenericNativeInstruction<SsaOperand>;
 
 /// Represents a basic block in SSA form
 #[derive(Debug, Clone)]
@@ -882,8 +882,8 @@ mod tests {
     use super::*;
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v2::instructions::InstructionKind;
     use crate::disasm::v2::listeners::ssa_converter::SsaConverter;
+    use crate::disasm::v2::native::NativeInstructionKind;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     use crate::disasm::v2::{
         dispatching::EventPublisher,
@@ -1113,7 +1113,7 @@ mod tests {
             if block
                 .instructions
                 .iter()
-                .any(|instr| matches!(instr.kind, InstructionKind::Output(_)))
+                .any(|instr| matches!(instr.kind, NativeInstructionKind::Output(_)))
             {
                 merge_block_id = Some(*block_id);
                 break;
@@ -1134,10 +1134,10 @@ mod tests {
         let output_instr = merge_block
             .instructions
             .iter()
-            .find(|instr| matches!(instr.kind, InstructionKind::Output(_)))
+            .find(|instr| matches!(instr.kind, NativeInstructionKind::Output(_)))
             .expect("Should have an output instruction");
 
-        let output_ssa_operand = if let InstructionKind::Output(ssa_op) = &output_instr.kind {
+        let output_ssa_operand = if let NativeInstructionKind::Output(ssa_op) = &output_instr.kind {
             ssa_op
         } else {
             panic!("Expected Output instruction");
@@ -1215,7 +1215,7 @@ mod tests {
         for (block_id, block) in &ssa_function.blocks {
             if !block.instructions.is_empty() {
                 let first_instr = &block.instructions[0];
-                if matches!(first_instr.kind, InstructionKind::Output(_)) {
+                if matches!(first_instr.kind, NativeInstructionKind::Output(_)) {
                     println!("Found block with output: {}", block_id);
                     found_return_block = Some(block);
                     break;
@@ -1236,7 +1236,7 @@ mod tests {
 
         // Simply check that the conversion runs without errors. In the future, we may want to
         // enhance this test to verify other aspects of the conversion.
-        if let InstructionKind::Output(ssa_op) = &output_instr.kind {
+        if let NativeInstructionKind::Output(ssa_op) = &output_instr.kind {
             match ssa_op.as_variable() {
                 Some(var) => {
                     assert!(
@@ -1296,7 +1296,7 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                if let InstructionKind::Add(src1, _, dst) = &instr.kind {
+                if let NativeInstructionKind::Add(src1, _, dst) = &instr.kind {
                     // Check underlying operand kinds
                     src1.to_operand().kind.get_relative_memory() == Some(-4)
                         && dst.to_operand().kind.get_relative_memory() == Some(-4)
@@ -1306,7 +1306,7 @@ mod tests {
             })
             .expect("Should have found the addition instruction");
 
-        if let InstructionKind::Add(src1, _, dst) = &add_instr.kind {
+        if let NativeInstructionKind::Add(src1, _, dst) = &add_instr.kind {
             // Extract versions from SsaOperands
             let src1_var = src1.as_variable().expect("Add source1 should be Variable");
             let dst_var = dst

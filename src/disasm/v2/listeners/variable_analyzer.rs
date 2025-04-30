@@ -13,8 +13,8 @@ use crate::disasm::{
         dispatching::{EventCollector, EventListener},
         events::Event,
         id_types::define_id_type,
-        instructions::{GenericInstruction, InstructionKind},
         model::{BlockId, ProgramModel},
+        native::{GenericNativeInstruction, NativeInstructionKind},
         ssa_form::{SsaBlock, SsaOperand, SsaVar, SsaVarKind},
         type_inference::types::Type,
     },
@@ -162,17 +162,17 @@ impl<'a> VariableMerger<'a> {
     fn related_from_instruction<'b>(
         model: &ProgramModel,
         function_id: FunctionId,
-        instruction: &'b GenericInstruction<SsaOperand>,
+        instruction: &'b GenericNativeInstruction<SsaOperand>,
     ) -> Option<(&'b SsaVar, &'b SsaVar)> {
         match &instruction.kind {
-            InstructionKind::Add(a, b, c) => {
+            NativeInstructionKind::Add(a, b, c) => {
                 match (a.as_variable(), b.as_variable(), c.as_variable()) {
                     (Some(a), _, Some(c)) if Self::are_same_location(a, c) => Some((a, c)),
                     (_, Some(b), Some(c)) if Self::are_same_location(b, c) => Some((b, c)),
                     _ => None,
                 }
             }
-            InstructionKind::Mul(a, b, c) => {
+            NativeInstructionKind::Mul(a, b, c) => {
                 match (a.as_variable(), b.as_variable(), c.as_variable()) {
                     (Some(a), Some(b), Some(c))
                         if Self::are_same_location(a, c) && !Self::are_same_location(b, c) =>
@@ -187,7 +187,7 @@ impl<'a> VariableMerger<'a> {
                     _ => None,
                 }
             }
-            InstructionKind::Assign(a, b) => a
+            NativeInstructionKind::Assign(a, b) => a
                 .as_variable()
                 .zip(b.as_variable())
                 .filter(|(a, _)| a.get_relative_memory() != Some(0))
