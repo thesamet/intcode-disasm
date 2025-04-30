@@ -4,6 +4,7 @@ pub mod data_flow;
 pub mod dispatching;
 pub mod events;
 pub mod id_types;
+pub mod instructions;
 #[cfg(test)]
 mod integration_tests;
 pub mod listeners;
