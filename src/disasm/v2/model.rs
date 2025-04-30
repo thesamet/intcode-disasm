@@ -17,7 +17,7 @@ use crate::disasm::hlr::ast::HlrProgram;
 
 define_id_type!(FunctionId);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProgramModel {
     image: Vec<i128>,
 

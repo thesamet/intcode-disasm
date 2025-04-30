@@ -10,7 +10,7 @@ use crate::disasm::v2::{
     },
     instructions::{Addressable, Instruction, InstructionKind, LowExpr},
     model::{BlockId, FunctionId, ProgramModel},
-    native::{NativeInstruction, NativeInstructionKind, Operand},
+    native::{NativeInstruction, Operand},
     Span,
 };
 
@@ -168,6 +168,7 @@ impl ControlFlowGraphBuilder {
                 native_next: NextKind::Unknown,
                 predecessors: Vec::new(), // To be filled later
                 next: NextKind::Unknown,
+                data_flow: None,
             };
             model.add_block(block);
 

@@ -6,16 +6,16 @@ use log::debug;
 
 use crate::disasm::v2::control_flow::Block;
 use crate::disasm::v2::control_flow::FunctionCall;
-use crate::disasm::v2::data_flow::BlockDataFlow;
-use crate::disasm::v2::data_flow::CallSiteInfo;
-use crate::disasm::v2::data_flow::OriginationPoint;
+use crate::disasm::v2::data_flow::BlockNativeDataFlow;
+use crate::disasm::v2::data_flow::NativeCallSiteInfo;
+use crate::disasm::v2::data_flow::NativeOriginationPoint;
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::{
     control_flow::NextKind,
-    data_flow::{DataFlowResult, Definition},
+    data_flow::{DataFlowResult, NativeDefinition},
     events::{self, FunctionCfgBuilt, ModelEventListener},
     model::{BlockId, FunctionId, ProgramModel},
 };
@@ -184,8 +184,8 @@ impl DataFlowAnalyzer {
 
                 // Add GEN set
                 for (kind, (instruction_id, _)) in &block_flow.gen {
-                    current_defs_out.insert(Definition {
-                        source: OriginationPoint::Instruction(*instruction_id),
+                    current_defs_out.insert(NativeDefinition {
+                        source: NativeOriginationPoint::Instruction(*instruction_id),
                         kind: *kind,
                         block_id: *block_id,
                     });
@@ -211,7 +211,7 @@ impl DataFlowAnalyzer {
         function: &Function,
         block: &Block,
         df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
-    ) -> HashSet<Definition> {
+    ) -> HashSet<NativeDefinition> {
         let mut new_defs_in = HashSet::new();
 
         for pred_kind in &block.native_predecessors {
@@ -235,8 +235,8 @@ impl DataFlowAnalyzer {
                     dfr.use_before_def
                         .keys()
                         .filter(|k| k.is_negative_relative_memory())
-                        .map(|k| Definition {
-                            source: OriginationPoint::FunctionInput,
+                        .map(|k| NativeDefinition {
+                            source: NativeOriginationPoint::FunctionInput,
                             kind: *k,
                             block_id: block.id,
                         }),
@@ -298,7 +298,7 @@ impl DataFlowAnalyzer {
                     current_live_in
                         .entry(*k)
                         .or_insert_with(HashSet::new)
-                        .insert(OriginationPoint::Instruction(*v));
+                        .insert(NativeOriginationPoint::Instruction(*v));
                 }
 
                 // Update block's IN set if changed
@@ -320,7 +320,7 @@ impl DataFlowAnalyzer {
         function: &Function,
         block_id: BlockId,
         df_result: &DataFlowResult, // Read-only access for successor IN sets
-    ) -> HashMap<OperandKind, HashSet<OriginationPoint>> {
+    ) -> HashMap<OperandKind, HashSet<NativeOriginationPoint>> {
         let block = model.get_block(block_id);
         let mut new_live_out = HashMap::new();
 
@@ -345,7 +345,7 @@ impl DataFlowAnalyzer {
                     new_live_out
                         .entry(*gen)
                         .or_insert_with(HashSet::new)
-                        .insert(OriginationPoint::FunctionOutput);
+                        .insert(NativeOriginationPoint::FunctionOutput);
                 }
             }
         }
@@ -390,13 +390,13 @@ impl ModelEventListener for DataFlowAnalyzer {
         for block_id in &function.blocks {
             df_result_for_function
                 .block_results
-                .insert(*block_id, BlockDataFlow::new());
+                .insert(*block_id, BlockNativeDataFlow::new());
             if let NextKind::FunctionCall(_) = model.get_block(*block_id).native_next {
                 df_result_for_function
                     .block_results
                     .get_mut(block_id)
                     .unwrap()
-                    .call_site_info = Some(CallSiteInfo::new());
+                    .call_site_info = Some(NativeCallSiteInfo::new());
             }
         }
 
@@ -463,7 +463,7 @@ mod tests {
         parser,
         test_utils::init_logging,
         v2::{
-            data_flow::OriginationPoint,
+            data_flow::NativeOriginationPoint,
             dispatching::EventPublisher,
             events::Event,
             listeners::{
@@ -506,9 +506,9 @@ mod tests {
     }
 
     // Helper to create a Definition for assertions
-    fn def(instr_id: usize, location: OperandKind, block_id: usize) -> Definition {
-        Definition {
-            source: OriginationPoint::Instruction(NativeInstructionId::from(instr_id)),
+    fn def(instr_id: usize, location: OperandKind, block_id: usize) -> NativeDefinition {
+        NativeDefinition {
+            source: NativeOriginationPoint::Instruction(NativeInstructionId::from(instr_id)),
             kind: location,
             block_id: BlockId::from(block_id),
         }

@@ -1,6 +1,6 @@
 use crate::disasm::v2::{
     control_flow::NextKind,
-    data_flow::OriginationPoint,
+    data_flow::NativeOriginationPoint,
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
     model::{BlockId, FunctionId, ProgramModel},
@@ -178,7 +178,7 @@ impl FunctionCallAnalyzer {
                     if *offset < 0
                         && points
                             .iter()
-                            .any(|p| *p != OriginationPoint::FunctionOutput)
+                            .any(|p| *p != NativeOriginationPoint::FunctionOutput)
                     {
                         // Found a potential parameter offset `n`
                         // Now find the SsaVar with the lowest version for this kind in the function

@@ -9,7 +9,7 @@ use crate::disasm::v2::{
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::{data_flow::OriginationPoint, model::Function, native::GenericNativeInstruction};
+use super::{data_flow::NativeOriginationPoint, model::Function, native::GenericNativeInstruction};
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -519,7 +519,7 @@ impl<'a> SSAConversionState<'a> {
                     .unwrap()
                     .defs_in
                     .iter()
-                    .filter(|d| d.source == OriginationPoint::FunctionInput)
+                    .filter(|d| d.source == NativeOriginationPoint::FunctionInput)
                     .for_each({
                         |d| {
                             let kind = SsaVarKind::from_operand_kind(&d.kind).unwrap();
@@ -603,7 +603,7 @@ impl<'a> SSAConversionState<'a> {
             // Get the data flow result for this block
             let block_flow = data_flow.block_results.get(&block_id).unwrap();
             // Find all variable definitions reaching this block from any predecessor
-            let all_incoming_defs: HashMap<OperandKind, HashSet<OriginationPoint>> =
+            let all_incoming_defs: HashMap<OperandKind, HashSet<NativeOriginationPoint>> =
                 if block.native_predecessors.len() > 1 {
                     block_flow
                         .defs_in

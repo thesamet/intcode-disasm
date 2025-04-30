@@ -1,4 +1,5 @@
 use super::{
+    data_flow::BlockDataFlow,
     instructions::{Addressable, Instruction, LowExpr},
     model::{BlockId, FunctionId},
     native::{NativeInstruction, Operand},
@@ -191,7 +192,7 @@ impl<T> Condition<T> {
 }
 
 /// A block in the control flow graph
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Block {
     pub id: BlockId,
     // To which function does this block belong?
@@ -205,6 +206,9 @@ pub struct Block {
     pub native_predecessors: Vec<PredecessorKind<Operand>>,
     pub next: NextKind<LowExpr<Addressable>>,
     pub predecessors: Vec<PredecessorKind<LowExpr<Addressable>>>,
+
+    // Dataflow information (added by DataFlowAnalyzer)
+    pub data_flow: Option<BlockDataFlow>,
 }
 
 /// Information about a function call for control flow analysis.
