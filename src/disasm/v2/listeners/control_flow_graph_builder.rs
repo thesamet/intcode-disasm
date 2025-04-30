@@ -8,7 +8,7 @@ use crate::disasm::v2::{
         self, ControlFlowAnalysisPhaseComplete, FunctionCfgBuilt, ImageScannerComplete,
         ModelEventListener,
     },
-    instructions::Instruction,
+    instructions::{Addressable, Instruction, InstructionKind, LowExpr},
     model::{BlockId, FunctionId, ProgramModel},
     native::{NativeInstruction, NativeInstructionKind, Operand},
     Span,
@@ -165,7 +165,9 @@ impl ControlFlowGraphBuilder {
                 native_instructions: current_block_instructions.clone(),
                 low_instructions: Instruction::convert_block(current_block_instructions),
                 native_predecessors: Vec::new(), // To be filled later
-                native_next: NextKind::Unknown,  // To be filled now
+                native_next: NextKind::Unknown,
+                predecessors: Vec::new(), // To be filled later
+                next: NextKind::Unknown,
             };
             model.add_block(block);
 
@@ -177,7 +179,10 @@ impl ControlFlowGraphBuilder {
         }
 
         // --- Pass 2: Determine NextKind and Predecessors ---
-        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> = HashMap::new();
+        let mut native_predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> =
+            HashMap::new();
+        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<LowExpr<Addressable>>>> =
+            HashMap::new();
 
         for block_id in &function_block_ids {
             let block = model.get_block(*block_id); // immutable borrow
@@ -187,8 +192,29 @@ impl ControlFlowGraphBuilder {
                 .expect("Created blocks cannot be empty");
 
             // Determine next kind, passing the block_id for context
-            let next_kind =
-                determine_next_kind(*block_id, last_instr, block.span.end, recognized_func);
+            let native_next_kind =
+                determine_native_next_kind(*block_id, last_instr, block.span.end, recognized_func);
+
+            let next_kind = if block.low_instructions.is_empty() {
+                assert_eq!(
+                    BlockId::from(recognized_func.span.start),
+                    *block_id,
+                    "Only the entry block can be empty"
+                );
+                // It only had the SET R+=<Stack> command, so follower is block start+2.
+                let next_block = BlockId::from(recognized_func.span.start + 2);
+                assert!(model.has_block(next_block));
+                NextKind::Follows(next_block)
+            } else {
+                determine_next_kind(
+                    *block_id,
+                    block
+                        .low_instructions
+                        .last()
+                        .expect("Created blocks cannot be empty"),
+                    block.span.end,
+                )
+            };
 
             // Store predecessors temporarily, checking if target blocks exist
             match &next_kind {
@@ -220,11 +246,44 @@ impl ControlFlowGraphBuilder {
                 NextKind::Condition(cond) => {
                     assert!(model.has_block(cond.target_block));
                     assert!(model.has_block(cond.follows_block));
-                    predecessors_map
+                    predecessors_map.entry(cond.target_block);
+                }
+                NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
+            };
+            match &native_next_kind {
+                NextKind::Follows(target_id) => {
+                    assert!(model.has_block(*target_id));
+                    native_predecessors_map
+                        .entry(*target_id)
+                        .or_default()
+                        .push(PredecessorKind::FollowsFrom(*block_id));
+                }
+                NextKind::Goto(target_block_id) => {
+                    assert!(model.has_block(*target_block_id));
+                    native_predecessors_map
+                        .entry(*target_block_id)
+                        .or_default()
+                        .push(PredecessorKind::GotoFrom(*block_id));
+                }
+                NextKind::FunctionCall(call) => {
+                    assert!(
+                        model.has_block(call.return_block),
+                        "Return block {:?} does not exist",
+                        call.return_block
+                    );
+                    native_predecessors_map
+                        .entry(call.return_block)
+                        .or_default()
+                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
+                }
+                NextKind::Condition(cond) => {
+                    assert!(model.has_block(cond.target_block));
+                    assert!(model.has_block(cond.follows_block));
+                    native_predecessors_map
                         .entry(cond.target_block)
                         .or_default()
                         .push(PredecessorKind::ConditionalJump(cond.clone()));
-                    predecessors_map
+                    native_predecessors_map
                         .entry(cond.follows_block)
                         .or_default()
                         .push(PredecessorKind::ConditionalFollow(cond.clone()));
@@ -233,11 +292,15 @@ impl ControlFlowGraphBuilder {
             }
 
             // Update the block in the model (mutable borrow needed here)
-            model.get_block_mut(*block_id).native_next = next_kind;
+            model.get_block_mut(*block_id).native_next = native_next_kind;
+            model.get_block_mut(*block_id).next = next_kind;
         }
 
         // Apply predecessors
         for (block_id, preds) in predecessors_map {
+            model.get_block_mut(block_id).predecessors = preds;
+        }
+        for (block_id, preds) in native_predecessors_map {
             // block_id must exist since we created it and added it to function_block_ids
             model.get_block_mut(block_id).native_predecessors = preds;
         }
@@ -289,8 +352,35 @@ impl ModelEventListener for ControlFlowGraphBuilder {
     }
 }
 
-// Helper to determine NextKind based on the last instruction and context
 fn determine_next_kind(
+    block_id: BlockId,
+    last_instr: &Instruction<Addressable>,
+    block_end_addr: usize,
+) -> NextKind<LowExpr<Addressable>> {
+    match &last_instr.kind {
+        InstructionKind::Halt => NextKind::Halt,
+        InstructionKind::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
+        InstructionKind::Call { addr, return_to } => {
+            NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), return_to.clone()))
+        }
+        InstructionKind::Return => NextKind::Return,
+        InstructionKind::If {
+            cond,
+            then_addr,
+            else_addr,
+        } => NextKind::Condition(Condition {
+            from_block: block_id,
+            condition_operand: cond.clone(),
+            jump_if_true: true,
+            target_block: *then_addr,
+            follows_block: *else_addr,
+        }),
+        _ => NextKind::Follows(BlockId::from(block_end_addr)),
+    }
+}
+
+// Helper to determine NextKind based on the last instruction and context
+fn determine_native_next_kind(
     block_id: BlockId,
     last_instr: &NativeInstruction,
     block_end_addr: usize,

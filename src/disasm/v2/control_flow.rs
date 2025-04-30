@@ -1,5 +1,5 @@
 use super::{
-    instructions::{Addressable, Instruction},
+    instructions::{Addressable, Instruction, LowExpr},
     model::{BlockId, FunctionId},
     native::{NativeInstruction, Operand},
     Span,
@@ -9,7 +9,7 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NextKind<T>
 where
-    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+    T: Clone + PartialEq + Eq + std::hash::Hash,
 {
     // Block always falls through to the immediately following block
     Follows(BlockId),
@@ -72,7 +72,7 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PredecessorKind<T>
 where
-    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+    T: Clone + PartialEq + Eq + std::hash::Hash,
 {
     // Entered from the immediately preceding block
     FollowsFrom(BlockId),
@@ -136,7 +136,7 @@ impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> PredecessorKind<T> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionCall<T>
 where
-    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+    T: Clone + PartialEq + Eq + std::hash::Hash,
 {
     pub calling_block: BlockId,
     // The operand representing the function address (can be immediate or indirect)
@@ -144,7 +144,7 @@ where
     pub return_block: BlockId, // The block execution resumes at after the call
 }
 
-impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
+impl<T: Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
     pub fn new(calling_block: BlockId, function_addr: T, return_block: BlockId) -> Self {
         Self {
             calling_block,
@@ -159,7 +159,7 @@ impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
     {
         FunctionCall {
             calling_block: self.calling_block,
-            function_addr: map(self.function_addr),
+            function_addr: map(self.function_addr.clone()),
             return_block: self.return_block,
         }
     }
@@ -203,6 +203,8 @@ pub struct Block {
     // CFG Information (added by ControlFlowGraphBuilder)
     pub native_next: NextKind<Operand>,
     pub native_predecessors: Vec<PredecessorKind<Operand>>,
+    pub next: NextKind<LowExpr<Addressable>>,
+    pub predecessors: Vec<PredecessorKind<LowExpr<Addressable>>>,
 }
 
 /// Information about a function call for control flow analysis.

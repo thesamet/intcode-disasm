@@ -3,8 +3,8 @@ use crate::disasm::v2::{
     data_flow::OriginationPoint,
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
-    native::OperandKind,
     model::{BlockId, FunctionId, ProgramModel},
+    native::OperandKind,
     ssa_form::{SsaFunction, SsaOperand, SsaOperandKind, SsaResult, SsaVar},
 };
 use itertools::Itertools;

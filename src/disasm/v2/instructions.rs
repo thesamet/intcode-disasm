@@ -25,7 +25,7 @@ pub enum Addressable {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction<A> {
-    kind: InstructionKind<A>,
+    pub kind: InstructionKind<A>,
 }
 
 /// Represents different kinds of low-level instructions.
@@ -52,6 +52,7 @@ pub enum InstructionKind<A> {
     /// Calls a function. Does not contain information on arguments and return values.
     Call {
         addr: LowExpr<A>,
+        return_to: BlockId,
     },
     /// Outputs the result of an expression.
     Output(LowExpr<A>),
@@ -368,10 +369,8 @@ impl Instruction<Addressable> {
             )),
             NativeInstructionKind::Assign(target, src) => {
                 if Some(0) == target.kind.get_relative_memory() {
-                    assert_eq!(
-                        src.kind.get_immediate().map(|i| i as usize).unwrap(),
-                        native.span.end + 3
-                    );
+                    let return_to = src.kind.get_immediate().map(|i| i as usize).unwrap();
+                    assert_eq!(return_to, native.span.end + 3);
                     let Some(GenericNativeInstruction {
                         kind: NativeInstructionKind::Goto(func_addr),
                         ..
@@ -384,6 +383,7 @@ impl Instruction<Addressable> {
                         Some(Instruction {
                             kind: InstructionKind::Call {
                                 addr: func_addr.clone().into(),
+                                return_to: BlockId::from(return_to),
                             },
                         }),
                     );
