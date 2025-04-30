@@ -1,8 +1,9 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::atomic::AtomicUsize};
 
 use pretty_assertions::assert_matches;
 
 use super::{
+    id_types::define_id_type,
     model::BlockId,
     native::{
         GenericNativeInstruction, NativeInstruction, NativeInstructionKind, Operand, OperandKind,
@@ -23,8 +24,20 @@ pub enum Addressable {
     Pointer(usize),
 }
 
+define_id_type!(InstructionId);
+
+static INSTRUCTION_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+impl InstructionId {
+    pub fn fresh() -> Self {
+        let next = INSTRUCTION_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        InstructionId::new(next)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction<A> {
+    pub id: InstructionId,
     pub kind: InstructionKind<A>,
 }
 
@@ -344,6 +357,7 @@ impl Instruction<Addressable> {
                         return (
                             2,
                             Some(Instruction {
+                                id: InstructionId::fresh(),
                                 kind: InstructionKind::Return,
                             }),
                         );
@@ -385,6 +399,7 @@ impl Instruction<Addressable> {
                                 addr: func_addr.clone().into(),
                                 return_to: BlockId::from(return_to),
                             },
+                            id: InstructionId::fresh(),
                         }),
                     );
                 } else {
@@ -395,6 +410,12 @@ impl Instruction<Addressable> {
                 }
             }
         };
-        (1, Some(Instruction { kind }))
+        (
+            1,
+            Some(Instruction {
+                kind,
+                id: InstructionId::fresh(),
+            }),
+        )
     }
 }
