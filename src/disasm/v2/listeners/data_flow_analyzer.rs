@@ -12,8 +12,8 @@ use crate::disasm::v2::data_flow::{
 };
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
+use crate::disasm::v2::instructions::Addressable;
 use crate::disasm::v2::instructions::LowExpr;
-use crate::disasm::v2::instructions::{Addressable, InstructionId};
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::{
@@ -608,38 +608,6 @@ impl DataFlowAnalyzer {
         }
 
         new_live_out
-    }
-    /// Converts an operand kind to an addressable
-    fn convert_operand_kind_to_addressable(kind: &OperandKind) -> Addressable {
-        match kind {
-            OperandKind::Memory(addr) => Addressable::Memory(*addr),
-            OperandKind::RelativeMemory(offset) => Addressable::RelativeMemory(*offset),
-            OperandKind::Deref(addr) => Addressable::Deref(*addr),
-            OperandKind::Pointer(addr) => Addressable::Pointer(*addr),
-            OperandKind::Immediate(_) => panic!("Cannot convert immediate to addressable"),
-        }
-    }
-
-    /// Tries to convert an operand kind to an addressable, returning None for immediates
-    fn try_convert_operand_kind_to_addressable(kind: &OperandKind) -> Option<Addressable> {
-        match kind {
-            OperandKind::Memory(addr) => Some(Addressable::Memory(*addr)),
-            OperandKind::RelativeMemory(offset) => Some(Addressable::RelativeMemory(*offset)),
-            OperandKind::Deref(addr) => Some(Addressable::Deref(*addr)),
-            OperandKind::Pointer(addr) => Some(Addressable::Pointer(*addr)),
-            OperandKind::Immediate(_) => None,
-        }
-    }
-
-    /// Converts a function call with operands to a function call with addressables
-    fn convert_function_call_to_addressable(
-        call: &FunctionCall<Operand>,
-    ) -> FunctionCall<Addressable> {
-        FunctionCall {
-            calling_block: call.calling_block,
-            function_addr: Self::convert_operand_kind_to_addressable(&call.function_addr.kind),
-            return_block: call.return_block,
-        }
     }
 }
 
