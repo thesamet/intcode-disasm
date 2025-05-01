@@ -11,7 +11,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use super::{
-    data_flow::NativeOriginationPoint,
     instructions::{Addressable, Instruction, LowExpr, PointerId},
     model::Function,
     native::GenericNativeInstruction,
@@ -34,7 +33,7 @@ impl std::fmt::Display for VersionedAddressableKind {
                 write!(f, "[R+{}]", offset)
             }
             VersionedAddressableKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
-            VersionedAddressableKind::Pointer(addr) => write!(f, "p{}", addr),
+            VersionedAddressableKind::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
         }
     }
 }
@@ -377,14 +376,6 @@ impl fmt::Display for SsaOperand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhiFunction {
     /// The resulting SSA variable (must be a Variable)
-    pub native_result: SsaVar,
-    /// Map describing the sources for this Phi function's value.
-    /// The key is the PredecessorKind corresponding to the incoming edge.
-    /// The value is the SsaOperand representing the value coming from that source.
-    /// For FunctionReturn predecessors, the SsaOperand is typically the phi.result itself wrapped in SsaOperand::Variable.
-    pub native_inputs: HashMap<PredecessorKind<Operand>, SsaVar>,
-
-    /// The resulting SSA variable (must be a Variable)
     pub result: VersionedAddressable,
     /// Map describing the sources for this Phi function's value.
     /// The key is the PredecessorKind corresponding to the incoming edge.
@@ -415,9 +406,7 @@ pub struct SsaBlock {
     /// End state: the state of all versioned variables at the end of this block
     pub end_state: HashMap<VersionedAddressableKind, VersionedAddressable>, // Track only versioned variables
     /// Control flow information using SSA operands
-    pub native_next: NextKind<SsaOperand>,
-    pub next: NextKind<LowExpr<SsaAddressable>>,
-    pub native_predecessors: Vec<PredecessorKind<SsaOperand>>,
+    pub next: NextKind<SsaAddressable>,
     pub predecessors: Vec<PredecessorKind<SsaAddressable>>,
 }
 
@@ -559,10 +548,10 @@ impl<'a> SSAConversionState<'a> {
 
     fn create_ssa_next_kind(
         current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
-        original: &NextKind<LowExpr<Addressable>>,
+        original: &NextKind<Addressable>,
         function_id: FunctionId,
-    ) -> NextKind<LowExpr<SsaAddressable>> {
-        original.map(&mut |op| to_versioned_expression(current_versions, function_id, &op))
+    ) -> NextKind<SsaAddressable> {
+        original.map(&mut |op| to_versioned_addressable(current_versions, function_id, &op))
     }
 
     fn convert_function(&mut self, function_id: FunctionId) -> HashMap<BlockId, SsaBlock> {
@@ -678,8 +667,6 @@ impl<'a> SSAConversionState<'a> {
                 end_state,
                 next: NextKind::Halt,
                 predecessors: vec![],
-                native_next: NextKind::Halt,
-                native_predecessors: vec![],
                 native_start_state: HashMap::new(),
                 native_end_state: HashMap::new(),
             };
@@ -783,13 +770,7 @@ impl<'a> SSAConversionState<'a> {
                 let phi = PhiFunction {
                     result: phi_result,
                     // remove native_result later. Junk value.
-                    native_result: SsaVar {
-                        kind: SsaVarKind::Memory(0),
-                        origin_info: SsaOriginInfo::new(function_id, 0, None),
-                        version: 0,
-                    },
-                    inputs: HashMap::new(),        // Will be filled later
-                    native_inputs: HashMap::new(), // Will be filled later
+                    inputs: HashMap::new(), // Will be filled later
                 };
 
                 // Add the phi function to this block
@@ -824,7 +805,7 @@ impl<'a> SSAConversionState<'a> {
                 let live_in =
                     &self.model.get_data_flow_result().unwrap().block_results[block_id].live_in;
 
-                for pred in &control_block.native_predecessors {
+                for pred in &control_block.predecessors {
                     let pred_id = pred.source_block_id();
                     // Use the collected end_states map here
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().native_end_state;
@@ -908,26 +889,21 @@ impl<'a> SSAConversionState<'a> {
             let mut phi_functions = vec![];
             for phi in &ssa_block.phi_functions {
                 let mut phi_inputs = HashMap::new();
-                for pred in &block.native_predecessors {
+                for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && phi
-                            .native_result
-                            .get_relative_memory()
-                            .is_some_and(|x| x > 0)
+                        && phi.result.kind.get_relative_memory().is_some_and(|x| x > 0)
                     {
                         // For function returns, the phi result itself represents the value.
                         // Wrap the SsaVar result in SsaOperand::Variable.
-                        phi_inputs.insert(pred.clone(), phi.native_result);
-                    } else if let Some(pred_var) =
-                        pred_ssa_block.native_end_state.get(&phi.native_result.kind)
-                    {
+                        phi_inputs.insert(pred.clone(), phi.result.clone());
+                    } else if let Some(pred_var) = pred_ssa_block.end_state.get(&phi.result.kind) {
                         phi_inputs.insert(pred.clone(), *pred_var);
                     }
                 }
                 let mut phi = phi.clone();
-                phi.native_inputs = phi_inputs;
+                phi.inputs = phi_inputs;
                 phi_functions.push(phi);
             }
             /*
@@ -962,20 +938,20 @@ impl<'a> SSAConversionState<'a> {
             ssa_block.phi_functions = phi_functions;
             ssa_block.next =
                 Self::create_ssa_next_kind(&ssa_block.end_state, &block.next, function.function_id);
-            let next = ssa_block.native_next.clone();
+            let next = ssa_block.next.clone();
             match next {
                 NextKind::Follows(target_id) => {
                     ssa_blocks
                         .get_mut(&target_id)
                         .unwrap()
-                        .native_predecessors
+                        .predecessors
                         .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
                     ssa_blocks
                         .get_mut(&target_block_id)
                         .unwrap()
-                        .native_predecessors
+                        .predecessors
                         .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
                 }
                 NextKind::FunctionCall(call) => {
@@ -984,7 +960,7 @@ impl<'a> SSAConversionState<'a> {
                     ssa_blocks
                         .get_mut(&call.return_block)
                         .unwrap()
-                        .native_predecessors
+                        .predecessors
                         .push(PredecessorKind::FunctionCallReturns(call));
                 }
                 NextKind::Condition(cond) => {
@@ -992,12 +968,12 @@ impl<'a> SSAConversionState<'a> {
                     ssa_blocks
                         .get_mut(&cond.target_block)
                         .unwrap()
-                        .native_predecessors
+                        .predecessors
                         .push(PredecessorKind::ConditionalJump(cond.clone()));
                     ssa_blocks
                         .get_mut(&cond.follows_block)
                         .unwrap()
-                        .native_predecessors
+                        .predecessors
                         .push(PredecessorKind::ConditionalFollow(cond));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
@@ -1516,7 +1492,9 @@ mod tests {
 
                     // Check for marker 'b' in the target
                     if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('b', _)) = find_debug_marker_in_expr(src) {
+                        if let Some(LowExpr::DebugMarker('b', _)) =
+                            find_first_debug_marker_in_expr(src)
+                        {
                             assert_eq!(versioned.kind, VersionedAddressableKind::RelativeMemory(2));
                             assert_eq!(versioned.version, 1);
                             found_b = true;
@@ -1525,7 +1503,9 @@ mod tests {
 
                     // Check for marker 'c' in the target
                     if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('c', _)) = find_debug_marker_in_expr(src) {
+                        if let Some(LowExpr::DebugMarker('c', _)) =
+                            find_first_debug_marker_in_expr(src)
+                        {
                             assert_eq!(versioned.kind, VersionedAddressableKind::RelativeMemory(2));
                             assert_eq!(versioned.version, 2);
                             found_c = true;
@@ -1540,14 +1520,30 @@ mod tests {
         assert!(found_c, "Marker 'c' not found");
     }
 
+    fn find_debug_marker_in_expr(
+        expr: &LowExpr<SsaAddressable>,
+        marker: char,
+    ) -> Option<VersionedAddressable> {
+        match expr {
+            LowExpr::DebugMarker(c, e) if *c == marker => match **e {
+                LowExpr::Addressable(SsaAddressable::Versioned(versioned)) => Some(versioned),
+                _ => None,
+            },
+            LowExpr::DebugMarker(_, e) => find_debug_marker_in_expr(e, marker),
+            LowExpr::BinaryOp { lhs, rhs, .. } => find_debug_marker_in_expr(lhs, marker)
+                .or_else(|| find_debug_marker_in_expr(rhs, marker)),
+            LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg, marker),
+            _ => None,
+        }
+    }
+
     // Helper function to find debug markers in expressions
-    fn find_debug_marker_in_expr<A>(expr: &LowExpr<A>) -> Option<&LowExpr<A>> {
+    fn find_first_debug_marker_in_expr<A>(expr: &LowExpr<A>) -> Option<&LowExpr<A>> {
         match expr {
             LowExpr::DebugMarker(_, _) => Some(expr),
-            LowExpr::BinaryOp { lhs, rhs, .. } => {
-                find_debug_marker_in_expr(lhs).or_else(|| find_debug_marker_in_expr(rhs))
-            }
-            LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg),
+            LowExpr::BinaryOp { lhs, rhs, .. } => find_first_debug_marker_in_expr(lhs)
+                .or_else(|| find_first_debug_marker_in_expr(rhs)),
+            LowExpr::UnaryOp { arg, .. } => find_first_debug_marker_in_expr(arg),
             _ => None,
         }
     }
@@ -1580,7 +1576,8 @@ mod tests {
             for instr in &block.instructions {
                 if let InstructionKind::Assign { src, target } = &instr.kind {
                     // Check for marker 'a' in the target (ptr = ptr + [R+2])
-                    if let Some(LowExpr::DebugMarker('a', _)) = find_debug_marker_in_expr(src) {
+                    if let Some(LowExpr::DebugMarker('a', _)) = find_first_debug_marker_in_expr(src)
+                    {
                         if let SsaAddressable::Versioned(versioned) = target {
                             assert_eq!(
                                 versioned.kind,
@@ -1592,7 +1589,8 @@ mod tests {
                     }
 
                     // Check for marker 'b' in the target (ptr = ptr + [R+3])
-                    if let Some(LowExpr::DebugMarker('b', _)) = find_debug_marker_in_expr(src) {
+                    if let Some(LowExpr::DebugMarker('b', _)) = find_first_debug_marker_in_expr(src)
+                    {
                         if let SsaAddressable::Versioned(versioned) = target {
                             assert_eq!(
                                 versioned.kind,
@@ -1604,7 +1602,9 @@ mod tests {
                     }
 
                     // Check for marker 'c' in the source ([R+1] = 'c *ptr)
-                    if let Some(LowExpr::DebugMarker('c', expr)) = find_debug_marker_in_expr(src) {
+                    if let Some(LowExpr::DebugMarker('c', expr)) =
+                        find_first_debug_marker_in_expr(src)
+                    {
                         if let LowExpr::Addressable(SsaAddressable::Deref(deref_expr)) = &**expr {
                             if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
                                 &**deref_expr
@@ -1642,7 +1642,7 @@ mod tests {
     // Helper function to find debug markers in target addressables
     fn find_debug_marker_in_target(target: &SsaAddressable) -> Option<&LowExpr<SsaAddressable>> {
         match target {
-            SsaAddressable::Deref(expr) => find_debug_marker_in_expr(expr),
+            SsaAddressable::Deref(expr) => find_first_debug_marker_in_expr(expr),
             _ => None,
         }
     }
@@ -1670,7 +1670,9 @@ mod tests {
                 if let InstructionKind::Assign { src, target } = &instr.kind {
                     // Check for marker 'a' in the target (ptr = [R-2])
                     if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('a', _)) = find_debug_marker_in_expr(src) {
+                        if let Some(LowExpr::DebugMarker('a', _)) =
+                            find_first_debug_marker_in_expr(src)
+                        {
                             assert_eq!(
                                 versioned.kind,
                                 VersionedAddressableKind::Pointer(PointerId::from(9))
@@ -1682,7 +1684,9 @@ mod tests {
 
                     // Check for marker 'b' in the target (*ptr = 1)
                     if let SsaAddressable::Deref(deref_expr) = target {
-                        if let Some(LowExpr::DebugMarker('b', _)) = find_debug_marker_in_expr(src) {
+                        if let Some(LowExpr::DebugMarker('b', _)) =
+                            find_first_debug_marker_in_expr(src)
+                        {
                             if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
                                 &**deref_expr
                             {
@@ -1741,7 +1745,9 @@ mod tests {
                 // Check for marker 'b' in assignment target
                 if let InstructionKind::Assign { target, src } = &instr.kind {
                     if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('b', _)) = find_debug_marker_in_expr(src) {
+                        if let Some(LowExpr::DebugMarker('b', _)) =
+                            find_first_debug_marker_in_expr(src)
+                        {
                             assert_eq!(
                                 versioned.kind,
                                 VersionedAddressableKind::RelativeMemory(-1)
@@ -1803,7 +1809,7 @@ mod tests {
                         if let SsaAddressable::Versioned(versioned) = target {
                             // Check for markers in source
                             if let Some(LowExpr::DebugMarker(marker, _)) =
-                                find_debug_marker_in_expr(src)
+                                find_first_debug_marker_in_expr(src)
                             {
                                 markers.insert(*marker, (versioned.kind, versioned.version));
                             }
@@ -2026,7 +2032,7 @@ exit:
                     InstructionKind::Assign { target, src } => {
                         // Check for markers in source
                         if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_debug_marker_in_expr(src)
+                            find_first_debug_marker_in_expr(src)
                         {
                             if let SsaAddressable::Versioned(versioned) = target {
                                 markers.insert(*marker, (versioned.kind, versioned.version));
@@ -2088,7 +2094,7 @@ exit:
                     InstructionKind::Assign { target, src } => {
                         // Check for markers in source
                         if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_debug_marker_in_expr(src)
+                            find_first_debug_marker_in_expr(src)
                         {
                             if let SsaAddressable::Versioned(versioned) = target {
                                 markers.insert(*marker, (versioned.kind, versioned.version));
@@ -2158,7 +2164,7 @@ exit:
                     InstructionKind::Assign { target, src } => {
                         // Check for markers in source or target
                         if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_debug_marker_in_expr(src)
+                            find_first_debug_marker_in_expr(src)
                         {
                             if let SsaAddressable::Versioned(versioned) = target {
                                 markers.insert(*marker, (versioned.kind, versioned.version));
@@ -2231,7 +2237,7 @@ exit:
                     InstructionKind::Assign { target, src } => {
                         // Check for markers in source
                         if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_debug_marker_in_expr(src)
+                            find_first_debug_marker_in_expr(src)
                         {
                             if let SsaAddressable::Versioned(versioned) = target {
                                 markers.insert(*marker, (versioned.kind, versioned.version));

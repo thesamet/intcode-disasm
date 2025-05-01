@@ -108,13 +108,13 @@ pub struct BlockDataFlow {
     // Function calls for which their return values reach the entry point of this block. This means that this block
     // is either a function return block, or has a predecessor that calls a function and no code in between writes
     // to positive r values.
-    pub function_returns_in: HashSet<FunctionCall<LowExpr<Addressable>>>,
+    pub function_returns_in: HashSet<FunctionCall<Addressable>>,
 
     // Function call returns that might reach the exit point of this block.
     // This reset to an empty set if the function writes to any positive relative offsets.
     // The value is not affected if this block calls a function - it is added to the function's return block
     // function_returns_in
-    pub function_returns_out: HashSet<FunctionCall<LowExpr<Addressable>>>,
+    pub function_returns_out: HashSet<FunctionCall<Addressable>>,
 
     // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
     pub call_site_info: Option<CallSiteInfo>,
@@ -150,17 +150,6 @@ pub struct BlockNativeDataFlow {
 
     // Instructions in this block that write to [R+n] and thus invalidate all incoming function return values.
     pub writes_above_r: bool,
-
-    // Function calls for which their return values reach the entry point of this block. This means that this block
-    // is either a function return block, or has a predecessor that calls a function and no code in between writes
-    // to positive r values.
-    pub function_returns_in: HashSet<FunctionCall<Operand>>,
-
-    // Function call returns that might reach the exit point of this block.
-    // This reset to an empty set if the function writes to any positive relative offsets.
-    // The value is not affected if this block calls a function - it is added to the function's return block
-    // function_returns_in
-    pub function_returns_out: HashSet<FunctionCall<Operand>>,
 
     // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
     pub call_site_info: Option<NativeCallSiteInfo>,

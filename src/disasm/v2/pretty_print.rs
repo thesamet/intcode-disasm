@@ -5,9 +5,8 @@ use super::{
     control_flow::PredecessorKind,
     instructions::{Instruction, InstructionKind, LowExpr},
     model::ProgramModel,
-    native::{GenericNativeInstruction, NativeInstructionKind},
     ssa_form::{
-        PhiFunction, SsaAddressable, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind,
+        PhiFunction, SsaAddressable, SsaBlock, SsaFunction, SsaOperandKind, SsaVarKind,
         VersionedAddressable,
     },
 };
@@ -33,7 +32,7 @@ impl<'a> PrettyPrinter<'a> {
             LowExpr::Input() => "input()".to_string(),
             LowExpr::DebugMarker(marker, expr) => {
                 format!(
-                    "{}({})",
+                    "'{} ({})",
                     marker.to_string().yellow(),
                     self.format_expression(expr)
                 )
@@ -49,7 +48,7 @@ impl<'a> PrettyPrinter<'a> {
     }
 
     fn format_versioned_addressable(&self, addressable: &VersionedAddressable) -> String {
-        format!("{}_{}", addressable, addressable.version)
+        format!("{}_{}", addressable.kind, addressable.version)
     }
 
     fn format_ssa_addressable_kind(&self, op_kind: &SsaOperandKind) -> String {

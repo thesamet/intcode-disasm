@@ -128,7 +128,7 @@ fn find_lowest_version_of(
         // Check Phi results
         for phi in &block.phi_functions {
             if &phi.result.kind == kind
-                && (min_var.is_none() || phi.native_result.version < min_var_version(min_var))
+                && (min_var.is_none() || phi.result.version < min_var_version(min_var))
             {
                 min_var = Some(phi.result);
             }

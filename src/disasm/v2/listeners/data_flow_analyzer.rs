@@ -114,14 +114,6 @@ impl DataFlowAnalyzer {
                 }
             }
 
-            // Native function returns
-            block_flow.function_returns_in = block
-                .native_predecessors
-                .iter()
-                .filter_map(|p| p.get_function_call_returns())
-                .cloned()
-                .collect();
-
             // Low-level function returns
             low_flow.function_returns_in = block
                 .predecessors
@@ -149,24 +141,6 @@ impl DataFlowAnalyzer {
         while changed {
             changed = false;
             for &block_id in block_ids {
-                // Native function returns
-                let new_func_in = Self::calculate_function_returns_in(model, block_id, df_result);
-
-                // Update block's IN set if changed
-                let block_flow = df_result.block_results.get_mut(&block_id).unwrap(); // Must exist
-                if new_func_in != block_flow.function_returns_in {
-                    debug!(
-                        "Block {:?}: FunctionReturnsIn changed to {:?}",
-                        block_id, new_func_in
-                    );
-                    block_flow.function_returns_in = new_func_in.clone();
-                    changed = true;
-                }
-                if !block_flow.writes_above_r && block_flow.function_returns_out != new_func_in {
-                    block_flow.function_returns_out = new_func_in;
-                    changed = true;
-                }
-
                 // Low-level function returns
                 let new_low_func_in =
                     Self::calculate_low_function_returns_in(model, block_id, df_result);
@@ -186,41 +160,11 @@ impl DataFlowAnalyzer {
         }
     }
 
-    fn calculate_function_returns_in(
-        model: &ProgramModel,
-        block_id: BlockId,
-        df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
-    ) -> HashSet<FunctionCall<Operand>> {
-        let block_flow = df_result.block_results.get(&block_id).unwrap();
-        let mut new_func_in = block_flow.function_returns_in.clone();
-        // If this block is a return from a function call, we do not change new_func_in, as
-        // defintions from further away will be overridden by the immediate one.
-        if !model
-            .get_block(block_id)
-            .native_predecessors
-            .iter()
-            .any(|p| p.get_function_call_returns().is_some())
-        {
-            for pred in model.get_block(block_id).native_predecessors.iter() {
-                // Update block's IN set if changed
-                let pred_block_id = pred.source_block_id();
-                let pred_function_returns_out = df_result
-                    .block_results
-                    .get(&pred_block_id)
-                    .unwrap()
-                    .function_returns_out
-                    .clone();
-                new_func_in.extend(pred_function_returns_out);
-            }
-        }
-        new_func_in
-    }
-
     fn calculate_low_function_returns_in(
         model: &ProgramModel,
         block_id: BlockId,
         df_result: &DataFlowResult,
-    ) -> HashSet<FunctionCall<LowExpr<Addressable>>> {
+    ) -> HashSet<FunctionCall<Addressable>> {
         let block = model.get_block(block_id);
         let low_flow = df_result.low_block_results.get(&block_id).unwrap();
         let mut new_func_in = low_flow.function_returns_in.clone();
@@ -253,45 +197,6 @@ impl DataFlowAnalyzer {
             changed = false;
             for block_id in &func.blocks {
                 let block = model.get_block(*block_id);
-
-                // Native definitions
-                let new_defs_in = Self::calculate_defs_in(func, block, df_result);
-
-                // Update block's IN set if changed
-                // Use get_mut for direct modification
-                let block_flow = df_result.block_results.get_mut(&block_id).unwrap(); // Must exist
-                if new_defs_in != block_flow.defs_in {
-                    debug!("Block {:?}: DefsIn changed", block_id);
-                    block_flow.defs_in = new_defs_in;
-                    changed = true; // Continue iteration if IN changed
-                }
-
-                // Calculate OUT set: OUT = (IN - KILL) U GEN
-                let killed_kinds: HashSet<&OperandKind> = block_flow.gen.keys().collect();
-                let mut current_defs_out = block_flow.defs_in.clone();
-                current_defs_out.retain(|def| !killed_kinds.contains(&def.kind));
-
-                // Add GEN set
-                for (kind, (instruction_id, _)) in &block_flow.gen {
-                    current_defs_out.insert(NativeDefinition {
-                        source: NativeOriginationPoint::Instruction(*instruction_id),
-                        kind: *kind,
-                        block_id: *block_id,
-                    });
-                }
-                // In we call a function at the end of the block, this block doesn't let [R+n]
-                // defintions flow forward.
-                if matches!(block.native_next, NextKind::FunctionCall(_)) {
-                    current_defs_out.retain(|d| !d.kind.is_positive_relative_memory());
-                }
-
-                // Update block's OUT set if changed
-                if current_defs_out != block_flow.defs_out {
-                    debug!("Block {:?}: DefsOut changed", block_id);
-                    block_flow.defs_out = current_defs_out;
-                    changed = true;
-                }
-
                 // Low-level definitions
                 let new_low_defs_in = Self::calculate_low_defs_in(func, block, df_result);
 
@@ -331,47 +236,6 @@ impl DataFlowAnalyzer {
                 }
             }
         }
-    }
-
-    /// Calculates the Defs-In set for a single block based on its predecessors.
-    fn calculate_defs_in(
-        function: &Function,
-        block: &Block,
-        df_result: &DataFlowResult, // Read-only access for predecessor OUT sets
-    ) -> HashSet<NativeDefinition> {
-        let mut new_defs_in = HashSet::new();
-
-        for pred_kind in &block.native_predecessors {
-            let pred_block_id = pred_kind.source_block_id();
-            let pred_flow = df_result
-                .block_results
-                .get(&pred_block_id)
-                .expect("Predecessor block data flow info should exist");
-
-            new_defs_in.extend(&pred_flow.defs_out);
-        }
-
-        if function.entry_block == block.id {
-            // Create synthetic definitions for any potential input parameters
-            // to this function. We take the union of all the use_before_def sets
-            // for all blocks in the function, since it is a superset (which is still
-            // smaller than all the reads).
-            for &other_block_id in &function.blocks {
-                let dfr = df_result.block_results.get(&other_block_id).unwrap();
-                new_defs_in.extend(
-                    dfr.use_before_def
-                        .keys()
-                        .filter(|k| k.is_negative_relative_memory())
-                        .map(|k| NativeDefinition {
-                            source: NativeOriginationPoint::FunctionInput,
-                            kind: *k,
-                            block_id: block.id,
-                        }),
-                );
-            }
-        }
-
-        new_defs_in
     }
 
     /// Calculates the low-level Defs-In set for a single block based on its predecessors.
@@ -652,29 +516,6 @@ impl ModelEventListener for DataFlowAnalyzer {
         // If there is use of undefined [R+n] values, we check it comes from a function, and
         // that function is unique.
         for block_id in &function.blocks {
-            let br = df_result_for_function.block_results.get(block_id).unwrap();
-            let return_usage_in_block = br
-                .use_before_def
-                .iter()
-                .filter_map(|(k, v)| k.get_relative_memory().map(|n| (n, *v)))
-                .filter(|&(n, _)| n > 0)
-                .collect_vec();
-            if !return_usage_in_block.is_empty() {
-                assert_eq!(br.function_returns_in.len(), 1);
-                let calling_block = br.function_returns_in.iter().next().unwrap().calling_block;
-
-                // Update native call site info
-                let calling_block_flow = df_result_for_function
-                    .block_results
-                    .get_mut(&calling_block)
-                    .unwrap();
-                calling_block_flow
-                    .call_site_info
-                    .as_mut()
-                    .unwrap()
-                    .return_values_accessed
-                    .extend(return_usage_in_block.clone());
-            }
             // Update low-level call site info
             let br = df_result_for_function
                 .low_block_results

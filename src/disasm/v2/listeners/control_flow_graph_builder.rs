@@ -164,7 +164,6 @@ impl ControlFlowGraphBuilder {
                 span: Span::new(start_addr, current_block_end),
                 native_instructions: current_block_instructions.clone(),
                 low_instructions: Instruction::convert_block(current_block_instructions),
-                native_predecessors: Vec::new(), // To be filled later
                 native_next: NextKind::Unknown,
                 predecessors: Vec::new(), // To be filled later
                 next: NextKind::Unknown,
@@ -182,7 +181,7 @@ impl ControlFlowGraphBuilder {
         // --- Pass 2: Determine NextKind and Predecessors ---
         let mut native_predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> =
             HashMap::new();
-        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<LowExpr<Addressable>>>> =
+        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Addressable>>> =
             HashMap::new();
 
         for block_id in &function_block_ids {
@@ -191,10 +190,6 @@ impl ControlFlowGraphBuilder {
                 .native_instructions
                 .last()
                 .expect("Created blocks cannot be empty");
-
-            // Determine next kind, passing the block_id for context
-            let native_next_kind =
-                determine_native_next_kind(*block_id, last_instr, block.span.end, recognized_func);
 
             let next_kind = if block.low_instructions.is_empty() {
                 assert_eq!(
@@ -258,59 +253,12 @@ impl ControlFlowGraphBuilder {
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             };
-            match &native_next_kind {
-                NextKind::Follows(target_id) => {
-                    assert!(model.has_block(*target_id));
-                    native_predecessors_map
-                        .entry(*target_id)
-                        .or_default()
-                        .push(PredecessorKind::FollowsFrom(*block_id));
-                }
-                NextKind::Goto(target_block_id) => {
-                    assert!(model.has_block(*target_block_id));
-                    native_predecessors_map
-                        .entry(*target_block_id)
-                        .or_default()
-                        .push(PredecessorKind::GotoFrom(*block_id));
-                }
-                NextKind::FunctionCall(call) => {
-                    assert!(
-                        model.has_block(call.return_block),
-                        "Return block {:?} does not exist",
-                        call.return_block
-                    );
-                    native_predecessors_map
-                        .entry(call.return_block)
-                        .or_default()
-                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
-                }
-                NextKind::Condition(cond) => {
-                    assert!(model.has_block(cond.target_block));
-                    assert!(model.has_block(cond.follows_block));
-                    native_predecessors_map
-                        .entry(cond.target_block)
-                        .or_default()
-                        .push(PredecessorKind::ConditionalJump(cond.clone()));
-                    native_predecessors_map
-                        .entry(cond.follows_block)
-                        .or_default()
-                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
-                }
-                NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
-            }
-
-            // Update the block in the model (mutable borrow needed here)
-            model.get_block_mut(*block_id).native_next = native_next_kind;
             model.get_block_mut(*block_id).next = next_kind;
         }
 
         // Apply predecessors
         for (block_id, preds) in predecessors_map {
             model.get_block_mut(block_id).predecessors = preds;
-        }
-        for (block_id, preds) in native_predecessors_map {
-            // block_id must exist since we created it and added it to function_block_ids
-            model.get_block_mut(block_id).native_predecessors = preds;
         }
 
         // Update the Function object
@@ -364,7 +312,7 @@ fn determine_next_kind(
     block_id: BlockId,
     last_instr: &Instruction<Addressable>,
     block_end_addr: usize,
-) -> NextKind<LowExpr<Addressable>> {
+) -> NextKind<Addressable> {
     match &last_instr.kind {
         InstructionKind::Halt => NextKind::Halt,
         InstructionKind::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
@@ -384,54 +332,6 @@ fn determine_next_kind(
             follows_block: *else_addr,
         }),
         _ => NextKind::Follows(BlockId::from(block_end_addr)),
-    }
-}
-
-// Helper to determine NextKind based on the last instruction and context
-fn determine_native_next_kind(
-    block_id: BlockId,
-    last_instr: &NativeInstruction,
-    block_end_addr: usize,
-    func: &RecognizedFunction,
-) -> NextKind<Operand> {
-    if func.return_span.map(|r| r.end) == Some(block_end_addr) {
-        NextKind::Return
-    } else if let Some(call) = func
-        .function_calls
-        .iter()
-        .find(|c| c.span.end == last_instr.span.end)
-    {
-        let Some(_) = last_instr.goto_address() else {
-            panic!("Expected goto address");
-        };
-        NextKind::FunctionCall(FunctionCall::new(
-            block_id,
-            call.target,
-            BlockId::from(call.return_address),
-        ))
-    } else if let Some(target_addr) = last_instr.immediate_goto() {
-        NextKind::Goto(BlockId::from(target_addr))
-    } else if last_instr.goto_address().is_some() {
-        panic!(
-            "Unexpected non-immediate goto at {}: {}",
-            last_instr.span.start, last_instr
-        );
-    } else if let Some(target_addr) = last_instr.conditional_jump_immediate_address() {
-        let jump_if_true = last_instr.opcode() == crate::disasm::v2::native::Opcode::JumpIfTrue;
-        let condition_operand = last_instr.conditional_jump_condition().unwrap();
-        NextKind::Condition(Condition {
-            from_block: block_id,
-            condition_operand,
-            jump_if_true,
-            target_block: BlockId::from(target_addr),
-            follows_block: BlockId::from(block_end_addr), // Fallthrough address
-        })
-    } else if last_instr.is_conditional_jump() {
-        panic!("Expected conditional jump to have an immediate target");
-    } else if last_instr.is_halt() {
-        NextKind::Halt
-    } else {
-        NextKind::Follows(BlockId::from(block_end_addr))
     }
 }
 
