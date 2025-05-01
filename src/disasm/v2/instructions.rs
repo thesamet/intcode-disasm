@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::atomic::AtomicUsize};
+use std::{cmp::Ordering, fmt::Display, sync::atomic::AtomicUsize};
 
 use pretty_assertions::assert_matches;
 
@@ -194,6 +194,22 @@ pub enum BinaryOp {
     NotEquals,
 }
 
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinaryOp::Add => write!(f, "+"),
+            BinaryOp::Mul => write!(f, "*"),
+            BinaryOp::Sub => write!(f, "-"),
+            BinaryOp::LessThan => write!(f, "<"),
+            BinaryOp::LessThanOrEqual => write!(f, "<="),
+            BinaryOp::GreaterThan => write!(f, ">"),
+            BinaryOp::GreaterThanOrEqual => write!(f, ">="),
+            BinaryOp::Equals => write!(f, "=="),
+            BinaryOp::NotEquals => write!(f, "!="),
+        }
+    }
+}
+
 /// Represents unary operations that can be performed on a single operand.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum UnaryOp {
@@ -201,6 +217,15 @@ pub enum UnaryOp {
     Not,
     /// Arithmetic negation operation (-).
     Minus,
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnaryOp::Not => write!(f, "!"),
+            UnaryOp::Minus => write!(f, "-"),
+        }
+    }
 }
 
 #[expect(dead_code)]

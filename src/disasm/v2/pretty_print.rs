@@ -3,10 +3,13 @@ use itertools::Itertools;
 
 use super::{
     control_flow::PredecessorKind,
+    instructions::{Instruction, InstructionKind, LowExpr},
     model::ProgramModel,
     native::{GenericNativeInstruction, NativeInstructionKind},
-    // Import SsaOperand and related types
-    ssa_form::{PhiFunction, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind},
+    ssa_form::{
+        PhiFunction, SsaAddressable, SsaBlock, SsaFunction, SsaOperand, SsaOperandKind, SsaVarKind,
+        VersionedAddressable,
+    },
 };
 
 struct PrettyPrinter<'a> {
@@ -16,16 +19,45 @@ struct PrettyPrinter<'a> {
 }
 
 impl<'a> PrettyPrinter<'a> {
-    fn format_ssa_operand(&self, ssa_op: &SsaOperand) -> String {
-        self.format_ssa_operand_kind(&ssa_op.kind)
+    fn format_expression(&self, expr: &LowExpr<SsaAddressable>) -> String {
+        match expr {
+            LowExpr::Constant(value) => format!("{}", value).green().to_string(),
+            LowExpr::Addressable(addr) => self.format_addressable(addr),
+            LowExpr::BinaryOp { op, lhs, rhs } => format!(
+                "({} {} {})",
+                self.format_expression(lhs),
+                op,
+                self.format_expression(rhs)
+            ),
+            LowExpr::UnaryOp { op, arg } => format!("{}({})", op, self.format_expression(arg)),
+            LowExpr::Input() => "input()".to_string(),
+            LowExpr::DebugMarker(marker, expr) => {
+                format!(
+                    "{}({})",
+                    marker.to_string().yellow(),
+                    self.format_expression(expr)
+                )
+            }
+        }
     }
 
-    fn format_ssa_operand_kind(&self, op_kind: &SsaOperandKind) -> String {
+    fn format_addressable(&self, addressable: &SsaAddressable) -> String {
+        match addressable {
+            SsaAddressable::Versioned(a) => self.format_versioned_addressable(a),
+            SsaAddressable::Deref(expr) => format!("*({})", self.format_expression(expr)),
+        }
+    }
+
+    fn format_versioned_addressable(&self, addressable: &VersionedAddressable) -> String {
+        format!("{}_{}", addressable, addressable.version)
+    }
+
+    fn format_ssa_addressable_kind(&self, op_kind: &SsaOperandKind) -> String {
         match op_kind {
             SsaOperandKind::Constant(val) => format!("{}", val).green().to_string(),
             SsaOperandKind::Deref(ptr) => format!(
                 "*{}",
-                self.format_ssa_operand_kind(&SsaOperandKind::Variable(*ptr))
+                self.format_ssa_addressable_kind(&SsaOperandKind::Variable(*ptr))
             ),
             SsaOperandKind::Variable(ref var) => {
                 // Formatting logic for SsaVar
@@ -102,10 +134,10 @@ impl<'a> PrettyPrinter<'a> {
 
     fn format_phi_function(&self, phi: &PhiFunction) -> String {
         let inputs = phi
-            .native_inputs
+            .inputs
             .iter()
             .sorted_by_key(|(pred_kind, _)| pred_kind.source_block_id())
-            .map(|(pred_kind, ssa_op)| {
+            .map(|(pred_kind, addressable)| {
                 // Now iterates over SsaOperand
                 let source_id = pred_kind.source_block_id();
                 let call_marker = if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
@@ -113,107 +145,61 @@ impl<'a> PrettyPrinter<'a> {
                 } else {
                     ""
                 };
-                // Create a new SsaOperand with the SSA var
-                let ssa_operand = SsaOperand {
-                    kind: SsaOperandKind::Variable(*ssa_op),
-                    origin_info: ssa_op.origin_info,
-                };
 
                 format!(
                     "{}{}: {}",
                     source_id,
                     call_marker,
-                    self.format_ssa_operand(&ssa_operand)
+                    self.format_versioned_addressable(addressable)
                 )
             })
             .join(", ");
         // Phi result is always an SsaVar, wrap it for formatting
         format!(
             "{} = φ({})",
-            self.format_ssa_operand(&SsaOperand {
-                kind: SsaOperandKind::Variable(phi.native_result),
-                origin_info: phi.native_result.origin_info,
-            }),
+            self.format_versioned_addressable(&phi.result),
             inputs
         )
     }
 
     // Update to take GenericInstruction<SsaOperand>
-    fn format_instruction(&self, instr: &GenericNativeInstruction<SsaOperand>) -> String {
+    fn format_instruction(&self, instr: &Instruction<SsaAddressable>) -> String {
         // Use format_ssa_operand for all operands
         match &instr.kind {
-            NativeInstructionKind::Add(a, b, c) => {
-                format!(
-                    "{} = {} + {}",
-                    self.format_ssa_operand(c),
-                    self.format_ssa_operand(a),
-                    self.format_ssa_operand(b)
-                )
-            }
-            NativeInstructionKind::Mul(a, b, c) => {
-                format!(
-                    "{} = {} * {}",
-                    self.format_ssa_operand(c),
-                    self.format_ssa_operand(a),
-                    self.format_ssa_operand(b)
-                )
-            }
-            NativeInstructionKind::Input(a) => {
-                format!("{} = input()", self.format_ssa_operand(a))
-            }
-            NativeInstructionKind::Output(a) => {
-                format!("output({})", self.format_ssa_operand(a))
-            }
-            NativeInstructionKind::JumpIfTrue(cond, target) => {
-                format!(
-                    "if {} goto {}",
-                    self.format_ssa_operand(cond),
-                    self.format_ssa_operand(target)
-                )
-            }
-            NativeInstructionKind::JumpIfFalse(cond, target) => {
-                format!(
-                    "if !{} goto {}",
-                    self.format_ssa_operand(cond),
-                    self.format_ssa_operand(target)
-                )
-            }
-            NativeInstructionKind::LessThan(a, b, c) => {
-                format!(
-                    "{} = {} < {}",
-                    self.format_ssa_operand(c),
-                    self.format_ssa_operand(a),
-                    self.format_ssa_operand(b)
-                )
-            }
-            NativeInstructionKind::Equals(a, b, c) => {
-                format!(
-                    "{} = {} == {}",
-                    self.format_ssa_operand(c),
-                    self.format_ssa_operand(a),
-                    self.format_ssa_operand(b)
-                )
-            }
-            NativeInstructionKind::AdjustRelativeBase(a) => {
-                format!("R += {}", self.format_ssa_operand(a))
-            }
-            NativeInstructionKind::Halt => "halt".red().to_string(),
-            NativeInstructionKind::Data(values) => {
-                format!(
-                    "DATA {}",
-                    values.iter().map(|v| v.to_string().green()).join(", ")
-                )
-            }
-            NativeInstructionKind::Goto(target) => {
-                format!("goto {}", self.format_ssa_operand(target))
-            }
-            NativeInstructionKind::Assign(target, source) => {
+            InstructionKind::Assign { target, src } => {
                 format!(
                     "{} = {}",
-                    self.format_ssa_operand(target),
-                    self.format_ssa_operand(source)
+                    self.format_addressable(target),
+                    self.format_expression(src)
                 )
             }
+            InstructionKind::If {
+                cond,
+                then_addr,
+                else_addr,
+            } => {
+                format!(
+                    "if {} goto {} else goto {}",
+                    self.format_expression(cond),
+                    then_addr,
+                    else_addr
+                )
+            }
+            InstructionKind::Goto(addr) => {
+                format!("goto {}", addr)
+            }
+            InstructionKind::Call { addr, return_to } => {
+                format!(
+                    "call {} return to {}",
+                    self.format_expression(addr),
+                    return_to
+                )
+            }
+            InstructionKind::Output(expr) => {
+                format!("output {}", self.format_expression(expr))
+            }
+            InstructionKind::Return => "return".to_string(),
+            InstructionKind::Halt => "halt".to_string(),
         }
     }
 
@@ -234,12 +220,14 @@ impl<'a> PrettyPrinter<'a> {
         }
 
         // Instructions
-        for instr in &block.native_instructions {
+        for instr in &block.instructions {
             if self.show_vars {
-                match instr.kind {
-                    NativeInstructionKind::Assign(a, b) => {
+                match &instr.kind {
+                    InstructionKind::Assign { target, src } => {
+                        panic!("Migration uncomment")
                         // skip a == b where a and b are the same variable
-                        if let (Some(a), Some(b)) = (a.as_variable(), b.as_variable()) {
+                        /*
+                        if let (Some(target), Some(src)) = (target.as_variable(), .as_variable()) {
                             let var_to_cluster = &self
                                 .model
                                 .get_variable_merger_result()
@@ -251,9 +239,7 @@ impl<'a> PrettyPrinter<'a> {
                                 continue;
                             }
                         }
-                    }
-                    NativeInstructionKind::AdjustRelativeBase(_) => {
-                        continue;
+                        */
                     }
                     _ => {}
                 }
@@ -272,21 +258,23 @@ impl<'a> PrettyPrinter<'a> {
     }
 
     pub fn format_call_info(&self, function: &SsaFunction) -> String {
-        let args_rets = self
+        return "".to_string();
+        let args_rets: Option<String> = self
             .model
             .get_type_inference_result()
-            .and_then(|m| m.get_function_signature(&function.original_id));
-
+            // .and_then(|m| m.get_function_signature(&function.original_id));
+            .and_then(|m| panic!("Migration uncomment"));
+        /*
         let sig = if let Some((args, rets)) = args_rets {
             let mut args = args.iter().map(|(_, v, _)| {
-                self.format_ssa_operand(&SsaOperand {
+                self.format_addressable(&SsaOperand {
                     kind: SsaOperandKind::Variable(*v),
                     origin_info: v.origin_info,
                 })
                 .to_string()
             });
             let mut rets = rets.iter().map(|(_, v, _)| {
-                self.format_ssa_operand(&SsaOperand {
+                self.format_addressable(&SsaOperand {
                     kind: SsaOperandKind::Variable(*v),
                     origin_info: v.origin_info,
                 })
@@ -305,6 +293,7 @@ impl<'a> PrettyPrinter<'a> {
             "(unknown) -> (unknown)".to_string()
         };
         sig
+        */
     }
 
     pub fn format_callers_comment(&self, function: &SsaFunction) -> String {
