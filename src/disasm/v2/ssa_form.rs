@@ -1014,6 +1014,20 @@ impl<'a> SSAConversionState<'a> {
     }
 }
 
+use super::instructions::InstructionKind;
+
+// Helper function to find debug markers in expressions with a specific marker
+fn find_debug_marker_in_expr<A>(expr: &LowExpr<A>, marker: char) -> Option<&LowExpr<A>> {
+    match expr {
+        LowExpr::DebugMarker(c, e) if *c == marker => Some(expr),
+        LowExpr::DebugMarker(_, e) => find_debug_marker_in_expr(e, marker),
+        LowExpr::BinaryOp { lhs, rhs, .. } => find_debug_marker_in_expr(lhs, marker)
+            .or_else(|| find_debug_marker_in_expr(rhs, marker)),
+        LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg, marker),
+        _ => None,
+    }
+}
+
 // Helper functions for finding and creating SSA operands from expressions
 #[cfg(test)]
 fn create_ssa_operand_from_versioned(versioned: &VersionedAddressable, marker: char) -> SsaOperand {
@@ -1022,7 +1036,7 @@ fn create_ssa_operand_from_versioned(versioned: &VersionedAddressable, marker: c
             kind: match versioned.kind {
                 VersionedAddressableKind::Memory(addr) => SsaVarKind::Memory(addr),
                 VersionedAddressableKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
-                VersionedAddressableKind::Pointer(id) => SsaVarKind::Pointer(id.as_usize()),
+                VersionedAddressableKind::Pointer(id) => SsaVarKind::Pointer(id.index()),
             },
             version: versioned.version,
             origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
@@ -1033,15 +1047,15 @@ fn create_ssa_operand_from_versioned(versioned: &VersionedAddressable, marker: c
 
 #[cfg(test)]
 fn create_ssa_operand_from_expr(expr: &LowExpr<SsaAddressable>, marker: char) -> Option<SsaOperand> {
-    if let Some(LowExpr::DebugMarker(m, expr)) = find_debug_marker_in_expr(expr, marker) {
-        if *m == marker {
-            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**expr {
+    if let Some(marker_expr) = find_debug_marker_in_expr(expr, marker) {
+        if let LowExpr::DebugMarker(_, inner_expr) = marker_expr {
+            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**inner_expr {
                 return Some(create_ssa_operand_from_versioned(versioned, marker));
-            } else if let LowExpr::Addressable(SsaAddressable::Deref(deref_expr)) = &**expr {
+            } else if let LowExpr::Addressable(SsaAddressable::Deref(deref_expr)) = &**inner_expr {
                 if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**deref_expr {
                     return Some(SsaOperand {
                         kind: SsaOperandKind::Deref(SsaVar {
-                            kind: SsaVarKind::Pointer(versioned.kind.as_pointer().unwrap().as_usize()),
+                            kind: SsaVarKind::Pointer(versioned.kind.as_pointer().unwrap().index()),
                             version: versioned.version,
                             origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
                         }),
@@ -1547,18 +1561,6 @@ mod tests {
             LowExpr::BinaryOp { lhs, rhs, .. } => find_first_debug_marker_in_expr(lhs)
                 .or_else(|| find_first_debug_marker_in_expr(rhs)),
             LowExpr::UnaryOp { arg, .. } => find_first_debug_marker_in_expr(arg),
-            _ => None,
-        }
-    }
-
-    // Helper function to find debug markers in expressions with a specific marker
-    fn find_debug_marker_in_expr<A>(expr: &LowExpr<A>, marker: char) -> Option<&LowExpr<A>> {
-        match expr {
-            LowExpr::DebugMarker(c, e) if *c == marker => Some(expr),
-            LowExpr::DebugMarker(_, e) => find_debug_marker_in_expr(e, marker),
-            LowExpr::BinaryOp { lhs, rhs, .. } => find_debug_marker_in_expr(lhs, marker)
-                .or_else(|| find_debug_marker_in_expr(rhs, marker)),
-            LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg, marker),
             _ => None,
         }
     }
