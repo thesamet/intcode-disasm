@@ -79,8 +79,8 @@ impl DataFlowAnalyzer {
                 if let Some(write_operand) = instr.kind.writes() {
                     low_flow
                         .gen
-                        .insert(*write_operand, (instr.id, write_operand.clone()));
-                    low_defined_in_block.insert(*write_operand);
+                        .insert(write_operand.clone(), (instr.id, write_operand.clone()));
+                    low_defined_in_block.insert(write_operand.clone());
 
                     if let Some(n) = write_operand.as_relative_memory() {
                         if n > 0 {
@@ -312,7 +312,7 @@ impl DataFlowAnalyzer {
                 for (kind, (instruction_id, _)) in &low_flow.gen {
                     low_current_defs_out.insert(Definition {
                         source: OriginationPoint::Instruction(*instruction_id),
-                        kind: *kind,
+                        kind: kind.clone(),
                         block_id: *block_id,
                     });
                 }
@@ -387,7 +387,7 @@ impl DataFlowAnalyzer {
             let pred_block = df_result.low_block_results.get(&pred_block_id);
             let pred_flow = pred_block.as_ref().unwrap();
 
-            new_defs_in.extend(&pred_flow.defs_out);
+            new_defs_in.extend(pred_flow.defs_out.iter().cloned());
         }
 
         if function.entry_block == block.id {
@@ -404,7 +404,7 @@ impl DataFlowAnalyzer {
                         .filter(|k| k.is_negative_relative_memory())
                         .map(|k| Definition {
                             source: OriginationPoint::FunctionInput,
-                            kind: *k,
+                            kind: k.clone(),
                             block_id: block.id,
                         }),
                 );
@@ -506,7 +506,7 @@ impl DataFlowAnalyzer {
                     for d in &low_flow.defs_in {
                         if d.kind.is_positive_relative_memory() {
                             low_current_live_in
-                                .entry(d.kind)
+                                .entry(d.kind.clone())
                                 .or_insert_with(HashSet::new)
                                 .insert(d.source);
                         }
@@ -516,7 +516,7 @@ impl DataFlowAnalyzer {
                 low_current_live_in.retain(|kind, _| !low_defined_kinds.contains(kind));
                 for (k, v) in &low_flow.use_before_def {
                     low_current_live_in
-                        .entry(*k)
+                        .entry(k.clone())
                         .or_insert_with(HashSet::new)
                         .insert(OriginationPoint::Instruction(*v));
                 }
@@ -584,7 +584,7 @@ impl DataFlowAnalyzer {
             let succ_block = df_result.low_block_results.get(&succ_id).unwrap();
             for (k, v) in &succ_block.live_in {
                 new_live_out
-                    .entry(*k)
+                    .entry(k.clone())
                     .or_insert_with(HashSet::new)
                     .extend(v);
             }
@@ -600,7 +600,7 @@ impl DataFlowAnalyzer {
                     .filter(|k| k.is_negative_relative_memory())
                 {
                     new_live_out
-                        .entry(*gen)
+                        .entry(gen.clone())
                         .or_insert_with(HashSet::new)
                         .insert(OriginationPoint::FunctionOutput);
                 }
@@ -837,7 +837,8 @@ mod tests {
         assert!(flow0.defs_in.is_empty(), "DefsIn @ B0");
 
         // Check that defs_out contains definitions for [100] and [101]
-        let defs_out_kinds: HashSet<_> = flow0.defs_out.iter().map(|def| def.kind).collect();
+        let defs_out_kinds: HashSet<_> =
+            flow0.defs_out.iter().map(|def| def.kind.clone()).collect();
         assert!(
             defs_out_kinds.contains(&Addressable::Memory(100)),
             "DefsOut should contain [100]"
@@ -852,7 +853,7 @@ mod tests {
         assert!(flow12.gen.is_empty(), "GEN @ B12");
 
         // Reaching Defs
-        let defs_in_kinds: HashSet<_> = flow12.defs_in.iter().map(|def| def.kind).collect();
+        let defs_in_kinds: HashSet<_> = flow12.defs_in.iter().map(|def| def.kind.clone()).collect();
         assert!(
             defs_in_kinds.contains(&Addressable::Memory(100)),
             "DefsIn should contain [100]"
@@ -911,7 +912,8 @@ mod tests {
 
         // --- Check Defs reaching merge block (Block 20) ---
         // Check that defs_in contains definitions for [100] and [101]
-        let defs_in20_kinds: HashSet<_> = flow20.defs_in.iter().map(|def| def.kind).collect();
+        let defs_in20_kinds: HashSet<_> =
+            flow20.defs_in.iter().map(|def| def.kind.clone()).collect();
         assert!(
             defs_in20_kinds.contains(&Addressable::Memory(100)),
             "DefsIn should contain [100]"
@@ -961,8 +963,9 @@ mod tests {
 
         // --- Check Defs reaching branches ---
         // Only Def A ([100]) reaches both branches
-        let defs_in9_kinds: HashSet<_> = flow9.defs_in.iter().map(|def| def.kind).collect();
-        let defs_in16_kinds: HashSet<_> = flow16.defs_in.iter().map(|def| def.kind).collect();
+        let defs_in9_kinds: HashSet<_> = flow9.defs_in.iter().map(|def| def.kind.clone()).collect();
+        let defs_in16_kinds: HashSet<_> =
+            flow16.defs_in.iter().map(|def| def.kind.clone()).collect();
 
         assert!(
             defs_in9_kinds.contains(&Addressable::Memory(100)),
@@ -984,7 +987,8 @@ mod tests {
 
         // --- Check Defs out of merge block (Block 20) ---
         // Defs from branches should reach, Def A also. Output generates nothing new.
-        let defs_out20_kinds: HashSet<_> = flow20.defs_out.iter().map(|def| def.kind).collect();
+        let defs_out20_kinds: HashSet<_> =
+            flow20.defs_out.iter().map(|def| def.kind.clone()).collect();
         assert!(
             defs_out20_kinds.contains(&Addressable::Memory(100)),
             "DefsOut @ B20 should contain [100]"
@@ -995,7 +999,8 @@ mod tests {
         );
 
         // --- Check Defs into return block (Block 22) ---
-        let defs_in22_kinds: HashSet<_> = flow22.defs_in.iter().map(|def| def.kind).collect();
+        let defs_in22_kinds: HashSet<_> =
+            flow22.defs_in.iter().map(|def| def.kind.clone()).collect();
         assert!(
             defs_in22_kinds.contains(&Addressable::Memory(100)),
             "DefsIn @ B22 should contain [100]"
@@ -1161,7 +1166,8 @@ mod tests {
         );
 
         // --- Check Defs reaching return block (Block 21) ---
-        let defs_in21_kinds: HashSet<_> = flow21.defs_in.iter().map(|def| def.kind).collect();
+        let defs_in21_kinds: HashSet<_> =
+            flow21.defs_in.iter().map(|def| def.kind.clone()).collect();
 
         // Should contain [100] but not [R+1] or [R+2] which are killed by the call
         assert!(

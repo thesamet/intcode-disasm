@@ -43,7 +43,7 @@ pub struct NativeDefinition {
 /// Represents a specific definition site for an Addressable operand.
 /// A definition occurs when an instruction writes a value to a memory location
 /// represented by the Operand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Definition {
     /// The location where the definition originated from (from defs), or where it is read from for liveness.
     /// or the ID of the call instruction (`goto @func`) for return values.

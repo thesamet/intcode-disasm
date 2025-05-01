@@ -10,18 +10,22 @@ use super::{
     },
 };
 
+define_id_type!(PointerId);
+
 /// Represents operands that have an address in memory.
 /// These can be both sources and targets.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Addressable {
-    /// Represents a memory location outside the stack and code segments.
+    /// Represents a fixed memory location outside the stack and code segments.
+    /// These will get versioned.
     Memory(usize),
     /// Represents a memory location relative to some base address.
     RelativeMemory(i128),
-    /// Represents a dereference of the given address.
-    Deref(usize),
     /// Represents a pointer to a point in memory.
-    Pointer(usize),
+    Pointer(PointerId),
+    /// Represents a memory address we access indirectly through a dereference.
+    /// The argument is a low-level expression that evaluates to a pointer.
+    Deref(Box<LowExpr<Addressable>>),
 }
 
 define_id_type!(InstructionId);
@@ -97,7 +101,7 @@ impl<A> InstructionKind<A> {
 }
 
 /// Represents a low-level expression that can be evaluated.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum LowExpr<A> {
     /// A literal constant value.
     Constant(i128),
@@ -145,7 +149,7 @@ impl<A> LowExpr<A> {
 }
 
 /// Represents binary operations that can be performed on two operands.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum BinaryOp {
     /// Addition operation (+).
     Add,
@@ -168,7 +172,7 @@ pub enum BinaryOp {
 }
 
 /// Represents unary operations that can be performed on a single operand.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum UnaryOp {
     /// Logical negation operation (!).
     Not,
@@ -287,8 +291,10 @@ impl TryFrom<OperandKind> for Addressable {
         match value {
             OperandKind::Memory(offset) => Ok(Addressable::Memory(offset)),
             OperandKind::RelativeMemory(offset) => Ok(Addressable::RelativeMemory(offset)),
-            OperandKind::Deref(offset) => Ok(Addressable::Deref(offset)),
-            OperandKind::Pointer(offset) => Ok(Addressable::Pointer(offset)),
+            OperandKind::Deref(offset) => Ok(Addressable::Deref(Box::new(LowExpr::Addressable(
+                Addressable::Pointer(PointerId::from(offset)),
+            )))),
+            OperandKind::Pointer(offset) => Ok(Addressable::Pointer(PointerId::from(offset))),
             OperandKind::Immediate(_) => Err("Cannot convert immediate operand to addressable"),
         }
     }
