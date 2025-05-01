@@ -12,7 +12,7 @@ use super::{
 
 /// Represents operands that have an address in memory.
 /// These can be both sources and targets.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Addressable {
     /// Represents a memory location outside the stack and code segments.
     Memory(usize),

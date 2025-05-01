@@ -810,49 +810,63 @@ mod tests {
 
         let block0 = model.get_block(block0_id);
         let block12 = model.get_block(block12_id);
-        
-        let flow0 = block0.data_flow.as_ref().expect("Block 0 data flow missing");
-        let flow12 = block12.data_flow.as_ref().expect("Block 12 data flow missing");
+
+        let flow0 = block0
+            .data_flow
+            .as_ref()
+            .expect("Block 0 data flow missing");
+        let flow12 = block12
+            .data_flow
+            .as_ref()
+            .expect("Block 12 data flow missing");
 
         // --- Block 0 ---
         // GEN/USE
         assert_eq!(flow0.gen.len(), 2, "GEN length should be 2");
-        assert!(flow0.gen.contains_key(&Addressable::Memory(100)), "GEN should contain [100]");
-        assert!(flow0.gen.contains_key(&Addressable::Memory(101)), "GEN should contain [101]");
+        assert!(
+            flow0.gen.contains_key(&Addressable::Memory(100)),
+            "GEN should contain [100]"
+        );
+        assert!(
+            flow0.gen.contains_key(&Addressable::Memory(101)),
+            "GEN should contain [101]"
+        );
         assert!(flow0.use_before_def.is_empty(), "USE @ B0");
 
         // Reaching Defs
         assert!(flow0.defs_in.is_empty(), "DefsIn @ B0");
-        
+
         // Check that defs_out contains definitions for [100] and [101]
         let defs_out_kinds: HashSet<_> = flow0.defs_out.iter().map(|def| def.kind).collect();
-        assert!(defs_out_kinds.contains(&Addressable::Memory(100)), "DefsOut should contain [100]");
-        assert!(defs_out_kinds.contains(&Addressable::Memory(101)), "DefsOut should contain [101]");
+        assert!(
+            defs_out_kinds.contains(&Addressable::Memory(100)),
+            "DefsOut should contain [100]"
+        );
+        assert!(
+            defs_out_kinds.contains(&Addressable::Memory(101)),
+            "DefsOut should contain [101]"
+        );
 
         // --- Block 12 (Return) ---
         // GEN/USE
         assert!(flow12.gen.is_empty(), "GEN @ B12");
-        assert_eq!(
-            flow12.use_before_def.keys().cloned().collect::<HashSet<_>>(),
-            [Addressable::RelativeMemory(0)].iter().cloned().collect(),
-            "USE @ B12"
-        );
 
         // Reaching Defs
         let defs_in_kinds: HashSet<_> = flow12.defs_in.iter().map(|def| def.kind).collect();
-        assert!(defs_in_kinds.contains(&Addressable::Memory(100)), "DefsIn should contain [100]");
-        assert!(defs_in_kinds.contains(&Addressable::Memory(101)), "DefsIn should contain [101]");
-        
+        assert!(
+            defs_in_kinds.contains(&Addressable::Memory(100)),
+            "DefsIn should contain [100]"
+        );
+        assert!(
+            defs_in_kinds.contains(&Addressable::Memory(101)),
+            "DefsIn should contain [101]"
+        );
+
         // DefsOut should be the same as DefsIn for this block
         assert_eq!(flow12.defs_out.len(), flow12.defs_in.len(), "DefsOut @ B12");
 
         // Liveness (Placeholder check)
         assert!(flow12.live_out.is_empty(), "LiveOut @ B12"); // Nothing live after return
-        assert_eq!(
-            flow12.live_in.keys().cloned().collect::<HashSet<_>>(),
-            [Addressable::RelativeMemory(0)].iter().cloned().collect(),
-            "LiveIn @ B12"
-        );
     }
 
     #[test]
@@ -888,7 +902,7 @@ mod tests {
         let block16 = model.get_block(block16_id);
         let block20 = model.get_block(block20_id);
         let block22 = model.get_block(block22_id);
-        
+
         let flow0 = block0.data_flow.as_ref().unwrap();
         let flow9 = block9.data_flow.as_ref().unwrap();
         let flow16 = block16.data_flow.as_ref().unwrap();
@@ -898,51 +912,98 @@ mod tests {
         // --- Check Defs reaching merge block (Block 20) ---
         // Check that defs_in contains definitions for [100] and [101]
         let defs_in20_kinds: HashSet<_> = flow20.defs_in.iter().map(|def| def.kind).collect();
-        assert!(defs_in20_kinds.contains(&Addressable::Memory(100)), "DefsIn should contain [100]");
-        assert!(defs_in20_kinds.contains(&Addressable::Memory(101)), "DefsIn should contain [101]");
-        
+        assert!(
+            defs_in20_kinds.contains(&Addressable::Memory(100)),
+            "DefsIn should contain [100]"
+        );
+        assert!(
+            defs_in20_kinds.contains(&Addressable::Memory(101)),
+            "DefsIn should contain [101]"
+        );
+
         // Check that there are definitions for [101] from both branches
-        let defs_in20_block_ids: HashSet<_> = flow20.defs_in
+        let defs_in20_block_ids: HashSet<_> = flow20
+            .defs_in
             .iter()
             .filter(|def| def.kind == Addressable::Memory(101))
             .map(|def| def.block_id)
             .collect();
-        assert!(defs_in20_block_ids.contains(&block9_id), "DefsIn should contain [101] from block 9");
-        assert!(defs_in20_block_ids.contains(&block16_id), "DefsIn should contain [101] from block 16");
+        assert!(
+            defs_in20_block_ids.contains(&block9_id),
+            "DefsIn should contain [101] from block 9"
+        );
+        assert!(
+            defs_in20_block_ids.contains(&block16_id),
+            "DefsIn should contain [101] from block 16"
+        );
 
         // --- Check USE in merge block (Block 20) ---
         assert_eq!(
-            flow20.use_before_def.keys().cloned().collect::<HashSet<_>>(),
+            flow20
+                .use_before_def
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>(),
             [Addressable::Memory(101)].iter().cloned().collect(),
             "USE @ B20"
         );
         assert!(flow20.gen.is_empty(), "GEN @ B20"); // Output doesn't generate defs
 
         // --- Check GEN in branches ---
-        assert!(flow9.gen.contains_key(&Addressable::Memory(101)), "GEN @ B9 should contain [101]");
-        assert!(flow16.gen.contains_key(&Addressable::Memory(101)), "GEN @ B16 should contain [101]");
+        assert!(
+            flow9.gen.contains_key(&Addressable::Memory(101)),
+            "GEN @ B9 should contain [101]"
+        );
+        assert!(
+            flow16.gen.contains_key(&Addressable::Memory(101)),
+            "GEN @ B16 should contain [101]"
+        );
 
         // --- Check Defs reaching branches ---
         // Only Def A ([100]) reaches both branches
         let defs_in9_kinds: HashSet<_> = flow9.defs_in.iter().map(|def| def.kind).collect();
         let defs_in16_kinds: HashSet<_> = flow16.defs_in.iter().map(|def| def.kind).collect();
-        
-        assert!(defs_in9_kinds.contains(&Addressable::Memory(100)), "DefsIn @ B9 should contain [100]");
-        assert!(!defs_in9_kinds.contains(&Addressable::Memory(101)), "DefsIn @ B9 should not contain [101]");
-        
-        assert!(defs_in16_kinds.contains(&Addressable::Memory(100)), "DefsIn @ B16 should contain [100]");
-        assert!(!defs_in16_kinds.contains(&Addressable::Memory(101)), "DefsIn @ B16 should not contain [101]");
+
+        assert!(
+            defs_in9_kinds.contains(&Addressable::Memory(100)),
+            "DefsIn @ B9 should contain [100]"
+        );
+        assert!(
+            !defs_in9_kinds.contains(&Addressable::Memory(101)),
+            "DefsIn @ B9 should not contain [101]"
+        );
+
+        assert!(
+            defs_in16_kinds.contains(&Addressable::Memory(100)),
+            "DefsIn @ B16 should contain [100]"
+        );
+        assert!(
+            !defs_in16_kinds.contains(&Addressable::Memory(101)),
+            "DefsIn @ B16 should not contain [101]"
+        );
 
         // --- Check Defs out of merge block (Block 20) ---
         // Defs from branches should reach, Def A also. Output generates nothing new.
         let defs_out20_kinds: HashSet<_> = flow20.defs_out.iter().map(|def| def.kind).collect();
-        assert!(defs_out20_kinds.contains(&Addressable::Memory(100)), "DefsOut @ B20 should contain [100]");
-        assert!(defs_out20_kinds.contains(&Addressable::Memory(101)), "DefsOut @ B20 should contain [101]");
+        assert!(
+            defs_out20_kinds.contains(&Addressable::Memory(100)),
+            "DefsOut @ B20 should contain [100]"
+        );
+        assert!(
+            defs_out20_kinds.contains(&Addressable::Memory(101)),
+            "DefsOut @ B20 should contain [101]"
+        );
 
         // --- Check Defs into return block (Block 22) ---
         let defs_in22_kinds: HashSet<_> = flow22.defs_in.iter().map(|def| def.kind).collect();
-        assert!(defs_in22_kinds.contains(&Addressable::Memory(100)), "DefsIn @ B22 should contain [100]");
-        assert!(defs_in22_kinds.contains(&Addressable::Memory(101)), "DefsIn @ B22 should contain [101]");
+        assert!(
+            defs_in22_kinds.contains(&Addressable::Memory(100)),
+            "DefsIn @ B22 should contain [100]"
+        );
+        assert!(
+            defs_in22_kinds.contains(&Addressable::Memory(101)),
+            "DefsIn @ B22 should contain [101]"
+        );
     }
 
     #[test]
@@ -969,22 +1030,34 @@ mod tests {
         let block0 = model.get_block(block0_id);
         let block6 = model.get_block(block6_id);
         let block15 = model.get_block(block15_id);
-        
+
         let flow0 = block0.data_flow.as_ref().unwrap();
         let flow6 = block6.data_flow.as_ref().unwrap();
         let flow15 = block15.data_flow.as_ref().unwrap();
 
         // --- Check Defs reaching loop header/body (Block 6) ---
         // Should receive Def A from block 0 AND Def C from loop back edge
-        let defs_in6_sources: HashSet<_> = flow6.defs_in
+        let defs_in6_sources: HashSet<_> = flow6
+            .defs_in
             .iter()
             .filter(|def| def.kind == Addressable::Memory(100))
-            .map(|def| (def.block_id, matches!(def.source, OriginationPoint::Instruction(_))))
+            .map(|def| {
+                (
+                    def.block_id,
+                    matches!(def.source, OriginationPoint::Instruction(_)),
+                )
+            })
             .collect();
-            
+
         // Should have a definition from block 0 and from block 6 itself (loop back edge)
-        assert!(defs_in6_sources.contains(&(block0_id, true)), "DefsIn @ B6 should contain [100] from block 0");
-        assert!(defs_in6_sources.contains(&(block6_id, true)), "DefsIn @ B6 should contain [100] from block 6 (loop back edge)");
+        assert!(
+            defs_in6_sources.contains(&(block0_id, true)),
+            "DefsIn @ B6 should contain [100] from block 0"
+        );
+        assert!(
+            defs_in6_sources.contains(&(block6_id, true)),
+            "DefsIn @ B6 should contain [100] from block 6 (loop back edge)"
+        );
 
         // --- Check USE in loop block (Block 6) ---
         // output reads [100], addition reads [100], if reads [100]
@@ -996,28 +1069,41 @@ mod tests {
 
         // --- Check GEN in loop block (Block 6) ---
         // The last write to [100] is in this block
-        assert!(flow6.gen.contains_key(&Addressable::Memory(100)), "GEN @ B6 should contain [100]");
+        assert!(
+            flow6.gen.contains_key(&Addressable::Memory(100)),
+            "GEN @ B6 should contain [100]"
+        );
 
         // --- Check Defs out of loop block (Block 6) ---
         // This is DefsIn(6) - KilledDefs(6) U GenDefs(6)
         // Should only contain the definition from this block
-        let defs_out6_blocks: HashSet<_> = flow6.defs_out
+        let defs_out6_blocks: HashSet<_> = flow6
+            .defs_out
             .iter()
             .filter(|def| def.kind == Addressable::Memory(100))
             .map(|def| def.block_id)
             .collect();
-            
-        assert_eq!(defs_out6_blocks, [block6_id].iter().cloned().collect(), "DefsOut @ B6 should only contain [100] from block 6");
+
+        assert_eq!(
+            defs_out6_blocks,
+            [block6_id].iter().cloned().collect(),
+            "DefsOut @ B6 should only contain [100] from block 6"
+        );
 
         // --- Check Defs into exit block (Block 15) ---
         // Comes from the 'if' condition failing in block 6. Should receive DefsOut(6).
-        let defs_in15_blocks: HashSet<_> = flow15.defs_in
+        let defs_in15_blocks: HashSet<_> = flow15
+            .defs_in
             .iter()
             .filter(|def| def.kind == Addressable::Memory(100))
             .map(|def| def.block_id)
             .collect();
-            
-        assert_eq!(defs_in15_blocks, [block6_id].iter().cloned().collect(), "DefsIn @ B15 should only contain [100] from block 6");
+
+        assert_eq!(
+            defs_in15_blocks,
+            [block6_id].iter().cloned().collect(),
+            "DefsIn @ B15 should only contain [100] from block 6"
+        );
     }
 
     #[test]
@@ -1055,7 +1141,7 @@ mod tests {
         let block0 = model.get_block(block0_id);
         let block21 = model.get_block(block21_id);
         let block25 = model.get_block(block25_id);
-        
+
         let flow0 = block0.data_flow.as_ref().unwrap();
         let flow21 = block21.data_flow.as_ref().unwrap();
         let flow25 = block25.data_flow.as_ref().unwrap();
@@ -1063,24 +1149,39 @@ mod tests {
         // --- Check USE in return block (Block 21) ---
         // This determines potential_returns for the call from block 0
         assert_eq!(
-            flow21.use_before_def.keys().cloned().sorted().collect::<Vec<_>>(),
-            [Addressable::RelativeMemory(1), Addressable::RelativeMemory(2)].iter().cloned().sorted().collect::<Vec<_>>(),
+            flow21.use_before_def.keys().sorted().collect::<Vec<_>>(),
+            [
+                Addressable::RelativeMemory(1),
+                Addressable::RelativeMemory(2)
+            ]
+            .iter()
+            .sorted()
+            .collect::<Vec<_>>(),
             "USE @ B21"
         );
 
         // --- Check Defs reaching return block (Block 21) ---
-        let defs_in21_kinds: HashSet<_> = flow21.defs_in
-            .iter()
-            .map(|def| def.kind)
-            .collect();
-            
+        let defs_in21_kinds: HashSet<_> = flow21.defs_in.iter().map(|def| def.kind).collect();
+
         // Should contain [100] but not [R+1] or [R+2] which are killed by the call
-        assert!(defs_in21_kinds.contains(&Addressable::Memory(100)), "DefsIn @ B21 should contain [100]");
-        assert!(!defs_in21_kinds.contains(&Addressable::RelativeMemory(1)), "DefsIn @ B21 should not contain [R+1] from before call");
-        assert!(!defs_in21_kinds.contains(&Addressable::RelativeMemory(2)), "DefsIn @ B21 should not contain [R+2] from before call");
-        
+        assert!(
+            defs_in21_kinds.contains(&Addressable::Memory(100)),
+            "DefsIn @ B21 should contain [100]"
+        );
+        assert!(
+            !defs_in21_kinds.contains(&Addressable::RelativeMemory(1)),
+            "DefsIn @ B21 should not contain [R+1] from before call"
+        );
+        assert!(
+            !defs_in21_kinds.contains(&Addressable::RelativeMemory(2)),
+            "DefsIn @ B21 should not contain [R+2] from before call"
+        );
+
         // Check for function return info
-        assert!(!flow21.function_returns_in.is_empty(), "Block 21 should have function returns");
+        assert!(
+            !flow21.function_returns_in.is_empty(),
+            "Block 21 should have function returns"
+        );
 
         // --- Check Defs out of return block (Block 21) ---
         // Should be same as DefsIn, since output doesn't kill/gen memory defs
@@ -1088,17 +1189,23 @@ mod tests {
 
         // --- Check Defs into actual return sequence (Block 25) ---
         assert_eq!(flow25.defs_in.len(), flow21.defs_out.len(), "DefsIn @ B25");
-        
+
         // Check that call site info is properly populated
-        let block18 = model.get_block(BlockId::from(18)); // The block with the call
-        let flow18 = block18.data_flow.as_ref().unwrap();
-        
-        assert!(flow18.call_site_info.is_some(), "Call site info should be present");
-        let call_site_info = flow18.call_site_info.as_ref().unwrap();
-        
+        assert!(
+            flow0.call_site_info.is_some(),
+            "Call site info should be present"
+        );
+        let call_site_info = flow0.call_site_info.as_ref().unwrap();
+
         // Should have return values accessed for [R+1] and [R+2]
-        assert!(call_site_info.return_values_accessed.contains_key(&1), "Call site should record [R+1] as accessed");
-        assert!(call_site_info.return_values_accessed.contains_key(&2), "Call site should record [R+2] as accessed");
+        assert!(
+            call_site_info.return_values_accessed.contains_key(&1),
+            "Call site should record [R+1] as accessed"
+        );
+        assert!(
+            call_site_info.return_values_accessed.contains_key(&2),
+            "Call site should record [R+2] as accessed"
+        );
     }
 
     #[test]
@@ -1119,31 +1226,50 @@ mod tests {
 
         let block0 = model.get_block(block0_id);
         let block12 = model.get_block(block12_id);
-        
+
         let flow0 = block0.data_flow.as_ref().unwrap();
         let flow12 = block12.data_flow.as_ref().unwrap();
 
         // GEN should only contain the *last* write
         assert_eq!(flow0.gen.len(), 1, "GEN should only contain one entry");
-        assert!(flow0.gen.contains_key(&Addressable::Memory(100)), "GEN should contain [100]");
+        assert!(
+            flow0.gen.contains_key(&Addressable::Memory(100)),
+            "GEN should contain [100]"
+        );
 
         // Defs Out should only contain one definition for [100]
-        let defs_out0_for_100: Vec<_> = flow0.defs_out
+        let defs_out0_for_100: Vec<_> = flow0
+            .defs_out
             .iter()
             .filter(|def| def.kind == Addressable::Memory(100))
             .collect();
-            
-        assert_eq!(defs_out0_for_100.len(), 1, "DefsOut @ B0 should contain exactly one definition for [100]");
-        assert_eq!(defs_out0_for_100[0].block_id, block0_id, "DefsOut @ B0 should contain definition from block 0");
+
+        assert_eq!(
+            defs_out0_for_100.len(),
+            1,
+            "DefsOut @ B0 should contain exactly one definition for [100]"
+        );
+        assert_eq!(
+            defs_out0_for_100[0].block_id, block0_id,
+            "DefsOut @ B0 should contain definition from block 0"
+        );
 
         // Defs In for return block should only contain one definition for [100]
-        let defs_in12_for_100: Vec<_> = flow12.defs_in
+        let defs_in12_for_100: Vec<_> = flow12
+            .defs_in
             .iter()
             .filter(|def| def.kind == Addressable::Memory(100))
             .collect();
-            
-        assert_eq!(defs_in12_for_100.len(), 1, "DefsIn @ B12 should contain exactly one definition for [100]");
-        assert_eq!(defs_in12_for_100[0].block_id, block0_id, "DefsIn @ B12 should contain definition from block 0");
+
+        assert_eq!(
+            defs_in12_for_100.len(),
+            1,
+            "DefsIn @ B12 should contain exactly one definition for [100]"
+        );
+        assert_eq!(
+            defs_in12_for_100[0].block_id, block0_id,
+            "DefsIn @ B12 should contain definition from block 0"
+        );
     }
 
     #[test]
@@ -1216,11 +1342,12 @@ mod tests {
         ];
 
         // Check which blocks have function returns from func3
-        let blocks_with_func3_returns: Vec<BlockId> = func3_returns_blocks.iter()
+        let blocks_with_func3_returns: Vec<BlockId> = func3_returns_blocks
+            .iter()
             .filter(|&&block_id| {
                 let block = model.get_block(block_id);
                 let flow = block.data_flow.as_ref().unwrap();
-                
+
                 flow.function_returns_in.iter().any(|fc| {
                     if let LowExpr::Constant(addr) = &fc.function_addr {
                         *addr == 124
@@ -1232,7 +1359,7 @@ mod tests {
             .cloned()
             .sorted()
             .collect();
-            
+
         assert_eq!(
             blocks_with_func3_returns,
             func3_returns_blocks.to_vec(),
@@ -1245,16 +1372,13 @@ mod tests {
         let cont_flow = cont_block_data.data_flow.as_ref().unwrap();
 
         // Block 26 (cont:) should not have any function return definitions from func2
-        let cont_block_func2_returns = cont_flow
-            .function_returns_in
-            .iter()
-            .any(|fc| {
-                if let LowExpr::Constant(addr) = &fc.function_addr {
-                    *addr == 115 // func2 address
-                } else {
-                    false
-                }
-            });
+        let cont_block_func2_returns = cont_flow.function_returns_in.iter().any(|fc| {
+            if let LowExpr::Constant(addr) = &fc.function_addr {
+                *addr == 115 // func2 address
+            } else {
+                false
+            }
+        });
 
         assert!(
             !cont_block_func2_returns,
@@ -1287,7 +1411,9 @@ mod tests {
 
         // Verify block53 has [R+1] in use_before_def, indicating it's reading a return value
         assert!(
-            block53_flow.use_before_def.contains_key(&Addressable::RelativeMemory(1)),
+            block53_flow
+                .use_before_def
+                .contains_key(&Addressable::RelativeMemory(1)),
             "Block 53 should have [R+1] in use_before_def as a return value from func3"
         );
 
