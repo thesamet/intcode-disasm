@@ -1539,19 +1539,6 @@ mod tests {
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
     }
 
-    fn find_debug_marker_in_expr(
-        expr: &LowExpr<SsaAddressable>,
-        marker: char,
-    ) -> Option<&LowExpr<SsaAddressable>> {
-        match expr {
-            LowExpr::DebugMarker(c, _) if *c == marker => Some(expr),
-            LowExpr::DebugMarker(_, e) => find_debug_marker_in_expr(e, marker),
-            LowExpr::BinaryOp { lhs, rhs, .. } => find_debug_marker_in_expr(lhs, marker)
-                .or_else(|| find_debug_marker_in_expr(rhs, marker)),
-            LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg, marker),
-            _ => None,
-        }
-    }
 
     // Helper function to find debug markers in expressions
     fn find_first_debug_marker_in_expr<A>(expr: &LowExpr<A>) -> Option<&LowExpr<A>> {
