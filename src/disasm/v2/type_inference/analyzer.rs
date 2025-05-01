@@ -81,7 +81,7 @@ impl TypeInferenceAnalyzer {
         let result_addr = NativeInstructionId::from(block_id.index());
 
         // Add constraints between each input source and the result
-        for (pred_kind, input_var) in &phi.native_inputs {
+        for (pred_kind, input_var) in &phi.inputs {
             match pred_kind {
                 PredecessorKind::FunctionCallReturns(call_info) => {
                     // This phi input represents a return value.

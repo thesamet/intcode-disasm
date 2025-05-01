@@ -1,46 +1,43 @@
-use crate::disasm::{
-    v2::{listeners::image_scanner::ImageScanner, model::ProgramModel},
-    Error,
-};
-use colored::Colorize;
-
 use super::{
     dispatching::EventPublisher,
     events::Event,
     listeners::{
-        control_flow_analyzer::ControlFlowStructureRecoveryListener,
-        control_flow_graph_builder::ControlFlowGraphBuilder, data_flow_analyzer::DataFlowAnalyzer,
-        function_call_analyzer::FunctionCallAnalyzer, hlr_optimization::HlrOptimizationListener,
-        image_scanner::ImageScannerResult, ssa_converter::SsaConverter,
-        variable_analyzer::VariableAnalyzer,
+        control_flow_graph_builder::ControlFlowGraphBuilder,
+        data_flow_analyzer::DataFlowAnalyzer,
+        function_call_analyzer::FunctionCallAnalyzer,
+        image_scanner::{ImageScanner, ImageScannerResult},
+        ssa_converter::SsaConverter,
     },
-    pretty_print::{pretty_print_ssa, pretty_print_with_types},
-    type_inference::TypeInferenceAnalyzer,
+    model::ProgramModel,
+    pretty_print::pretty_print_ssa,
 };
-use crate::disasm::hlr::ast::pretty_print_program;
 
 /// Run the analysis pipeline and print data flow information
 pub fn run_analysis(image: Vec<i128>) {
     let mut model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner::new()));
-    publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
+    let x = ControlFlowGraphBuilder::new();
+    publisher.add_listener(Box::new(x));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
     publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    /*
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     publisher.add_listener(Box::new(VariableAnalyzer::new()));
     publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
     publisher.add_listener(Box::new(HlrOptimizationListener::new()));
+    */
     model.load_image(&image, &mut publisher);
     let res = publisher.process_events(&mut model);
     match res {
         Ok(_) => {
-            let program = model.get_optimized_hlr_program().unwrap();
-            println!("{}", pretty_print_program(program));
+            // let program = model.get_optimized_hlr_program().unwrap();
+            // println!("{}", pretty_print_program(program));
             // pretty_print_with_vars(&model);
         }
         Err(e) => {
+            /*
             eprintln!("\nError: {}", e.to_string().red().bold());
             if let Error::TypeConflict {
                 key,
@@ -50,6 +47,7 @@ pub fn run_analysis(image: Vec<i128>) {
             {
                 eprintln!("\n{}", partial_result.format_traces_for_var(key));
             }
+            */
         }
     }
 }
@@ -62,7 +60,9 @@ pub fn run_types(image: Vec<i128>) {
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
     publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
-    publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
+    assert!(false);
+    // publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
+    /* commented for migration
     model.load_image(&image, &mut publisher);
     let res = publisher.process_events(&mut model);
     match res {
@@ -81,6 +81,7 @@ pub fn run_types(image: Vec<i128>) {
             }
         }
     }
+    */
 }
 
 /// Run the analysis pipeline up to and including control flow structure recovery
@@ -92,6 +93,8 @@ pub fn run_flow_recovery(image: Vec<i128>) {
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
     publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    assert!(false);
+    /*
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     publisher.add_listener(Box::new(VariableAnalyzer::new()));
     publisher.add_listener(Box::new(ControlFlowStructureRecoveryListener::new()));
@@ -117,6 +120,7 @@ pub fn run_flow_recovery(image: Vec<i128>) {
             }
         }
     }
+    */
 }
 
 pub fn disassemble(image: Vec<i128>) -> ImageScannerResult {

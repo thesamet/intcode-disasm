@@ -11,9 +11,8 @@ use super::{
         variable_analyzer::VariableMergerResult,
     },
     ssa_form::SsaResult,
-    type_inference::TypeInferenceResult,
+    type_inference::result::TypeInferenceResult,
 };
-use crate::disasm::hlr::ast::HlrProgram;
 
 define_id_type!(FunctionId);
 
@@ -30,8 +29,9 @@ pub struct ProgramModel {
     ssa_result: Option<SsaResult>,
 
     function_call_analysis: Option<FunctionCallAnalysis>,
-
     type_inference_result: Option<TypeInferenceResult>,
+    variable_merger_result: Option<VariableMergerResult>,
+    /*
 
     // High-level representation of the program
     hlr_program: Option<HlrProgram>,
@@ -40,7 +40,7 @@ pub struct ProgramModel {
     optimized_hlr_program: Option<HlrProgram>,
 
     // Variable clusters for high-level variable recovery
-    variable_merger_result: Option<VariableMergerResult>,
+    */
 }
 
 impl ProgramModel {
@@ -55,8 +55,10 @@ impl ProgramModel {
             type_inference_result: None,
             function_call_analysis: None,
             variable_merger_result: None,
+            /*
             hlr_program: None,
             optimized_hlr_program: None,
+            */
         }
     }
 
@@ -145,20 +147,12 @@ impl ProgramModel {
         self.ssa_result.as_ref()
     }
 
-    pub fn set_type_inference_result(&mut self, result: TypeInferenceResult) {
-        self.type_inference_result = Some(result);
-    }
-
     pub fn get_type_inference_result(&self) -> Option<&TypeInferenceResult> {
         self.type_inference_result.as_ref()
     }
 
-    pub fn set_function_call_analysis(&mut self, analysis_result: FunctionCallAnalysis) {
-        self.function_call_analysis = Some(analysis_result);
-    }
-
-    pub fn get_function_call_analysis(&self) -> Option<&FunctionCallAnalysis> {
-        self.function_call_analysis.as_ref()
+    pub fn set_type_inference_result(&mut self, result: TypeInferenceResult) {
+        self.type_inference_result = Some(result);
     }
 
     pub fn set_variable_merger_result(&mut self, result: VariableMergerResult) {
@@ -168,6 +162,7 @@ impl ProgramModel {
     pub fn get_variable_merger_result(&self) -> Option<&VariableMergerResult> {
         self.variable_merger_result.as_ref()
     }
+    /*
 
     pub fn get_hlr_program(&self) -> Option<&HlrProgram> {
         self.hlr_program.as_ref()
@@ -183,6 +178,15 @@ impl ProgramModel {
 
     pub fn set_optimized_hlr_program(&mut self, program: HlrProgram) {
         self.optimized_hlr_program = Some(program);
+    }
+    */
+
+    pub fn set_function_call_analysis(&mut self, analysis_result: FunctionCallAnalysis) {
+        self.function_call_analysis = Some(analysis_result);
+    }
+
+    pub fn get_function_call_analysis(&self) -> Option<&FunctionCallAnalysis> {
+        self.function_call_analysis.as_ref()
     }
 }
 

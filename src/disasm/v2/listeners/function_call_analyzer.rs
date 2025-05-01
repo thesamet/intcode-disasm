@@ -1,15 +1,23 @@
+use crate::disasm::v2::data_flow::NativeOriginationPoint;
 use crate::disasm::v2::{
     control_flow::NextKind,
-    data_flow::NativeOriginationPoint,
+    data_flow::OriginationPoint,
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
+    instructions::LowExpr,
     model::{BlockId, FunctionId, ProgramModel},
     native::OperandKind,
-    ssa_form::{SsaFunction, SsaOperand, SsaOperandKind, SsaResult, SsaVar},
+    ssa_form::{
+        SsaAddressable, SsaFunction, SsaOperand, SsaOperandKind, SsaResult, VersionedAddressable,
+        VersionedAddressableKind,
+    },
 };
 use itertools::Itertools;
 use log::{debug, trace};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::LowerExp,
+};
 
 /// Top-level result container for function call analysis.
 #[derive(Debug, Clone, Default)]
@@ -36,12 +44,12 @@ pub struct CalleeInfo {
     /// Maps the parameter offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *first read* of that parameter,
     /// typically near the function entry.
-    pub parameter_entry_vars: HashMap<i128, SsaVar>,
+    pub parameter_entry_vars: HashMap<i128, VersionedAddressable>,
 
     /// Return values defined by this function.
     /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *last write* to that location before returning.
-    pub return_writes: HashMap<i128, SsaVar>,
+    pub return_writes: HashMap<i128, VersionedAddressable>,
 }
 
 /// Information about a specific location where a function call occurs (Caller's perspective).
@@ -55,35 +63,35 @@ pub struct CallSiteInfo {
     pub target_function_id: Option<FunctionId>,
 
     /// The SSA variable representing the target address for indirect calls (`goto [addr]`).
-    pub target_address_var: Option<SsaOperand>,
+    pub target_address_var: Option<LowExpr<SsaAddressable>>,
 
     /// Arguments provided *by the caller* before the call.
     /// Maps the argument offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within the *caller function* that holds the value written to that location.
-    pub argument_writes: HashMap<i128, SsaVar>,
+    pub argument_writes: HashMap<i128, VersionedAddressable>,
 
     /// Return values accessed *by the caller* after the call returns.
     /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within the *caller function* that reads the value from that location.
-    pub return_reads: HashMap<i128, SsaVar>,
+    pub return_reads: HashMap<i128, VersionedAddressable>,
 
     /// BlockId where execution resumes in the caller after the function returns.
     pub return_block_id: BlockId,
 
-    /// Maps caller's argument write SsaVar to callee's parameter entry SsaVar.
+    /// Maps caller's argument write VersionedAddressable to callee's parameter entry VersionedAddressable.
     /// Only populated for direct calls.
-    pub parameter_map: HashMap<SsaVar, SsaVar>,
+    pub parameter_map: HashMap<VersionedAddressable, VersionedAddressable>,
 
-    /// Maps caller's return read SsaVar to callee's parameter entry SsaVar.
+    /// Maps caller's return read VersionedAddressable to callee's parameter entry VersionedAddressable.
     /// Only populated for direct calls.
-    pub return_map: HashMap<SsaVar, SsaVar>,
+    pub return_map: HashMap<VersionedAddressable, VersionedAddressable>,
 }
 
 impl FunctionCallAnalysis {
     pub fn get_effective_return_values(
         &self,
         function_id: FunctionId,
-    ) -> Option<Vec<(i128, SsaVar)>> {
+    ) -> Option<Vec<(i128, VersionedAddressable)>> {
         let callers_csi = self
             .call_site_info
             .values()
@@ -92,7 +100,7 @@ impl FunctionCallAnalysis {
         if callers_csi.is_empty() {
             None
         } else {
-            let mut return_reads: HashSet<(i128, SsaVar)> = HashSet::new();
+            let mut return_reads: HashSet<(i128, VersionedAddressable)> = HashSet::new();
             for csi in callers_csi {
                 return_reads.extend(
                     csi.return_reads
@@ -106,23 +114,27 @@ impl FunctionCallAnalysis {
     }
 }
 
-fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Option<SsaVar> {
-    let mut min_var: Option<SsaVar> = None;
+fn find_lowest_version_of(
+    function: &SsaFunction,
+    kind: &VersionedAddressableKind,
+) -> Option<VersionedAddressable> {
+    let mut min_var: Option<VersionedAddressable> = None;
 
-    let min_var_version =
-        |min_var: Option<SsaVar>| min_var.as_ref().map(|var| var.version).unwrap_or(0);
+    let min_var_version = |min_var: Option<VersionedAddressable>| {
+        min_var.as_ref().map(|var| var.version).unwrap_or(0)
+    };
 
     for block in function.blocks.values() {
         // Check Phi results
         for phi in &block.phi_functions {
-            if &phi.native_result.to_operand().kind == kind
+            if &phi.result.kind == kind
                 && (min_var.is_none() || phi.native_result.version < min_var_version(min_var))
             {
-                min_var = Some(phi.native_result);
+                min_var = Some(phi.result);
             }
             // Check Phi inputs
-            for input_var in phi.native_inputs.values() {
-                if &input_var.to_operand().kind == kind
+            for input_var in phi.inputs.values() {
+                if &input_var.kind == kind
                     && (min_var.is_none() || input_var.version < min_var_version(min_var))
                 {
                     min_var = Some(*input_var);
@@ -130,15 +142,15 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
             }
         }
         // Check instruction operands
-        for instr in &block.native_instructions {
+        for instr in &block.instructions {
             // Consider all read operands.
-            let operands_in_instr = instr.reads();
+            let operands_in_instr = instr.kind.reads();
             for var in operands_in_instr {
-                if let SsaOperandKind::Variable(var) = var.kind {
-                    if &var.to_operand().kind == kind
+                if let Some(var) = var.as_versioned() {
+                    if &var.kind == kind
                         && (min_var.is_none() || var.version < min_var_version(min_var))
                     {
-                        min_var = Some(var);
+                        min_var = Some(*var);
                     }
                 }
             }
@@ -164,30 +176,32 @@ impl FunctionCallAnalyzer {
             let return_block_id = model.get_function(function.original_id).return_block;
             let stack_size = model.get_function(function.original_id).stack_size as i128;
 
-            let mut parameter_entry_vars: HashMap<i128, SsaVar> = HashMap::new();
+            let mut parameter_entry_vars: HashMap<i128, VersionedAddressable> = HashMap::new();
 
             // Analyze parameters using live_in at entry block
-            let entry_flow = model
-                .get_data_flow_result()
-                .expect("Data flow result not found")
-                .block_results
-                .get(&entry_block_id)
-                .unwrap();
-            for (live_kind, points) in &entry_flow.live_in {
-                if let OperandKind::RelativeMemory(offset) = live_kind {
-                    if *offset < 0
-                        && points
-                            .iter()
-                            .any(|p| *p != NativeOriginationPoint::FunctionOutput)
-                    {
-                        // Found a potential parameter offset `n`
-                        // Now find the SsaVar with the lowest version for this kind in the function
-                        if let Some(entry_var) = find_lowest_version_ssa_var(function, &live_kind) {
-                            parameter_entry_vars.insert(offset + stack_size, entry_var);
-                        } else {
-                            panic!("Function {}: OperandKind {:?} is live_in at entry, but no corresponding SsaVar found.", function_id, live_kind);
-                        }
-                    }
+            let entry_flow = model.get_block(entry_block_id).data_flow.as_ref().unwrap();
+            for (live_addressable, points) in &entry_flow.live_in {
+                let Some(live_kind) =
+                    VersionedAddressableKind::try_from_addressable(live_addressable)
+                else {
+                    continue;
+                };
+                let Some(offset) = live_kind.get_relative_memory() else {
+                    continue;
+                };
+                if offset >= 0
+                    || !points
+                        .iter()
+                        .any(|p| *p != OriginationPoint::FunctionOutput)
+                {
+                    continue;
+                }
+                // Found a potential parameter offset `n`
+                // Now find the VersionedAddressable with the lowest version for this kind in the function
+                if let Some(entry_var) = find_lowest_version_of(function, &live_kind) {
+                    parameter_entry_vars.insert(offset + stack_size, entry_var);
+                } else {
+                    panic!("Function {}: OperandKind {:?} is live_in at entry, but no corresponding VersionedAddressable found.", function_id, live_kind);
                 }
             }
 
@@ -201,7 +215,7 @@ impl FunctionCallAnalyzer {
                     .blocks
                     .get(&return_block_id)
                     .unwrap()
-                    .native_end_state
+                    .end_state
                     .iter()
                     .filter_map(|(k, v)| {
                         k.get_relative_memory().filter(|r| *r < 0).map(|r| (r, *v))
@@ -231,13 +245,13 @@ impl FunctionCallAnalyzer {
         // --- Phase 2: Analyze Call Sites ---
         for (&calling_function_id, function) in &ssa_result.functions {
             for (&calling_block_id, block) in &function.blocks {
-                if let NextKind::FunctionCall(call) = &block.native_next {
+                if let NextKind::FunctionCall(call) = &block.next {
                     trace!(
                         "Analyzing call site in block {} (func {})",
                         calling_block_id,
                         calling_function_id
                     );
-                    let argument_writes: HashMap<i128, SsaVar> = model
+                    let argument_writes: HashMap<i128, VersionedAddressable> = model
                         .get_ssa_result()
                         .unwrap()
                         .functions
@@ -246,33 +260,32 @@ impl FunctionCallAnalyzer {
                         .blocks
                         .get(&calling_block_id)
                         .unwrap()
-                        .native_end_state
+                        .end_state
                         .iter()
                         .filter_map(|(k, v)| {
                             k.get_relative_memory().filter(|r| *r > 0).map(|r| (r, *v))
                         })
                         .collect();
-                    let mut return_reads: HashMap<i128, SsaVar> = HashMap::new();
-                    let mut target_address_var: Option<SsaOperand> = None;
+                    let mut return_reads: HashMap<i128, VersionedAddressable> = HashMap::new();
+                    let mut target_address_var: Option<LowExpr<SsaAddressable>> = None;
                     let mut target_function_id: Option<FunctionId> = None;
 
                     // Determine Target Function
-                    match call.function_addr.to_operand().kind {
-                        OperandKind::Immediate(addr) => {
-                            target_function_id = Some(FunctionId::from(addr as usize));
+                    match call.function_addr {
+                        LowExpr::Constant(addr) => {
+                            target_function_id = Some(FunctionId::from(addr as usize))
                         }
                         _ => {
                             // Indirect call
-                            target_address_var = Some(call.function_addr);
+                            target_address_var = Some(call.function_addr.clone());
                         }
                     }
 
                     // Find Return Reads (first reads of [R+n] in return block)
                     let return_values_accessed = model
-                        .get_data_flow_result()
-                        .unwrap()
-                        .block_results
-                        .get(&call.calling_block)
+                        .get_block(call.calling_block)
+                        .data_flow
+                        .as_ref()
                         .unwrap()
                         .call_site_info
                         .clone()
@@ -283,17 +296,18 @@ impl FunctionCallAnalyzer {
                         let instr = function
                             .blocks
                             .values()
-                            .flat_map(|b| b.native_instructions.iter())
+                            .flat_map(|b| b.instructions.iter())
                             .find(|i| i.id == instr_id)
                             .unwrap();
                         let read_var = *instr
+                            .kind
                             .reads()
                             .iter()
-                            .find(|r| r.to_operand().kind.get_relative_memory() == Some(offset))
+                            .find(|r| r.get_relative_memory() == Some(offset))
+                            .unwrap()
+                            .as_versioned()
                             .unwrap();
-                        return_reads
-                            .entry(offset)
-                            .or_insert(*read_var.as_variable().unwrap());
+                        return_reads.entry(offset).or_insert(read_var);
                     }
                     let (parameter_map, return_map) =
                         if let Some(target_function_id) = target_function_id {
@@ -333,9 +347,12 @@ fn populate_call_site_maps(
     target_id: FunctionId,
     analysis: &FunctionCallAnalysis,
     model: &ProgramModel,
-    argument_writes: &HashMap<i128, SsaVar>,
-    return_reads: &HashMap<i128, SsaVar>,
-) -> (HashMap<SsaVar, SsaVar>, HashMap<SsaVar, SsaVar>) {
+    argument_writes: &HashMap<i128, VersionedAddressable>,
+    return_reads: &HashMap<i128, VersionedAddressable>,
+) -> (
+    HashMap<VersionedAddressable, VersionedAddressable>,
+    HashMap<VersionedAddressable, VersionedAddressable>,
+) {
     let mut parameter_map = HashMap::new();
     let mut return_map = HashMap::new();
     let Some(callee_info) = analysis.callee_info.get(&target_id) else {

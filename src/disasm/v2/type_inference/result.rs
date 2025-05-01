@@ -6,11 +6,11 @@ use crate::disasm::v2::{
     ssa_form::{SsaOperand, SsaVar},
 };
 
-use super::types::{Type, VariableKind};
 use super::{
-    solver::{AnalysisTrace, ChangeReason},
-    visuals::TraceColors,
+    types::{Type, VariableKind},
+    AnalysisTrace,
 };
+use super::{visuals::TraceColors, ChangeReason};
 use colored::Colorize;
 
 pub type FunctionSignature = (Vec<(i128, SsaVar, Type)>, Vec<(i128, SsaVar, Type)>);

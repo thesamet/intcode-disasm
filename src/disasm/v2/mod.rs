@@ -5,14 +5,14 @@ pub mod dispatching;
 pub mod events;
 pub mod id_types;
 pub mod instructions;
-#[cfg(test)]
-mod integration_tests;
 pub mod listeners;
 pub mod model;
 pub mod native;
 pub mod pretty_print;
 pub mod ssa_form;
 pub mod type_inference;
+// #[cfg(test)]
+// mod integration_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {

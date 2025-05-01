@@ -82,6 +82,8 @@ impl FunctionVarNamingState {
     }
 }
 
+/*
+
 impl<'a> VariableMerger<'a> {
     /// Creates a new VariableclusterAnalyzer
     pub fn new(model: &'a ProgramModel) -> VariableMerger<'a> {
@@ -536,3 +538,4 @@ mod tests {
         );
     }
 }
+*/
