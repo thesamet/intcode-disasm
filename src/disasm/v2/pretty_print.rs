@@ -102,7 +102,7 @@ impl<'a> PrettyPrinter<'a> {
 
     fn format_phi_function(&self, phi: &PhiFunction) -> String {
         let inputs = phi
-            .inputs
+            .native_inputs
             .iter()
             .sorted_by_key(|(pred_kind, _)| pred_kind.source_block_id())
             .map(|(pred_kind, ssa_op)| {
@@ -131,8 +131,8 @@ impl<'a> PrettyPrinter<'a> {
         format!(
             "{} = φ({})",
             self.format_ssa_operand(&SsaOperand {
-                kind: SsaOperandKind::Variable(phi.result),
-                origin_info: phi.result.origin_info,
+                kind: SsaOperandKind::Variable(phi.native_result),
+                origin_info: phi.native_result.origin_info,
             }),
             inputs
         )
@@ -234,7 +234,7 @@ impl<'a> PrettyPrinter<'a> {
         }
 
         // Instructions
-        for instr in &block.instructions {
+        for instr in &block.native_instructions {
             if self.show_vars {
                 match instr.kind {
                     NativeInstructionKind::Assign(a, b) => {

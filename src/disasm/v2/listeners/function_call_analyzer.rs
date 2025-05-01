@@ -115,13 +115,13 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
     for block in function.blocks.values() {
         // Check Phi results
         for phi in &block.phi_functions {
-            if &phi.result.to_operand().kind == kind
-                && (min_var.is_none() || phi.result.version < min_var_version(min_var))
+            if &phi.native_result.to_operand().kind == kind
+                && (min_var.is_none() || phi.native_result.version < min_var_version(min_var))
             {
-                min_var = Some(phi.result);
+                min_var = Some(phi.native_result);
             }
             // Check Phi inputs
-            for input_var in phi.inputs.values() {
+            for input_var in phi.native_inputs.values() {
                 if &input_var.to_operand().kind == kind
                     && (min_var.is_none() || input_var.version < min_var_version(min_var))
                 {
@@ -130,7 +130,7 @@ fn find_lowest_version_ssa_var(function: &SsaFunction, kind: &OperandKind) -> Op
             }
         }
         // Check instruction operands
-        for instr in &block.instructions {
+        for instr in &block.native_instructions {
             // Consider all read operands.
             let operands_in_instr = instr.reads();
             for var in operands_in_instr {
@@ -201,7 +201,7 @@ impl FunctionCallAnalyzer {
                     .blocks
                     .get(&return_block_id)
                     .unwrap()
-                    .end_state
+                    .native_end_state
                     .iter()
                     .filter_map(|(k, v)| {
                         k.get_relative_memory().filter(|r| *r < 0).map(|r| (r, *v))
@@ -231,7 +231,7 @@ impl FunctionCallAnalyzer {
         // --- Phase 2: Analyze Call Sites ---
         for (&calling_function_id, function) in &ssa_result.functions {
             for (&calling_block_id, block) in &function.blocks {
-                if let NextKind::FunctionCall(call) = &block.next {
+                if let NextKind::FunctionCall(call) = &block.native_next {
                     trace!(
                         "Analyzing call site in block {} (func {})",
                         calling_block_id,
@@ -246,7 +246,7 @@ impl FunctionCallAnalyzer {
                         .blocks
                         .get(&calling_block_id)
                         .unwrap()
-                        .end_state
+                        .native_end_state
                         .iter()
                         .filter_map(|(k, v)| {
                             k.get_relative_memory().filter(|r| *r > 0).map(|r| (r, *v))
@@ -283,7 +283,7 @@ impl FunctionCallAnalyzer {
                         let instr = function
                             .blocks
                             .values()
-                            .flat_map(|b| b.instructions.iter())
+                            .flat_map(|b| b.native_instructions.iter())
                             .find(|i| i.id == instr_id)
                             .unwrap();
                         let read_var = *instr

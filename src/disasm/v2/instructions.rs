@@ -146,6 +146,29 @@ impl<A> LowExpr<A> {
         }
         out
     }
+
+    pub fn map<F, B>(&self, map: &mut F) -> LowExpr<B>
+    where
+        F: FnMut(&A) -> B,
+    {
+        match self {
+            LowExpr::Constant(val) => LowExpr::Constant(*val),
+            LowExpr::Addressable(a) => LowExpr::Addressable(map(a)),
+            LowExpr::BinaryOp { op, lhs, rhs } => LowExpr::BinaryOp {
+                op: *op,
+                lhs: Box::new(lhs.map(map)),
+                rhs: Box::new(rhs.map(map)),
+            },
+            LowExpr::UnaryOp { op, arg } => LowExpr::UnaryOp {
+                op: *op,
+                arg: Box::new(arg.map(map)),
+            },
+            LowExpr::Input() => LowExpr::Input(),
+            LowExpr::DebugMarker(marker, expr) => {
+                LowExpr::DebugMarker(*marker, Box::new(expr.map(map)))
+            }
+        }
+    }
 }
 
 /// Represents binary operations that can be performed on two operands.
@@ -467,5 +490,63 @@ impl Instruction<Addressable> {
                 id: InstructionId::fresh(),
             }),
         )
+    }
+}
+
+impl<A> Instruction<A> {
+    pub fn map_rw<C, R, W, T>(
+        &self,
+        context: &mut C,
+        mut map_read: R,
+        mut map_write: W,
+    ) -> Instruction<T>
+    where
+        R: FnMut(&mut C, &A) -> T,
+        W: FnMut(&mut C, &A) -> T,
+    {
+        match &self.kind {
+            InstructionKind::Assign { target, src } => Instruction {
+                id: self.id,
+                kind: InstructionKind::Assign {
+                    target: map_write(context, &target),
+                    src: src.map(&mut |v| map_read(context, v)),
+                },
+            },
+            InstructionKind::If {
+                cond,
+                then_addr,
+                else_addr,
+            } => Instruction {
+                id: self.id,
+                kind: InstructionKind::If {
+                    cond: cond.map(&mut |v| map_read(context, v)),
+                    then_addr: *then_addr,
+                    else_addr: *else_addr,
+                },
+            },
+            InstructionKind::Goto(addr) => Instruction {
+                id: self.id,
+                kind: InstructionKind::Goto(*addr),
+            },
+            InstructionKind::Call { addr, return_to } => Instruction {
+                id: self.id,
+                kind: InstructionKind::Call {
+                    addr: addr.map(&mut |v| map_read(context, v)),
+                    return_to: *return_to,
+                },
+            },
+            InstructionKind::Output(expr) => Instruction {
+                id: self.id,
+                kind: InstructionKind::Output(expr.map(&mut |v| map_read(context, v))),
+            },
+            InstructionKind::Return => Instruction {
+                id: self.id,
+                kind: InstructionKind::Return,
+            },
+            InstructionKind::Halt => Instruction {
+                id: self.id,
+                kind: InstructionKind::Halt,
+            },
+        }
     }
 }

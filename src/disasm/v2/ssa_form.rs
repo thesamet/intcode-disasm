@@ -3,13 +3,74 @@ use std::convert::From;
 
 use crate::disasm::v2::{
     control_flow::{NextKind, PredecessorKind},
+    data_flow::OriginationPoint,
     model::{BlockId, FunctionId, ProgramModel},
     native::{Operand, OperandKind},
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use super::{data_flow::NativeOriginationPoint, model::Function, native::GenericNativeInstruction};
+use super::{
+    data_flow::NativeOriginationPoint,
+    instructions::{Addressable, Instruction, LowExpr, PointerId},
+    model::Function,
+    native::GenericNativeInstruction,
+};
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum VersionedAddressableKind {
+    Memory(usize),
+    RelativeMemory(i128),
+    Pointer(PointerId),
+}
+
+impl VersionedAddressableKind {
+    /// Converts an `Addressable` to a `VersionedAddressableKind`.
+    ///
+    /// This function is used during SSA conversion to transform addressable expressions into their versioned counterparts.
+    ///
+    /// # Arguments
+    /// * `addressable` - A reference to an `Addressable` to convert
+    ///
+    /// # Returns
+    /// * `Some(VersionedAddressableKind)` - If the addressable is Memory, RelativeMemory, or Pointer
+    /// * `None` - If the addressable is a Deref
+    pub fn try_from_addressable(addressable: &Addressable) -> Option<Self> {
+        match addressable {
+            Addressable::Memory(addr) => Some(VersionedAddressableKind::Memory(*addr)),
+            Addressable::RelativeMemory(offset) => {
+                Some(VersionedAddressableKind::RelativeMemory(*offset))
+            }
+            Addressable::Pointer(id) => Some(VersionedAddressableKind::Pointer(*id)),
+            Addressable::Deref(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+struct VersionedAddressable {
+    kind: VersionedAddressableKind,
+    function_id: FunctionId,
+    version: usize,
+}
+
+impl VersionedAddressable {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum SsaAddressable {
+    Versioned(VersionedAddressable),
+    Deref(Box<LowExpr<SsaAddressable>>),
+}
+
+impl From<VersionedAddressableKind> for Addressable {
+    fn from(ssa_assignable: VersionedAddressableKind) -> Self {
+        match ssa_assignable {
+            VersionedAddressableKind::Memory(addr) => Addressable::Memory(addr),
+            VersionedAddressableKind::RelativeMemory(offset) => Addressable::RelativeMemory(offset),
+            VersionedAddressableKind::Pointer(pointer_id) => Addressable::Pointer(pointer_id),
+        }
+    }
+}
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -272,12 +333,20 @@ impl fmt::Display for SsaOperand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhiFunction {
     /// The resulting SSA variable (must be a Variable)
-    pub result: SsaVar,
+    pub native_result: SsaVar,
     /// Map describing the sources for this Phi function's value.
     /// The key is the PredecessorKind corresponding to the incoming edge.
     /// The value is the SsaOperand representing the value coming from that source.
     /// For FunctionReturn predecessors, the SsaOperand is typically the phi.result itself wrapped in SsaOperand::Variable.
-    pub inputs: HashMap<PredecessorKind<Operand>, SsaVar>,
+    pub native_inputs: HashMap<PredecessorKind<Operand>, SsaVar>,
+
+    /// The resulting SSA variable (must be a Variable)
+    pub result: VersionedAddressable,
+    /// Map describing the sources for this Phi function's value.
+    /// The key is the PredecessorKind corresponding to the incoming edge.
+    /// The value is the SsaOperand representing the value coming from that source.
+    /// For FunctionReturn predecessors, the SsaOperand is typically the phi.result itself wrapped in SsaOperand::Variable.
+    pub inputs: HashMap<PredecessorKind<Addressable>, VersionedAddressable>,
 }
 
 pub type SsaInstruction = GenericNativeInstruction<SsaOperand>;
@@ -290,14 +359,22 @@ pub struct SsaBlock {
     /// Phi functions at the start of this block
     pub phi_functions: Vec<PhiFunction>,
     /// Instructions in SSA form
-    pub instructions: Vec<SsaInstruction>,
+    pub native_instructions: Vec<SsaInstruction>,
+    // Instructions in SSA form
+    pub instructions: Vec<Instruction<SsaAddressable>>,
     // Start state: the state of all versioned variables at the start of this block
-    pub start_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
+    pub native_start_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
+    // Start state: the state of all versioned variables at the start of this block
+    pub start_state: HashMap<VersionedAddressableKind, VersionedAddressable>, // Track only versioned variables
     /// End state: the state of all versioned variables at the end of this block
-    pub end_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
+    pub native_end_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
+    /// End state: the state of all versioned variables at the end of this block
+    pub end_state: HashMap<VersionedAddressableKind, VersionedAddressable>, // Track only versioned variables
     /// Control flow information using SSA operands
-    pub next: NextKind<SsaOperand>,
-    pub predecessors: Vec<PredecessorKind<SsaOperand>>,
+    pub native_next: NextKind<SsaOperand>,
+    pub next: NextKind<LowExpr<SsaAddressable>>,
+    pub native_predecessors: Vec<PredecessorKind<SsaOperand>>,
+    pub predecessors: Vec<PredecessorKind<SsaAddressable>>,
 }
 
 /// Represents a function in SSA form
@@ -314,7 +391,7 @@ impl SsaFunction {
     #[cfg(test)]
     pub fn find_ssa_operand_by_marker(&self, marker: char) -> Option<SsaOperand> {
         for block in self.blocks.values() {
-            for instr in &block.instructions {
+            for instr in &block.native_instructions {
                 // Use into_iter() to consume and avoid borrowing issues if needed,
                 // or just iterate over references.
                 // Assuming reads/writes return Vec<SsaOperand> or similar collection
@@ -375,79 +452,73 @@ struct SSAConversionState<'a> {
     model: &'a ProgramModel,
 }
 
+fn get_current_version(
+    current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
+    addressable: &VersionedAddressableKind,
+    function_id: FunctionId,
+) -> VersionedAddressable {
+    current_versions
+        .get(addressable)
+        .cloned()
+        .unwrap_or(VersionedAddressable {
+            kind: *addressable,
+            function_id,
+            version: 0,
+        })
+}
+// Creates the next version for a *variable* operand. Panics if called on a constant.
+fn create_next_version(
+    current_versions: &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
+    addressable: &VersionedAddressableKind,
+    function_id: FunctionId,
+) -> VersionedAddressable {
+    let mut versioned_addressable = get_current_version(current_versions, addressable, function_id);
+    versioned_addressable.version += 1;
+    current_versions.insert(*addressable, versioned_addressable);
+    versioned_addressable
+}
+
+fn to_versioned_addressable(
+    current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
+    function_id: FunctionId,
+    a: &Addressable,
+) -> SsaAddressable {
+    match VersionedAddressableKind::try_from_addressable(a) {
+        Some(kind) => {
+            SsaAddressable::Versioned(get_current_version(current_versions, &kind, function_id))
+        }
+        None => match a {
+            Addressable::Deref(expr) => {
+                let expr = to_versioned_expression(current_versions, function_id, expr);
+                SsaAddressable::Deref(Box::new(expr))
+            }
+            _ => unreachable!("Expected deref addressable"),
+        },
+    }
+}
+
+// Gets the current SsaOperand (Constant or Variable) for a given Operand.
+fn to_versioned_expression(
+    current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
+    function_id: FunctionId,
+    expr: &LowExpr<Addressable>,
+) -> LowExpr<SsaAddressable> {
+    expr.map(&mut |op| to_versioned_addressable(current_versions, function_id, op))
+}
+
+// Creates the NextKind using SsaOperands based on the current versions.
+
 impl<'a> SSAConversionState<'a> {
     fn new(model: &'a ProgramModel) -> Self {
         Self { model }
     }
 
-    // Creates the next version for a *variable* operand. Panics if called on a constant.
-    fn create_next_version(
-        current_versions: &mut HashMap<SsaVarKind, SsaVar>,
-        var_operand: Operand,
-        function_id: FunctionId,
-    ) -> SsaVar {
-        // This function should only be called for actual variables, not constants.
-        let kind = SsaVarKind::from_operand_kind(&var_operand.kind)
-            .expect("create_next_version called on a non-variable operand");
-
-        let version = current_versions.get(&kind).map(|v| v.version).unwrap_or(0) + 1;
-        let new_version = SsaVar {
-            kind,
-            version,
-            origin_info: SsaOriginInfo::new(
-                function_id,
-                var_operand.offset,
-                var_operand.debug_marker,
-            ),
-        };
-        current_versions.insert(kind, new_version);
-        new_version
-    }
-
-    // Gets the current SsaOperand (Constant or Variable) for a given Operand.
-    fn get_current_value_for(
-        current_versions: &HashMap<SsaVarKind, SsaVar>,
-        op: Operand,
-        function_id: FunctionId,
-    ) -> SsaOperand {
-        let origin_info = SsaOriginInfo::new(function_id, op.offset, op.debug_marker);
-        match op.kind {
-            OperandKind::Memory(_) | OperandKind::Pointer(_) | OperandKind::RelativeMemory(_) => {
-                let kind = SsaVarKind::from_operand_kind(&op.kind).unwrap();
-                SsaOperand {
-                    kind: SsaOperandKind::Variable(SsaVar {
-                        kind,
-                        version: current_versions.get(&kind).map(|v| v.version).unwrap_or(0),
-                        origin_info,
-                    }),
-                    origin_info,
-                }
-            }
-            OperandKind::Immediate(val) => SsaOperand {
-                kind: SsaOperandKind::Constant(val),
-                origin_info,
-            },
-            OperandKind::Deref(addr) => SsaOperand {
-                kind: SsaOperandKind::Deref(SsaVar {
-                    kind: SsaVarKind::Pointer(addr),
-                    version: current_versions
-                        .get(&SsaVarKind::Pointer(addr))
-                        .map(|v| v.version)
-                        .unwrap_or(0),
-                    origin_info,
-                }),
-                origin_info,
-            },
-        }
-    }
-
-    // Creates the NextKind using SsaOperands based on the current versions.
     fn create_ssa_next_kind(
-        current_versions: &HashMap<SsaVarKind, SsaVar>,
-        original: &NextKind<Operand>,
+        current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
+        original: &NextKind<LowExpr<Addressable>>,
         function_id: FunctionId,
-    ) -> NextKind<SsaOperand> {
-        original.map(&mut |op| Self::get_current_value_for(current_versions, op, function_id))
+    ) -> NextKind<LowExpr<SsaAddressable>> {
+        original.map(&mut |op| to_versioned_expression(current_versions, function_id, &op))
     }
 
     fn convert_function(&mut self, function_id: FunctionId) -> HashMap<BlockId, SsaBlock> {
@@ -476,36 +547,37 @@ impl<'a> SSAConversionState<'a> {
         &mut self,
         function: &Function,
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-        current_versions: &mut HashMap<SsaVarKind, SsaVar>,
+        current_versions: &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
     ) -> HashMap<BlockId, SsaBlock> {
         let mut ssa_blocks = HashMap::new();
 
         fn map_read(
-            (function_id, _, _): &mut (
+            (function_id, current, _): &mut (
                 FunctionId,
-                &mut HashMap<SsaVarKind, SsaVar>,
-                &mut HashMap<SsaVarKind, SsaVar>,
+                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
+                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
             ),
-            op: &Operand,
-        ) -> SsaOperand {
-            SsaOperand::from_operand(op, usize::MAX, *function_id)
+            op: &Addressable,
+        ) -> SsaAddressable {
+            to_versioned_addressable(current, *function_id, op)
         }
 
         fn map_write(
             (function_id, current, end): &mut (
                 FunctionId,
-                &mut HashMap<SsaVarKind, SsaVar>,
-                &mut HashMap<SsaVarKind, SsaVar>,
+                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
+                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
             ),
-            op: &Operand,
-        ) -> SsaOperand {
-            let mut ssa_op = SsaOperand::from_operand(op, usize::MAX, *function_id);
-            if ssa_op.as_variable().is_some() {
-                let next_var = SSAConversionState::create_next_version(current, *op, *function_id);
-                end.insert(next_var.kind, next_var); // Capture current_block_end_state mutably
-                ssa_op.kind = SsaOperandKind::Variable(next_var);
+            op: &Addressable,
+        ) -> SsaAddressable {
+            match VersionedAddressableKind::try_from_addressable(&op) {
+                Some(kind) => {
+                    let next_var = create_next_version(current, &kind, *function_id);
+                    end.insert(next_var.kind, next_var); // Capture current_block_end_state mutably
+                    SsaAddressable::Versioned(next_var)
+                }
+                None => to_versioned_addressable(current, *function_id, op),
             }
-            ssa_op
         }
 
         for block_id in function.blocks.iter().sorted() {
@@ -514,21 +586,21 @@ impl<'a> SSAConversionState<'a> {
                 self.model
                     .get_data_flow_result()
                     .unwrap()
-                    .block_results
+                    .low_block_results
                     .get(&block_id)
                     .unwrap()
                     .defs_in
                     .iter()
-                    .filter(|d| d.source == NativeOriginationPoint::FunctionInput)
+                    .filter(|d| d.source == OriginationPoint::FunctionInput)
+                    .filter_map(|d| VersionedAddressableKind::try_from_addressable(&d.kind))
                     .for_each({
-                        |d| {
-                            let kind = SsaVarKind::from_operand_kind(&d.kind).unwrap();
+                        |versioned_kind| {
                             end_state.insert(
-                                kind,
-                                SsaVar {
-                                    kind,
+                                versioned_kind,
+                                VersionedAddressable {
+                                    kind: versioned_kind,
+                                    function_id: function.function_id,
                                     version: 0,
-                                    origin_info: SsaOriginInfo::new(function.function_id, 0, None),
                                 },
                             );
                         }
@@ -537,18 +609,15 @@ impl<'a> SSAConversionState<'a> {
             let block = self.model.get_block(*block_id);
             let mut phi_functions = phi_placements.get(block_id).unwrap_or(&Vec::new()).clone();
             for phi in phi_functions.iter_mut() {
-                phi.result = Self::create_next_version(
-                    current_versions,
-                    phi.result.to_operand(),
-                    function.function_id,
-                );
+                phi.result =
+                    create_next_version(current_versions, &phi.result.kind, function.function_id);
                 end_state.insert(phi.result.kind, phi.result);
             }
             // At this point end_state has the phi functions for this block, so this is the start state
             // we have without variables flowing from predecessors.
             let start_state = end_state.clone();
             let mut instructions = Vec::new();
-            for instr in &block.native_instructions {
+            for instr in &block.low_instructions {
                 let mut state: (_, &mut HashMap<_, _>, &mut HashMap<_, _>) = (
                     function.function_id,
                     current_versions as &mut HashMap<_, _>,
@@ -561,10 +630,15 @@ impl<'a> SSAConversionState<'a> {
                 original_id: *block_id,
                 phi_functions,
                 instructions,
+                native_instructions: vec![],
                 start_state,
                 end_state,
                 next: NextKind::Halt,
                 predecessors: vec![],
+                native_next: NextKind::Halt,
+                native_predecessors: vec![],
+                native_start_state: HashMap::new(),
+                native_end_state: HashMap::new(),
             };
 
             ssa_blocks.insert(*block_id, ssa_block);
@@ -591,9 +665,9 @@ impl<'a> SSAConversionState<'a> {
             let block = self.model.get_block(block_id);
 
             // Only blocks with multiple predecessors or blocks that are function returns nee d phi functions.
-            if block.native_predecessors.len() <= 1
+            if block.predecessors.len() <= 1
                 && !block
-                    .native_predecessors
+                    .predecessors
                     .iter()
                     .any(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
             {
@@ -601,14 +675,14 @@ impl<'a> SSAConversionState<'a> {
             }
 
             // Get the data flow result for this block
-            let block_flow = data_flow.block_results.get(&block_id).unwrap();
+            let block_flow = data_flow.low_block_results.get(&block_id).unwrap();
             // Find all variable definitions reaching this block from any predecessor
-            let all_incoming_defs: HashMap<OperandKind, HashSet<NativeOriginationPoint>> =
-                if block.native_predecessors.len() > 1 {
+            let all_incoming_defs: HashMap<Addressable, HashSet<OriginationPoint>> =
+                if block.predecessors.len() > 1 {
                     block_flow
                         .defs_in
                         .iter()
-                        .map(|d| (d.kind, d.source))
+                        .map(|d| (d.kind.clone(), d.source))
                         .into_grouping_map()
                         .collect()
                 } else {
@@ -617,12 +691,12 @@ impl<'a> SSAConversionState<'a> {
 
             let return_values_accessed = if let Some(PredecessorKind::FunctionCallReturns(fc)) =
                 block
-                    .native_predecessors
+                    .predecessors
                     .iter()
                     .find(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
             {
                 data_flow
-                    .block_results
+                    .low_block_results
                     .get(&fc.calling_block) // Returns Option<&BlockDataFlowResult>
                     .and_then(|block_flow| block_flow.call_site_info.as_ref()) // Returns Option<&CallSiteInfo>
                     .map(|call_info| {
@@ -631,7 +705,7 @@ impl<'a> SSAConversionState<'a> {
                             .return_values_accessed
                             .keys() // Get iterator of keys (&i128)
                             .cloned() // Get iterator of values (i128)
-                            .map(OperandKind::RelativeMemory) // Convert to OperandKind
+                            .map(Addressable::RelativeMemory) // Convert to Addressable
                             .collect_vec() // Collect into Vec<OperandKind>
                     })
                     .unwrap()
@@ -642,7 +716,7 @@ impl<'a> SSAConversionState<'a> {
             let vars = all_incoming_defs
                 .iter()
                 .filter(|(var_kind, defs)| {
-                    defs.len() > 1 && block_flow.live_in.contains_key(var_kind)
+                    defs.len() > 1 && block_flow.live_in.contains_key(*var_kind)
                 })
                 .map(|(var_kind, _)| var_kind)
                 .chain(return_values_accessed.iter())
@@ -651,23 +725,28 @@ impl<'a> SSAConversionState<'a> {
             // add a phi function
             for var_kind in vars {
                 // Skip constants and derefs
-                if !var_kind.is_variable() {
+                let Some(phi_kind) = VersionedAddressableKind::try_from_addressable(var_kind)
+                else {
                     continue;
-                }
+                };
 
-                let phi_kind = SsaVarKind::from_operand_kind(var_kind)
-                    .expect("Phi function created for non-variable kind");
-
-                let phi_result = SsaVar {
+                let phi_result = VersionedAddressable {
                     kind: phi_kind,
+                    function_id,
                     version: 0, // Placeholder
-                    origin_info: SsaOriginInfo::new(function_id, 0, None),
                 };
 
                 // We fill this function later.
                 let phi = PhiFunction {
                     result: phi_result,
-                    inputs: HashMap::new(), // Will be filled later
+                    // remove native_result later. Junk value.
+                    native_result: SsaVar {
+                        kind: SsaVarKind::Memory(0),
+                        origin_info: SsaOriginInfo::new(function_id, 0, None),
+                        version: 0,
+                    },
+                    inputs: HashMap::new(),        // Will be filled later
+                    native_inputs: HashMap::new(), // Will be filled later
                 };
 
                 // Add the phi function to this block
@@ -685,12 +764,12 @@ impl<'a> SSAConversionState<'a> {
         // can affect the end state of these variable.
         let initial_end_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
             .iter()
-            .map(|(id, block)| (*id, block.end_state.clone()))
+            .map(|(id, block)| (*id, block.native_end_state.clone()))
             .collect();
 
         let initial_start_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
             .iter()
-            .map(|(id, block)| (*id, block.start_state.clone()))
+            .map(|(id, block)| (*id, block.native_start_state.clone()))
             .collect();
 
         loop {
@@ -705,7 +784,7 @@ impl<'a> SSAConversionState<'a> {
                 for pred in &control_block.native_predecessors {
                     let pred_id = pred.source_block_id();
                     // Use the collected end_states map here
-                    let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
+                    let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().native_end_state;
                     // new_in should store SsaVarKind -> SsaVar
                     for (var_kind, var) in pred_end_state {
                         if !live_in.contains_key(&var_kind.to_operand_kind())
@@ -760,13 +839,13 @@ impl<'a> SSAConversionState<'a> {
                 }
 
                 let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
-                if ssa_block.start_state != new_in {
+                if ssa_block.native_start_state != new_in {
                     changed = true;
-                    ssa_block.start_state = new_in; // Move new_in here
+                    ssa_block.native_start_state = new_in; // Move new_in here
                 }
-                if ssa_block.end_state != new_out {
+                if ssa_block.native_end_state != new_out {
                     changed = true;
-                    ssa_block.end_state = new_out; // Move new_out here
+                    ssa_block.native_end_state = new_out; // Move new_out here
                 }
             }
             if !changed {
@@ -790,26 +869,32 @@ impl<'a> SSAConversionState<'a> {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && phi.result.get_relative_memory().is_some_and(|x| x > 0)
+                        && phi
+                            .native_result
+                            .get_relative_memory()
+                            .is_some_and(|x| x > 0)
                     {
                         // For function returns, the phi result itself represents the value.
                         // Wrap the SsaVar result in SsaOperand::Variable.
-                        phi_inputs.insert(pred.clone(), phi.result);
-                    } else if let Some(pred_var) = pred_ssa_block.end_state.get(&phi.result.kind) {
+                        phi_inputs.insert(pred.clone(), phi.native_result);
+                    } else if let Some(pred_var) =
+                        pred_ssa_block.native_end_state.get(&phi.native_result.kind)
+                    {
                         phi_inputs.insert(pred.clone(), *pred_var);
                     }
                 }
                 let mut phi = phi.clone();
-                phi.inputs = phi_inputs;
+                phi.native_inputs = phi_inputs;
                 phi_functions.push(phi);
             }
+            /*
             let mut instructions = vec![];
-            let mut state = ssa_block.start_state.clone();
-            for instr in &ssa_block.instructions {
+            let mut state = ssa_block.native_start_state.clone();
+            for instr in &ssa_block.native_instructions {
                 let mut instr = instr.clone();
                 instr = instr.map_rw(
                     &mut state,
-                    |c, op| Self::get_current_value_for(c, op.to_operand(), function.function_id),
+                    |c, op| (c, op.to_operand(), function.function_id),
                     |c, op| {
                         if matches!(op.kind, SsaOperandKind::Deref(..)) {
                             // Derefs need to be renewed also for writes, since the pointer they
@@ -827,29 +912,27 @@ impl<'a> SSAConversionState<'a> {
                 }
                 instructions.push(instr);
             }
+            ssa_block.native_instructions = instructions;
+            */
             // ssa_block.instructions = instructions;
             let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
             ssa_block.phi_functions = phi_functions;
-            ssa_block.instructions = instructions;
-            ssa_block.next = Self::create_ssa_next_kind(
-                &ssa_block.end_state,
-                &block.native_next,
-                function.function_id,
-            );
-            let next = ssa_block.next.clone();
+            ssa_block.next =
+                Self::create_ssa_next_kind(&ssa_block.end_state, &block.next, function.function_id);
+            let next = ssa_block.native_next.clone();
             match next {
                 NextKind::Follows(target_id) => {
                     ssa_blocks
                         .get_mut(&target_id)
                         .unwrap()
-                        .predecessors
+                        .native_predecessors
                         .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
                     ssa_blocks
                         .get_mut(&target_block_id)
                         .unwrap()
-                        .predecessors
+                        .native_predecessors
                         .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
                 }
                 NextKind::FunctionCall(call) => {
@@ -858,7 +941,7 @@ impl<'a> SSAConversionState<'a> {
                     ssa_blocks
                         .get_mut(&call.return_block)
                         .unwrap()
-                        .predecessors
+                        .native_predecessors
                         .push(PredecessorKind::FunctionCallReturns(call));
                 }
                 NextKind::Condition(cond) => {
@@ -866,12 +949,12 @@ impl<'a> SSAConversionState<'a> {
                     ssa_blocks
                         .get_mut(&cond.target_block)
                         .unwrap()
-                        .predecessors
+                        .native_predecessors
                         .push(PredecessorKind::ConditionalJump(cond.clone()));
                     ssa_blocks
                         .get_mut(&cond.follows_block)
                         .unwrap()
-                        .predecessors
+                        .native_predecessors
                         .push(PredecessorKind::ConditionalFollow(cond));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
@@ -1044,7 +1127,7 @@ mod tests {
         let entry_block = ssa_function.blocks.get(&entry_block_id).unwrap();
 
         // The entry block should have instructions
-        assert!(!entry_block.instructions.is_empty());
+        assert!(!entry_block.native_instructions.is_empty());
     }
 
     // Test conversion with dominance frontiers and phi functions
@@ -1100,7 +1183,7 @@ mod tests {
                 for (i, phi) in block.phi_functions.iter().enumerate() {
                     println!(
                         "    Phi {}: result={:?}, inputs={:?}",
-                        i, phi.result, phi.inputs
+                        i, phi.native_result, phi.native_inputs
                     );
                 }
             }
@@ -1114,7 +1197,7 @@ mod tests {
         let mut merge_block_id = None;
         for (block_id, block) in &ssa_function.blocks {
             if block
-                .instructions
+                .native_instructions
                 .iter()
                 .any(|instr| matches!(instr.kind, NativeInstructionKind::Output(_)))
             {
@@ -1135,7 +1218,7 @@ mod tests {
 
         // Verify that the instruction that reads from [100] is using the correct SSA var
         let output_instr = merge_block
-            .instructions
+            .native_instructions
             .iter()
             .find(|instr| matches!(instr.kind, NativeInstructionKind::Output(_)))
             .expect("Should have an output instruction");
@@ -1216,8 +1299,8 @@ mod tests {
         // Find the return block by searching for one that contains output instruction
         let mut found_return_block = None;
         for (block_id, block) in &ssa_function.blocks {
-            if !block.instructions.is_empty() {
-                let first_instr = &block.instructions[0];
+            if !block.native_instructions.is_empty() {
+                let first_instr = &block.native_instructions[0];
                 if matches!(first_instr.kind, NativeInstructionKind::Output(_)) {
                     println!("Found block with output: {}", block_id);
                     found_return_block = Some(block);
@@ -1230,7 +1313,7 @@ mod tests {
             found_return_block.expect("Could not find return block with output instruction");
 
         // Find the output instruction that uses the return value
-        let output_instr = return_block.instructions.first().unwrap();
+        let output_instr = return_block.native_instructions.first().unwrap();
         // println!("Output instruction: {:?}", output_instr);
 
         // NOTE: With the removal of DefinitionKind::FunctionReturn, we now rely on
@@ -1296,7 +1379,7 @@ mod tests {
 
         // Now find the instruction: [R-4] = [R-4] + 10
         let add_instr = block
-            .instructions
+            .native_instructions
             .iter()
             .find(|instr| {
                 if let NativeInstructionKind::Add(src1, _, dst) = &instr.kind {
@@ -1481,7 +1564,7 @@ mod tests {
             f0.blocks
                 .get(&return_block_id)
                 .unwrap()
-                .end_state
+                .native_end_state
                 .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
                 .expect("End state should contain [R-1]")
                 .version, // Access version on the SsaVar
@@ -1491,7 +1574,7 @@ mod tests {
             f0.blocks
                 .get(&BlockId::from(13))
                 .unwrap()
-                .end_state
+                .native_end_state
                 .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
                 .expect("End state should contain [R-1]")
                 .version, // Access version on the SsaVar
@@ -1536,11 +1619,11 @@ exit:
         let return_block = f0.blocks.get(&return_block_id).unwrap();
         assert_eq!(
             return_block
-                .end_state
+                .native_end_state
                 .get(&SsaVarKind::RelativeMemory(-1)) // Use SsaVarKind
                 .expect("End state should contain [R-1]")
                 .version, // Access version on the SsaVar
-            return_block.phi_functions[0].result.version // Compare with phi result version
+            return_block.phi_functions[0].native_result.version // Compare with phi result version
         );
     }
 
@@ -1656,7 +1739,7 @@ exit:
             .1;
         assert_eq!(merge_block.phi_functions.len(), 1);
         assert_matches!(
-            merge_block.phi_functions[0].result,
+            merge_block.phi_functions[0].native_result,
             SsaVar {
                 kind: SsaVarKind::RelativeMemory(1),
                 version: 3,

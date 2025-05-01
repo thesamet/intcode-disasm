@@ -205,11 +205,11 @@ impl<'a> VariableMerger<'a> {
         for block in blocks.values() {
             // Process phi functions
             for phi in &block.phi_functions {
-                let target = &phi.result;
+                let target = &phi.native_result;
                 let mut set_id = ds.insert(*target);
 
                 // Add input to the same cluster
-                for input in phi.inputs.values() {
+                for input in phi.native_inputs.values() {
                     set_id = ds.insert_join(&set_id, *input);
                 }
             }
@@ -250,7 +250,7 @@ impl<'a> VariableMerger<'a> {
             .clone();
         // Process each block to find data flow relationships
         for block in blocks.values() {
-            for instr in &block.instructions {
+            for instr in &block.native_instructions {
                 for i in instr.reads() {
                     insert_var(ds, &i);
                 }

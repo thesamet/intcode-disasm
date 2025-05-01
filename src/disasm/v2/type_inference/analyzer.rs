@@ -77,11 +77,11 @@ impl TypeInferenceAnalyzer {
         phi: &PhiFunction,
         block_id: BlockId,
     ) {
-        let result_type = Type::from_ssavar(&phi.result);
+        let result_type = Type::from_ssavar(&phi.native_result);
         let result_addr = NativeInstructionId::from(block_id.index());
 
         // Add constraints between each input source and the result
-        for (pred_kind, input_var) in &phi.inputs {
+        for (pred_kind, input_var) in &phi.native_inputs {
             match pred_kind {
                 PredecessorKind::FunctionCallReturns(call_info) => {
                     // This phi input represents a return value.
@@ -105,7 +105,7 @@ impl TypeInferenceAnalyzer {
                                     callee_ret_write_type,
                                     caller_ret_read_type,
                                     result_addr, // Location in the caller (phi function)
-                                    phi.result.origin_info.function_id,
+                                    phi.native_result.origin_info.function_id,
                                     ConstraintReason::FunctionReturnBinding,
                                 );
                             }
@@ -113,7 +113,7 @@ impl TypeInferenceAnalyzer {
                     } else {
                         log::warn!(
                             "Call site info not found for block {} during phi constraint generation for {}.",
-                            call_info.calling_block, phi.result
+                            call_info.calling_block, phi.native_result
                         );
                         // Fallback if call site info is missing? Add basic PhiAssignment?
                         // For now, we just skip adding a constraint for this specific return value.
@@ -126,7 +126,7 @@ impl TypeInferenceAnalyzer {
                         input_type,
                         result_type.clone(),
                         result_addr, // Use address of the result variable definition
-                        phi.result.origin_info.function_id,
+                        phi.native_result.origin_info.function_id,
                         ConstraintReason::PhiAssignment,
                     );
                 }
@@ -325,12 +325,12 @@ impl TypeInferenceAnalyzer {
         // Use the address of the *last* instruction in the block for constraint location, if available.
         // Otherwise, use the block ID (start address).
         let location_addr = block
-            .instructions
+            .native_instructions
             .last()
             .map(|instr| instr.id)
             .unwrap_or_else(|| NativeInstructionId::from(block_id.index()));
 
-        match &block.next {
+        match &block.native_next {
             NextKind::Condition(cond) => {
                 // The condition operand must be a boolean
                 let cond_type = Type::from_ssaoperand(&cond.condition_operand);
@@ -356,7 +356,7 @@ impl TypeInferenceAnalyzer {
                     // Link caller arguments to callee parameters
                     for (caller_offset, callee_param_var) in &callee_info.parameter_entry_vars {
                         if let Some(caller_arg_var) = block
-                            .end_state
+                            .native_end_state
                             .get(&SsaVarKind::RelativeMemory(*caller_offset))
                         {
                             let caller_arg_type = Type::from_ssavar(caller_arg_var);
@@ -408,7 +408,7 @@ impl TypeInferenceAnalyzer {
         }
 
         // Process instructions
-        for instr in &block.instructions {
+        for instr in &block.native_instructions {
             self.generate_constraints_for_instruction(instr, function_id);
         }
 

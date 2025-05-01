@@ -97,7 +97,7 @@ impl IntoNeighbors for &SsaFunction {
     type Neighbors = std::vec::IntoIter<BlockId>;
 
     fn neighbors(self, a: Self::NodeId) -> Self::Neighbors {
-        self.blocks[&a].next.successors().into_iter()
+        self.blocks[&a].native_next.successors().into_iter()
     }
 }
 
@@ -106,9 +106,9 @@ impl IntoNeighborsDirected for &SsaFunction {
 
     fn neighbors_directed(self, n: Self::NodeId, d: Direction) -> Self::NeighborsDirected {
         match d {
-            Direction::Outgoing => self.blocks[&n].next.successors().into_iter(),
+            Direction::Outgoing => self.blocks[&n].native_next.successors().into_iter(),
             Direction::Incoming => self.blocks[&n]
-                .predecessors
+                .native_predecessors
                 .iter()
                 .map(|pred| pred.source_block_id())
                 .collect_vec()
@@ -323,7 +323,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         context.in_loop = Some(discovered_loop);
                         let loop_body = self.analyze_block(ssa_func, context, current, None);
                         if let NextKind::Condition(cond) =
-                            &ssa_func.blocks[&discovered_loop.jump_back].next
+                            &ssa_func.blocks[&discovered_loop.jump_back].native_next
                         {
                             assert!(cond.target_block == discovered_loop.header);
                             let op = if cond.jump_if_true {
@@ -358,7 +358,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                     break;
                 }
             }
-            match &block.next {
+            match &block.native_next {
                 NextKind::Follows(next) => {
                     current = *next;
                 }
@@ -567,7 +567,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
     ) -> Result<(), Error> {
         // Closure to create an HLR assignment target for a variable
 
-        for instr in &block.instructions {
+        for instr in &block.native_instructions {
             let stmt = match &instr.kind {
                 NativeInstructionKind::Add(a, b, c) => {
                     let result_var = c.as_variable().ok_or_else(|| {

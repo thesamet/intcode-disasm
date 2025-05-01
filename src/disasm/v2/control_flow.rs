@@ -36,7 +36,7 @@ where
     pub fn map<F, S>(&self, map: &mut F) -> NextKind<S>
     where
         F: FnMut(T) -> S,
-        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+        S: Clone + PartialEq + Eq + std::hash::Hash,
     {
         match self {
             NextKind::Follows(id) => NextKind::Follows(*id),
@@ -156,7 +156,7 @@ impl<T: Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
     pub fn map<F, S>(&self, map: &mut F) -> FunctionCall<S>
     where
         F: FnMut(T) -> S,
-        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+        S: Clone + PartialEq + Eq + std::hash::Hash,
     {
         FunctionCall {
             calling_block: self.calling_block,
