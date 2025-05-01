@@ -66,6 +66,21 @@ impl VersionedAddressableKind {
             _ => None,
         }
     }
+    
+    pub fn as_pointer(&self) -> Option<&PointerId> {
+        match self {
+            VersionedAddressableKind::Pointer(id) => Some(id),
+            _ => None,
+        }
+    }
+    
+    pub fn is_positive_relative_memory(&self) -> bool {
+        matches!(self, VersionedAddressableKind::RelativeMemory(n) if *n > 0)
+    }
+    
+    pub fn is_negative_relative_memory(&self) -> bool {
+        matches!(self, VersionedAddressableKind::RelativeMemory(n) if *n < 0)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -424,16 +439,81 @@ impl SsaFunction {
     #[cfg(test)]
     pub fn find_ssa_operand_by_marker(&self, marker: char) -> Option<SsaOperand> {
         for block in self.blocks.values() {
-            for instr in &block.native_instructions {
-                // Use into_iter() to consume and avoid borrowing issues if needed,
-                // or just iterate over references.
-                // Assuming reads/writes return Vec<SsaOperand> or similar collection
-                for ssa_operand in instr.reads().into_iter().chain(instr.writes().into_iter()) {
-                    // Check if the operand has the marker in its origin info
-                    if ssa_operand.origin_info.debug_marker == Some(marker) {
-                        // Return the SsaOperand (it's Copy)
-                        return Some(ssa_operand);
-                    }
+            for instr in &block.instructions {
+                match &instr.kind {
+                    InstructionKind::Assign { target, src } => {
+                        // Check for marker in source expression
+                        if let Some(LowExpr::DebugMarker(m, expr)) = find_debug_marker_in_expr(src, marker) {
+                            if *m == marker {
+                                if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**expr {
+                                    return Some(SsaOperand {
+                                        kind: SsaOperandKind::Variable(SsaVar {
+                                            kind: match versioned.kind {
+                                                VersionedAddressableKind::Memory(addr) => SsaVarKind::Memory(addr),
+                                                VersionedAddressableKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+                                                VersionedAddressableKind::Pointer(id) => SsaVarKind::Pointer(id.as_usize()),
+                                            },
+                                            version: versioned.version,
+                                            origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                        }),
+                                        origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                    });
+                                } else if let LowExpr::Addressable(SsaAddressable::Deref(deref_expr)) = &**expr {
+                                    if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**deref_expr {
+                                        return Some(SsaOperand {
+                                            kind: SsaOperandKind::Deref(SsaVar {
+                                                kind: SsaVarKind::Pointer(versioned.kind.as_pointer().unwrap().as_usize()),
+                                                version: versioned.version,
+                                                origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                            }),
+                                            origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Check for marker in target
+                        if let SsaAddressable::Versioned(versioned) = target {
+                            if let Some(LowExpr::DebugMarker(m, _)) = find_debug_marker_in_expr(src, marker) {
+                                if *m == marker {
+                                    return Some(SsaOperand {
+                                        kind: SsaOperandKind::Variable(SsaVar {
+                                            kind: match versioned.kind {
+                                                VersionedAddressableKind::Memory(addr) => SsaVarKind::Memory(addr),
+                                                VersionedAddressableKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+                                                VersionedAddressableKind::Pointer(id) => SsaVarKind::Pointer(id.as_usize()),
+                                            },
+                                            version: versioned.version,
+                                            origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                        }),
+                                        origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    InstructionKind::Output(expr) => {
+                        if let LowExpr::DebugMarker(m, inner_expr) = expr {
+                            if *m == marker {
+                                if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**inner_expr {
+                                    return Some(SsaOperand {
+                                        kind: SsaOperandKind::Variable(SsaVar {
+                                            kind: match versioned.kind {
+                                                VersionedAddressableKind::Memory(addr) => SsaVarKind::Memory(addr),
+                                                VersionedAddressableKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
+                                                VersionedAddressableKind::Pointer(id) => SsaVarKind::Pointer(id.as_usize()),
+                                            },
+                                            version: versioned.version,
+                                            origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                        }),
+                                        origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    _ => {}
                 }
             }
         }
@@ -1544,6 +1624,26 @@ mod tests {
             LowExpr::BinaryOp { lhs, rhs, .. } => find_first_debug_marker_in_expr(lhs)
                 .or_else(|| find_first_debug_marker_in_expr(rhs)),
             LowExpr::UnaryOp { arg, .. } => find_first_debug_marker_in_expr(arg),
+            _ => None,
+        }
+    }
+
+    // Helper function to find debug markers in expressions with a specific marker
+    fn find_debug_marker_in_expr<A>(expr: &LowExpr<A>, marker: char) -> Option<&LowExpr<A>> {
+        match expr {
+            LowExpr::DebugMarker(c, e) if *c == marker => Some(expr),
+            LowExpr::DebugMarker(_, e) => find_debug_marker_in_expr(e, marker),
+            LowExpr::BinaryOp { lhs, rhs, .. } => find_debug_marker_in_expr(lhs, marker)
+                .or_else(|| find_debug_marker_in_expr(rhs, marker)),
+            LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg, marker),
+            _ => None,
+        }
+    }
+
+    // Helper function to find debug markers in target addressables
+    fn find_debug_marker_in_target(target: &SsaAddressable) -> Option<&LowExpr<SsaAddressable>> {
+        match target {
+            SsaAddressable::Deref(expr) => find_first_debug_marker_in_expr(expr),
             _ => None,
         }
     }
