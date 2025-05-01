@@ -1542,62 +1542,9 @@ mod tests {
             "#,
         );
         pretty_print_ssa(&ctx.model);
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        // Find instruction with marker 'a'
-        let mut found_a = false;
-        let mut found_b = false;
-        let mut found_c = false;
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                if let InstructionKind::Assign { src, target } = &instr.kind {
-                    // Check for marker 'a' in the source expression
-                    if let LowExpr::BinaryOp { lhs, .. } = src {
-                        if let LowExpr::DebugMarker('a', _) = &**lhs {
-                            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
-                                &**lhs
-                            {
-                                assert_eq!(
-                                    versioned.kind,
-                                    VersionedAddressableKind::RelativeMemory(3)
-                                );
-                                assert_eq!(versioned.version, 1);
-                                found_a = true;
-                            }
-                        }
-                    }
-
-                    // Check for marker 'b' in the target
-                    if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('b', _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            assert_eq!(versioned.kind, VersionedAddressableKind::RelativeMemory(2));
-                            assert_eq!(versioned.version, 1);
-                            found_b = true;
-                        }
-                    }
-
-                    // Check for marker 'c' in the target
-                    if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('c', _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            assert_eq!(versioned.kind, VersionedAddressableKind::RelativeMemory(2));
-                            assert_eq!(versioned.version, 2);
-                            found_c = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        assert!(found_a, "Marker 'a' not found");
-        assert!(found_b, "Marker 'b' not found");
-        assert!(found_c, "Marker 'c' not found");
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
     }
 
     fn find_debug_marker_in_expr(
@@ -1663,80 +1610,10 @@ mod tests {
                 "#,
         );
         pretty_print_ssa(&ctx.model);
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut found_a = false;
-        let mut found_b = false;
-        let mut found_c = false;
-        let mut found_d = false;
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                if let InstructionKind::Assign { src, target } = &instr.kind {
-                    // Check for marker 'a' in the target (ptr = ptr + [R+2])
-                    if let Some(LowExpr::DebugMarker('a', _)) = find_first_debug_marker_in_expr(src)
-                    {
-                        if let SsaAddressable::Versioned(versioned) = target {
-                            assert_eq!(
-                                versioned.kind,
-                                VersionedAddressableKind::Pointer(PointerId::from(23))
-                            );
-                            assert_eq!(versioned.version, 2);
-                            found_a = true;
-                        }
-                    }
-
-                    // Check for marker 'b' in the target (ptr = ptr + [R+3])
-                    if let Some(LowExpr::DebugMarker('b', _)) = find_first_debug_marker_in_expr(src)
-                    {
-                        if let SsaAddressable::Versioned(versioned) = target {
-                            assert_eq!(
-                                versioned.kind,
-                                VersionedAddressableKind::Pointer(PointerId::from(23))
-                            );
-                            assert_eq!(versioned.version, 3);
-                            found_b = true;
-                        }
-                    }
-
-                    // Check for marker 'c' in the source ([R+1] = 'c *ptr)
-                    if let Some(LowExpr::DebugMarker('c', expr)) =
-                        find_first_debug_marker_in_expr(src)
-                    {
-                        if let LowExpr::Addressable(SsaAddressable::Deref(deref_expr)) = &**expr {
-                            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
-                                &**deref_expr
-                            {
-                                assert_eq!(
-                                    versioned.kind,
-                                    VersionedAddressableKind::Pointer(PointerId::from(23))
-                                );
-                                assert_eq!(versioned.version, 3);
-                                found_c = true;
-                            }
-                        }
-                    }
-
-                    // Check for marker 'd' in the target ('d [R+1] = *ptr)
-                    if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('d', _)) =
-                            find_debug_marker_in_target(target)
-                        {
-                            assert_eq!(versioned.kind, VersionedAddressableKind::RelativeMemory(1));
-                            assert_eq!(versioned.version, 1);
-                            found_d = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        assert!(found_a, "Marker 'a' not found");
-        assert!(found_b, "Marker 'b' not found");
-        assert!(found_c, "Marker 'c' not found");
-        assert!(found_d, "Marker 'd' not found");
+        assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(23, 2));
+        assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(23, 3));
+        assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3));
+        assert_marker_at_main!(ctx, 'd', ssa_var_rel!(1, 1));
     }
 
     // Helper function to find debug markers in target addressables
@@ -1758,53 +1635,8 @@ mod tests {
                 "#,
         );
         pretty_print_ssa(&ctx.model);
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut found_a = false;
-        let mut found_b = false;
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                if let InstructionKind::Assign { src, target } = &instr.kind {
-                    // Check for marker 'a' in the target (ptr = [R-2])
-                    if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('a', _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            assert_eq!(
-                                versioned.kind,
-                                VersionedAddressableKind::Pointer(PointerId::from(9))
-                            );
-                            assert_eq!(versioned.version, 1);
-                            found_a = true;
-                        }
-                    }
-
-                    // Check for marker 'b' in the target (*ptr = 1)
-                    if let SsaAddressable::Deref(deref_expr) = target {
-                        if let Some(LowExpr::DebugMarker('b', _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
-                                &**deref_expr
-                            {
-                                assert_eq!(
-                                    versioned.kind,
-                                    VersionedAddressableKind::Pointer(PointerId::from(9))
-                                );
-                                assert_eq!(versioned.version, 1);
-                                found_b = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        assert!(found_a, "Marker 'a' not found");
-        assert!(found_b, "Marker 'b' not found");
+        assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
     }
 
     #[test]
@@ -1817,51 +1649,8 @@ mod tests {
                 halt
                 "#,
         );
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut found_a = false;
-        let mut found_b = false;
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                // Check for marker 'a' in output instruction
-                if let InstructionKind::Output(expr) = &instr.kind {
-                    if let LowExpr::DebugMarker('a', inner_expr) = expr {
-                        if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
-                            &**inner_expr
-                        {
-                            assert_eq!(
-                                versioned.kind,
-                                VersionedAddressableKind::RelativeMemory(-1)
-                            );
-                            assert_eq!(versioned.version, 0);
-                            found_a = true;
-                        }
-                    }
-                }
-
-                // Check for marker 'b' in assignment target
-                if let InstructionKind::Assign { target, src } = &instr.kind {
-                    if let SsaAddressable::Versioned(versioned) = target {
-                        if let Some(LowExpr::DebugMarker('b', _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            assert_eq!(
-                                versioned.kind,
-                                VersionedAddressableKind::RelativeMemory(-1)
-                            );
-                            assert_eq!(versioned.version, 1);
-                            found_b = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        assert!(found_a, "Marker 'a' not found");
-        assert!(found_b, "Marker 'b' not found");
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-1, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-1, 1));
     }
 
     #[test]
@@ -1895,113 +1684,25 @@ mod tests {
         );
         pretty_print_ssa(&ctx.model);
 
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        // Create a map to store found markers and their versions
-        let mut markers = HashMap::new();
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
-                        // Check for markers in target
-                        if let SsaAddressable::Versioned(versioned) = target {
-                            // Check for markers in source
-                            if let Some(LowExpr::DebugMarker(marker, _)) =
-                                find_first_debug_marker_in_expr(src)
-                            {
-                                markers.insert(*marker, (versioned.kind, versioned.version));
-                            }
-                        }
-                    }
-                    InstructionKind::Output(expr) => {
-                        // Check for marker in output expression
-                        if let LowExpr::DebugMarker(marker, inner_expr) = expr {
-                            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) =
-                                &**inner_expr
-                            {
-                                markers.insert(*marker, (versioned.kind, versioned.version));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Verify all markers were found with correct versions
-        assert_eq!(
-            markers.get(&'a').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-2)
-        );
-        assert_eq!(markers.get(&'a').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'b').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-3)
-        );
-        assert_eq!(markers.get(&'b').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'c').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-5)
-        );
-        assert_eq!(markers.get(&'c').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'d').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-3)
-        );
-        assert_eq!(markers.get(&'d').unwrap().1, 2);
-
-        assert_eq!(
-            markers.get(&'e').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-2)
-        );
-        assert_eq!(markers.get(&'e').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'f').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-5)
-        );
-        assert_eq!(markers.get(&'f').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'g').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-3)
-        );
-        assert_eq!(markers.get(&'g').unwrap().1, 2);
-
-        assert_eq!(
-            markers.get(&'h').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-3)
-        );
-        assert_eq!(markers.get(&'h').unwrap().1, 2);
-
-        assert_eq!(
-            markers.get(&'i').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-2)
-        );
-        assert_eq!(markers.get(&'i').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'j').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(1)
-        );
-        assert_eq!(markers.get(&'j').unwrap().1, 2);
-
-        assert_eq!(
-            markers.get(&'k').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-3)
-        );
-        assert_eq!(markers.get(&'k').unwrap().1, 2);
-
-        assert_eq!(
-            markers.get(&'l').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-3)
-        );
-        assert_eq!(markers.get(&'l').unwrap().1, 3);
+        // Initial assignments before loop
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 1));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-5, 1));
+        
+        // Inside loop header - Phi versions
+        assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-3, 2));
+        assert_marker_at_main!(ctx, 'e', ssa_var_rel!(-2, 1));
+        assert_marker_at_main!(ctx, 'f', ssa_var_rel!(-5, 1));
+        assert_marker_at_main!(ctx, 'g', ssa_var_rel!(-3, 2));
+        assert_marker_at_main!(ctx, 'h', ssa_var_rel!(-3, 2));
+        assert_marker_at_main!(ctx, 'i', ssa_var_rel!(-2, 1));
+        
+        // After function call return
+        assert_marker_at_main!(ctx, 'j', ssa_var_rel!(1, 2));
+        
+        // Inside loop body (after call)
+        assert_marker_at_main!(ctx, 'k', ssa_var_rel!(-3, 2));
+        assert_marker_at_main!(ctx, 'l', ssa_var_rel!(-3, 3));
     }
 
     #[test]
@@ -2120,47 +1821,9 @@ exit:
             "#,
         );
         pretty_print_ssa(&ctx.model);
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut markers = HashMap::new();
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
-                        // Check for markers in source
-                        if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            if let SsaAddressable::Versioned(versioned) = target {
-                                markers.insert(*marker, (versioned.kind, versioned.version));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        assert_eq!(
-            markers.get(&'a').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-4)
-        );
-        assert_eq!(markers.get(&'a').unwrap().1, 0);
-
-        assert_eq!(
-            markers.get(&'b').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-4)
-        );
-        assert_eq!(markers.get(&'b').unwrap().1, 0);
-
-        assert_eq!(
-            markers.get(&'c').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-4)
-        );
-        assert_eq!(markers.get(&'c').unwrap().1, 1);
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
     }
 
     #[test]
@@ -2182,47 +1845,9 @@ exit:
             "#,
         );
         pretty_print_ssa(&ctx.model);
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut markers = HashMap::new();
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
-                        // Check for markers in source
-                        if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            if let SsaAddressable::Versioned(versioned) = target {
-                                markers.insert(*marker, (versioned.kind, versioned.version));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        assert_eq!(
-            markers.get(&'a').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-4)
-        );
-        assert_eq!(markers.get(&'a').unwrap().1, 0);
-
-        assert_eq!(
-            markers.get(&'b').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-4)
-        );
-        assert_eq!(markers.get(&'b').unwrap().1, 0);
-
-        assert_eq!(
-            markers.get(&'c').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-4)
-        );
-        assert_eq!(markers.get(&'c').unwrap().1, 1);
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
     }
 
     #[test]
@@ -2252,57 +1877,9 @@ exit:
           "#,
         );
         pretty_print_ssa(&ctx.model);
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut markers = HashMap::new();
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
-                        // Check for markers in source or target
-                        if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            if let SsaAddressable::Versioned(versioned) = target {
-                                markers.insert(*marker, (versioned.kind, versioned.version));
-                            } else if let LowExpr::BinaryOp { lhs, .. } = src {
-                                if let LowExpr::DebugMarker(marker, inner) = &**lhs {
-                                    if let LowExpr::Addressable(SsaAddressable::Versioned(
-                                        versioned,
-                                    )) = &**inner
-                                    {
-                                        markers
-                                            .insert(*marker, (versioned.kind, versioned.version));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        assert_eq!(
-            markers.get(&'a').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-2)
-        );
-        assert_eq!(markers.get(&'a').unwrap().1, 0);
-
-        assert_eq!(
-            markers.get(&'b').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-2)
-        );
-        assert_eq!(markers.get(&'b').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'c').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(-2)
-        );
-        assert_eq!(markers.get(&'c').unwrap().1, 2);
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
     }
 
     #[test]
@@ -2325,62 +1902,21 @@ exit:
             goto [R]
             "#,
         );
-
-        // Find the instructions with markers and check their versions
-        let func = &ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)];
-
-        let mut markers = HashMap::new();
-
-        for block in func.blocks.values() {
-            for instr in &block.instructions {
-                match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
-                        // Check for markers in source
-                        if let Some(LowExpr::DebugMarker(marker, _)) =
-                            find_first_debug_marker_in_expr(src)
-                        {
-                            if let SsaAddressable::Versioned(versioned) = target {
-                                markers.insert(*marker, (versioned.kind, versioned.version));
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        assert_eq!(
-            markers.get(&'a').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(1)
-        );
-        assert_eq!(markers.get(&'a').unwrap().1, 1);
-
-        assert_eq!(
-            markers.get(&'b').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(1)
-        );
-        assert_eq!(markers.get(&'b').unwrap().1, 2);
-
-        assert_eq!(
-            markers.get(&'c').unwrap().0,
-            VersionedAddressableKind::RelativeMemory(1)
-        );
-        assert_eq!(markers.get(&'c').unwrap().1, 4);
-
+        assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
+        assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
+        
         // Check the merge block has a phi function for [R+1]
-        let merge_block = func
+        let merge_block = ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)]
             .blocks
             .iter()
             .sorted_by_key(|(k, _)| *k)
             .nth(3)
             .unwrap()
             .1;
-
+            
         assert_eq!(merge_block.phi_functions.len(), 1);
-        assert_eq!(
-            merge_block.phi_functions[0].result.kind,
-            VersionedAddressableKind::RelativeMemory(1)
-        );
+        assert_eq!(merge_block.phi_functions[0].result.kind, VersionedAddressableKind::RelativeMemory(1));
         assert_eq!(merge_block.phi_functions[0].result.version, 3);
     }
 }
