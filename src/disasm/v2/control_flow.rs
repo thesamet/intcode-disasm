@@ -31,7 +31,7 @@ where
 
 impl<T> NextKind<T>
 where
-    T: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+    T: Clone + PartialEq + Eq + std::hash::Hash,
 {
     pub fn map<F, S>(&self, map: &mut F) -> NextKind<S>
     where
@@ -87,7 +87,7 @@ where
     ConditionalJump(Condition<T>),
 }
 
-impl<T: Copy + Clone + PartialEq + Eq + std::hash::Hash> PredecessorKind<T> {
+impl<T: Clone + PartialEq + Eq + std::hash::Hash> PredecessorKind<T> {
     /// Gets the ID of the block where this predecessor originates.
     pub fn source_block_id(&self) -> BlockId {
         match self {
@@ -179,11 +179,11 @@ impl<T> Condition<T> {
     pub fn map<F, S>(&self, map: &mut F) -> Condition<S>
     where
         F: FnMut(T) -> S,
-        T: Copy + Clone,
+        T: Clone,
     {
         Condition {
             from_block: self.from_block,
-            condition_operand: map(self.condition_operand),
+            condition_operand: map(self.condition_operand.clone()),
             jump_if_true: self.jump_if_true,
             target_block: self.target_block,
             follows_block: self.follows_block,

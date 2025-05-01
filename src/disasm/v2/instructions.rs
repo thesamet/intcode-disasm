@@ -75,6 +75,27 @@ pub enum InstructionKind<A> {
     Halt,
 }
 
+impl<A> InstructionKind<A> {
+    pub fn reads(&self) -> Vec<&A> {
+        match self {
+            InstructionKind::Assign { src, .. } => src.reads(),
+            InstructionKind::If { cond, .. } => cond.reads(),
+            InstructionKind::Goto(_) => vec![],
+            InstructionKind::Call { addr, .. } => addr.reads(),
+            InstructionKind::Output(expr) => expr.reads(),
+            InstructionKind::Return => vec![],
+            InstructionKind::Halt => vec![],
+        }
+    }
+
+    pub fn writes(&self) -> Option<&A> {
+        match self {
+            InstructionKind::Assign { target, .. } => Some(target),
+            _ => None,
+        }
+    }
+}
+
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LowExpr<A> {
@@ -100,6 +121,27 @@ pub enum LowExpr<A> {
     },
     Input(), // Expression that reads the next input.
     DebugMarker(char, Box<LowExpr<A>>),
+}
+
+impl<A> LowExpr<A> {
+    pub fn reads<'a>(&'a self) -> Vec<&'a A> {
+        let mut out = vec![];
+        let mut queue = vec![self];
+        while let Some(expr) = queue.pop() {
+            match expr {
+                LowExpr::Constant(_) => {}
+                LowExpr::Addressable(a) => out.push(a),
+                LowExpr::BinaryOp { lhs, rhs, .. } => {
+                    queue.push(lhs);
+                    queue.push(rhs);
+                }
+                LowExpr::UnaryOp { arg, .. } => queue.push(arg),
+                LowExpr::Input() => {}
+                LowExpr::DebugMarker(_, expr) => queue.push(expr),
+            }
+        }
+        out
+    }
 }
 
 /// Represents binary operations that can be performed on two operands.
@@ -187,7 +229,7 @@ impl From<Operand> for LowExpr<Addressable> {
             OperandKind::Memory(_)
             | OperandKind::RelativeMemory(_)
             | OperandKind::Deref(_)
-            | OperandKind::Pointer(_) => LowExpr::Addressable(op.into()),
+            | OperandKind::Pointer(_) => LowExpr::Addressable(op.kind.try_into().unwrap()),
         };
         match op.debug_marker {
             Some(marker) => LowExpr::DebugMarker(marker, Box::new(expr)),
@@ -238,14 +280,16 @@ impl Addressable {
     }
 }
 
-impl From<Operand> for Addressable {
-    fn from(op: Operand) -> Addressable {
-        match op.kind {
-            OperandKind::Memory(offset) => Addressable::Memory(offset),
-            OperandKind::RelativeMemory(offset) => Addressable::RelativeMemory(offset),
-            OperandKind::Deref(offset) => Addressable::Deref(offset),
-            OperandKind::Pointer(offset) => Addressable::Pointer(offset),
-            OperandKind::Immediate(_) => panic!("Cannot convert immediate operand to addressable"),
+impl TryFrom<OperandKind> for Addressable {
+    type Error = &'static str;
+
+    fn try_from(value: OperandKind) -> Result<Self, Self::Error> {
+        match value {
+            OperandKind::Memory(offset) => Ok(Addressable::Memory(offset)),
+            OperandKind::RelativeMemory(offset) => Ok(Addressable::RelativeMemory(offset)),
+            OperandKind::Deref(offset) => Ok(Addressable::Deref(offset)),
+            OperandKind::Pointer(offset) => Ok(Addressable::Pointer(offset)),
+            OperandKind::Immediate(_) => Err("Cannot convert immediate operand to addressable"),
         }
     }
 }
@@ -282,7 +326,7 @@ impl Instruction<Addressable> {
         // there's an early return.
         let kind = match native.kind {
             NativeInstructionKind::Add(a, b, c) => InstructionKind::Assign {
-                target: c.into(),
+                target: c.kind.try_into().unwrap(),
                 src: LowExpr::BinaryOp {
                     op: BinaryOp::Add,
                     lhs: Box::new(a.into()),
@@ -290,7 +334,7 @@ impl Instruction<Addressable> {
                 },
             },
             NativeInstructionKind::Mul(a, b, c) => InstructionKind::Assign {
-                target: c.into(),
+                target: c.kind.try_into().unwrap(),
                 src: LowExpr::BinaryOp {
                     op: BinaryOp::Mul,
                     lhs: Box::new(a.into()),
@@ -298,7 +342,7 @@ impl Instruction<Addressable> {
                 },
             },
             NativeInstructionKind::Input(a) => InstructionKind::Assign {
-                target: a.into(),
+                target: a.kind.try_into().unwrap(),
                 src: LowExpr::Input(),
             },
             NativeInstructionKind::Output(a) => InstructionKind::Output(a.into()),
@@ -322,7 +366,7 @@ impl Instruction<Addressable> {
                 else_addr: BlockId::from(native.span.end),
             },
             NativeInstructionKind::LessThan(a, b, c) => InstructionKind::Assign {
-                target: c.into(),
+                target: c.kind.try_into().unwrap(),
                 src: LowExpr::BinaryOp {
                     op: BinaryOp::LessThan,
                     lhs: Box::new(a.into()),
@@ -330,7 +374,7 @@ impl Instruction<Addressable> {
                 },
             },
             NativeInstructionKind::Equals(a, b, c) => InstructionKind::Assign {
-                target: c.into(),
+                target: c.kind.try_into().unwrap(),
                 src: LowExpr::BinaryOp {
                     op: BinaryOp::Equals,
                     lhs: Box::new(a.into()),
@@ -404,7 +448,7 @@ impl Instruction<Addressable> {
                     );
                 } else {
                     InstructionKind::Assign {
-                        target: target.into(),
+                        target: target.kind.try_into().unwrap(),
                         src: src.into(),
                     }
                 }
