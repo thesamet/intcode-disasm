@@ -8,24 +8,184 @@ use super::{
     native::{
         GenericNativeInstruction, NativeInstruction, NativeInstructionKind, Operand, OperandKind,
     },
+    ssa_form::{MemoryReferenceType, SsaMemoryReference, VersionedMemoryReference},
 };
 
 define_id_type!(PointerId);
 
-/// Represents operands that have an address in memory.
-/// These can be both sources and targets.
+/// Represents a reference to a memory location that can be read from or written to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Addressable {
+pub enum MemoryReference {
     /// Represents a fixed memory location outside the stack and code segments.
     /// These will get versioned.
-    Memory(usize),
-    /// Represents a memory location relative to some base address.
-    RelativeMemory(i128),
+    Global(usize),
+    /// Stack-relative memory location with specific semantics:
+    /// - Positive values (R+n): Outgoing parameters to called functions or return values
+    /// - Zero (R+0): Return address for function calls
+    /// - Negative values (R-n): Local variables, incoming parameters, or return values
+    StackRelative(i128),
     /// Represents a pointer to a point in memory.
     Pointer(PointerId),
-    /// Represents a memory address we access indirectly through a dereference.
-    /// The argument is a low-level expression that evaluates to a pointer.
-    Deref(Box<LowExpr<Addressable>>),
+    /// Dereference of a pointer expression.
+    Deref(Box<Expression<MemoryReference>>),
+}
+
+impl<'a> From<&'a MemoryReference> for MemoryReference {
+    fn from(value: &'a MemoryReference) -> Self {
+        value.clone()
+    }
+}
+
+impl<'a> From<&'a SsaMemoryReference> for MemoryReference {
+    fn from(value: &'a SsaMemoryReference) -> Self {
+        match value {
+            SsaMemoryReference::Versioned(var) => (var).into(),
+            SsaMemoryReference::Deref(expr) => {
+                MemoryReference::Deref(Box::new(expr.map(&mut |t| Self::from(t))))
+            }
+        }
+    }
+}
+
+impl<'a> From<&'a VersionedMemoryReference> for MemoryReference {
+    fn from(value: &'a VersionedMemoryReference) -> MemoryReference {
+        (&value.kind).into()
+    }
+}
+
+impl<'a> From<&'a MemoryReferenceType> for MemoryReference {
+    fn from(value: &'a MemoryReferenceType) -> MemoryReference {
+        match value {
+            MemoryReferenceType::Memory(addr) => MemoryReference::Global(*addr),
+            MemoryReferenceType::RelativeMemory(offset) => MemoryReference::StackRelative(*offset),
+            MemoryReferenceType::Pointer(pointer_id) => MemoryReference::Pointer(*pointer_id),
+        }
+    }
+}
+
+/// A trait for types that can be converted to a MemoryReference.
+///
+/// This trait provides utility methods for querying properties of memory references,
+/// with implementations for any type that can be converted to a MemoryReference.
+pub trait MemoryReferenceInfo<'a> {
+    /// Converts this value to a MemoryReference.
+    ///
+    /// This is the core method that must be implemented by all types
+    /// implementing this trait.
+    fn to_memory_reference(&'a self) -> MemoryReference;
+
+    /// Extracts the global address if this is a global memory reference.
+    ///
+    /// # Returns
+    /// - `Some(usize)` containing the global address if this is a global reference
+    /// - `None` if this is not a global reference
+    fn as_global(&'a self) -> Option<usize> {
+        match self.to_memory_reference() {
+            MemoryReference::Global(g) => Some(g),
+            _ => None,
+        }
+    }
+
+    /// Checks if this reference is a global memory reference.
+    ///
+    /// # Returns
+    /// `true` if this is a global memory reference, `false` otherwise
+    fn is_global(&'a self) -> bool {
+        self.as_global().is_some()
+    }
+
+    /// Extracts the offset if this is a stack-relative memory reference.
+    ///
+    /// # Returns
+    /// - `Some(i128)` containing the stack offset if this is a stack-relative reference
+    /// - `None` if this is not a stack-relative reference
+    fn as_stack_relative(&'a self) -> Option<i128> {
+        match self.to_memory_reference() {
+            MemoryReference::StackRelative(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Checks if this reference is a stack-relative memory reference.
+    ///
+    /// # Returns
+    /// `true` if this is a stack-relative memory reference, `false` otherwise
+    fn is_stack_relative(&'a self) -> bool {
+        self.as_stack_relative().is_some()
+    }
+
+    /// Extracts the expression if this is a dereferenced pointer.
+    ///
+    /// # Returns
+    /// - `Some(Expression<MemoryReference>)` containing the dereferenced expression
+    /// - `None` if this is not a dereferenced pointer
+    fn as_deref(&'a self) -> Option<Expression<MemoryReference>> {
+        match self.to_memory_reference() {
+            MemoryReference::Deref(e) => Some(*e),
+            _ => None,
+        }
+    }
+
+    /// Checks if this reference is a dereferenced pointer.
+    ///
+    /// # Returns
+    /// `true` if this is a dereferenced pointer, `false` otherwise
+    fn is_deref(&'a self) -> bool {
+        self.as_deref().is_some()
+    }
+
+    /// Extracts the pointer ID if this is a direct pointer reference.
+    ///
+    /// # Returns
+    /// - `Some(PointerId)` containing the pointer identifier
+    /// - `None` if this is not a direct pointer reference
+    fn as_pointer(&'a self) -> Option<PointerId> {
+        match self.to_memory_reference() {
+            MemoryReference::Pointer(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Checks if this reference is a direct pointer.
+    ///
+    /// # Returns
+    /// `true` if this is a direct pointer reference, `false` otherwise
+    fn is_pointer(&'a self) -> bool {
+        self.as_pointer().is_some()
+    }
+
+    /// Checks if this reference is an outgoing parameter (positive stack offset).
+    ///
+    /// Outgoing parameters are represented by positive stack-relative offsets.
+    ///
+    /// # Returns
+    /// `true` if this is a stack-relative reference with positive offset, `false` otherwise
+    fn is_outgoing_parameter(&'a self) -> bool {
+        self.as_stack_relative().map(|n| n > 0).unwrap_or(false)
+    }
+
+    /// Checks if this reference is a local variable or incoming parameter (negative stack offset).
+    ///
+    /// Local variables and incoming parameters are represented by negative stack-relative offsets.
+    ///
+    /// # Returns
+    /// `true` if this is a stack-relative reference with negative offset, `false` otherwise
+    fn is_local_or_parameter(&'a self) -> bool {
+        self.as_stack_relative().map(|n| n < 0).unwrap_or(false)
+    }
+}
+
+/// This implementation allows the MemoryReferenceInfo trait to be used with
+/// any type that can be converted into a MemoryReference, including both
+/// owned and borrowed values. This provides flexibility when working with
+/// different representations of memory references.
+impl<'a, T: 'a> MemoryReferenceInfo<'a> for T
+where
+    &'a T: Into<MemoryReference>,
+{
+    fn to_memory_reference(&'a self) -> MemoryReference {
+        self.into()
+    }
 }
 
 define_id_type!(InstructionId);
@@ -40,26 +200,31 @@ impl InstructionId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Instruction<A> {
+pub struct InstructionNode<A> {
     pub id: InstructionId,
-    pub kind: InstructionKind<A>,
+    pub kind: Instruction<A>,
 }
 
 /// Represents different kinds of low-level instructions.
-/// Type parameter `A` represents the type of the addresable type.
+///
+/// Each instruction represents an operation in the intermediate representation.
+/// The type parameter `A` represents the type of memory reference (typically `MemoryReference`),
+/// which can be addressed (read from or written to) during instruction execution.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum InstructionKind<A> {
+pub enum Instruction<A> {
     /// Assigns the result of an expression to a target address.
     Assign {
         /// Target location where the result will be stored.
         target: A,
         /// Source expression to evaluate.
-        src: LowExpr<A>,
+        src: Expression<A>,
+        /// Debug marker applies to the lhs side.
+        target_debug_marker: Option<char>,
     },
     /// Conditional branch instruction.
     If {
         /// Condition to evaluate.
-        cond: LowExpr<A>,
+        cond: Expression<A>,
         /// Address to jump to if condition is true.
         then_addr: BlockId,
         /// Address to jump to if condition is false.
@@ -68,112 +233,185 @@ pub enum InstructionKind<A> {
     Goto(BlockId),
     /// Calls a function. Does not contain information on arguments and return values.
     Call {
-        addr: LowExpr<A>,
+        addr: Expression<A>,
         return_to: BlockId,
     },
     /// Outputs the result of an expression.
-    Output(LowExpr<A>),
+    Output(Expression<A>),
     /// Returns from the current function. Does not contain information on return values.
     Return,
     /// Halts execution.
     Halt,
 }
 
-impl<A> InstructionKind<A> {
-    pub fn reads(&self) -> Vec<&A> {
-        match self {
-            InstructionKind::Assign { src, .. } => src.reads(),
-            InstructionKind::If { cond, .. } => cond.reads(),
-            InstructionKind::Goto(_) => vec![],
-            InstructionKind::Call { addr, .. } => addr.reads(),
-            InstructionKind::Output(expr) => expr.reads(),
-            InstructionKind::Return => vec![],
-            InstructionKind::Halt => vec![],
-        }
+impl<A> Instruction<A> {
+    /// Collects all memory references that this instruction reads from.
+    ///
+    /// Collects all memory references accessed by expressions within this instruction.
+    /// For example, in an assignment like `mem[5] = mem[3] + mem[4]`, this would return
+    /// references to memory locations 3 and 4.
+    pub fn collect_read_addresses(&self) -> Vec<&A> {
+        self.collect_source_expressions()
+            .iter()
+            .flat_map(|e| e.collect_read_addresses())
+            .collect()
     }
 
-    pub fn writes(&self) -> Option<&A> {
+    /// Collects the source expressions that this instruction evaluates.
+    ///
+    /// Different instruction types operate on different kinds of expressions:
+    /// - Assign: The source expression to be assigned
+    /// - If: The condition expression
+    /// - Call: The target address expression
+    /// - Output: The expression to be output
+    /// - Other instructions (Goto, Return, Halt): No expressions
+    pub fn collect_source_expressions(&self) -> Vec<&Expression<A>> {
         match self {
-            InstructionKind::Assign { target, .. } => Some(target),
+            Instruction::Assign { src, .. } => vec![src],
+            Instruction::If { cond, .. } => vec![cond],
+            Instruction::Goto(_) => vec![],
+            Instruction::Call { addr, .. } => vec![addr],
+            Instruction::Output(expr) => vec![expr],
+            Instruction::Return | Instruction::Halt => vec![],
+        }
+    }
+    /// Returns the target memory reference that this instruction writes to, if any.
+    ///
+    /// Only Assign instructions write to memory. For example, in an assignment
+    /// like `mem[5] = value`, this would return a reference to memory location 5.
+    pub fn get_write_address(&self) -> Option<&A> {
+        match self {
+            Instruction::Assign { target, .. } => Some(target),
             _ => None,
         }
     }
 }
-
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub enum LowExpr<A> {
+pub enum Expression<A> {
     /// A literal constant value.
     Constant(i128),
     /// A reference to an addressable location.
     Addressable(A),
     /// A binary operation with two operands.
-    BinaryOp {
+    Binary {
         /// The binary operator.
-        op: BinaryOp,
+        op: BinaryOperator,
         /// The left-hand side operand.
-        lhs: Box<LowExpr<A>>,
+        lhs: Box<Expression<A>>,
         /// The right-hand side operand.
-        rhs: Box<LowExpr<A>>,
+        rhs: Box<Expression<A>>,
     },
     /// A unary operation with one operand.
-    UnaryOp {
+    Unary {
         /// The unary operator.
-        op: UnaryOp,
+        op: UnaryOperator,
         /// The operand argument.
-        arg: Box<LowExpr<A>>,
+        arg: Box<Expression<A>>,
     },
     Input(), // Expression that reads the next input.
-    DebugMarker(char, Box<LowExpr<A>>),
+    DebugMarker(char, Box<Expression<A>>),
 }
 
-impl<A> LowExpr<A> {
-    pub fn reads<'a>(&'a self) -> Vec<&'a A> {
+impl<A> Expression<A> {
+    /// Collects all memory references that this expression reads from.
+    ///
+    /// Returns a vector of references to all addressable locations accessed during
+    /// evaluation of this expression. This is useful for data flow analysis and
+    /// understanding memory dependencies.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // For an expression like: mem[5] + mem[3]
+    /// // This would return references to memory locations 5 and 3
+    /// ```
+    pub fn collect_read_addresses<'a>(&'a self) -> Vec<&'a A> {
         let mut out = vec![];
         let mut queue = vec![self];
         while let Some(expr) = queue.pop() {
             match expr {
-                LowExpr::Constant(_) => {}
-                LowExpr::Addressable(a) => out.push(a),
-                LowExpr::BinaryOp { lhs, rhs, .. } => {
+                Expression::Constant(_) => {}
+                Expression::Addressable(a) => out.push(a),
+                Expression::Binary { lhs, rhs, .. } => {
                     queue.push(lhs);
                     queue.push(rhs);
                 }
-                LowExpr::UnaryOp { arg, .. } => queue.push(arg),
-                LowExpr::Input() => {}
-                LowExpr::DebugMarker(_, expr) => queue.push(expr),
+                Expression::Unary { arg, .. } => queue.push(arg),
+                Expression::Input() => {}
+                Expression::DebugMarker(_, expr) => queue.push(expr),
             }
         }
         out
     }
 
-    pub fn map<F, B>(&self, map: &mut F) -> LowExpr<B>
+    /// Maps all addressable references in this expression using the provided function.
+    ///
+    /// This traverses the expression tree and applies a mapping function to each
+    /// addressable reference, producing a new expression with transformed references.
+    /// This is useful for address translation, renaming, or other transformations.
+    ///
+    /// # Parameters
+    ///
+    /// * `map`: A mutable function that transforms references of type `A` to type `B`
+    ///
+    /// # Returns
+    ///
+    /// A new expression with all addressable references transformed from type `A` to type `B`
+    pub fn map<F, B>(&self, map: &mut F) -> Expression<B>
     where
         F: FnMut(&A) -> B,
     {
         match self {
-            LowExpr::Constant(val) => LowExpr::Constant(*val),
-            LowExpr::Addressable(a) => LowExpr::Addressable(map(a)),
-            LowExpr::BinaryOp { op, lhs, rhs } => LowExpr::BinaryOp {
+            Expression::Constant(val) => Expression::Constant(*val),
+            Expression::Addressable(a) => Expression::Addressable(map(a)),
+            Expression::Binary { op, lhs, rhs } => Expression::Binary {
                 op: *op,
                 lhs: Box::new(lhs.map(map)),
                 rhs: Box::new(rhs.map(map)),
             },
-            LowExpr::UnaryOp { op, arg } => LowExpr::UnaryOp {
+            Expression::Unary { op, arg } => Expression::Unary {
                 op: *op,
                 arg: Box::new(arg.map(map)),
             },
-            LowExpr::Input() => LowExpr::Input(),
-            LowExpr::DebugMarker(marker, expr) => {
-                LowExpr::DebugMarker(*marker, Box::new(expr.map(map)))
+            Expression::Input() => Expression::Input(),
+            Expression::DebugMarker(marker, expr) => {
+                Expression::DebugMarker(*marker, Box::new(expr.map(map)))
             }
+        }
+    }
+
+    /// Locates a subexpression marked with a specific debug marker.
+    ///
+    /// Searches the expression tree for a debug marker with the specified character
+    /// and returns a reference to the expression contained within that marker.
+    /// This is useful for finding specific points of interest in complex expressions
+    /// that have been annotated during construction or analysis.
+    ///
+    /// # Parameters
+    ///
+    /// * `marker`: The character identifier of the debug marker to find
+    ///
+    /// # Returns
+    ///
+    /// A reference to the expression contained within the debug marker if found,
+    /// or None if no matching marker exists in the expression tree
+    pub fn find_debug_marker(self: &Expression<A>, marker: char) -> Option<&Expression<A>> {
+        match self {
+            Expression::DebugMarker(c, e) if *c == marker => Some(e),
+            Expression::DebugMarker(_, e) => e.find_debug_marker(marker),
+            Expression::Binary { lhs, rhs, .. } => lhs
+                .find_debug_marker(marker)
+                .or_else(|| rhs.find_debug_marker(marker)),
+            Expression::Unary { arg, .. } => arg.find_debug_marker(marker),
+            _ => None,
         }
     }
 }
 
 /// Represents binary operations that can be performed on two operands.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub enum BinaryOp {
+pub enum BinaryOperator {
     /// Addition operation (+).
     Add,
     /// Multiplication operation (*).
@@ -194,170 +432,128 @@ pub enum BinaryOp {
     NotEquals,
 }
 
-impl Display for BinaryOp {
+impl Display for BinaryOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BinaryOp::Add => write!(f, "+"),
-            BinaryOp::Mul => write!(f, "*"),
-            BinaryOp::Sub => write!(f, "-"),
-            BinaryOp::LessThan => write!(f, "<"),
-            BinaryOp::LessThanOrEqual => write!(f, "<="),
-            BinaryOp::GreaterThan => write!(f, ">"),
-            BinaryOp::GreaterThanOrEqual => write!(f, ">="),
-            BinaryOp::Equals => write!(f, "=="),
-            BinaryOp::NotEquals => write!(f, "!="),
+            BinaryOperator::Add => write!(f, "+"),
+            BinaryOperator::Mul => write!(f, "*"),
+            BinaryOperator::Sub => write!(f, "-"),
+            BinaryOperator::LessThan => write!(f, "<"),
+            BinaryOperator::LessThanOrEqual => write!(f, "<="),
+            BinaryOperator::GreaterThan => write!(f, ">"),
+            BinaryOperator::GreaterThanOrEqual => write!(f, ">="),
+            BinaryOperator::Equals => write!(f, "=="),
+            BinaryOperator::NotEquals => write!(f, "!="),
         }
     }
 }
 
 /// Represents unary operations that can be performed on a single operand.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum UnaryOp {
+pub enum UnaryOperator {
     /// Logical negation operation (!).
     Not,
     /// Arithmetic negation operation (-).
     Minus,
 }
 
-impl Display for UnaryOp {
+impl Display for UnaryOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UnaryOp::Not => write!(f, "!"),
-            UnaryOp::Minus => write!(f, "-"),
+            UnaryOperator::Not => write!(f, "!"),
+            UnaryOperator::Minus => write!(f, "-"),
         }
     }
 }
 
 #[expect(dead_code)]
-impl<A> LowExpr<A> {
+impl<A> Expression<A> {
     /// Checks if the expression is a constant.
     fn is_constant(&self) -> bool {
-        matches!(self, LowExpr::Constant(_))
+        matches!(self, Expression::Constant(_))
     }
 
     /// Checks if the expression is an addressable reference.
     fn is_addressable(&self) -> bool {
-        matches!(self, LowExpr::Addressable(_))
+        matches!(self, Expression::Addressable(_))
     }
 
     /// Checks if the expression is a unary operation.
     fn is_unary(&self) -> bool {
-        matches!(self, LowExpr::UnaryOp { .. })
+        matches!(self, Expression::Unary { .. })
     }
 
     /// Checks if the expression is a binary operation.
     fn is_binary(&self) -> bool {
-        matches!(self, LowExpr::BinaryOp { .. })
+        matches!(self, Expression::Binary { .. })
     }
 
     /// Checks if the expression is a unary operation.
     /// This is an alias for `is_unary`.
     fn is_unary_op(&self) -> bool {
-        matches!(self, LowExpr::UnaryOp { .. })
+        matches!(self, Expression::Unary { .. })
     }
 
     /// Checks if the expression is a binary operation.
     /// This is an alias for `is_binary`.
     fn is_binary_op(&self) -> bool {
-        matches!(self, LowExpr::BinaryOp { .. })
+        matches!(self, Expression::Binary { .. })
     }
 
     /// Extracts the binary operation components if this expression is a binary operation.
     ///
     /// Returns a tuple containing the operator, left-hand side, and right-hand side
     /// if this is a binary operation, or None otherwise.
-    fn as_binary_op(&self) -> Option<(BinaryOp, &LowExpr<A>, &LowExpr<A>)> {
+    fn as_binary_op(&self) -> Option<(BinaryOperator, &Expression<A>, &Expression<A>)> {
         match self {
-            LowExpr::BinaryOp { op, lhs, rhs } => Some((*op, lhs, rhs)),
+            Expression::Binary { op, lhs, rhs } => Some((*op, lhs, rhs)),
             _ => None,
         }
     }
 }
 
-impl From<Operand> for LowExpr<Addressable> {
-    fn from(op: Operand) -> LowExpr<Addressable> {
+impl From<Operand> for Expression<MemoryReference> {
+    fn from(op: Operand) -> Expression<MemoryReference> {
         let expr = match op.kind {
-            OperandKind::Immediate(value) => LowExpr::Constant(value),
+            OperandKind::Immediate(value) => Expression::Constant(value),
             OperandKind::Memory(_)
             | OperandKind::RelativeMemory(_)
             | OperandKind::Deref(_)
-            | OperandKind::Pointer(_) => LowExpr::Addressable(op.kind.try_into().unwrap()),
+            | OperandKind::Pointer(_) => Expression::Addressable(op.kind.try_into().unwrap()),
         };
         match op.debug_marker {
-            Some(marker) => LowExpr::DebugMarker(marker, Box::new(expr)),
+            Some(marker) => Expression::DebugMarker(marker, Box::new(expr)),
             None => expr,
         }
     }
 }
 
-impl Addressable {
-    /// Checks if this addressable is a direct memory reference.
-    pub fn is_memory(&self) -> bool {
-        matches!(self, Addressable::Memory(_))
-    }
-
-    /// Checks if this addressable is a relative memory reference.
-    pub fn is_relative_memory(&self) -> bool {
-        matches!(self, Addressable::RelativeMemory(_))
-    }
-
-    /// Checks if this addressable is a dereferenced pointer.
-    pub fn is_deref(&self) -> bool {
-        matches!(self, Addressable::Deref(_))
-    }
-
-    /// Checks if this addressable is a direct pointer.
-    pub fn is_pointer(&self) -> bool {
-        matches!(self, Addressable::Pointer(_))
-    }
-
-    /// Checks if this addressable is a positive relative memory offset.
-    pub fn is_positive_relative_memory(&self) -> bool {
-        matches!(self, Addressable::RelativeMemory(n) if *n > 0)
-    }
-
-    /// Checks if this addressable is a negative relative memory offset.
-    pub fn is_negative_relative_memory(&self) -> bool {
-        matches!(self, Addressable::RelativeMemory(n) if *n < 0)
-    }
-
-    /// Extracts the relative memory offset if this is a relative memory reference.
-    ///
-    /// Returns the offset value if this is a relative memory reference, or None otherwise.
-    pub fn as_relative_memory(&self) -> Option<i128> {
-        match self {
-            Addressable::RelativeMemory(value) => Some(*value),
-            _ => None,
-        }
-    }
-}
-
-impl TryFrom<OperandKind> for Addressable {
+impl TryFrom<OperandKind> for MemoryReference {
     type Error = &'static str;
 
     fn try_from(value: OperandKind) -> Result<Self, Self::Error> {
         match value {
-            OperandKind::Memory(offset) => Ok(Addressable::Memory(offset)),
-            OperandKind::RelativeMemory(offset) => Ok(Addressable::RelativeMemory(offset)),
-            OperandKind::Deref(offset) => Ok(Addressable::Deref(Box::new(LowExpr::Addressable(
-                Addressable::Pointer(PointerId::from(offset)),
-            )))),
-            OperandKind::Pointer(offset) => Ok(Addressable::Pointer(PointerId::from(offset))),
+            OperandKind::Memory(offset) => Ok(MemoryReference::Global(offset)),
+            OperandKind::RelativeMemory(offset) => Ok(MemoryReference::StackRelative(offset)),
+            OperandKind::Deref(offset) => Ok(MemoryReference::Deref(Box::new(
+                Expression::Addressable(MemoryReference::Pointer(PointerId::from(offset))),
+            ))),
+            OperandKind::Pointer(offset) => Ok(MemoryReference::Pointer(PointerId::from(offset))),
             OperandKind::Immediate(_) => Err("Cannot convert immediate operand to addressable"),
         }
     }
 }
 
-impl Instruction<Addressable> {
+impl InstructionNode<MemoryReference> {
     /// Converts a block of native instructions into a block of low-level instructions.
-    pub fn convert_block<I>(native: I) -> Vec<Instruction<Addressable>>
+    pub fn convert_block<I>(native: I) -> Vec<InstructionNode<MemoryReference>>
     where
         I: IntoIterator<Item = NativeInstruction>,
     {
         let mut iter = native.into_iter().peekable();
         let mut result = vec![];
         while let Some(native) = iter.next() {
-            let (skip, low) = Instruction::from_native_instruction_pair(native, iter.peek());
+            let (skip, low) = InstructionNode::from_native_instruction_pair(native, iter.peek());
             result.extend(low);
             assert!(skip == 2 || skip == 1);
             if skip == 2 {
@@ -375,65 +571,70 @@ impl Instruction<Addressable> {
     fn from_native_instruction_pair(
         native: NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
-    ) -> (usize, Option<Instruction<Addressable>>) {
+    ) -> (usize, Option<InstructionNode<MemoryReference>>) {
         // matches returns the default case of (1, Some(i)), if it's anything else,
         // there's an early return.
         let kind = match native.kind {
-            NativeInstructionKind::Add(a, b, c) => InstructionKind::Assign {
+            NativeInstructionKind::Add(a, b, c) => Instruction::Assign {
                 target: c.kind.try_into().unwrap(),
-                src: LowExpr::BinaryOp {
-                    op: BinaryOp::Add,
+                src: Expression::Binary {
+                    op: BinaryOperator::Add,
                     lhs: Box::new(a.into()),
                     rhs: Box::new(b.into()),
                 },
+                target_debug_marker: c.debug_marker,
             },
-            NativeInstructionKind::Mul(a, b, c) => InstructionKind::Assign {
+            NativeInstructionKind::Mul(a, b, c) => Instruction::Assign {
                 target: c.kind.try_into().unwrap(),
-                src: LowExpr::BinaryOp {
-                    op: BinaryOp::Mul,
+                src: Expression::Binary {
+                    op: BinaryOperator::Mul,
                     lhs: Box::new(a.into()),
                     rhs: Box::new(b.into()),
                 },
+                target_debug_marker: c.debug_marker,
             },
-            NativeInstructionKind::Input(a) => InstructionKind::Assign {
+            NativeInstructionKind::Input(a) => Instruction::Assign {
                 target: a.kind.try_into().unwrap(),
-                src: LowExpr::Input(),
+                src: Expression::Input(),
+                target_debug_marker: a.debug_marker,
             },
-            NativeInstructionKind::Output(a) => InstructionKind::Output(a.into()),
-            NativeInstructionKind::JumpIfTrue(cond, addr) => InstructionKind::If {
+            NativeInstructionKind::Output(a) => Instruction::Output(a.into()),
+            NativeInstructionKind::JumpIfTrue(cond, addr) => Instruction::If {
                 cond: cond.into(),
                 then_addr: match addr.into() {
-                    LowExpr::Constant(a) => BlockId::from(a as usize),
+                    Expression::Constant(a) => BlockId::from(a as usize),
                     _ => panic!("Expected constant address for jump"),
                 },
                 else_addr: BlockId::from(native.span.end),
             },
-            NativeInstructionKind::JumpIfFalse(cond, addr) => InstructionKind::If {
-                cond: LowExpr::UnaryOp {
-                    op: UnaryOp::Not,
+            NativeInstructionKind::JumpIfFalse(cond, addr) => Instruction::If {
+                cond: Expression::Unary {
+                    op: UnaryOperator::Not,
                     arg: Box::new(cond.into()),
                 },
                 then_addr: match addr.into() {
-                    LowExpr::Constant(a) => BlockId::from(a as usize),
+                    Expression::Constant(a) => BlockId::from(a as usize),
                     _ => panic!("Expected constant address for jump"),
                 },
                 else_addr: BlockId::from(native.span.end),
             },
-            NativeInstructionKind::LessThan(a, b, c) => InstructionKind::Assign {
+            NativeInstructionKind::LessThan(a, b, c) => Instruction::Assign {
                 target: c.kind.try_into().unwrap(),
-                src: LowExpr::BinaryOp {
-                    op: BinaryOp::LessThan,
+                src: Expression::Binary {
+                    op: BinaryOperator::LessThan,
                     lhs: Box::new(a.into()),
                     rhs: Box::new(b.into()),
                 },
+                target_debug_marker: a.debug_marker,
             },
-            NativeInstructionKind::Equals(a, b, c) => InstructionKind::Assign {
+            NativeInstructionKind::Equals(a, b, c) => Instruction::Assign {
                 target: c.kind.try_into().unwrap(),
-                src: LowExpr::BinaryOp {
-                    op: BinaryOp::Equals,
+                src: Expression::Binary {
+                    op: BinaryOperator::Equals,
                     lhs: Box::new(a.into()),
                     rhs: Box::new(b.into()),
                 },
+                target_debug_marker: c.debug_marker,
             },
             NativeInstructionKind::AdjustRelativeBase(r) => {
                 let Some(adjust) = r.kind.get_immediate() else {
@@ -454,9 +655,9 @@ impl Instruction<Addressable> {
                         );
                         return (
                             2,
-                            Some(Instruction {
+                            Some(InstructionNode {
                                 id: InstructionId::fresh(),
-                                kind: InstructionKind::Return,
+                                kind: Instruction::Return,
                             }),
                         );
                     }
@@ -469,11 +670,11 @@ impl Instruction<Addressable> {
                     }
                 }
             }
-            NativeInstructionKind::Halt => InstructionKind::Halt,
+            NativeInstructionKind::Halt => Instruction::Halt,
             NativeInstructionKind::Data(_) => {
                 unreachable!("Data instruction should be removed")
             }
-            NativeInstructionKind::Goto(addr) => InstructionKind::Goto(BlockId::from(
+            NativeInstructionKind::Goto(addr) => Instruction::Goto(BlockId::from(
                 addr.kind
                     .get_immediate()
                     .unwrap_or_else(|| panic!("Expected immediate value for GOTO address"))
@@ -492,8 +693,8 @@ impl Instruction<Addressable> {
                     };
                     return (
                         2,
-                        Some(Instruction {
-                            kind: InstructionKind::Call {
+                        Some(InstructionNode {
+                            kind: Instruction::Call {
                                 addr: func_addr.clone().into(),
                                 return_to: BlockId::from(return_to),
                             },
@@ -501,16 +702,17 @@ impl Instruction<Addressable> {
                         }),
                     );
                 } else {
-                    InstructionKind::Assign {
+                    Instruction::Assign {
                         target: target.kind.try_into().unwrap(),
                         src: src.into(),
+                        target_debug_marker: target.debug_marker,
                     }
                 }
             }
         };
         (
             1,
-            Some(Instruction {
+            Some(InstructionNode {
                 kind,
                 id: InstructionId::fresh(),
             }),
@@ -518,59 +720,64 @@ impl Instruction<Addressable> {
     }
 }
 
-impl<A> Instruction<A> {
+impl<A> InstructionNode<A> {
     pub fn map_rw<C, R, W, T>(
         &self,
         context: &mut C,
         mut map_read: R,
         mut map_write: W,
-    ) -> Instruction<T>
+    ) -> InstructionNode<T>
     where
         R: FnMut(&mut C, &A) -> T,
         W: FnMut(&mut C, &A) -> T,
     {
         match &self.kind {
-            InstructionKind::Assign { target, src } => Instruction {
+            Instruction::Assign {
+                target,
+                src,
+                target_debug_marker,
+            } => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::Assign {
+                kind: Instruction::Assign {
                     target: map_write(context, &target),
                     src: src.map(&mut |v| map_read(context, v)),
+                    target_debug_marker: *target_debug_marker,
                 },
             },
-            InstructionKind::If {
+            Instruction::If {
                 cond,
                 then_addr,
                 else_addr,
-            } => Instruction {
+            } => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::If {
+                kind: Instruction::If {
                     cond: cond.map(&mut |v| map_read(context, v)),
                     then_addr: *then_addr,
                     else_addr: *else_addr,
                 },
             },
-            InstructionKind::Goto(addr) => Instruction {
+            Instruction::Goto(addr) => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::Goto(*addr),
+                kind: Instruction::Goto(*addr),
             },
-            InstructionKind::Call { addr, return_to } => Instruction {
+            Instruction::Call { addr, return_to } => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::Call {
+                kind: Instruction::Call {
                     addr: addr.map(&mut |v| map_read(context, v)),
                     return_to: *return_to,
                 },
             },
-            InstructionKind::Output(expr) => Instruction {
+            Instruction::Output(expr) => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::Output(expr.map(&mut |v| map_read(context, v))),
+                kind: Instruction::Output(expr.map(&mut |v| map_read(context, v))),
             },
-            InstructionKind::Return => Instruction {
+            Instruction::Return => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::Return,
+                kind: Instruction::Return,
             },
-            InstructionKind::Halt => Instruction {
+            Instruction::Halt => InstructionNode {
                 id: self.id,
-                kind: InstructionKind::Halt,
+                kind: Instruction::Halt,
             },
         }
     }

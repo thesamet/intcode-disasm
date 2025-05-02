@@ -12,8 +12,9 @@ use crate::disasm::v2::data_flow::{
 };
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
-use crate::disasm::v2::instructions::Addressable;
-use crate::disasm::v2::instructions::LowExpr;
+use crate::disasm::v2::instructions::Expression;
+use crate::disasm::v2::instructions::MemoryReference;
+use crate::disasm::v2::instructions::MemoryReferenceInfo;
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::native::{Operand, OperandKind};
 use crate::disasm::v2::{
@@ -69,20 +70,20 @@ impl DataFlowAnalyzer {
 
             for instr in &block.low_instructions {
                 // Calculate USE for this instruction
-                for r in instr.kind.reads() {
+                for r in instr.kind.collect_read_addresses() {
                     if !low_defined_in_block.contains(r) {
                         low_flow.use_before_def.insert(r.clone(), instr.id);
                     }
                 }
 
                 // Calculate GEN for this instruction
-                if let Some(write_operand) = instr.kind.writes() {
+                if let Some(write_operand) = instr.kind.get_write_address() {
                     low_flow
                         .gen
                         .insert(write_operand.clone(), (instr.id, write_operand.clone()));
                     low_defined_in_block.insert(write_operand.clone());
 
-                    if let Some(n) = write_operand.as_relative_memory() {
+                    if let Some(n) = write_operand.as_stack_relative() {
                         if n > 0 {
                             low_flow.writes_above_r = true;
                         }
@@ -164,7 +165,7 @@ impl DataFlowAnalyzer {
         model: &ProgramModel,
         block_id: BlockId,
         df_result: &DataFlowResult,
-    ) -> HashSet<FunctionCall<Addressable>> {
+    ) -> HashSet<FunctionCall<MemoryReference>> {
         let block = model.get_block(block_id);
         let low_flow = df_result.low_block_results.get(&block_id).unwrap();
         let mut new_func_in = low_flow.function_returns_in.clone();
@@ -209,7 +210,7 @@ impl DataFlowAnalyzer {
                 }
 
                 // Calculate low-level OUT set: OUT = (IN - KILL) U GEN
-                let low_killed_kinds: HashSet<&Addressable> = low_flow.gen.keys().collect();
+                let low_killed_kinds: HashSet<&MemoryReference> = low_flow.gen.keys().collect();
                 let mut low_current_defs_out = low_flow.defs_in.clone();
                 low_current_defs_out.retain(|def| !low_killed_kinds.contains(&def.kind));
 
@@ -225,7 +226,7 @@ impl DataFlowAnalyzer {
                 // In we call a function at the end of the block, this block doesn't let [R+n]
                 // defintions flow forward.
                 if matches!(block.next, NextKind::FunctionCall(_)) {
-                    low_current_defs_out.retain(|d| !d.kind.is_positive_relative_memory());
+                    low_current_defs_out.retain(|d| !d.kind.is_outgoing_parameter());
                 }
 
                 // Update low-level block's OUT set if changed
@@ -265,13 +266,13 @@ impl DataFlowAnalyzer {
                     other_flow
                         .use_before_def
                         .keys()
-                        .filter(|k| k.is_negative_relative_memory())
+                        .filter(|k| (*k).is_local_or_parameter())
                         .map(|k| Definition {
                             source: OriginationPoint::FunctionInput,
                             kind: k.clone(),
                             block_id: block.id,
                         }),
-                );
+                )
             }
         }
 
@@ -356,7 +357,7 @@ impl DataFlowAnalyzer {
                 }
 
                 // Calculate low-level IN set
-                let low_defined_kinds: HashSet<Addressable> =
+                let low_defined_kinds: HashSet<MemoryReference> =
                     low_flow.gen.keys().cloned().collect();
                 let mut low_current_live_in = low_flow.live_out.clone();
 
@@ -368,7 +369,7 @@ impl DataFlowAnalyzer {
                     .is_some()
                 {
                     for d in &low_flow.defs_in {
-                        if d.kind.is_positive_relative_memory() {
+                        if d.kind.is_outgoing_parameter() {
                             low_current_live_in
                                 .entry(d.kind.clone())
                                 .or_insert_with(HashSet::new)
@@ -440,7 +441,7 @@ impl DataFlowAnalyzer {
         function: &Function,
         block_id: BlockId,
         df_result: &DataFlowResult,
-    ) -> HashMap<Addressable, HashSet<OriginationPoint>> {
+    ) -> HashMap<MemoryReference, HashSet<OriginationPoint>> {
         let block = model.get_block(block_id);
         let mut new_live_out = HashMap::new();
 
@@ -458,11 +459,7 @@ impl DataFlowAnalyzer {
             // If this is a function return, add potential return arguments to live out
             for &block_id in &function.blocks {
                 let low_flow = df_result.low_block_results.get(&block_id).unwrap();
-                for gen in low_flow
-                    .gen
-                    .keys()
-                    .filter(|k| k.is_negative_relative_memory())
-                {
+                for gen in low_flow.gen.keys().filter(|k| k.is_stack_relative()) {
                     new_live_out
                         .entry(gen.clone())
                         .or_insert_with(HashSet::new)
@@ -524,7 +521,7 @@ impl ModelEventListener for DataFlowAnalyzer {
             let return_usages_in_block = br
                 .use_before_def
                 .iter()
-                .filter_map(|(k, v)| k.as_relative_memory().map(|i| (i, *v)))
+                .filter_map(|(k, v)| k.as_stack_relative().map(|i| (i, *v)))
                 .filter(|&(n, _)| n > 0)
                 .collect_vec();
             if !return_usages_in_block.is_empty() {
@@ -665,11 +662,11 @@ mod tests {
         // GEN/USE
         assert_eq!(flow0.gen.len(), 2, "GEN length should be 2");
         assert!(
-            flow0.gen.contains_key(&Addressable::Memory(100)),
+            flow0.gen.contains_key(&MemoryReference::Global(100)),
             "GEN should contain [100]"
         );
         assert!(
-            flow0.gen.contains_key(&Addressable::Memory(101)),
+            flow0.gen.contains_key(&MemoryReference::Global(101)),
             "GEN should contain [101]"
         );
         assert!(flow0.use_before_def.is_empty(), "USE @ B0");
@@ -681,11 +678,11 @@ mod tests {
         let defs_out_kinds: HashSet<_> =
             flow0.defs_out.iter().map(|def| def.kind.clone()).collect();
         assert!(
-            defs_out_kinds.contains(&Addressable::Memory(100)),
+            defs_out_kinds.contains(&MemoryReference::Global(100)),
             "DefsOut should contain [100]"
         );
         assert!(
-            defs_out_kinds.contains(&Addressable::Memory(101)),
+            defs_out_kinds.contains(&MemoryReference::Global(101)),
             "DefsOut should contain [101]"
         );
 
@@ -696,11 +693,11 @@ mod tests {
         // Reaching Defs
         let defs_in_kinds: HashSet<_> = flow12.defs_in.iter().map(|def| def.kind.clone()).collect();
         assert!(
-            defs_in_kinds.contains(&Addressable::Memory(100)),
+            defs_in_kinds.contains(&MemoryReference::Global(100)),
             "DefsIn should contain [100]"
         );
         assert!(
-            defs_in_kinds.contains(&Addressable::Memory(101)),
+            defs_in_kinds.contains(&MemoryReference::Global(101)),
             "DefsIn should contain [101]"
         );
 
@@ -756,11 +753,11 @@ mod tests {
         let defs_in20_kinds: HashSet<_> =
             flow20.defs_in.iter().map(|def| def.kind.clone()).collect();
         assert!(
-            defs_in20_kinds.contains(&Addressable::Memory(100)),
+            defs_in20_kinds.contains(&MemoryReference::Global(100)),
             "DefsIn should contain [100]"
         );
         assert!(
-            defs_in20_kinds.contains(&Addressable::Memory(101)),
+            defs_in20_kinds.contains(&MemoryReference::Global(101)),
             "DefsIn should contain [101]"
         );
 
@@ -768,7 +765,7 @@ mod tests {
         let defs_in20_block_ids: HashSet<_> = flow20
             .defs_in
             .iter()
-            .filter(|def| def.kind == Addressable::Memory(101))
+            .filter(|def| def.kind == MemoryReference::Global(101))
             .map(|def| def.block_id)
             .collect();
         assert!(
@@ -787,18 +784,18 @@ mod tests {
                 .keys()
                 .cloned()
                 .collect::<HashSet<_>>(),
-            [Addressable::Memory(101)].iter().cloned().collect(),
+            [MemoryReference::Global(101)].iter().cloned().collect(),
             "USE @ B20"
         );
         assert!(flow20.gen.is_empty(), "GEN @ B20"); // Output doesn't generate defs
 
         // --- Check GEN in branches ---
         assert!(
-            flow9.gen.contains_key(&Addressable::Memory(101)),
+            flow9.gen.contains_key(&MemoryReference::Global(101)),
             "GEN @ B9 should contain [101]"
         );
         assert!(
-            flow16.gen.contains_key(&Addressable::Memory(101)),
+            flow16.gen.contains_key(&MemoryReference::Global(101)),
             "GEN @ B16 should contain [101]"
         );
 
@@ -809,20 +806,20 @@ mod tests {
             flow16.defs_in.iter().map(|def| def.kind.clone()).collect();
 
         assert!(
-            defs_in9_kinds.contains(&Addressable::Memory(100)),
+            defs_in9_kinds.contains(&MemoryReference::Global(100)),
             "DefsIn @ B9 should contain [100]"
         );
         assert!(
-            !defs_in9_kinds.contains(&Addressable::Memory(101)),
+            !defs_in9_kinds.contains(&MemoryReference::Global(101)),
             "DefsIn @ B9 should not contain [101]"
         );
 
         assert!(
-            defs_in16_kinds.contains(&Addressable::Memory(100)),
+            defs_in16_kinds.contains(&MemoryReference::Global(100)),
             "DefsIn @ B16 should contain [100]"
         );
         assert!(
-            !defs_in16_kinds.contains(&Addressable::Memory(101)),
+            !defs_in16_kinds.contains(&MemoryReference::Global(101)),
             "DefsIn @ B16 should not contain [101]"
         );
 
@@ -831,11 +828,11 @@ mod tests {
         let defs_out20_kinds: HashSet<_> =
             flow20.defs_out.iter().map(|def| def.kind.clone()).collect();
         assert!(
-            defs_out20_kinds.contains(&Addressable::Memory(100)),
+            defs_out20_kinds.contains(&MemoryReference::Global(100)),
             "DefsOut @ B20 should contain [100]"
         );
         assert!(
-            defs_out20_kinds.contains(&Addressable::Memory(101)),
+            defs_out20_kinds.contains(&MemoryReference::Global(101)),
             "DefsOut @ B20 should contain [101]"
         );
 
@@ -843,11 +840,11 @@ mod tests {
         let defs_in22_kinds: HashSet<_> =
             flow22.defs_in.iter().map(|def| def.kind.clone()).collect();
         assert!(
-            defs_in22_kinds.contains(&Addressable::Memory(100)),
+            defs_in22_kinds.contains(&MemoryReference::Global(100)),
             "DefsIn @ B22 should contain [100]"
         );
         assert!(
-            defs_in22_kinds.contains(&Addressable::Memory(101)),
+            defs_in22_kinds.contains(&MemoryReference::Global(101)),
             "DefsIn @ B22 should contain [101]"
         );
     }
@@ -886,7 +883,7 @@ mod tests {
         let defs_in6_sources: HashSet<_> = flow6
             .defs_in
             .iter()
-            .filter(|def| def.kind == Addressable::Memory(100))
+            .filter(|def| def.kind == MemoryReference::Global(100))
             .map(|def| {
                 (
                     def.block_id,
@@ -909,14 +906,14 @@ mod tests {
         // output reads [100], addition reads [100], if reads [100]
         assert_eq!(
             flow6.use_before_def.keys().cloned().collect::<HashSet<_>>(),
-            [Addressable::Memory(100)].iter().cloned().collect(),
+            [MemoryReference::Global(100)].iter().cloned().collect(),
             "USE @ B6"
         );
 
         // --- Check GEN in loop block (Block 6) ---
         // The last write to [100] is in this block
         assert!(
-            flow6.gen.contains_key(&Addressable::Memory(100)),
+            flow6.gen.contains_key(&MemoryReference::Global(100)),
             "GEN @ B6 should contain [100]"
         );
 
@@ -926,7 +923,7 @@ mod tests {
         let defs_out6_blocks: HashSet<_> = flow6
             .defs_out
             .iter()
-            .filter(|def| def.kind == Addressable::Memory(100))
+            .filter(|def| def.kind == MemoryReference::Global(100))
             .map(|def| def.block_id)
             .collect();
 
@@ -941,7 +938,7 @@ mod tests {
         let defs_in15_blocks: HashSet<_> = flow15
             .defs_in
             .iter()
-            .filter(|def| def.kind == Addressable::Memory(100))
+            .filter(|def| def.kind == MemoryReference::Global(100))
             .map(|def| def.block_id)
             .collect();
 
@@ -997,8 +994,8 @@ mod tests {
         assert_eq!(
             flow21.use_before_def.keys().sorted().collect::<Vec<_>>(),
             [
-                Addressable::RelativeMemory(1),
-                Addressable::RelativeMemory(2)
+                MemoryReference::StackRelative(1),
+                MemoryReference::StackRelative(2)
             ]
             .iter()
             .sorted()
@@ -1012,15 +1009,15 @@ mod tests {
 
         // Should contain [100] but not [R+1] or [R+2] which are killed by the call
         assert!(
-            defs_in21_kinds.contains(&Addressable::Memory(100)),
+            defs_in21_kinds.contains(&MemoryReference::Global(100)),
             "DefsIn @ B21 should contain [100]"
         );
         assert!(
-            !defs_in21_kinds.contains(&Addressable::RelativeMemory(1)),
+            !defs_in21_kinds.contains(&MemoryReference::StackRelative(1)),
             "DefsIn @ B21 should not contain [R+1] from before call"
         );
         assert!(
-            !defs_in21_kinds.contains(&Addressable::RelativeMemory(2)),
+            !defs_in21_kinds.contains(&MemoryReference::StackRelative(2)),
             "DefsIn @ B21 should not contain [R+2] from before call"
         );
 
@@ -1080,7 +1077,7 @@ mod tests {
         // GEN should only contain the *last* write
         assert_eq!(flow0.gen.len(), 1, "GEN should only contain one entry");
         assert!(
-            flow0.gen.contains_key(&Addressable::Memory(100)),
+            flow0.gen.contains_key(&MemoryReference::Global(100)),
             "GEN should contain [100]"
         );
 
@@ -1088,7 +1085,7 @@ mod tests {
         let defs_out0_for_100: Vec<_> = flow0
             .defs_out
             .iter()
-            .filter(|def| def.kind == Addressable::Memory(100))
+            .filter(|def| def.kind == MemoryReference::Global(100))
             .collect();
 
         assert_eq!(
@@ -1105,7 +1102,7 @@ mod tests {
         let defs_in12_for_100: Vec<_> = flow12
             .defs_in
             .iter()
-            .filter(|def| def.kind == Addressable::Memory(100))
+            .filter(|def| def.kind == MemoryReference::Global(100))
             .collect();
 
         assert_eq!(
@@ -1196,7 +1193,7 @@ mod tests {
                 let flow = block.data_flow.as_ref().unwrap();
 
                 flow.function_returns_in.iter().any(|fc| {
-                    if let LowExpr::Constant(addr) = &fc.function_addr {
+                    if let Expression::Constant(addr) = &fc.function_addr {
                         *addr == 124
                     } else {
                         false
@@ -1220,7 +1217,7 @@ mod tests {
 
         // Block 26 (cont:) should not have any function return definitions from func2
         let cont_block_func2_returns = cont_flow.function_returns_in.iter().any(|fc| {
-            if let LowExpr::Constant(addr) = &fc.function_addr {
+            if let Expression::Constant(addr) = &fc.function_addr {
                 *addr == 115 // func2 address
             } else {
                 false
@@ -1242,7 +1239,7 @@ mod tests {
             .function_returns_in
             .iter()
             .filter(|fc| {
-                if let LowExpr::Constant(addr) = &fc.function_addr {
+                if let Expression::Constant(addr) = &fc.function_addr {
                     *addr == 124
                 } else {
                     false
@@ -1260,7 +1257,7 @@ mod tests {
         assert!(
             block53_flow
                 .use_before_def
-                .contains_key(&Addressable::RelativeMemory(1)),
+                .contains_key(&MemoryReference::StackRelative(1)),
             "Block 53 should have [R+1] in use_before_def as a return value from func3"
         );
 

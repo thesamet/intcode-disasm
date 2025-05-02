@@ -11,34 +11,19 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use super::{
-    instructions::{Addressable, Instruction, LowExpr, PointerId},
+    instructions::{Expression, InstructionNode, MemoryReference, MemoryReferenceInfo, PointerId},
     model::Function,
     native::GenericNativeInstruction,
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub enum VersionedAddressableKind {
+pub enum MemoryReferenceType {
     Memory(usize),
     RelativeMemory(i128),
     Pointer(PointerId),
 }
-impl std::fmt::Display for VersionedAddressableKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VersionedAddressableKind::Memory(addr) => write!(f, "[{}]", addr),
-            VersionedAddressableKind::RelativeMemory(offset) if *offset == 0 => {
-                write!(f, "[R]")
-            }
-            VersionedAddressableKind::RelativeMemory(offset) if *offset > 0 => {
-                write!(f, "[R+{}]", offset)
-            }
-            VersionedAddressableKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
-            VersionedAddressableKind::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
-        }
-    }
-}
 
-impl VersionedAddressableKind {
+impl MemoryReferenceType {
     /// Converts an `Addressable` to a `VersionedAddressableKind`.
     ///
     /// This function is used during SSA conversion to transform addressable expressions into their versioned counterparts.
@@ -49,84 +34,99 @@ impl VersionedAddressableKind {
     /// # Returns
     /// * `Some(VersionedAddressableKind)` - If the addressable is Memory, RelativeMemory, or Pointer
     /// * `None` - If the addressable is a Deref
-    pub fn try_from_addressable(addressable: &Addressable) -> Option<Self> {
-        match addressable {
-            Addressable::Memory(addr) => Some(VersionedAddressableKind::Memory(*addr)),
-            Addressable::RelativeMemory(offset) => {
-                Some(VersionedAddressableKind::RelativeMemory(*offset))
+    #[deprecated = "Use TryFrom<MemoryReference> instead"]
+    pub fn try_from_memory_reference(addressable: &MemoryReference) -> Option<Self> {
+        addressable.try_into().ok()
+    }
+}
+
+impl TryFrom<&MemoryReference> for MemoryReferenceType {
+    type Error = String;
+    fn try_from(value: &MemoryReference) -> Result<Self, Self::Error> {
+        match value {
+            MemoryReference::Global(addr) => Ok(MemoryReferenceType::Memory(*addr)),
+            MemoryReference::StackRelative(offset) => {
+                Ok(MemoryReferenceType::RelativeMemory(*offset))
             }
-            Addressable::Pointer(id) => Some(VersionedAddressableKind::Pointer(*id)),
-            Addressable::Deref(_) => None,
+            MemoryReference::Pointer(id) => Ok(MemoryReferenceType::Pointer(*id)),
+            MemoryReference::Deref(_) => {
+                Err("MemoryReferenceType::try_from_addressable: Deref not supported".to_string())
+            }
         }
+    }
+}
+
+impl std::fmt::Display for MemoryReferenceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryReferenceType::Memory(addr) => write!(f, "[{}]", addr),
+            MemoryReferenceType::RelativeMemory(offset) if *offset == 0 => {
+                write!(f, "[R]")
+            }
+            MemoryReferenceType::RelativeMemory(offset) if *offset > 0 => {
+                write!(f, "[R+{}]", offset)
+            }
+            MemoryReferenceType::RelativeMemory(offset) => write!(f, "[R{}]", offset),
+            MemoryReferenceType::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
+        }
+    }
+}
+
+impl<'a> MemoryReferenceInfo<'a> for &'a MemoryReferenceType {
+    fn to_memory_reference(&self) -> MemoryReference {
+        (*self).into()
     }
 
-    pub fn get_relative_memory(&self) -> Option<i128> {
-        match self {
-            VersionedAddressableKind::RelativeMemory(offset) => Some(*offset),
-            _ => None,
-        }
+    fn as_deref(&self) -> Option<Expression<MemoryReference>> {
+        panic!("Programming error: MemoryReferenceType can't be a deref")
     }
-    
-    pub fn as_pointer(&self) -> Option<&PointerId> {
-        match self {
-            VersionedAddressableKind::Pointer(id) => Some(id),
-            _ => None,
-        }
-    }
-    
-    pub fn is_positive_relative_memory(&self) -> bool {
-        matches!(self, VersionedAddressableKind::RelativeMemory(n) if *n > 0)
-    }
-    
-    pub fn is_negative_relative_memory(&self) -> bool {
-        matches!(self, VersionedAddressableKind::RelativeMemory(n) if *n < 0)
+
+    fn is_deref(&self) -> bool {
+        panic!("Programming error: MemoryReferenceType can't be a deref")
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VersionedAddressable {
-    pub kind: VersionedAddressableKind,
+pub struct VersionedMemoryReference {
+    pub kind: MemoryReferenceType,
     pub function_id: FunctionId,
     pub version: usize,
 }
 
-impl std::fmt::Display for VersionedAddressable {
+impl VersionedMemoryReference {
+    pub fn new(kind: MemoryReferenceType, function_id: FunctionId, version: usize) -> Self {
+        Self {
+            kind,
+            function_id,
+            version,
+        }
+    }
+}
+
+impl std::fmt::Display for VersionedMemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}_{}_{}", self.kind, self.function_id, self.version)
     }
 }
 
-impl VersionedAddressable {}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum SsaAddressable {
-    Versioned(VersionedAddressable),
-    Deref(Box<LowExpr<SsaAddressable>>),
+pub enum SsaMemoryReference {
+    Versioned(VersionedMemoryReference),
+    Deref(Box<Expression<SsaMemoryReference>>),
 }
 
-impl SsaAddressable {
-    pub fn get_relative_memory(&self) -> Option<i128> {
+impl SsaMemoryReference {
+    pub fn as_versioned(&self) -> Option<&VersionedMemoryReference> {
         match self {
-            SsaAddressable::Versioned(var) => var.kind.get_relative_memory(),
-            SsaAddressable::Deref(_) => None,
-        }
-    }
-
-    pub fn as_versioned(&self) -> Option<&VersionedAddressable> {
-        match self {
-            SsaAddressable::Versioned(var) => Some(var),
-            SsaAddressable::Deref(_) => None,
+            SsaMemoryReference::Versioned(v) => Some(v),
+            _ => None,
         }
     }
 }
 
-impl From<VersionedAddressableKind> for Addressable {
-    fn from(ssa_assignable: VersionedAddressableKind) -> Self {
-        match ssa_assignable {
-            VersionedAddressableKind::Memory(addr) => Addressable::Memory(addr),
-            VersionedAddressableKind::RelativeMemory(offset) => Addressable::RelativeMemory(offset),
-            VersionedAddressableKind::Pointer(pointer_id) => Addressable::Pointer(pointer_id),
-        }
+impl From<VersionedMemoryReference> for SsaMemoryReference {
+    fn from(v: VersionedMemoryReference) -> Self {
+        SsaMemoryReference::Versioned(v)
     }
 }
 
@@ -391,12 +391,12 @@ impl fmt::Display for SsaOperand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhiFunction {
     /// The resulting SSA variable (must be a Variable)
-    pub result: VersionedAddressable,
+    pub result: VersionedMemoryReference,
     /// Map describing the sources for this Phi function's value.
     /// The key is the PredecessorKind corresponding to the incoming edge.
     /// The value is the SsaOperand representing the value coming from that source.
     /// For FunctionReturn predecessors, the SsaOperand is typically the phi.result itself wrapped in SsaOperand::Variable.
-    pub inputs: HashMap<PredecessorKind<Addressable>, VersionedAddressable>,
+    pub inputs: HashMap<PredecessorKind<MemoryReference>, VersionedMemoryReference>,
 }
 
 pub type SsaInstruction = GenericNativeInstruction<SsaOperand>;
@@ -411,18 +411,18 @@ pub struct SsaBlock {
     /// Instructions in SSA form
     pub native_instructions: Vec<SsaInstruction>,
     // Instructions in SSA form
-    pub instructions: Vec<Instruction<SsaAddressable>>,
+    pub instructions: Vec<InstructionNode<SsaMemoryReference>>,
     // Start state: the state of all versioned variables at the start of this block
     pub native_start_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
     // Start state: the state of all versioned variables at the start of this block
-    pub start_state: HashMap<VersionedAddressableKind, VersionedAddressable>, // Track only versioned variables
+    pub start_state: VersionRegistry, // Track only versioned variables
     /// End state: the state of all versioned variables at the end of this block
     pub native_end_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
     /// End state: the state of all versioned variables at the end of this block
-    pub end_state: HashMap<VersionedAddressableKind, VersionedAddressable>, // Track only versioned variables
+    pub end_state: VersionRegistry, // Track only versioned variables
     /// Control flow information using SSA operands
-    pub next: NextKind<SsaAddressable>,
-    pub predecessors: Vec<PredecessorKind<SsaAddressable>>,
+    pub next: NextKind<SsaMemoryReference>,
+    pub predecessors: Vec<PredecessorKind<SsaMemoryReference>>,
 }
 
 /// Represents a function in SSA form
@@ -437,40 +437,39 @@ pub struct SsaFunction {
 impl SsaFunction {
     // Helper to find an SSA variable with a specific debug marker
     #[cfg(test)]
-    pub fn find_ssa_operand_by_marker(&self, marker: char) -> Option<SsaOperand> {
+    pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult> {
+        use super::instructions::Instruction;
+
         for block in self.blocks.values() {
             for instr in &block.instructions {
-                match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
-                        // Check for marker in source expression
-                        if let Some(operand) = create_ssa_operand_from_expr(src, marker) {
-                            return Some(operand);
-                        }
-                        
-                        // Check for marker in target
-                        if let SsaAddressable::Versioned(versioned) = target {
-                            if let Some(LowExpr::DebugMarker(m, _)) = find_debug_marker_in_expr(src, marker) {
-                                if *m == marker {
-                                    return Some(create_ssa_operand_from_versioned(versioned, marker));
-                                }
-                            }
-                        }
-                    },
-                    InstructionKind::Output(expr) => {
-                        if let LowExpr::DebugMarker(m, inner_expr) = expr {
-                            if *m == marker {
-                                if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**inner_expr {
-                                    return Some(create_ssa_operand_from_versioned(versioned, marker));
-                                }
-                            }
-                        }
-                    },
-                    _ => {}
+                if let Instruction::Assign {
+                    target,
+                    target_debug_marker: Some(target_debug_marker),
+                    ..
+                } = &instr.kind
+                {
+                    if *target_debug_marker == marker {
+                        return Some(MarkerSearchResult::SsaAddressable(target));
+                    }
+                };
+                if let Some(found) = instr
+                    .kind
+                    .collect_source_expressions()
+                    .iter()
+                    .find_map(|x| x.find_debug_marker(marker))
+                {
+                    return Some(MarkerSearchResult::Expr(found));
                 }
             }
         }
         None
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkerSearchResult<'a> {
+    SsaAddressable(&'a SsaMemoryReference),
+    Expr(&'a Expression<SsaMemoryReference>),
 }
 
 #[derive(Debug, Clone)]
@@ -489,13 +488,13 @@ impl SsaResult {
         assert!(model.get_data_flow_result().is_some());
 
         let mut ssa_result = Self::new();
-        let mut converter = SSAConversionState::new(model);
 
         // Process each function in the model
         for &function_id in model.functions().keys() {
+            let mut converter = SSAConversionState::new(model, function_id);
             let ssa_func = SsaFunction {
                 original_id: function_id,
-                blocks: converter.convert_function(function_id),
+                blocks: converter.convert_function(),
             };
             ssa_result.functions.insert(function_id, ssa_func);
         }
@@ -504,100 +503,130 @@ impl SsaResult {
     }
 
     #[cfg(test)]
-    pub fn find_ssa_operand_by_marker(&self, marker: char) -> SsaOperand {
+    pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult> {
         self.functions
             .values()
-            .flat_map(|func| func.find_ssa_operand_by_marker(marker))
-            .next()
-            .unwrap_or_else(|| panic!("Marker '{}' not found in SSA program", marker))
+            .find_map(|func| func.find_marker(marker))
     }
 }
 
 struct SSAConversionState<'a> {
     model: &'a ProgramModel,
+    function_id: FunctionId,
 }
 
-fn get_current_version(
-    current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
-    addressable: &VersionedAddressableKind,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionRegistry {
+    current_versions: HashMap<MemoryReferenceType, VersionedMemoryReference>,
     function_id: FunctionId,
-) -> VersionedAddressable {
-    current_versions
-        .get(addressable)
-        .cloned()
-        .unwrap_or(VersionedAddressable {
-            kind: *addressable,
+}
+
+impl VersionRegistry {
+    fn new(function_id: FunctionId) -> Self {
+        Self {
+            current_versions: HashMap::new(),
             function_id,
-            version: 0,
-        })
-}
-// Creates the next version for a *variable* operand. Panics if called on a constant.
-fn create_next_version(
-    current_versions: &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
-    addressable: &VersionedAddressableKind,
-    function_id: FunctionId,
-) -> VersionedAddressable {
-    let mut versioned_addressable = get_current_version(current_versions, addressable, function_id);
-    versioned_addressable.version += 1;
-    current_versions.insert(*addressable, versioned_addressable);
-    versioned_addressable
-}
-
-fn to_versioned_addressable(
-    current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
-    function_id: FunctionId,
-    a: &Addressable,
-) -> SsaAddressable {
-    match VersionedAddressableKind::try_from_addressable(a) {
-        Some(kind) => {
-            SsaAddressable::Versioned(get_current_version(current_versions, &kind, function_id))
         }
-        None => match a {
-            Addressable::Deref(expr) => {
-                let expr = to_versioned_expression(current_versions, function_id, expr);
-                SsaAddressable::Deref(Box::new(expr))
-            }
-            _ => unreachable!("Expected deref addressable"),
-        },
     }
-}
 
-// Gets the current SsaOperand (Constant or Variable) for a given Operand.
-fn to_versioned_expression(
-    current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
-    function_id: FunctionId,
-    expr: &LowExpr<Addressable>,
-) -> LowExpr<SsaAddressable> {
-    expr.map(&mut |op| to_versioned_addressable(current_versions, function_id, op))
+    fn new_with_versions(
+        function_id: FunctionId,
+        current_versions: HashMap<MemoryReferenceType, VersionedMemoryReference>,
+    ) -> Self {
+        Self {
+            current_versions,
+            function_id,
+        }
+    }
+
+    fn current_version(
+        &self,
+        memory_reference_type: &MemoryReferenceType,
+    ) -> VersionedMemoryReference {
+        self.current_versions
+            .get(memory_reference_type)
+            .cloned()
+            .unwrap_or(VersionedMemoryReference {
+                kind: *memory_reference_type,
+                function_id: self.function_id,
+                version: 0,
+            })
+    }
+
+    fn create_next_version(
+        &mut self,
+        memory_reference_type: &MemoryReferenceType,
+    ) -> VersionedMemoryReference {
+        let mut versioned_memory_reference = self.current_version(memory_reference_type);
+        versioned_memory_reference.version += 1;
+        self.current_versions
+            .insert(*memory_reference_type, versioned_memory_reference);
+        versioned_memory_reference
+    }
+
+    fn set_version(
+        &mut self,
+        memory_reference_type: MemoryReferenceType,
+        versioned_memory_reference: VersionedMemoryReference,
+    ) {
+        self.current_versions
+            .insert(memory_reference_type, versioned_memory_reference);
+    }
+
+    fn current_memory_reference<T>(&self, memory_reference: &T) -> SsaMemoryReference
+    where
+        T: std::fmt::Debug,
+        MemoryReference: for<'a> From<&'a T>,
+    {
+        let mem_ref: MemoryReference = memory_reference.into();
+        MemoryReferenceType::try_from(&mem_ref)
+            .map(|kind| SsaMemoryReference::Versioned(self.current_version(&kind)))
+            .unwrap_or_else(|_| match mem_ref {
+                MemoryReference::Deref(expr) => {
+                    // Clone the expression here instead of trying to use From trait
+                    let expr = expr.as_ref();
+                    SsaMemoryReference::Deref(Box::new(
+                        self.current_expression::<MemoryReference>(expr),
+                    ))
+                }
+                _ => unreachable!("Expected type: {:?}", memory_reference),
+            })
+    }
+
+    fn current_expression<T>(&self, expr: &Expression<T>) -> Expression<SsaMemoryReference>
+    where
+        MemoryReference: for<'a> From<&'a T>,
+        T: std::fmt::Debug,
+    {
+        expr.map(&mut |op| self.current_memory_reference(op))
+    }
+
+    pub fn iter_versions(
+        &self,
+    ) -> impl Iterator<Item = (&MemoryReferenceType, &VersionedMemoryReference)> {
+        self.current_versions.iter()
+    }
+
+    fn has_version_for(&self, memory_reference_type: &MemoryReferenceType) -> bool {
+        self.current_versions.contains_key(memory_reference_type)
+    }
 }
 
 // Creates the NextKind using SsaOperands based on the current versions.
 
 impl<'a> SSAConversionState<'a> {
-    fn new(model: &'a ProgramModel) -> Self {
-        Self { model }
+    fn new(model: &'a ProgramModel, function_id: FunctionId) -> Self {
+        Self { model, function_id }
     }
 
-    fn create_ssa_next_kind(
-        current_versions: &HashMap<VersionedAddressableKind, VersionedAddressable>,
-        original: &NextKind<Addressable>,
-        function_id: FunctionId,
-    ) -> NextKind<SsaAddressable> {
-        original.map(&mut |op| to_versioned_addressable(current_versions, function_id, &op))
-    }
-
-    fn convert_function(&mut self, function_id: FunctionId) -> HashMap<BlockId, SsaBlock> {
+    fn convert_function(&mut self) -> HashMap<BlockId, SsaBlock> {
+        let function_id = self.function_id;
         // Step 1: Place phi functions where needed
         let phi_placements = self.place_phi_functions(function_id);
 
         // Step 2: Populate versions for phi results and targets of writes in top-bottom order.
         let function = self.model.get_function(function_id);
-        let mut initial_versions = HashMap::new();
-        let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(
-            function,
-            &phi_placements,
-            &mut initial_versions,
-        );
+        let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(function, &phi_placements);
 
         // Step 3: Compute start and end states for all blocks.
         self.compute_start_end_states(&mut ssa_blocks);
@@ -612,41 +641,33 @@ impl<'a> SSAConversionState<'a> {
         &mut self,
         function: &Function,
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-        current_versions: &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
     ) -> HashMap<BlockId, SsaBlock> {
         let mut ssa_blocks = HashMap::new();
 
         fn map_read(
-            (function_id, current, _): &mut (
-                FunctionId,
-                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
-                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
-            ),
-            op: &Addressable,
-        ) -> SsaAddressable {
-            to_versioned_addressable(current, *function_id, op)
+            (current, _): &mut (&mut VersionRegistry, &mut VersionRegistry),
+            op: &MemoryReference,
+        ) -> SsaMemoryReference {
+            current.current_memory_reference(op)
         }
 
         fn map_write(
-            (function_id, current, end): &mut (
-                FunctionId,
-                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
-                &mut HashMap<VersionedAddressableKind, VersionedAddressable>,
-            ),
-            op: &Addressable,
-        ) -> SsaAddressable {
-            match VersionedAddressableKind::try_from_addressable(&op) {
-                Some(kind) => {
-                    let next_var = create_next_version(current, &kind, *function_id);
-                    end.insert(next_var.kind, next_var); // Capture current_block_end_state mutably
-                    SsaAddressable::Versioned(next_var)
+            (current, end): &mut (&mut VersionRegistry, &mut VersionRegistry),
+            op: &MemoryReference,
+        ) -> SsaMemoryReference {
+            match MemoryReferenceType::try_from(op) {
+                Ok(mem_ref) => {
+                    let next_var = current.create_next_version(&mem_ref);
+                    end.set_version(mem_ref, next_var);
+                    next_var.into()
                 }
-                None => to_versioned_addressable(current, *function_id, op),
+                Err(_) => current.current_memory_reference(op),
             }
         }
+        let mut function_registry = VersionRegistry::new(self.function_id);
 
         for block_id in function.blocks.iter().sorted() {
-            let mut end_state = HashMap::new();
+            let mut end_state = VersionRegistry::new(self.function_id);
             if *block_id == function.entry_block {
                 self.model
                     .get_block(*block_id)
@@ -656,12 +677,13 @@ impl<'a> SSAConversionState<'a> {
                     .defs_in
                     .iter()
                     .filter(|d| d.source == OriginationPoint::FunctionInput)
-                    .filter_map(|d| VersionedAddressableKind::try_from_addressable(&d.kind))
+                    .filter_map(|d| MemoryReferenceType::try_from(&d.kind).ok())
                     .for_each({
                         |versioned_kind| {
-                            end_state.insert(
+                            println!("Adding version 0 for {:?}", versioned_kind);
+                            end_state.set_version(
                                 versioned_kind,
-                                VersionedAddressable {
+                                VersionedMemoryReference {
                                     kind: versioned_kind,
                                     function_id: function.function_id,
                                     version: 0,
@@ -673,19 +695,17 @@ impl<'a> SSAConversionState<'a> {
             let block = self.model.get_block(*block_id);
             let mut phi_functions = phi_placements.get(block_id).unwrap_or(&Vec::new()).clone();
             for phi in phi_functions.iter_mut() {
-                phi.result =
-                    create_next_version(current_versions, &phi.result.kind, function.function_id);
-                end_state.insert(phi.result.kind, phi.result);
+                phi.result = function_registry.create_next_version(&phi.result.kind);
+                end_state.set_version(phi.result.kind, phi.result);
             }
             // At this point end_state has the phi functions for this block, so this is the start state
             // we have without variables flowing from predecessors.
-            let start_state = end_state.clone();
+            let mut start_state = end_state.clone();
             let mut instructions = Vec::new();
             for instr in &block.low_instructions {
-                let mut state: (_, &mut HashMap<_, _>, &mut HashMap<_, _>) = (
-                    function.function_id,
-                    current_versions as &mut HashMap<_, _>,
-                    &mut end_state,
+                let mut state: (&mut VersionRegistry, &mut VersionRegistry) = (
+                    &mut start_state as &mut VersionRegistry,
+                    &mut end_state as &mut VersionRegistry,
                 );
                 instructions.push(instr.map_rw(&mut state, map_read, map_write));
             }
@@ -736,7 +756,7 @@ impl<'a> SSAConversionState<'a> {
             // Get the data flow result for this block
             let block_flow = self.model.get_block(block_id).data_flow.as_ref().unwrap();
             // Find all variable definitions reaching this block from any predecessor
-            let all_incoming_defs: HashMap<Addressable, HashSet<OriginationPoint>> =
+            let all_incoming_defs: HashMap<MemoryReference, HashSet<OriginationPoint>> =
                 if block.predecessors.len() > 1 {
                     block_flow
                         .defs_in
@@ -767,7 +787,7 @@ impl<'a> SSAConversionState<'a> {
                             .return_values_accessed
                             .keys() // Get iterator of keys (&i128)
                             .cloned() // Get iterator of values (i128)
-                            .map(Addressable::RelativeMemory) // Convert to Addressable
+                            .map(MemoryReference::StackRelative) // Convert to Addressable
                             .collect_vec() // Collect into Vec<OperandKind>
                     })
                     .unwrap()
@@ -787,12 +807,11 @@ impl<'a> SSAConversionState<'a> {
             // add a phi function
             for var_kind in vars {
                 // Skip constants and derefs
-                let Some(phi_kind) = VersionedAddressableKind::try_from_addressable(var_kind)
-                else {
+                let Ok(phi_kind) = MemoryReferenceType::try_from(var_kind) else {
                     continue;
                 };
 
-                let phi_result = VersionedAddressable {
+                let phi_result = VersionedMemoryReference {
                     kind: phi_kind,
                     function_id,
                     version: 0, // Placeholder
@@ -818,14 +837,14 @@ impl<'a> SSAConversionState<'a> {
 
         // These are the variables that are updated by the block. No predecessor
         // can affect the end state of these variable.
-        let initial_end_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
-            .iter()
-            .map(|(id, block)| (*id, block.native_end_state.clone()))
+        let initial_end_states: HashMap<BlockId, VersionRegistry> = ssa_blocks
+            .keys()
+            .map(|id| (*id, ssa_blocks[id].end_state.clone()))
             .collect();
 
-        let initial_start_states: HashMap<BlockId, HashMap<SsaVarKind, SsaVar>> = ssa_blocks
+        let initial_start_states: HashMap<BlockId, VersionRegistry> = ssa_blocks
             .iter()
-            .map(|(id, block)| (*id, block.native_start_state.clone()))
+            .map(|(id, block)| (*id, block.start_state.clone()))
             .collect();
 
         loop {
@@ -834,22 +853,27 @@ impl<'a> SSAConversionState<'a> {
                 let mut new_in = initial_start_states[block_id].clone();
                 let mut new_out = initial_end_states[block_id].clone();
                 let control_block = self.model.get_block(*block_id);
-                let live_in =
-                    &self.model.get_data_flow_result().unwrap().block_results[block_id].live_in;
+                let live_in = &self
+                    .model
+                    .get_block(*block_id)
+                    .data_flow
+                    .as_ref()
+                    .unwrap()
+                    .live_in;
 
                 for pred in &control_block.predecessors {
                     let pred_id = pred.source_block_id();
                     // Use the collected end_states map here
-                    let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().native_end_state;
+                    let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
                     // new_in should store SsaVarKind -> SsaVar
-                    for (var_kind, var) in pred_end_state {
-                        if !live_in.contains_key(&var_kind.to_operand_kind())
-                            && !var_kind.get_relative_memory().is_some_and(|r| r < 0)
+                    for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
+                        if !live_in.contains_key(&mem_ref_type.into())
+                            && !mem_ref_type.is_local_or_parameter()
                         {
                             // This var doesn't live from here and not a return value
                             continue;
                         }
-                        if initial_start_states[block_id].contains_key(var_kind) {
+                        if initial_start_states[block_id].has_version_for(mem_ref_type) {
                             // This block's phis write to the key, so both start_state and end_state can't affect from a predecessor
                             continue;
                         }
@@ -871,10 +895,10 @@ impl<'a> SSAConversionState<'a> {
                         );
                         */
 
-                        new_in.insert(*var_kind, *var);
+                        new_in.set_version(*mem_ref_type, *versioned_mem_ref);
 
                         // means we write to the key, so this can't affect the end_state
-                        if initial_end_states[block_id].contains_key(var_kind) {
+                        if initial_end_states[block_id].has_version_for(mem_ref_type) {
                             continue;
                         }
                         /*
@@ -890,18 +914,18 @@ impl<'a> SSAConversionState<'a> {
                             pred.source_block_id()
                         );
                         */
-                        new_out.insert(*var_kind, *var);
+                        new_out.set_version(*mem_ref_type, *versioned_mem_ref);
                     }
                 }
 
                 let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
-                if ssa_block.native_start_state != new_in {
+                if ssa_block.start_state != new_in {
                     changed = true;
-                    ssa_block.native_start_state = new_in; // Move new_in here
+                    ssa_block.start_state = new_in; // Move new_in here
                 }
-                if ssa_block.native_end_state != new_out {
+                if ssa_block.end_state != new_out {
                     changed = true;
-                    ssa_block.native_end_state = new_out; // Move new_out here
+                    ssa_block.end_state = new_out; // Move new_out here
                 }
             }
             if !changed {
@@ -925,53 +949,52 @@ impl<'a> SSAConversionState<'a> {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && phi.result.kind.get_relative_memory().is_some_and(|x| x > 0)
+                        && phi.result.as_stack_relative().is_some_and(|x| x > 0)
                     {
                         // For function returns, the phi result itself represents the value.
                         // Wrap the SsaVar result in SsaOperand::Variable.
                         phi_inputs.insert(pred.clone(), phi.result.clone());
-                    } else if let Some(pred_var) = pred_ssa_block.end_state.get(&phi.result.kind) {
-                        phi_inputs.insert(pred.clone(), *pred_var);
+                    } else {
+                        phi_inputs.insert(
+                            pred.clone(),
+                            pred_ssa_block.end_state.current_version(&phi.result.kind),
+                        );
                     }
                 }
                 let mut phi = phi.clone();
                 phi.inputs = phi_inputs;
                 phi_functions.push(phi);
             }
-            /*
             let mut instructions = vec![];
-            let mut state = ssa_block.native_start_state.clone();
-            for instr in &ssa_block.native_instructions {
+            let mut registry = ssa_block.start_state.clone();
+            for instr in &ssa_block.instructions {
                 let mut instr = instr.clone();
                 instr = instr.map_rw(
-                    &mut state,
-                    |c, op| (c, op.to_operand(), function.function_id),
-                    |c, op| {
-                        if matches!(op.kind, SsaOperandKind::Deref(..)) {
-                            // Derefs need to be renewed also for writes, since the pointer they
-                            // deref has an updated version.
-                            Self::get_current_value_for(c, op.to_operand(), function.function_id)
-                        } else {
-                            *op
+                    &mut registry,
+                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
+                    |reg, ssa_memory_reference| match ssa_memory_reference {
+                        SsaMemoryReference::Deref(expr) => {
+                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
                         }
+                        _ => ssa_memory_reference.clone(),
                     },
                 );
-                if let Some(write) = instr.writes() {
-                    if let Some(write) = write.as_variable() {
-                        state.insert(write.kind, *write);
+                if let Some(write) = instr.kind.get_write_address() {
+                    if let Some(write) = write.as_versioned() {
+                        registry.set_version(write.kind, *write);
                     }
                 }
                 instructions.push(instr);
             }
-            ssa_block.native_instructions = instructions;
-            */
-            // ssa_block.instructions = instructions;
+            let ssa_block_next = {
+                block
+                    .next
+                    .map(&mut |op| ssa_block.end_state.current_memory_reference(op))
+            };
             let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
+            ssa_block.instructions = instructions;
             ssa_block.phi_functions = phi_functions;
-            ssa_block.next =
-                Self::create_ssa_next_kind(&ssa_block.end_state, &block.next, function.function_id);
-            let next = ssa_block.next.clone();
-            match next {
+            match &ssa_block_next {
                 NextKind::Follows(target_id) => {
                     ssa_blocks
                         .get_mut(&target_id)
@@ -993,7 +1016,7 @@ impl<'a> SSAConversionState<'a> {
                         .get_mut(&call.return_block)
                         .unwrap()
                         .predecessors
-                        .push(PredecessorKind::FunctionCallReturns(call));
+                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
                 }
                 NextKind::Condition(cond) => {
                     // Add current block as predecessor to the target block
@@ -1006,66 +1029,13 @@ impl<'a> SSAConversionState<'a> {
                         .get_mut(&cond.follows_block)
                         .unwrap()
                         .predecessors
-                        .push(PredecessorKind::ConditionalFollow(cond));
+                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             }
+            ssa_blocks.get_mut(block_id).unwrap().next = ssa_block_next;
         }
     }
-}
-
-use super::instructions::InstructionKind;
-
-// Helper function to find debug markers in expressions with a specific marker
-fn find_debug_marker_in_expr<A>(expr: &LowExpr<A>, marker: char) -> Option<&LowExpr<A>> {
-    match expr {
-        LowExpr::DebugMarker(c, e) if *c == marker => Some(expr),
-        LowExpr::DebugMarker(_, e) => find_debug_marker_in_expr(e, marker),
-        LowExpr::BinaryOp { lhs, rhs, .. } => find_debug_marker_in_expr(lhs, marker)
-            .or_else(|| find_debug_marker_in_expr(rhs, marker)),
-        LowExpr::UnaryOp { arg, .. } => find_debug_marker_in_expr(arg, marker),
-        _ => None,
-    }
-}
-
-// Helper functions for finding and creating SSA operands from expressions
-#[cfg(test)]
-fn create_ssa_operand_from_versioned(versioned: &VersionedAddressable, marker: char) -> SsaOperand {
-    SsaOperand {
-        kind: SsaOperandKind::Variable(SsaVar {
-            kind: match versioned.kind {
-                VersionedAddressableKind::Memory(addr) => SsaVarKind::Memory(addr),
-                VersionedAddressableKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(offset),
-                VersionedAddressableKind::Pointer(id) => SsaVarKind::Pointer(id.index()),
-            },
-            version: versioned.version,
-            origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
-        }),
-        origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
-    }
-}
-
-#[cfg(test)]
-fn create_ssa_operand_from_expr(expr: &LowExpr<SsaAddressable>, marker: char) -> Option<SsaOperand> {
-    if let Some(marker_expr) = find_debug_marker_in_expr(expr, marker) {
-        if let LowExpr::DebugMarker(_, inner_expr) = marker_expr {
-            if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**inner_expr {
-                return Some(create_ssa_operand_from_versioned(versioned, marker));
-            } else if let LowExpr::Addressable(SsaAddressable::Deref(deref_expr)) = &**inner_expr {
-                if let LowExpr::Addressable(SsaAddressable::Versioned(versioned)) = &**deref_expr {
-                    return Some(SsaOperand {
-                        kind: SsaOperandKind::Deref(SsaVar {
-                            kind: SsaVarKind::Pointer(versioned.kind.as_pointer().unwrap().index()),
-                            version: versioned.version,
-                            origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
-                        }),
-                        origin_info: SsaOriginInfo::new(versioned.function_id, 0, Some(marker)),
-                    });
-                }
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -1073,7 +1043,7 @@ mod tests {
     use super::*;
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v2::instructions::{BinaryOp, InstructionKind};
+    use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
     use crate::disasm::v2::listeners::ssa_converter::SsaConverter;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     use crate::disasm::v2::{
@@ -1089,27 +1059,21 @@ mod tests {
     // Define SSA macros for creating expected SsaOperand values with Variable kinds
     macro_rules! ssa_var_rel {
         ($offset:expr, $version:expr) => {
-            SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::RelativeMemory($offset),
-                    version: $version,
-                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-                }),
-                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-            }
+            SsaMemoryReference::Versioned(VersionedMemoryReference {
+                kind: MemoryReferenceType::RelativeMemory($offset),
+                function_id: FunctionId::from(0),
+                version: $version,
+            })
         };
     }
 
     macro_rules! ssa_var_pointer {
         ($addr:expr, $version:expr) => {
-            SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::Pointer($addr),
-                    version: $version,
-                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-                }),
-                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-            }
+            SsaMemoryReference::Versioned(VersionedMemoryReference {
+                kind: MemoryReferenceType::Pointer(PointerId::from($addr)),
+                function_id: FunctionId::from(0),
+                version: $version,
+            })
         };
     }
 
@@ -1117,14 +1081,13 @@ mod tests {
     macro_rules! ssa_var_deref {
         ($addr:expr, $addr_ver: expr) => {
             // Added addr_ver
-            SsaOperand {
-                kind: SsaOperandKind::Deref(SsaVar {
-                    kind: SsaVarKind::Pointer($addr),
+            SsaMemoryReference::Deref(Box::new(Expression::Addressable(
+                SsaMemoryReference::Versioned(VersionedMemoryReference {
+                    kind: MemoryReferenceType::Pointer(PointerId::from($addr)),
+                    function_id: FunctionId::from(0),
                     version: $addr_ver,
-                    origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
                 }),
-                origin_info: SsaOriginInfo::new(FunctionId::from(0), 0, None),
-            }
+            )))
         };
     }
 
@@ -1133,23 +1096,22 @@ mod tests {
             // Find the SsaOperand with the given debug marker
             let found_operand = $ctx
                 .main_function
-                .find_ssa_operand_by_marker($marker) // Use the new function name
+                .find_marker($marker) // Use the new function name
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
-            // Extract the expected SsaVar if the expected operand's kind is Variable
-            match ($expected_operand.kind, found_operand.kind) {
-                (SsaOperandKind::Variable(expected_var), SsaOperandKind::Variable(found_var)) => {
-                    assert_eq!(expected_var.kind, found_var.kind, "For marker '{}': Expected kind: {:?}, Actual kind: {:?}", $marker, expected_var.kind, found_var.kind);
-                    assert_eq!(expected_var.version, found_var.version, "For marker '{}': Expected version: {}, Actual version: {}", $marker, expected_var.version, found_var.version);
-                },
-                (SsaOperandKind::Deref(expected_var), SsaOperandKind::Deref(actual_var)) => {
-                    assert_eq!(expected_var.kind, actual_var.kind, "For marker '{}': Expected kind: {:?}, Actual kind: {:?}", $marker, expected_var.kind, actual_var.kind);
-                    assert_eq!(expected_var.version, actual_var.version, "For marker '{}': Expected version: {}, Actual version: {}", $marker, expected_var.version, actual_var.version);
-                },
-                (a, b) => {
-                    panic!("For marker '{}: Expected SsaOperandKind::Variable or SsaOperandKind::Deref for marker assertion, got {:?} and {:?}", $marker, a, b);
-                }
-            }
+            let res = match found_operand {
+                MarkerSearchResult::SsaAddressable(a) => a,
+                MarkerSearchResult::Expr(Expression::Addressable(a)) => a,
+                _ => panic!("Expected SsaAddressable or LowExpr::Addressable"),
+            };
+            pretty_assertions::assert_eq!(
+                &$expected_operand,
+                res,
+                "For marker '{} expected: {:?}, actual: {:?}",
+                $marker,
+                $expected_operand,
+                res
+            );
         }};
     }
 
@@ -1304,7 +1266,7 @@ mod tests {
             if block
                 .instructions
                 .iter()
-                .any(|instr| matches!(instr.kind, InstructionKind::Output(_)))
+                .any(|instr| matches!(instr.kind, Instruction::Output(_)))
             {
                 merge_block_id = Some(*block_id);
                 break;
@@ -1325,10 +1287,10 @@ mod tests {
         let output_instr = merge_block
             .instructions
             .iter()
-            .find(|instr| matches!(instr.kind, InstructionKind::Output(_)))
+            .find(|instr| matches!(instr.kind, Instruction::Output(_)))
             .expect("Should have an output instruction");
 
-        let output_expr = if let InstructionKind::Output(expr) = &output_instr.kind {
+        let output_expr = if let Instruction::Output(expr) = &output_instr.kind {
             expr
         } else {
             panic!("Expected Output instruction");
@@ -1336,10 +1298,10 @@ mod tests {
 
         // Verify the output expression is using a versioned addressable
         match output_expr {
-            LowExpr::Addressable(SsaAddressable::Versioned(versioned)) => {
+            Expression::Addressable(SsaMemoryReference::Versioned(versioned)) => {
                 assert_eq!(
                     versioned.kind,
-                    VersionedAddressableKind::Memory(100),
+                    MemoryReferenceType::Memory(100),
                     "Output should use [100]"
                 );
                 assert!(
@@ -1404,7 +1366,7 @@ mod tests {
         for (block_id, block) in &ssa_function.blocks {
             if !block.instructions.is_empty() {
                 let first_instr = &block.instructions[0];
-                if matches!(first_instr.kind, InstructionKind::Output(_)) {
+                if matches!(first_instr.kind, Instruction::Output(_)) {
                     println!("Found block with output: {}", block_id);
                     found_return_block = Some(block);
                     break;
@@ -1425,9 +1387,9 @@ mod tests {
 
         // Simply check that the conversion runs without errors. In the future, we may want to
         // enhance this test to verify other aspects of the conversion.
-        if let InstructionKind::Output(expr) = &output_instr.kind {
+        if let Instruction::Output(expr) = &output_instr.kind {
             match expr {
-                LowExpr::Addressable(SsaAddressable::Versioned(versioned)) => {
+                Expression::Addressable(SsaMemoryReference::Versioned(versioned)) => {
                     assert!(
                         versioned.version > 0,
                         "Output variable should have a valid version number, got {}",
@@ -1487,12 +1449,12 @@ mod tests {
             .instructions
             .iter()
             .find(|instr| {
-                if let InstructionKind::Assign { target, src } = &instr.kind {
+                if let Instruction::Assign { target, src, .. } = &instr.kind {
                     // Check if this is an assignment with a binary op
                     if let (
-                        SsaAddressable::Versioned(target_var),
-                        LowExpr::BinaryOp {
-                            op: BinaryOp::Add,
+                        SsaMemoryReference::Versioned(target_var),
+                        Expression::Binary {
+                            op: BinaryOperator::Add,
                             lhs,
                             ..
                         },
@@ -1500,12 +1462,12 @@ mod tests {
                     {
                         // Check if target is [R-4] and lhs is also [R-4]
                         if let (
-                            VersionedAddressableKind::RelativeMemory(target_offset),
-                            LowExpr::Addressable(SsaAddressable::Versioned(lhs_var)),
+                            MemoryReferenceType::RelativeMemory(target_offset),
+                            Expression::Addressable(SsaMemoryReference::Versioned(lhs_var)),
                         ) = (target_var.kind, &**lhs)
                         {
                             return target_offset == -4
-                                && lhs_var.kind == VersionedAddressableKind::RelativeMemory(-4);
+                                && lhs_var.kind == MemoryReferenceType::RelativeMemory(-4);
                         }
                     }
                     false
@@ -1515,11 +1477,11 @@ mod tests {
             })
             .expect("Should have found the addition instruction");
 
-        if let InstructionKind::Assign { target, src } = &add_instr.kind {
-            if let (SsaAddressable::Versioned(target_var), LowExpr::BinaryOp { lhs, .. }) =
+        if let Instruction::Assign { target, src, .. } = &add_instr.kind {
+            if let (SsaMemoryReference::Versioned(target_var), Expression::Binary { lhs, .. }) =
                 (target, src)
             {
-                if let LowExpr::Addressable(SsaAddressable::Versioned(src_var)) = &**lhs {
+                if let Expression::Addressable(SsaMemoryReference::Versioned(src_var)) = &**lhs {
                     assert!(
                         src_var.version < target_var.version,
                         "Source version {} should be less than destination version {}",
@@ -1553,14 +1515,13 @@ mod tests {
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
     }
 
-
     // Helper function to find debug markers in expressions
-    fn find_first_debug_marker_in_expr<A>(expr: &LowExpr<A>) -> Option<&LowExpr<A>> {
+    fn find_first_debug_marker_in_expr<A>(expr: &Expression<A>) -> Option<&Expression<A>> {
         match expr {
-            LowExpr::DebugMarker(_, _) => Some(expr),
-            LowExpr::BinaryOp { lhs, rhs, .. } => find_first_debug_marker_in_expr(lhs)
+            Expression::DebugMarker(_, _) => Some(expr),
+            Expression::Binary { lhs, rhs, .. } => find_first_debug_marker_in_expr(lhs)
                 .or_else(|| find_first_debug_marker_in_expr(rhs)),
-            LowExpr::UnaryOp { arg, .. } => find_first_debug_marker_in_expr(arg),
+            Expression::Unary { arg, .. } => find_first_debug_marker_in_expr(arg),
             _ => None,
         }
     }
@@ -1586,7 +1547,6 @@ mod tests {
         assert_marker_at_main!(ctx, 'd', ssa_var_rel!(1, 1));
     }
 
-
     #[test]
     fn test_deref_read_after_write() {
         let ctx = TestContext::new(
@@ -1600,6 +1560,25 @@ mod tests {
         pretty_print_ssa(&ctx.model);
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
+    }
+
+    #[test]
+    fn test_deref_read_after_cond_write() {
+        let ctx = TestContext::new(
+            r#"
+                R += 5
+                'a ptr = 345
+                 if [R-4] goto @merge
+                'b ptr = ptr + 1
+            merge:
+                'c *ptr = 17
+                halt
+                "#,
+        );
+        pretty_print_ssa(&ctx.model);
+        assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(16, 1));
+        assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(16, 2));
+        assert_marker_at_main!(ctx, 'c', ssa_var_deref!(16, 3));
     }
 
     #[test]
@@ -1651,7 +1630,7 @@ mod tests {
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-5, 1));
-        
+
         // Inside loop header - Phi versions
         assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-3, 2));
         assert_marker_at_main!(ctx, 'e', ssa_var_rel!(-2, 1));
@@ -1659,10 +1638,10 @@ mod tests {
         assert_marker_at_main!(ctx, 'g', ssa_var_rel!(-3, 2));
         assert_marker_at_main!(ctx, 'h', ssa_var_rel!(-3, 2));
         assert_marker_at_main!(ctx, 'i', ssa_var_rel!(-2, 1));
-        
+
         // After function call return
         assert_marker_at_main!(ctx, 'j', ssa_var_rel!(1, 2));
-        
+
         // Inside loop body (after call)
         assert_marker_at_main!(ctx, 'k', ssa_var_rel!(-3, 2));
         assert_marker_at_main!(ctx, 'l', ssa_var_rel!(-3, 3));
@@ -1703,8 +1682,7 @@ mod tests {
                 .get(&return_block_id)
                 .unwrap()
                 .end_state
-                .get(&VersionedAddressableKind::RelativeMemory(-1))
-                .expect("End state should contain [R-1]")
+                .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
             3 // Expecting version 3 based on the control flow
         );
@@ -1713,8 +1691,7 @@ mod tests {
                 .get(&BlockId::from(13))
                 .unwrap()
                 .end_state
-                .get(&VersionedAddressableKind::RelativeMemory(-1))
-                .expect("End state should contain [R-1]")
+                .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
             3 // Expecting version 3 based on the control flow
         );
@@ -1758,8 +1735,7 @@ exit:
         assert_eq!(
             return_block
                 .end_state
-                .get(&VersionedAddressableKind::RelativeMemory(-1))
-                .expect("End state should contain [R-1]")
+                .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
             return_block.phi_functions[0].result.version // Compare with phi result version
         );
@@ -1868,7 +1844,7 @@ exit:
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
-        
+
         // Check the merge block has a phi function for [R+1]
         let merge_block = ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)]
             .blocks
@@ -1877,9 +1853,12 @@ exit:
             .nth(3)
             .unwrap()
             .1;
-            
+
         assert_eq!(merge_block.phi_functions.len(), 1);
-        assert_eq!(merge_block.phi_functions[0].result.kind, VersionedAddressableKind::RelativeMemory(1));
+        assert_eq!(
+            merge_block.phi_functions[0].result.kind,
+            MemoryReferenceType::RelativeMemory(1)
+        );
         assert_eq!(merge_block.phi_functions[0].result.version, 3);
     }
 }

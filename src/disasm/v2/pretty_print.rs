@@ -3,11 +3,11 @@ use itertools::Itertools;
 
 use super::{
     control_flow::PredecessorKind,
-    instructions::{Instruction, InstructionKind, LowExpr},
+    instructions::{Expression, Instruction, InstructionNode},
     model::ProgramModel,
     ssa_form::{
-        PhiFunction, SsaAddressable, SsaBlock, SsaFunction, SsaOperandKind, SsaVarKind,
-        VersionedAddressable,
+        PhiFunction, SsaMemoryReference, SsaBlock, SsaFunction, SsaOperandKind, SsaVarKind,
+        VersionedMemoryReference,
     },
 };
 
@@ -18,19 +18,21 @@ struct PrettyPrinter<'a> {
 }
 
 impl<'a> PrettyPrinter<'a> {
-    fn format_expression(&self, expr: &LowExpr<SsaAddressable>) -> String {
+    fn format_expression(&self, expr: &Expression<SsaMemoryReference>) -> String {
         match expr {
-            LowExpr::Constant(value) => format!("{}", value).green().to_string(),
-            LowExpr::Addressable(addr) => self.format_addressable(addr),
-            LowExpr::BinaryOp { op, lhs, rhs } => format!(
+            Expression::Constant(value) => format!("{}", value).green().to_string(),
+            Expression::Addressable(addr) => self.format_addressable(addr),
+            Expression::Binary { op, lhs, rhs } => format!(
                 "({} {} {})",
                 self.format_expression(lhs),
                 op,
                 self.format_expression(rhs)
             ),
-            LowExpr::UnaryOp { op, arg } => format!("{}({})", op, self.format_expression(arg)),
-            LowExpr::Input() => "input()".to_string(),
-            LowExpr::DebugMarker(marker, expr) => {
+            Expression::Unary { op, arg } => {
+                format!("{}({})", op, self.format_expression(arg))
+            }
+            Expression::Input() => "input()".to_string(),
+            Expression::DebugMarker(marker, expr) => {
                 format!(
                     "'{} ({})",
                     marker.to_string().yellow(),
@@ -40,14 +42,14 @@ impl<'a> PrettyPrinter<'a> {
         }
     }
 
-    fn format_addressable(&self, addressable: &SsaAddressable) -> String {
+    fn format_addressable(&self, addressable: &SsaMemoryReference) -> String {
         match addressable {
-            SsaAddressable::Versioned(a) => self.format_versioned_addressable(a),
-            SsaAddressable::Deref(expr) => format!("*({})", self.format_expression(expr)),
+            SsaMemoryReference::Versioned(a) => self.format_versioned_addressable(a),
+            SsaMemoryReference::Deref(expr) => format!("*({})", self.format_expression(expr)),
         }
     }
 
-    fn format_versioned_addressable(&self, addressable: &VersionedAddressable) -> String {
+    fn format_versioned_addressable(&self, addressable: &VersionedMemoryReference) -> String {
         format!("{}_{}", addressable.kind, addressable.version)
     }
 
@@ -162,17 +164,17 @@ impl<'a> PrettyPrinter<'a> {
     }
 
     // Update to take GenericInstruction<SsaOperand>
-    fn format_instruction(&self, instr: &Instruction<SsaAddressable>) -> String {
+    fn format_instruction(&self, instr: &InstructionNode<SsaMemoryReference>) -> String {
         // Use format_ssa_operand for all operands
         match &instr.kind {
-            InstructionKind::Assign { target, src } => {
+            Instruction::Assign { target, src, .. } => {
                 format!(
                     "{} = {}",
                     self.format_addressable(target),
                     self.format_expression(src)
                 )
             }
-            InstructionKind::If {
+            Instruction::If {
                 cond,
                 then_addr,
                 else_addr,
@@ -184,21 +186,21 @@ impl<'a> PrettyPrinter<'a> {
                     else_addr
                 )
             }
-            InstructionKind::Goto(addr) => {
+            Instruction::Goto(addr) => {
                 format!("goto {}", addr)
             }
-            InstructionKind::Call { addr, return_to } => {
+            Instruction::Call { addr, return_to } => {
                 format!(
                     "call {} return to {}",
                     self.format_expression(addr),
                     return_to
                 )
             }
-            InstructionKind::Output(expr) => {
+            Instruction::Output(expr) => {
                 format!("output {}", self.format_expression(expr))
             }
-            InstructionKind::Return => "return".to_string(),
-            InstructionKind::Halt => "halt".to_string(),
+            Instruction::Return => "return".to_string(),
+            Instruction::Halt => "halt".to_string(),
         }
     }
 
@@ -222,7 +224,11 @@ impl<'a> PrettyPrinter<'a> {
         for instr in &block.instructions {
             if self.show_vars {
                 match &instr.kind {
-                    InstructionKind::Assign { target, src } => {
+                    Instruction::Assign {
+                        target,
+                        src,
+                        target_debug_marker,
+                    } => {
                         panic!("Migration uncomment")
                         // skip a == b where a and b are the same variable
                         /*

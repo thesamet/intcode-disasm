@@ -1,15 +1,16 @@
 use crate::disasm::v2::data_flow::NativeOriginationPoint;
+use crate::disasm::v2::instructions::MemoryReferenceInfo;
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::OriginationPoint,
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
-    instructions::LowExpr,
+    instructions::Expression,
     model::{BlockId, FunctionId, ProgramModel},
     native::OperandKind,
     ssa_form::{
-        SsaAddressable, SsaFunction, SsaOperand, SsaOperandKind, SsaResult, VersionedAddressable,
-        VersionedAddressableKind,
+        MemoryReferenceType, SsaFunction, SsaMemoryReference, SsaOperand, SsaOperandKind,
+        SsaResult, VersionedMemoryReference,
     },
 };
 use itertools::Itertools;
@@ -44,12 +45,12 @@ pub struct CalleeInfo {
     /// Maps the parameter offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *first read* of that parameter,
     /// typically near the function entry.
-    pub parameter_entry_vars: HashMap<i128, VersionedAddressable>,
+    pub parameter_entry_vars: HashMap<i128, VersionedMemoryReference>,
 
     /// Return values defined by this function.
     /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *last write* to that location before returning.
-    pub return_writes: HashMap<i128, VersionedAddressable>,
+    pub return_writes: HashMap<i128, VersionedMemoryReference>,
 }
 
 /// Information about a specific location where a function call occurs (Caller's perspective).
@@ -63,35 +64,35 @@ pub struct CallSiteInfo {
     pub target_function_id: Option<FunctionId>,
 
     /// The SSA variable representing the target address for indirect calls (`goto [addr]`).
-    pub target_address_var: Option<LowExpr<SsaAddressable>>,
+    pub target_address_var: Option<Expression<SsaMemoryReference>>,
 
     /// Arguments provided *by the caller* before the call.
     /// Maps the argument offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within the *caller function* that holds the value written to that location.
-    pub argument_writes: HashMap<i128, VersionedAddressable>,
+    pub argument_writes: HashMap<i128, VersionedMemoryReference>,
 
     /// Return values accessed *by the caller* after the call returns.
     /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within the *caller function* that reads the value from that location.
-    pub return_reads: HashMap<i128, VersionedAddressable>,
+    pub return_reads: HashMap<i128, VersionedMemoryReference>,
 
     /// BlockId where execution resumes in the caller after the function returns.
     pub return_block_id: BlockId,
 
     /// Maps caller's argument write VersionedAddressable to callee's parameter entry VersionedAddressable.
     /// Only populated for direct calls.
-    pub parameter_map: HashMap<VersionedAddressable, VersionedAddressable>,
+    pub parameter_map: HashMap<VersionedMemoryReference, VersionedMemoryReference>,
 
     /// Maps caller's return read VersionedAddressable to callee's parameter entry VersionedAddressable.
     /// Only populated for direct calls.
-    pub return_map: HashMap<VersionedAddressable, VersionedAddressable>,
+    pub return_map: HashMap<VersionedMemoryReference, VersionedMemoryReference>,
 }
 
 impl FunctionCallAnalysis {
     pub fn get_effective_return_values(
         &self,
         function_id: FunctionId,
-    ) -> Option<Vec<(i128, VersionedAddressable)>> {
+    ) -> Option<Vec<(i128, VersionedMemoryReference)>> {
         let callers_csi = self
             .call_site_info
             .values()
@@ -100,7 +101,7 @@ impl FunctionCallAnalysis {
         if callers_csi.is_empty() {
             None
         } else {
-            let mut return_reads: HashSet<(i128, VersionedAddressable)> = HashSet::new();
+            let mut return_reads: HashSet<(i128, VersionedMemoryReference)> = HashSet::new();
             for csi in callers_csi {
                 return_reads.extend(
                     csi.return_reads
@@ -116,11 +117,11 @@ impl FunctionCallAnalysis {
 
 fn find_lowest_version_of(
     function: &SsaFunction,
-    kind: &VersionedAddressableKind,
-) -> Option<VersionedAddressable> {
-    let mut min_var: Option<VersionedAddressable> = None;
+    kind: &MemoryReferenceType,
+) -> Option<VersionedMemoryReference> {
+    let mut min_var: Option<VersionedMemoryReference> = None;
 
-    let min_var_version = |min_var: Option<VersionedAddressable>| {
+    let min_var_version = |min_var: Option<VersionedMemoryReference>| {
         min_var.as_ref().map(|var| var.version).unwrap_or(0)
     };
 
@@ -144,7 +145,7 @@ fn find_lowest_version_of(
         // Check instruction operands
         for instr in &block.instructions {
             // Consider all read operands.
-            let operands_in_instr = instr.kind.reads();
+            let operands_in_instr = instr.kind.collect_read_addresses();
             for var in operands_in_instr {
                 if let Some(var) = var.as_versioned() {
                     if &var.kind == kind
@@ -176,17 +177,17 @@ impl FunctionCallAnalyzer {
             let return_block_id = model.get_function(function.original_id).return_block;
             let stack_size = model.get_function(function.original_id).stack_size as i128;
 
-            let mut parameter_entry_vars: HashMap<i128, VersionedAddressable> = HashMap::new();
+            let mut parameter_entry_vars: HashMap<i128, VersionedMemoryReference> = HashMap::new();
 
             // Analyze parameters using live_in at entry block
             let entry_flow = model.get_block(entry_block_id).data_flow.as_ref().unwrap();
             for (live_addressable, points) in &entry_flow.live_in {
                 let Some(live_kind) =
-                    VersionedAddressableKind::try_from_addressable(live_addressable)
+                    MemoryReferenceType::try_from_memory_reference(live_addressable)
                 else {
                     continue;
                 };
-                let Some(offset) = live_kind.get_relative_memory() else {
+                let Some(offset) = live_kind.as_stack_relative() else {
                     continue;
                 };
                 if offset >= 0
@@ -216,10 +217,9 @@ impl FunctionCallAnalyzer {
                     .get(&return_block_id)
                     .unwrap()
                     .end_state
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        k.get_relative_memory().filter(|r| *r < 0).map(|r| (r, *v))
-                    })
+                    .iter_versions()
+                    .filter(|(k, _)| k.is_local_or_parameter())
+                    .filter_map(|(k, v)| k.as_stack_relative().map(|r| (r, *v)))
                     .collect()
             } else {
                 HashMap::new()
@@ -251,7 +251,7 @@ impl FunctionCallAnalyzer {
                         calling_block_id,
                         calling_function_id
                     );
-                    let argument_writes: HashMap<i128, VersionedAddressable> = model
+                    let argument_writes: HashMap<i128, VersionedMemoryReference> = model
                         .get_ssa_result()
                         .unwrap()
                         .functions
@@ -261,18 +261,18 @@ impl FunctionCallAnalyzer {
                         .get(&calling_block_id)
                         .unwrap()
                         .end_state
-                        .iter()
+                        .iter_versions()
                         .filter_map(|(k, v)| {
-                            k.get_relative_memory().filter(|r| *r > 0).map(|r| (r, *v))
+                            k.as_stack_relative().filter(|r| *r > 0).map(|r| (r, *v))
                         })
                         .collect();
-                    let mut return_reads: HashMap<i128, VersionedAddressable> = HashMap::new();
-                    let mut target_address_var: Option<LowExpr<SsaAddressable>> = None;
+                    let mut return_reads: HashMap<i128, VersionedMemoryReference> = HashMap::new();
+                    let mut target_address_var: Option<Expression<SsaMemoryReference>> = None;
                     let mut target_function_id: Option<FunctionId> = None;
 
                     // Determine Target Function
                     match call.function_addr {
-                        LowExpr::Constant(addr) => {
+                        Expression::Constant(addr) => {
                             target_function_id = Some(FunctionId::from(addr as usize))
                         }
                         _ => {
@@ -301,9 +301,9 @@ impl FunctionCallAnalyzer {
                             .unwrap();
                         let read_var = *instr
                             .kind
-                            .reads()
+                            .collect_read_addresses()
                             .iter()
-                            .find(|r| r.get_relative_memory() == Some(offset))
+                            .find(|r| (**r).as_stack_relative() == Some(offset))
                             .unwrap()
                             .as_versioned()
                             .unwrap();
@@ -347,11 +347,11 @@ fn populate_call_site_maps(
     target_id: FunctionId,
     analysis: &FunctionCallAnalysis,
     model: &ProgramModel,
-    argument_writes: &HashMap<i128, VersionedAddressable>,
-    return_reads: &HashMap<i128, VersionedAddressable>,
+    argument_writes: &HashMap<i128, VersionedMemoryReference>,
+    return_reads: &HashMap<i128, VersionedMemoryReference>,
 ) -> (
-    HashMap<VersionedAddressable, VersionedAddressable>,
-    HashMap<VersionedAddressable, VersionedAddressable>,
+    HashMap<VersionedMemoryReference, VersionedMemoryReference>,
+    HashMap<VersionedMemoryReference, VersionedMemoryReference>,
 ) {
     let mut parameter_map = HashMap::new();
     let mut return_map = HashMap::new();

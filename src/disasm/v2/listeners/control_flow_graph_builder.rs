@@ -8,7 +8,7 @@ use crate::disasm::v2::{
         self, ControlFlowAnalysisPhaseComplete, FunctionCfgBuilt, ImageScannerComplete,
         ModelEventListener,
     },
-    instructions::{Addressable, Instruction, InstructionKind, LowExpr},
+    instructions::{Expression, Instruction, InstructionNode, MemoryReference},
     model::{BlockId, FunctionId, ProgramModel},
     native::{NativeInstruction, Operand},
     Span,
@@ -163,7 +163,7 @@ impl ControlFlowGraphBuilder {
                 containing_function_id: func_id,
                 span: Span::new(start_addr, current_block_end),
                 native_instructions: current_block_instructions.clone(),
-                low_instructions: Instruction::convert_block(current_block_instructions),
+                low_instructions: InstructionNode::convert_block(current_block_instructions),
                 native_next: NextKind::Unknown,
                 predecessors: Vec::new(), // To be filled later
                 next: NextKind::Unknown,
@@ -181,7 +181,7 @@ impl ControlFlowGraphBuilder {
         // --- Pass 2: Determine NextKind and Predecessors ---
         let mut native_predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> =
             HashMap::new();
-        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Addressable>>> =
+        let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<MemoryReference>>> =
             HashMap::new();
 
         for block_id in &function_block_ids {
@@ -310,17 +310,17 @@ impl ModelEventListener for ControlFlowGraphBuilder {
 
 fn determine_next_kind(
     block_id: BlockId,
-    last_instr: &Instruction<Addressable>,
+    last_instr: &InstructionNode<MemoryReference>,
     block_end_addr: usize,
-) -> NextKind<Addressable> {
+) -> NextKind<MemoryReference> {
     match &last_instr.kind {
-        InstructionKind::Halt => NextKind::Halt,
-        InstructionKind::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
-        InstructionKind::Call { addr, return_to } => {
+        Instruction::Halt => NextKind::Halt,
+        Instruction::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
+        Instruction::Call { addr, return_to } => {
             NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), return_to.clone()))
         }
-        InstructionKind::Return => NextKind::Return,
-        InstructionKind::If {
+        Instruction::Return => NextKind::Return,
+        Instruction::If {
             cond,
             then_addr,
             else_addr,
@@ -753,7 +753,7 @@ mod tests {
 
         assert_eq!(call.return_block, BlockId::from(17));
         // For low-level, check that there's a constant expression with value 24
-        if let LowExpr::Constant(addr) = &call.function_addr {
+        if let Expression::Constant(addr) = &call.function_addr {
             assert_eq!(*addr, 24);
         } else {
             panic!("Expected function address to be a constant");

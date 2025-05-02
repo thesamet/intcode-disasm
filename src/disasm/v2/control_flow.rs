@@ -1,6 +1,6 @@
 use super::{
     data_flow::BlockDataFlow,
-    instructions::{Addressable, Instruction, LowExpr},
+    instructions::{Expression, InstructionNode, MemoryReference},
     model::{BlockId, FunctionId},
     native::{NativeInstruction, Operand},
     Span,
@@ -141,12 +141,16 @@ where
 {
     pub calling_block: BlockId,
     // The operand representing the function address (can be immediate or indirect)
-    pub function_addr: LowExpr<T>,
+    pub function_addr: Expression<T>,
     pub return_block: BlockId, // The block execution resumes at after the call
 }
 
 impl<T: Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
-    pub fn new(calling_block: BlockId, function_addr: LowExpr<T>, return_block: BlockId) -> Self {
+    pub fn new(
+        calling_block: BlockId,
+        function_addr: Expression<T>,
+        return_block: BlockId,
+    ) -> Self {
         Self {
             calling_block,
             function_addr,
@@ -168,11 +172,11 @@ impl<T: Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Condition<T> {
-    pub from_block: BlockId,           // Block containing the conditional jump
-    pub condition_operand: LowExpr<T>, // The operand being tested
-    pub jump_if_true: bool,            // True for `if x`, False for `if !x`
-    pub target_block: BlockId,         // Block jumped to if condition met
-    pub follows_block: BlockId,        // Block fallen through to if condition not met
+    pub from_block: BlockId,              // Block containing the conditional jump
+    pub condition_operand: Expression<T>, // The operand being tested
+    pub jump_if_true: bool,               // True for `if x`, False for `if !x`
+    pub target_block: BlockId,            // Block jumped to if condition met
+    pub follows_block: BlockId,           // Block fallen through to if condition not met
 }
 
 impl<T> Condition<T> {
@@ -199,12 +203,12 @@ pub struct Block {
     pub containing_function_id: FunctionId,
     pub span: Span,
     pub native_instructions: Vec<NativeInstruction>,
-    pub low_instructions: Vec<Instruction<Addressable>>,
+    pub low_instructions: Vec<InstructionNode<MemoryReference>>,
 
     // CFG Information (added by ControlFlowGraphBuilder)
     pub native_next: NextKind<Operand>,
-    pub next: NextKind<Addressable>,
-    pub predecessors: Vec<PredecessorKind<Addressable>>,
+    pub next: NextKind<MemoryReference>,
+    pub predecessors: Vec<PredecessorKind<MemoryReference>>,
 
     // Dataflow information (added by DataFlowAnalyzer)
     pub data_flow: Option<BlockDataFlow>,
