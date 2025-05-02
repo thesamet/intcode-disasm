@@ -248,9 +248,9 @@ impl<A> Instruction<A> {
     /// Collects the source expressions that this instruction evaluates.
     ///
     /// Different instruction types operate on different kinds of expressions:
-    /// - Assign: The source expression to be assigned. Note that evaulating
+    /// - Assign: The source expression to be assigned. Note that evaluating
     ///           the target expression will result in the source expression
-    ///           being evaluated.  See ReadAddressExtractor for more details.
+    ///           being evaluated. See ReadAddressExtractor for more details.
     /// - If: The condition expression
     /// - Call: The target address expression
     /// - Output: The expression to be output
@@ -307,9 +307,13 @@ pub enum Expression<A> {
 impl<A> Expression<A> {
     /// Collects all memory references that this expression reads from.
     ///
-    /// Returns a vector of references to all addressable locations accessed during
-    /// evaluation of this expression. This is useful for data flow analysis and
-    /// understanding memory dependencies.
+    /// This method recursively traverses the expression tree to find all memory
+    /// references that are read during evaluation. It's a key component of data flow
+    /// analysis, as it identifies all dependencies of an expression.
+    ///
+    /// # Returns
+    /// A vector of references to all addressable locations accessed during
+    /// evaluation of this expression.
     ///
     /// # Examples
     ///
@@ -423,17 +427,35 @@ pub enum BinaryOperator {
     NotEquals,
 }
 
+/// A trait for types that can extract read addresses from themselves.
+///
+/// This trait is crucial for data flow analysis, as it allows us to identify all memory
+/// locations that are read when a value is used, including indirect reads through pointers.
+///
+/// For example, when writing to a dereferenced pointer (`*ptr = value`), we need to recognize
+/// that `ptr` itself is being read to determine the target address. This trait provides a
+/// standardized way to extract such read operations across different memory reference types.
 pub trait ReadAddressExtractor {
+    /// Extracts all memory references that are read when this value is used.
+    ///
+    /// This method is particularly important for:
+    /// 1. Dereferenced pointers, where the pointer expression must be read
+    /// 2. Complex memory addressing expressions that involve multiple reads
+    ///
+    /// # Returns
+    /// A vector of references to all memory locations that are read when this value is used.
     fn extract_read_addresses(&self) -> Vec<&Self>;
 }
 
 impl ReadAddressExtractor for MemoryReference {
     fn extract_read_addresses(&self) -> Vec<&Self> {
         match self {
+            // When dereferencing a pointer, we need to read the pointer expression
+            MemoryReference::Deref(expr) => expr.collect_read_addresses(),
+            // Other memory reference types don't involve indirect reads
             MemoryReference::Global(_) => Vec::new(),
             MemoryReference::StackRelative(_) => Vec::new(),
             MemoryReference::Pointer(_) => Vec::new(),
-            MemoryReference::Deref(expr) => expr.collect_read_addresses(),
         }
     }
 }
@@ -441,7 +463,9 @@ impl ReadAddressExtractor for MemoryReference {
 impl ReadAddressExtractor for SsaMemoryReference {
     fn extract_read_addresses(&self) -> Vec<&Self> {
         match self {
+            // Similar to MemoryReference, we need to extract reads from dereferenced expressions
             SsaMemoryReference::Deref(expr) => expr.collect_read_addresses(),
+            // Versioned references don't involve indirect reads
             SsaMemoryReference::Versioned(_) => vec![],
         }
     }
@@ -450,10 +474,20 @@ impl ReadAddressExtractor for SsaMemoryReference {
 impl<A: ReadAddressExtractor> Instruction<A> {
     /// Collects all memory references that this instruction reads from.
     ///
-    /// Collects all memory references accessed by expressions within this instruction.
-    /// For example, in an assignment like `mem[5] = mem[3] + mem[4]`, this would return
-    /// references to memory locations 3 and 4.
+    /// This method is essential for data flow analysis as it identifies all memory
+    /// locations that an instruction depends on. It handles both:
+    /// 1. Explicit reads in source expressions (e.g., `[100]` in `[101] = [100] + 5`)
+    /// 2. Implicit reads in write targets (e.g., `ptr` in `*ptr = value`)
+    ///
+    /// The latter case is particularly important for correct liveness analysis and
+    /// SSA conversion, as it ensures that pointers used in dereferenced writes are
+    /// properly tracked as being read.
+    ///
+    /// # Returns
+    /// A vector of references to all memory locations read by this instruction.
     pub fn collect_read_addresses(&self) -> Vec<&A> {
+        // Start with reads from the write target (if any)
+        // This is crucial for cases like *ptr = value where ptr is read
         let mut reads = self
             .get_write_address()
             .map_or(vec![], |a| a.extract_read_addresses());
@@ -601,7 +635,7 @@ impl InstructionNode<MemoryReference> {
     /// Returns the number of instructions consumed by this instruction, which would
     /// be either 1 or 2 if `next_instruction` was consumed. The second return value
     /// is an optional instruction that is produced by this instruction, as some native
-    /// instructions do not prodice a low-level instruction.
+    /// instructions do not produce a low-level instruction.
     fn from_native_instruction_pair(
         native: NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
