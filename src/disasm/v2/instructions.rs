@@ -730,20 +730,26 @@ impl<A> InstructionNode<A> {
     where
         R: FnMut(&mut C, &A) -> T,
         W: FnMut(&mut C, &A) -> T,
+        C: std::fmt::Debug,
     {
         match &self.kind {
             Instruction::Assign {
                 target,
                 src,
                 target_debug_marker,
-            } => InstructionNode {
-                id: self.id,
-                kind: Instruction::Assign {
-                    target: map_write(context, &target),
-                    src: src.map(&mut |v| map_read(context, v)),
-                    target_debug_marker: *target_debug_marker,
-                },
-            },
+            } => {
+                if self.id == InstructionId::from(6) {
+                    print!("hello!: {:?}", context);
+                }
+                InstructionNode {
+                    id: self.id,
+                    kind: Instruction::Assign {
+                        target: map_write(context, &target),
+                        src: src.map(&mut |v| map_read(context, v)),
+                        target_debug_marker: *target_debug_marker,
+                    },
+                }
+            }
             Instruction::If {
                 cond,
                 then_addr,

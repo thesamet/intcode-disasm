@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use log::trace;
 use std::convert::From;
 
 use crate::disasm::v2::{
@@ -11,7 +12,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use super::{
-    instructions::{Expression, InstructionNode, MemoryReference, MemoryReferenceInfo, PointerId},
+    instructions::{
+        Expression, InstructionId, InstructionNode, MemoryReference, MemoryReferenceInfo, PointerId,
+    },
     model::Function,
     native::GenericNativeInstruction,
 };
@@ -664,7 +667,7 @@ impl<'a> SSAConversionState<'a> {
                 Err(_) => current.current_memory_reference(op),
             }
         }
-        let mut function_registry = VersionRegistry::new(self.function_id);
+        let mut version_registry = VersionRegistry::new(self.function_id);
 
         for block_id in function.blocks.iter().sorted() {
             let mut end_state = VersionRegistry::new(self.function_id);
@@ -680,7 +683,6 @@ impl<'a> SSAConversionState<'a> {
                     .filter_map(|d| MemoryReferenceType::try_from(&d.kind).ok())
                     .for_each({
                         |versioned_kind| {
-                            println!("Adding version 0 for {:?}", versioned_kind);
                             end_state.set_version(
                                 versioned_kind,
                                 VersionedMemoryReference {
@@ -695,16 +697,16 @@ impl<'a> SSAConversionState<'a> {
             let block = self.model.get_block(*block_id);
             let mut phi_functions = phi_placements.get(block_id).unwrap_or(&Vec::new()).clone();
             for phi in phi_functions.iter_mut() {
-                phi.result = function_registry.create_next_version(&phi.result.kind);
+                phi.result = version_registry.create_next_version(&phi.result.kind);
                 end_state.set_version(phi.result.kind, phi.result);
             }
             // At this point end_state has the phi functions for this block, so this is the start state
             // we have without variables flowing from predecessors.
-            let mut start_state = end_state.clone();
+            let start_state = end_state.clone();
             let mut instructions = Vec::new();
             for instr in &block.low_instructions {
                 let mut state: (&mut VersionRegistry, &mut VersionRegistry) = (
-                    &mut start_state as &mut VersionRegistry,
+                    &mut version_registry as &mut VersionRegistry,
                     &mut end_state as &mut VersionRegistry,
                 );
                 instructions.push(instr.map_rw(&mut state, map_read, map_write));
@@ -743,7 +745,7 @@ impl<'a> SSAConversionState<'a> {
         for &block_id in &function.blocks {
             let block = self.model.get_block(block_id);
 
-            // Only blocks with multiple predecessors or blocks that are function returns nee d phi functions.
+            // Only blocks with multiple predecessors or blocks that are function returns need phi functions.
             if block.predecessors.len() <= 1
                 && !block
                     .predecessors
@@ -816,6 +818,7 @@ impl<'a> SSAConversionState<'a> {
                     function_id,
                     version: 0, // Placeholder
                 };
+                trace!("{block_id}: Created {} = ?", phi_result);
 
                 // We fill this function later.
                 let phi = PhiFunction {
@@ -871,10 +874,12 @@ impl<'a> SSAConversionState<'a> {
                             && !mem_ref_type.is_local_or_parameter()
                         {
                             // This var doesn't live from here and not a return value
+                            trace!("Skipping var {} from predecessor {} because it doesn't live in this block {block_id}", mem_ref_type, pred_id);
                             continue;
                         }
                         if initial_start_states[block_id].has_version_for(mem_ref_type) {
                             // This block's phis write to the key, so both start_state and end_state can't affect from a predecessor
+                            trace!("Skipping var {} from predecessor {} because it is already in start_state", mem_ref_type, pred_id);
                             continue;
                         }
 
@@ -969,6 +974,9 @@ impl<'a> SSAConversionState<'a> {
             let mut registry = ssa_block.start_state.clone();
             for instr in &ssa_block.instructions {
                 let mut instr = instr.clone();
+                if instr.id == InstructionId::from(6) {
+                    print!("Outside map_rw: {:?}", registry);
+                }
                 instr = instr.map_rw(
                     &mut registry,
                     |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
@@ -1841,6 +1849,7 @@ exit:
             goto [R]
             "#,
         );
+        pretty_print_ssa(&ctx.model);
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));

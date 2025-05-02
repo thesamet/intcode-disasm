@@ -13,10 +13,12 @@ use crate::disasm::v2::data_flow::{
 use crate::disasm::v2::events::DataFlowAnalysisPhaseComplete;
 use crate::disasm::v2::events::FunctionDataFlowAnalysisComplete;
 use crate::disasm::v2::instructions::Expression;
+use crate::disasm::v2::instructions::Instruction;
 use crate::disasm::v2::instructions::MemoryReference;
 use crate::disasm::v2::instructions::MemoryReferenceInfo;
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::native::{Operand, OperandKind};
+use crate::disasm::v2::ssa_form::MemoryReferenceType;
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::DataFlowResult,
@@ -70,9 +72,25 @@ impl DataFlowAnalyzer {
 
             for instr in &block.low_instructions {
                 // Calculate USE for this instruction
-                for r in instr.kind.collect_read_addresses() {
+                let target_sources = match &instr.kind {
+                    Instruction::Assign {
+                        target: MemoryReference::Deref(expr),
+                        ..
+                    } => expr
+                        .collect_read_addresses()
+                        .into_iter()
+                        .map(|r| r.clone())
+                        .collect(),
+                    _ => vec![],
+                };
+                for r in instr
+                    .kind
+                    .collect_read_addresses()
+                    .into_iter()
+                    .chain(target_sources.iter())
+                {
                     if !low_defined_in_block.contains(r) {
-                        low_flow.use_before_def.insert(r.clone(), instr.id);
+                        low_flow.use_before_def.insert((*r).clone(), instr.id);
                     }
                 }
 
@@ -581,10 +599,11 @@ mod tests {
             data_flow::NativeOriginationPoint,
             dispatching::EventPublisher,
             events::Event,
+            instructions::PointerId,
             listeners::{
                 control_flow_graph_builder::ControlFlowGraphBuilder, image_scanner::ImageScanner,
             },
-            model::*, // Bring model types into scope
+            model::*,
             native::{NativeInstructionId, OperandKind},
         },
     };
@@ -1269,6 +1288,54 @@ mod tests {
         assert!(
             calling_block_flow.call_site_info.as_ref().unwrap().return_values_accessed.contains_key(&1),
             "The calling block for func3 should have 1 ([R+1]) in its call_site_info.return_values_accessed"
+        );
+    }
+    #[test]
+    fn test_deref_result_in_live_in() {
+        // This test verifies that pointer dereferencing operations are correctly tracked
+        // in the liveness analysis. When pointers are used or dereferenced later in the
+        // program, they should appear in the live_in set of preceding blocks.
+        let model = setup_and_analyze(
+            r#"
+            R += 3              ; 0
+            ptr1 = 2            ; 2  ; Define pointer 1
+            ptr2 = 4            ; 6  ; Define pointer 2
+            goto @below         ; 10
+            below:
+            [R+1] = [R-1]       ; 13 ; Stack memory operation
+            *ptr1 = 7           ; 17 ; Dereference and write to ptr1
+            [R+2] = *ptr2       ; 21 ; Read from dereferenced ptr2
+            R -= 3              ; 25
+            goto [R]
+            "#,
+        );
+
+        // Get the data flow information for the "below" block at address 13
+        let df = model
+            .get_block(BlockId::from(13))
+            .data_flow
+            .as_ref()
+            .unwrap();
+
+        // Check that pointers are correctly marked as live at block entry
+
+        // This verifies that ptr1 is live at the entry point of the block
+        // PointerId 20 corresponds to ptr1 (instruction at position 2)
+        assert!(
+            df.live_in
+                .contains_key(&MemoryReference::Pointer(PointerId::from(20))),
+            "ptr1 should be in live_in as it's used for dereferencing at instruction 17"
+        );
+
+        // This verifies that dereferenced ptr2 is in the live_in set
+        // The expression represents *ptr2, where ptr2 is defined at instruction position 6
+        // The data flow analyzer correctly identified that we need to read through ptr2
+        assert!(
+            df.live_in
+                .contains_key(&MemoryReference::Deref(Box::new(Expression::Addressable(
+                    MemoryReference::Pointer(PointerId::from(22))
+                )))),
+            "Dereferenced ptr2 should be in live_in as it's read at instruction 21"
         );
     }
 }
