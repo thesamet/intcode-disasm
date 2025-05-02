@@ -272,7 +272,7 @@ impl ControlFlowGraphBuilder {
         };
         let function = model.get_function_mut(func_id); // Pass func_id directly
         function.return_block = return_block;
-        function.blocks = function_block_ids; // Store the list of block IDs for this function
+        function.all_block_ids = function_block_ids; // Store the list of block IDs for this function
 
         sender.publish(FunctionCfgBuilt {
             function_id: func_id,
@@ -297,8 +297,9 @@ impl ModelEventListener for ControlFlowGraphBuilder {
                 function_id: func_id,
                 entry_block: BlockId::from(rec_func.span.start),
                 stack_size: rec_func.stack_size,
-                blocks: Vec::new(), // Will be filled
-                return_block: None, // Will be filled
+                all_block_ids: Vec::new(), // Will be filled
+                return_block: None,        // Will be filled
+                blocks: HashMap::new(),    // Will be filled
             });
 
             self.build_cfg_for_function(model, func_id, rec_func, sender);
@@ -383,7 +384,7 @@ mod tests {
         let func = model.get_function(func_id);
         assert_eq!(func.stack_size, 5);
         assert_eq!(func.entry_block, BlockId::from(0));
-        assert_eq!(func.blocks.len(), 2);
+        assert_eq!(func.all_block_ids.len(), 2);
         assert_eq!(func.return_block, Some(BlockId::from(2))); // The whole function is the return block
 
         let block0 = model.get_block(BlockId::from(0));
@@ -426,8 +427,11 @@ mod tests {
         let func = model.get_function(func_id);
         assert_eq!(func.stack_size, 5);
         assert_eq!(func.entry_block, BlockId::from(0));
-        assert_eq!(func.blocks.len(), 2);
-        assert_eq!(func.blocks, vec![BlockId::from(0), BlockId::from(10)]);
+        assert_eq!(func.all_block_ids.len(), 2);
+        assert_eq!(
+            func.all_block_ids,
+            vec![BlockId::from(0), BlockId::from(10)]
+        );
         assert_eq!(func.return_block, Some(BlockId::from(10)));
 
         let block0 = model.get_block(BlockId::from(0));
@@ -471,9 +475,9 @@ mod tests {
         let func = model.get_function(func_id);
         assert_eq!(func.stack_size, 5);
         assert_eq!(func.entry_block, BlockId::from(0));
-        assert_eq!(func.blocks.len(), 3);
+        assert_eq!(func.all_block_ids.len(), 3);
         assert_eq!(
-            func.blocks,
+            func.all_block_ids,
             vec![BlockId::from(0), BlockId::from(6), BlockId::from(10)]
         );
         assert_eq!(func.return_block, Some(BlockId::from(10)));
@@ -534,9 +538,9 @@ mod tests {
         let func_id = FunctionId::from(0);
         let func = model.get_function(func_id);
         assert_eq!(func.stack_size, 5);
-        assert_eq!(func.blocks.len(), 4);
+        assert_eq!(func.all_block_ids.len(), 4);
         assert_eq!(
-            func.blocks,
+            func.all_block_ids,
             vec![
                 BlockId::from(0),
                 BlockId::from(5),
@@ -617,9 +621,9 @@ mod tests {
 
         let func_id = FunctionId::from(0);
         let func = model.get_function(func_id);
-        assert_eq!(func.blocks.len(), 3);
+        assert_eq!(func.all_block_ids.len(), 3);
         assert_eq!(
-            func.blocks,
+            func.all_block_ids,
             vec![BlockId::from(0), BlockId::from(2), BlockId::from(9)]
         );
         assert_eq!(func.return_block, Some(BlockId::from(9)));
@@ -685,7 +689,7 @@ mod tests {
             panic!("Expected Block 9 to have a ConditionalFollow predecessor from Block 2");
         }
         assert_eq!(
-            func.blocks,
+            func.all_block_ids,
             vec![BlockId::from(0), BlockId::from(2), BlockId::from(9)]
         ); // Block 0, Block 2 (body), Block 9 (return)
     }
@@ -737,9 +741,9 @@ mod tests {
         // Check Main Function
         let main_func = model.get_function(main_id);
         assert_eq!(main_func.stack_size, 5);
-        assert_eq!(main_func.blocks.len(), 3); // Entry+Args+Call, Output, Return
+        assert_eq!(main_func.all_block_ids.len(), 3); // Entry+Args+Call, Output, Return
         assert_eq!(
-            main_func.blocks,
+            main_func.all_block_ids,
             vec![BlockId::from(0), BlockId::from(17), BlockId::from(19)]
         );
         assert_eq!(main_func.return_block, Some(BlockId::from(19)));
@@ -763,7 +767,7 @@ mod tests {
         // Check Callee Function (Block 24)
         let callee_func = model.get_function(callee_id);
         assert_eq!(callee_func.stack_size, 4);
-        assert_eq!(callee_func.blocks.len(), 2);
+        assert_eq!(callee_func.all_block_ids.len(), 2);
         assert_eq!(callee_func.return_block, Some(BlockId::from(42)));
 
         // Check Return Block Predecessor in Main
@@ -790,7 +794,7 @@ mod tests {
         let func_id = FunctionId::from(0);
         let func = model.get_function(func_id);
         assert_eq!(func.stack_size, 2);
-        assert_eq!(func.blocks.len(), 1);
+        assert_eq!(func.all_block_ids.len(), 1);
         assert!(func.return_block.is_none());
 
         let block0 = model.get_block(BlockId::from(0));

@@ -200,9 +200,11 @@ pub struct Function {
 
     // Discovered by control flow analysis
     pub stack_size: usize,
-    pub blocks: Vec<BlockId>, // list of blocks in this function
+    pub all_block_ids: Vec<BlockId>, // list of blocks in this function
 
     // The block containing the R -= N; goto [R] sequence.
     // Function may not have a return block. For example, if it reaches the end of the image, is a loop, or it halts.
     pub return_block: Option<BlockId>,
+
+    pub blocks: HashMap<BlockId, Block>,
 }

@@ -196,7 +196,7 @@ impl<T> Condition<T> {
 }
 
 /// A block in the control flow graph
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub id: BlockId,
     // To which function does this block belong?

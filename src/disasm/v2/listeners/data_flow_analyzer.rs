@@ -36,7 +36,7 @@ impl DataFlowAnalyzer {
     /// Performs the main data flow analysis passes for a given function.
     fn analyze_function(model: &ProgramModel, func_id: FunctionId, df_result: &mut DataFlowResult) {
         let func = model.get_function(func_id);
-        let block_ids = &func.blocks;
+        let block_ids = &func.all_block_ids;
 
         // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
         Self::initialize_gen_use_func_in(model, block_ids, df_result);
@@ -198,7 +198,7 @@ impl DataFlowAnalyzer {
         let mut changed = true;
         while changed {
             changed = false;
-            for block_id in &func.blocks {
+            for block_id in &func.all_block_ids {
                 let block = model.get_block(*block_id);
                 // Low-level definitions
                 let new_low_defs_in = Self::calculate_low_defs_in(func, block, df_result);
@@ -262,7 +262,7 @@ impl DataFlowAnalyzer {
             // to this function. We take the union of all the use_before_def sets
             // for all blocks in the function, since it is a superset (which is still
             // smaller than all the reads).
-            for &other_block_id in &function.blocks {
+            for &other_block_id in &function.all_block_ids {
                 let other_flow = df_result.low_block_results.get(&other_block_id).unwrap();
                 new_defs_in.extend(
                     other_flow
@@ -418,7 +418,7 @@ impl DataFlowAnalyzer {
             // We mark the live out as "FunctionOutput" to indicate that it is a return value.
             // This prevents from potential return values to appear as function inputs by propogating
             // to the entry point's live in.
-            for block in &function.blocks {
+            for block in &function.all_block_ids {
                 let dfr = df_result.block_results.get(block).unwrap();
                 for gen in dfr.gen.keys().filter(|k| k.is_negative_relative_memory()) {
                     new_live_out
@@ -454,7 +454,7 @@ impl DataFlowAnalyzer {
 
         if Some(block_id) == function.return_block {
             // If this is a function return, add potential return arguments to live out
-            for &block_id in &function.blocks {
+            for &block_id in &function.all_block_ids {
                 let low_flow = df_result.low_block_results.get(&block_id).unwrap();
                 for gen in low_flow.gen.keys().filter(|k| k.is_stack_relative()) {
                     new_live_out
@@ -483,7 +483,7 @@ impl ModelEventListener for DataFlowAnalyzer {
         let mut df_result_for_function = DataFlowResult::new();
         // Initialize block entries for this function
         let function = model.get_function(event.function_id);
-        for block_id in &function.blocks {
+        for block_id in &function.all_block_ids {
             df_result_for_function
                 .block_results
                 .insert(*block_id, BlockNativeDataFlow::new());
@@ -509,7 +509,7 @@ impl ModelEventListener for DataFlowAnalyzer {
 
         // If there is use of undefined [R+n] values, we check it comes from a function, and
         // that function is unique.
-        for block_id in &function.blocks {
+        for block_id in &function.all_block_ids {
             // Update low-level call site info
             let br = df_result_for_function
                 .low_block_results

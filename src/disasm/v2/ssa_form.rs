@@ -669,7 +669,7 @@ impl<'a> SSAConversionState<'a> {
         }
         let mut version_registry = VersionRegistry::new(self.function_id);
 
-        for block_id in function.blocks.iter().sorted() {
+        for block_id in function.all_block_ids.iter().sorted() {
             let mut end_state = VersionRegistry::new(self.function_id);
             if *block_id == function.entry_block {
                 self.model
@@ -738,11 +738,11 @@ impl<'a> SSAConversionState<'a> {
         let function = self.model.get_function(function_id);
 
         // Initialize empty phi function vectors for all blocks
-        for &block_id in &function.blocks {
+        for &block_id in &function.all_block_ids {
             phi_placements.insert(block_id, Vec::new());
         }
 
-        for &block_id in &function.blocks {
+        for &block_id in &function.all_block_ids {
             let block = self.model.get_block(block_id);
 
             // Only blocks with multiple predecessors or blocks that are function returns need phi functions.
@@ -944,7 +944,7 @@ impl<'a> SSAConversionState<'a> {
         function: &Function,
         ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
     ) {
-        for block_id in &function.blocks {
+        for block_id in &function.all_block_ids {
             let block = self.model.get_block(*block_id);
             let ssa_block = ssa_blocks.get(block_id).unwrap();
             let mut phi_functions = vec![];

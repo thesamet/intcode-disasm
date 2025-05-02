@@ -1,5 +1,6 @@
 mod code_printer;
 // pub mod hlr;
+pub mod model2;
 pub mod parser;
 mod test_utils;
 pub mod v2;
