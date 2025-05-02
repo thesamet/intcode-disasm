@@ -380,12 +380,7 @@ impl DataFlowAnalyzer {
                 let mut low_current_live_in = low_flow.live_out.clone();
 
                 // Add potential_function_call_params for low-level
-                if model
-                    .get_block(block_id)
-                    .native_next
-                    .as_function_call()
-                    .is_some()
-                {
+                if model.get_block(block_id).next.as_function_call().is_some() {
                     for d in &low_flow.defs_in {
                         if d.kind.is_outgoing_parameter() {
                             low_current_live_in
