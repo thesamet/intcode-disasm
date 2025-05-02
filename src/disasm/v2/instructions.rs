@@ -632,151 +632,57 @@ impl InstructionNode<MemoryReference> {
     }
 
     /// Converts a native instruction into a low-level instruction.
-    /// Returns the number of instructions consumed by this instruction, which would
-    /// be either 1 or 2 if `next_instruction` was consumed. The second return value
-    /// is an optional instruction that is produced by this instruction, as some native
-    /// instructions do not produce a low-level instruction.
+    /// Returns the number of instructions consumed and the resulting low-level instruction(s).
     fn from_native_instruction_pair(
         native: NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
     ) -> (usize, Option<InstructionNode<MemoryReference>>) {
-        // matches returns the default case of (1, Some(i)), if it's anything else,
-        // there's an early return.
+        // Handle special cases that need to look at the next instruction
+        if let Some(result) = Self::handle_special_instruction_pairs(&native, next_instruction) {
+            return result;
+        }
+
+        // Handle regular single instructions
         let kind = match native.kind {
-            NativeInstructionKind::Add(a, b, c) => Instruction::Assign {
-                target: c.kind.try_into().unwrap(),
-                src: Expression::Binary {
-                    op: BinaryOperator::Add,
-                    lhs: Box::new(a.into()),
-                    rhs: Box::new(b.into()),
-                },
-                target_debug_marker: c.debug_marker,
-            },
-            NativeInstructionKind::Mul(a, b, c) => Instruction::Assign {
-                target: c.kind.try_into().unwrap(),
-                src: Expression::Binary {
-                    op: BinaryOperator::Mul,
-                    lhs: Box::new(a.into()),
-                    rhs: Box::new(b.into()),
-                },
-                target_debug_marker: c.debug_marker,
-            },
-            NativeInstructionKind::Input(a) => Instruction::Assign {
-                target: a.kind.try_into().unwrap(),
+            NativeInstructionKind::Add(lhs, rhs, target) => {
+                Self::create_binary_expression_assignment(BinaryOperator::Add, lhs, rhs, target)
+            }
+            NativeInstructionKind::Mul(lhs, rhs, target) => {
+                Self::create_binary_expression_assignment(BinaryOperator::Mul, lhs, rhs, target)
+            }
+            NativeInstructionKind::LessThan(lhs, rhs, target) => {
+                Self::create_binary_expression_assignment(
+                    BinaryOperator::LessThan,
+                    lhs,
+                    rhs,
+                    target,
+                )
+            }
+            NativeInstructionKind::Equals(lhs, rhs, target) => {
+                Self::create_binary_expression_assignment(BinaryOperator::Equals, lhs, rhs, target)
+            }
+            NativeInstructionKind::Input(target) => Instruction::Assign {
+                target: target.kind.try_into().unwrap(),
                 src: Expression::Input(),
-                target_debug_marker: a.debug_marker,
+                target_debug_marker: target.debug_marker,
             },
-            NativeInstructionKind::Output(a) => Instruction::Output(a.into()),
-            NativeInstructionKind::JumpIfTrue(cond, addr) => Instruction::If {
-                cond: cond.into(),
-                then_addr: match addr.into() {
-                    Expression::Constant(a) => BlockId::from(a as usize),
-                    _ => panic!("Expected constant address for jump"),
-                },
-                else_addr: BlockId::from(native.span.end),
-            },
-            NativeInstructionKind::JumpIfFalse(cond, addr) => Instruction::If {
-                cond: Expression::Unary {
-                    op: UnaryOperator::Not,
-                    arg: Box::new(cond.into()),
-                },
-                then_addr: match addr.into() {
-                    Expression::Constant(a) => BlockId::from(a as usize),
-                    _ => panic!("Expected constant address for jump"),
-                },
-                else_addr: BlockId::from(native.span.end),
-            },
-            NativeInstructionKind::LessThan(a, b, c) => Instruction::Assign {
-                target: c.kind.try_into().unwrap(),
-                src: Expression::Binary {
-                    op: BinaryOperator::LessThan,
-                    lhs: Box::new(a.into()),
-                    rhs: Box::new(b.into()),
-                },
-                target_debug_marker: a.debug_marker,
-            },
-            NativeInstructionKind::Equals(a, b, c) => Instruction::Assign {
-                target: c.kind.try_into().unwrap(),
-                src: Expression::Binary {
-                    op: BinaryOperator::Equals,
-                    lhs: Box::new(a.into()),
-                    rhs: Box::new(b.into()),
-                },
-                target_debug_marker: c.debug_marker,
-            },
-            NativeInstructionKind::AdjustRelativeBase(r) => {
-                let Some(adjust) = r.kind.get_immediate() else {
-                    panic!("Expected immediate value for R adjustment");
-                };
-                match adjust.cmp(&0) {
-                    Ordering::Less => {
-                        // must be followed by GOTO [R], representing a return.
-                        assert_matches!(
-                            next_instruction,
-                            Some(GenericNativeInstruction {
-                                kind: NativeInstructionKind::Goto(Operand {
-                                    kind: OperandKind::RelativeMemory(0),
-                                    ..
-                                }),
-                                ..
-                            })
-                        );
-                        return (
-                            2,
-                            Some(InstructionNode {
-                                id: InstructionId::fresh(),
-                                kind: Instruction::Return,
-                            }),
-                        );
-                    }
-                    Ordering::Equal => {
-                        panic!("R adjustment must be non-zero");
-                    }
-                    Ordering::Greater => {
-                        // entry point to function, discard
-                        return (1, None);
-                    }
-                }
+            NativeInstructionKind::Output(operand) => Instruction::Output(operand.into()),
+            NativeInstructionKind::JumpIfTrue(cond, addr) => {
+                Self::create_conditional_jump(cond, addr, native.span.end, false)
             }
+            NativeInstructionKind::JumpIfFalse(cond, addr) => {
+                Self::create_conditional_jump(cond, addr, native.span.end, true)
+            }
+            NativeInstructionKind::Goto(addr) => Self::create_goto(addr),
             NativeInstructionKind::Halt => Instruction::Halt,
-            NativeInstructionKind::Data(_) => {
-                unreachable!("Data instruction should be removed")
-            }
-            NativeInstructionKind::Goto(addr) => Instruction::Goto(BlockId::from(
-                addr.kind
-                    .get_immediate()
-                    .unwrap_or_else(|| panic!("Expected immediate value for GOTO address"))
-                    as usize,
-            )),
-            NativeInstructionKind::Assign(target, src) => {
-                if Some(0) == target.kind.get_relative_memory() {
-                    let return_to = src.kind.get_immediate().map(|i| i as usize).unwrap();
-                    assert_eq!(return_to, native.span.end + 3);
-                    let Some(GenericNativeInstruction {
-                        kind: NativeInstructionKind::Goto(func_addr),
-                        ..
-                    }) = next_instruction
-                    else {
-                        panic!("Expected next instruction to be GOTO (func_addr)]");
-                    };
-                    return (
-                        2,
-                        Some(InstructionNode {
-                            kind: Instruction::Call {
-                                addr: func_addr.clone().into(),
-                                return_to: BlockId::from(return_to),
-                            },
-                            id: InstructionId::fresh(),
-                        }),
-                    );
-                } else {
-                    Instruction::Assign {
-                        target: target.kind.try_into().unwrap(),
-                        src: src.into(),
-                        target_debug_marker: target.debug_marker,
-                    }
-                }
-            }
+            NativeInstructionKind::Assign(target, src) => Instruction::Assign {
+                target: target.kind.try_into().unwrap(),
+                src: src.into(),
+                target_debug_marker: target.debug_marker,
+            },
+            // These cases are handled in handle_special_instruction_pairs
+            NativeInstructionKind::AdjustRelativeBase(_) => return (1, None),
+            NativeInstructionKind::Data(_) => unreachable!("Data instruction should be removed"),
         };
         (
             1,
@@ -785,6 +691,139 @@ impl InstructionNode<MemoryReference> {
                 id: InstructionId::fresh(),
             }),
         )
+    }
+
+    /// Creates a binary expression assignment instruction
+    ///
+    /// Takes a binary operator and operands and creates an assignment instruction
+    /// that assigns the result of the binary operation to the target.
+    fn create_binary_expression_assignment(
+        op: BinaryOperator,
+        lhs: Operand,
+        rhs: Operand,
+        target: Operand,
+    ) -> Instruction<MemoryReference> {
+        Instruction::Assign {
+            target: target
+                .kind
+                .try_into()
+                .unwrap_or_else(|e| panic!("Failed to convert target to MemoryReference: {}", e)),
+            src: Expression::Binary {
+                op,
+                lhs: Box::new(lhs.into()),
+                rhs: Box::new(rhs.into()),
+            },
+            target_debug_marker: target.debug_marker,
+        }
+    }
+
+    /// Creates a conditional jump instruction
+    fn create_conditional_jump(
+        cond: Operand,
+        addr: Operand,
+        fallthrough_addr: usize,
+        negate: bool,
+    ) -> Instruction<MemoryReference> {
+        let cond_expr = if negate {
+            Expression::Unary {
+                op: UnaryOperator::Not,
+                arg: Box::new(cond.into()),
+            }
+        } else {
+            cond.into()
+        };
+
+        let target_addr = match addr.into() {
+            Expression::Constant(a) => BlockId::from(a as usize),
+            _ => panic!("Expected constant address for jump"),
+        };
+
+        Instruction::If {
+            cond: cond_expr,
+            then_addr: target_addr,
+            else_addr: BlockId::from(fallthrough_addr),
+        }
+    }
+
+    /// Creates a goto instruction
+    fn create_goto(addr: Operand) -> Instruction<MemoryReference> {
+        let target_addr = addr
+            .kind
+            .get_immediate()
+            .unwrap_or_else(|| panic!("Expected immediate value for GOTO address"));
+
+        Instruction::Goto(BlockId::from(target_addr as usize))
+    }
+
+    /// Handles special cases where we need to look at pairs of instructions together
+    fn handle_special_instruction_pairs(
+        native: &NativeInstruction,
+        next_instruction: Option<&NativeInstruction>,
+    ) -> Option<(usize, Option<InstructionNode<MemoryReference>>)> {
+        match &native.kind {
+            // Handle function return sequence: R -= N followed by goto [R]
+            NativeInstructionKind::AdjustRelativeBase(r) => {
+                let Some(adjust) = r.kind.get_immediate() else {
+                    panic!("Expected immediate value for R adjustment");
+                };
+
+                if adjust < 0 {
+                    // Must be followed by GOTO [R], representing a return
+                    match next_instruction {
+                        Some(GenericNativeInstruction {
+                            kind:
+                                NativeInstructionKind::Goto(Operand {
+                                    kind: OperandKind::RelativeMemory(0),
+                                    ..
+                                }),
+                            ..
+                        }) => {
+                            return Some((
+                                2,
+                                Some(InstructionNode {
+                                    id: InstructionId::fresh(),
+                                    kind: Instruction::Return,
+                                }),
+                            ));
+                        }
+                        _ => panic!("Expected GOTO [R] after R adjustment for function return"),
+                    }
+                } else if adjust > 0 {
+                    // Entry point to function, discard
+                    return Some((1, None));
+                } else {
+                    panic!("R adjustment must be non-zero");
+                }
+            }
+
+            // Handle function call sequence: [R] = return_addr followed by goto func_addr
+            NativeInstructionKind::Assign(target, src) => {
+                if Some(0) == target.kind.get_relative_memory() {
+                    if let Some(return_to) = src.kind.get_immediate().map(|i| i as usize) {
+                        if return_to == native.span.end + 3 {
+                            if let Some(GenericNativeInstruction {
+                                kind: NativeInstructionKind::Goto(func_addr),
+                                ..
+                            }) = next_instruction
+                            {
+                                return Some((
+                                    2,
+                                    Some(InstructionNode {
+                                        kind: Instruction::Call {
+                                            addr: func_addr.clone().into(),
+                                            return_to: BlockId::from(return_to),
+                                        },
+                                        id: InstructionId::fresh(),
+                                    }),
+                                ));
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 }
 
