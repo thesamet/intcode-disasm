@@ -72,23 +72,7 @@ impl DataFlowAnalyzer {
 
             for instr in &block.low_instructions {
                 // Calculate USE for this instruction
-                let target_sources = match &instr.kind {
-                    Instruction::Assign {
-                        target: MemoryReference::Deref(expr),
-                        ..
-                    } => expr
-                        .collect_read_addresses()
-                        .into_iter()
-                        .map(|r| r.clone())
-                        .collect(),
-                    _ => vec![],
-                };
-                for r in instr
-                    .kind
-                    .collect_read_addresses()
-                    .into_iter()
-                    .chain(target_sources.iter())
-                {
+                for r in instr.kind.collect_read_addresses().into_iter() {
                     if !low_defined_in_block.contains(r) {
                         low_flow.use_before_def.insert((*r).clone(), instr.id);
                     }

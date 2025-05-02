@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Display, sync::atomic::AtomicUsize};
+use std::{cmp::Ordering, fmt::Display, iter, sync::atomic::AtomicUsize};
 
 use pretty_assertions::assert_matches;
 
@@ -245,22 +245,12 @@ pub enum Instruction<A> {
 }
 
 impl<A> Instruction<A> {
-    /// Collects all memory references that this instruction reads from.
-    ///
-    /// Collects all memory references accessed by expressions within this instruction.
-    /// For example, in an assignment like `mem[5] = mem[3] + mem[4]`, this would return
-    /// references to memory locations 3 and 4.
-    pub fn collect_read_addresses(&self) -> Vec<&A> {
-        self.collect_source_expressions()
-            .iter()
-            .flat_map(|e| e.collect_read_addresses())
-            .collect()
-    }
-
     /// Collects the source expressions that this instruction evaluates.
     ///
     /// Different instruction types operate on different kinds of expressions:
-    /// - Assign: The source expression to be assigned
+    /// - Assign: The source expression to be assigned. Note that evaulating
+    ///           the target expression will result in the source expression
+    ///           being evaluated.  See ReadAddressExtractor for more details.
     /// - If: The condition expression
     /// - Call: The target address expression
     /// - Output: The expression to be output
@@ -286,6 +276,7 @@ impl<A> Instruction<A> {
         }
     }
 }
+
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Expression<A> {
@@ -430,6 +421,49 @@ pub enum BinaryOperator {
     Equals,
     /// Inequality comparison (!=).
     NotEquals,
+}
+
+pub trait ReadAddressExtractor {
+    fn extract_read_addresses(&self) -> Vec<&Self>;
+}
+
+impl ReadAddressExtractor for MemoryReference {
+    fn extract_read_addresses(&self) -> Vec<&Self> {
+        match self {
+            MemoryReference::Global(_) => Vec::new(),
+            MemoryReference::StackRelative(_) => Vec::new(),
+            MemoryReference::Pointer(_) => Vec::new(),
+            MemoryReference::Deref(expr) => expr.collect_read_addresses(),
+        }
+    }
+}
+
+impl ReadAddressExtractor for SsaMemoryReference {
+    fn extract_read_addresses(&self) -> Vec<&Self> {
+        match self {
+            SsaMemoryReference::Deref(expr) => expr.collect_read_addresses(),
+            SsaMemoryReference::Versioned(_) => vec![],
+        }
+    }
+}
+
+impl<A: ReadAddressExtractor> Instruction<A> {
+    /// Collects all memory references that this instruction reads from.
+    ///
+    /// Collects all memory references accessed by expressions within this instruction.
+    /// For example, in an assignment like `mem[5] = mem[3] + mem[4]`, this would return
+    /// references to memory locations 3 and 4.
+    pub fn collect_read_addresses(&self) -> Vec<&A> {
+        let mut reads = self
+            .get_write_address()
+            .map_or(vec![], |a| a.extract_read_addresses());
+        reads.extend(
+            self.collect_source_expressions()
+                .iter()
+                .flat_map(|e| e.collect_read_addresses()),
+        );
+        reads
+    }
 }
 
 impl Display for BinaryOperator {
