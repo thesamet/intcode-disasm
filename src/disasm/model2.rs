@@ -1,13 +1,17 @@
-use std::collections::{HashMap, HashSet};
-
-use derive_more::AsRef;
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+};
 
 use super::v2::{
     self,
     control_flow::{FunctionCall, NextKind, PredecessorKind},
-    data_flow::{CallSiteInfo, Definition, OriginationPoint},
+    data_flow::{BlockDataFlow, Definition, OriginationPoint},
     instructions::{InstructionId, InstructionNode, MemoryReference},
-    listeners::{function_call_analyzer::CalleeInfo, image_scanner::ImageScannerResult},
+    listeners::{
+        function_call_analyzer::{CallSiteInfo, CalleeInfo},
+        image_scanner::ImageScannerResult,
+    },
     model::{BlockId, FunctionId},
     native::NativeInstruction,
     ssa_form::{PhiFunction, SsaMemoryReference, VersionRegistry},
@@ -16,74 +20,22 @@ use super::v2::{
 
 // --- State Types ---
 
-/// Defines the family of types associated with a particular analysis state
-pub trait StateTypes {
-    /// The type containing model-level data for this state
-    type ModelData;
-
-    /// The type containing block-level data for this state
-    type BlockData;
-
-    /// The type containing function-level data for this state
-    type FunctionData;
-}
-
-/// A marker trait for model states
-pub trait ModelState: StateTypes {}
-
-// Define concrete state types
-pub struct InitialTypes;
-impl StateTypes for InitialTypes {
-    type ModelData = ();
-    type BlockData = ();
-    type FunctionData = ();
-}
-impl ModelState for InitialTypes {}
-
-pub struct ImageScannerTypes;
-impl StateTypes for ImageScannerTypes {
-    type ModelData = ImageScannerResult;
-    type BlockData = ();
-    type FunctionData = ();
-}
-impl ModelState for ImageScannerTypes {}
-
-pub struct ControlFlowTypes;
-impl StateTypes for ControlFlowTypes {
-    type ModelData = ControlFlowGraphResult;
-    type BlockData = ();
-    type FunctionData = ();
-}
-impl ModelState for ControlFlowTypes {}
-
-pub struct DataFlowTypes;
-impl StateTypes for DataFlowTypes {
-    type ModelData = DataFlowResult;
-    type BlockData = DataFlowBlock;
-    type FunctionData = ();
-}
-impl ModelState for DataFlowTypes {}
-
-pub struct SsaTypes;
-impl StateTypes for SsaTypes {
-    type ModelData = SsaResult;
-    type BlockData = SsaBlock;
-    type FunctionData = ();
-}
-impl ModelState for SsaTypes {}
-
-pub struct FunctionCallTypes;
-impl StateTypes for FunctionCallTypes {
-    type ModelData = FunctionCallAnalysisResult;
-    type BlockData = v2::listeners::function_call_analyzer::CallSiteInfo;
-    type FunctionData = CalleeInfo;
-}
-impl ModelState for FunctionCallTypes {}
-
-// --- Core Data Structures ---
+pub trait ModelState {}
+struct InitialState {}
+struct ImageScannerComplete {}
+struct ControlFlowGraphComplete {}
+struct DataFlowComplete {}
+struct SsaComplete {}
+struct FunctionCallComplete {}
+impl ModelState for InitialState {}
+impl ModelState for ImageScannerComplete {}
+impl ModelState for ControlFlowGraphComplete {}
+impl ModelState for DataFlowComplete {}
+impl ModelState for SsaComplete {}
+impl ModelState for FunctionCallComplete {}
 
 /// A block in the control flow graph
-pub struct Block<S: ModelState> {
+pub struct Block {
     pub id: BlockId,
     // To which function does this block belong?
     pub containing_function_id: FunctionId,
@@ -94,207 +46,282 @@ pub struct Block<S: ModelState> {
     // CFG Information (added by ControlFlowGraphBuilder)
     pub next: NextKind<MemoryReference>,
     pub predecessors: Vec<PredecessorKind<MemoryReference>>,
-    data: S::BlockData,
 }
 
-pub struct Function<S: ModelState> {
+pub struct Function {
     pub function_id: FunctionId,
     pub entry_block: BlockId,
     pub stack_size: usize,
-    pub all_block_ids: Vec<BlockId>, // list of blocks in this function
 
     // The block containing the R -= N; goto [R] sequence.
     // Function may not have a return block. For example, if it reaches the end of the image, is a loop, or it halts.
     pub return_block: Option<BlockId>,
-
-    blocks: HashMap<BlockId, Block<S>>,
-    state_data: S::FunctionData,
+    blocks: HashMap<BlockId, Block>,
 }
 
-struct Model<S: ModelState> {
-    data: S::ModelData,
+struct FunctionView<'a, S: ModelState> {
+    model: &'a Model<S>,
+    function: &'a Function,
 }
 
-// --- Extensions and Traits ---
+impl<'a, S: ModelState> FunctionView<'a, S> {
+    fn new(model: &'a Model<S>, function: &'a Function) -> Self {
+        Self { model, function }
+    }
 
-pub trait ImageDataAccess<S: ModelState> {
-    fn image_data(&self) -> &ImageScannerResult;
-}
+    fn function_id(&self) -> FunctionId {
+        self.function.function_id
+    }
 
-pub trait HasFunctions<S: ModelState> {
-    fn functions(&self, function_id: &FunctionId) -> &Function<S>;
-}
+    fn entry_block(&self) -> BlockId {
+        self.function.entry_block
+    }
 
-pub trait DataFlowAccess {
-    fn data_flow(&self) -> &DataFlowBlock;
-}
+    fn stack_size(&self) -> usize {
+        self.function.stack_size
+    }
 
-pub trait SsaAccess {
-    fn ssa(&self) -> &SsaBlock;
-}
+    fn all_block_ids(&self) -> impl Iterator<Item = &BlockId> {
+        self.function.blocks.keys()
+    }
 
-pub trait CallSiteAccess {
-    fn call_site_info(&self) -> &v2::listeners::function_call_analyzer::CallSiteInfo;
-}
+    fn return_block(&self) -> Option<BlockId> {
+        self.function.return_block
+    }
 
-pub trait CalleeAccess {
-    fn callee_info(&self) -> &CalleeInfo;
-}
-
-// --- Implementations ---
-
-impl<S: ModelState> Function<S> {
-    fn blocks(&self, block_id: &BlockId) -> &Block<S> {
-        self.blocks.get(block_id).unwrap()
+    fn block(&self, block_id: &BlockId) -> BlockView<S> {
+        let block = self
+            .function
+            .blocks
+            .get(block_id)
+            .unwrap_or_else(|| panic!("Could not find {block_id} in {}", self.function_id()));
+        BlockView::new(self.model, block)
     }
 }
 
-impl<S: ModelState> DataFlowAccess for Block<S>
+impl<'a, S: ModelState> FunctionView<'a, S>
 where
-    S::BlockData: AsRef<DataFlowBlock>,
-{
-    fn data_flow(&self) -> &DataFlowBlock {
-        self.data.as_ref()
-    }
-}
-
-impl<S: ModelState> SsaAccess for Block<S>
-where
-    S::BlockData: AsRef<SsaBlock>,
-{
-    fn ssa(&self) -> &SsaBlock {
-        self.data.as_ref()
-    }
-}
-
-impl<S: ModelState> CallSiteAccess for Block<S>
-where
-    S::BlockData: AsRef<v2::listeners::function_call_analyzer::CallSiteInfo>,
-{
-    fn call_site_info(&self) -> &v2::listeners::function_call_analyzer::CallSiteInfo {
-        self.data.as_ref()
-    }
-}
-
-impl AsRef<ImageScannerResult> for ImageScannerResult {
-    fn as_ref(&self) -> &ImageScannerResult {
-        self
-    }
-}
-
-impl<S: ModelState> ImageDataAccess<S> for Model<S>
-where
-    S::ModelData: AsRef<ImageScannerResult>,
-{
-    fn image_data(&self) -> &ImageScannerResult {
-        self.data.as_ref()
-    }
-}
-
-impl<S: ModelState> HasFunctions<S> for Model<S>
-where
-    S::ModelData: AsRef<HashMap<FunctionId, Function<S>>>,
-{
-    fn functions(&self, function_id: &FunctionId) -> &Function<S> {
-        self.data.as_ref().get(function_id).unwrap()
-    }
-}
-
-impl<S: ModelState> CalleeAccess for Function<S>
-where
-    S::FunctionData: AsRef<CalleeInfo>,
+    S: HasFunctionCallResult,
 {
     fn callee_info(&self) -> &CalleeInfo {
-        self.state_data.as_ref()
+        self.model
+            .function_call_result()
+            .functions
+            .get(&self.function_id())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Could not find callee info for function {}",
+                    self.function_id()
+                )
+            })
     }
 }
 
-impl AsRef<DataFlowBlock> for DataFlowBlock {
-    fn as_ref(&self) -> &DataFlowBlock {
-        self
+pub struct Model<S: ModelState> {
+    image_scanner_result: Option<ImageScannerResult>,
+    control_flow_graph_result: Option<ControlFlowGraphResult>,
+    data_flow_result: Option<DataFlowResult>,
+    ssa_result: Option<SsaResult>,
+    function_call_result: Option<FunctionCallAnalysisResult>,
+    marker: PhantomData<S>,
+}
+
+pub trait HasImageScannerResult {}
+impl HasImageScannerResult for ControlFlowGraphComplete {}
+impl HasImageScannerResult for DataFlowComplete {}
+impl HasImageScannerResult for SsaComplete {}
+impl HasImageScannerResult for FunctionCallComplete {}
+
+pub trait HasControlFlowGraphResult {}
+impl HasControlFlowGraphResult for ControlFlowGraphComplete {}
+impl HasControlFlowGraphResult for DataFlowComplete {}
+impl HasControlFlowGraphResult for SsaComplete {}
+impl HasControlFlowGraphResult for FunctionCallComplete {}
+
+pub trait HasDataFlowResult {}
+impl HasDataFlowResult for DataFlowComplete {}
+impl HasDataFlowResult for SsaComplete {}
+impl HasDataFlowResult for FunctionCallComplete {}
+
+pub trait HasSsaResult {}
+impl HasSsaResult for SsaComplete {}
+impl HasSsaResult for FunctionCallComplete {}
+
+pub trait HasFunctionCallResult {}
+impl HasFunctionCallResult for FunctionCallComplete {}
+
+impl<S: ModelState> Model<S>
+where
+    S: HasImageScannerResult,
+{
+    fn image_scanner_result(&self) -> &ImageScannerResult {
+        self.image_scanner_result.as_ref().unwrap()
     }
 }
 
-impl AsRef<ControlFlowGraphResult> for ControlFlowGraphResult {
-    fn as_ref(&self) -> &ControlFlowGraphResult {
-        self
+impl<S: ModelState> Model<S>
+where
+    S: HasControlFlowGraphResult,
+{
+    fn control_flow_graph_result(&self) -> &ControlFlowGraphResult {
+        self.control_flow_graph_result.as_ref().unwrap()
+    }
+
+    fn function(&self, function_id: &FunctionId) -> FunctionView<'_, S> {
+        FunctionView::new(
+            self,
+            self.control_flow_graph_result()
+                .functions
+                .get(function_id)
+                .unwrap(),
+        )
     }
 }
 
-impl AsRef<SsaBlock> for SsaBlock {
-    fn as_ref(&self) -> &SsaBlock {
-        self
+impl<S: ModelState> Model<S>
+where
+    S: HasDataFlowResult,
+{
+    fn data_flow_result(&self) -> &DataFlowResult {
+        self.data_flow_result.as_ref().unwrap()
     }
 }
 
-impl AsRef<DataFlowResult> for DataFlowResult {
-    fn as_ref(&self) -> &DataFlowResult {
-        self
+impl<S: ModelState> Model<S>
+where
+    S: HasSsaResult,
+{
+    fn ssa_result(&self) -> &SsaResult {
+        self.ssa_result.as_ref().unwrap()
     }
 }
 
-impl AsRef<SsaResult> for SsaResult {
-    fn as_ref(&self) -> &SsaResult {
-        self
+impl<S: ModelState> Model<S>
+where
+    S: HasFunctionCallResult,
+{
+    fn function_call_result(&self) -> &FunctionCallAnalysisResult {
+        self.function_call_result.as_ref().unwrap()
     }
 }
 
-impl AsRef<CallSiteInfo> for CallSiteInfo {
-    fn as_ref(&self) -> &CallSiteInfo {
-        self
+impl<S: ModelState> Model<S> {
+    pub fn new() -> Model<InitialState> {
+        Model {
+            image_scanner_result: None,
+            control_flow_graph_result: None,
+            data_flow_result: None,
+            ssa_result: None,
+            function_call_result: None,
+            marker: PhantomData,
+        }
     }
 }
 
-impl AsRef<CalleeInfo> for CalleeInfo {
-    fn as_ref(&self) -> &CalleeInfo {
-        self
+pub struct BlockView<'a, S: ModelState> {
+    block: &'a Block,
+    model: &'a Model<S>,
+}
+
+impl<'a, S: ModelState> BlockView<'a, S> {
+    fn new(model: &'a Model<S>, block: &'a Block) -> Self {
+        Self { model, block }
+    }
+
+    pub fn block_id(&self) -> BlockId {
+        self.block.id
+    }
+
+    pub fn containing_function_id(&self) -> FunctionId {
+        self.block.containing_function_id
+    }
+
+    pub fn span(&self) -> &Span {
+        &self.block.span
+    }
+
+    pub fn native_instructions(&self) -> &[NativeInstruction] {
+        &self.block.native_instructions
+    }
+
+    pub fn low_instructions(&self) -> &[InstructionNode<MemoryReference>] {
+        &self.block.low_instructions
+    }
+
+    pub fn next(&self) -> &NextKind<MemoryReference> {
+        &self.block.next
+    }
+
+    pub fn predecessors(&self) -> &[PredecessorKind<MemoryReference>] {
+        &self.block.predecessors
+    }
+}
+
+impl<'a, S: ModelState> BlockView<'a, S>
+where
+    S: HasDataFlowResult,
+{
+    fn data_flow(&self) -> &DataFlowBlock {
+        self.model
+            .data_flow_result()
+            .blocks
+            .get(&self.block_id())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Could not find data flow information for block {}",
+                    self.block_id()
+                )
+            })
+    }
+}
+
+impl<'a, S: ModelState> BlockView<'a, S>
+where
+    S: HasSsaResult,
+{
+    fn ssa(&self) -> &SsaBlock {
+        self.model
+            .ssa_result()
+            .blocks
+            .get(&self.block_id())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Could not find ssa information for block {}",
+                    self.block_id()
+                )
+            })
+    }
+}
+
+impl<'a, S: ModelState> BlockView<'a, S>
+where
+    S: HasFunctionCallResult,
+{
+    fn call_site_info(&self) -> Option<&CallSiteInfo> {
+        self.model
+            .function_call_result()
+            .blocks
+            .get(&self.block_id())
     }
 }
 
 // --- Analysis Results ---
 
-#[derive(AsRef)]
 pub struct ControlFlowGraphResult {
-    #[as_ref]
-    image_scanner_result: ImageScannerResult,
-    #[as_ref]
-    functions: HashMap<FunctionId, Function<ControlFlowTypes>>,
+    functions: HashMap<FunctionId, Function>,
 }
 
-#[derive(AsRef)]
 pub struct DataFlowResult {
-    #[as_ref]
-    image_scanner_result: ImageScannerResult,
-    #[as_ref]
-    functions: HashMap<FunctionId, Function<DataFlowTypes>>,
+    blocks: HashMap<BlockId, DataFlowBlock>,
 }
 
-impl DataFlowResult {
-    fn new(
-        image_scanner_result: ImageScannerResult,
-        functions: HashMap<FunctionId, Function<DataFlowTypes>>,
-    ) -> Self {
-        Self {
-            image_scanner_result,
-            functions,
-        }
-    }
-}
-
-#[derive(AsRef)]
 pub struct SsaResult {
-    #[as_ref]
-    image_scanner_result: ImageScannerResult,
-    #[as_ref]
-    pub functions: HashMap<FunctionId, Function<SsaTypes>>,
+    blocks: HashMap<BlockId, SsaBlock>,
 }
 
-#[derive(AsRef)]
 pub struct FunctionCallAnalysisResult {
-    #[as_ref]
-    image_scanner_result: ImageScannerResult,
-    #[as_ref]
-    pub functions: HashMap<FunctionId, Function<FunctionCallTypes>>,
+    functions: HashMap<FunctionId, CalleeInfo>,
+    blocks: HashMap<BlockId, CallSiteInfo>,
 }
 
 // --- Specialized Blocks ---
@@ -339,10 +366,13 @@ pub struct DataFlowBlock {
     // The value is not affected if this block calls a function - it is added to the function's return block
     // function_returns_in
     function_returns_out: HashSet<FunctionCall<MemoryReference>>,
+
+    // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
+    call_site_info: Option<CallSiteInfo>,
 }
 
 /// Represents a basic block in SSA form
-#[derive(Debug, Clone, AsRef)]
+#[derive(Debug, Clone)]
 pub struct SsaBlock {
     /// Original block ID
     original_id: BlockId,
@@ -357,98 +387,122 @@ pub struct SsaBlock {
     /// Control flow information using SSA operands
     next: NextKind<SsaMemoryReference>,
     predecessors: Vec<PredecessorKind<SsaMemoryReference>>,
-    #[as_ref]
     data_flow_block: DataFlowBlock,
 }
 
 // --- Test Function ---
 
-fn test1() {
-    let model1 = Model::<InitialTypes> { data: () };
-    let model2 = Model::<ImageScannerTypes> {
-        data: ImageScannerResult {
-            recognized_functions: vec![],
-            data_segments: vec![],
-        },
-    };
-    model2.image_data();
-    let model3 = Model::<ControlFlowTypes> {
-        data: ControlFlowGraphResult {
-            image_scanner_result: ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            },
-            functions: HashMap::new(),
-        },
-    };
-    model3.image_data();
-    let m = model3
-        .functions(&FunctionId::from(0))
-        .blocks(&BlockId::from(0))
-        .containing_function_id;
-    assert!(m == FunctionId::from(0));
-    let model4 = Model::<DataFlowTypes> {
-        data: DataFlowResult {
-            image_scanner_result: ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            },
-            functions: HashMap::from_iter([(
-                FunctionId::from(0),
-                Function {
-                    function_id: FunctionId::from(0),
-                    entry_block: BlockId::from(0),
-                    stack_size: 0,
-                    all_block_ids: vec![],
-                    return_block: None,
-                    blocks: HashMap::new(),
-                    state_data: (),
-                },
-            )]),
-        },
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    model4.image_data();
-    let m = model4
-        .functions(&FunctionId::from(0))
-        .blocks(&BlockId::from(0))
-        .containing_function_id;
-    let z = model4
-        .functions(&FunctionId::from(0))
-        .blocks(&BlockId::from(0))
-        .data_flow();
-
-    let model5 = Model::<SsaTypes> {
-        data: SsaResult {
-            image_scanner_result: ImageScannerResult {
+    #[test]
+    fn test1() {
+        let model1 = Model::<ImageScannerComplete>::new();
+        let model2 = Model::<ImageScannerComplete> {
+            image_scanner_result: Some(ImageScannerResult {
                 recognized_functions: vec![],
                 data_segments: vec![],
-            },
-            functions: HashMap::new(),
-        },
-    };
-    let p = &model5.image_data().data_segments;
-    let q = &model5
-        .functions(&FunctionId::from(0))
-        .blocks(&BlockId::from(0))
-        .ssa();
-    let d = &model5
-        .functions(&FunctionId::from(0))
-        .blocks(&BlockId::from(0))
-        .data_flow();
-
-    let model6 = Model::<FunctionCallTypes> {
-        data: FunctionCallAnalysisResult {
-            image_scanner_result: ImageScannerResult {
+            }),
+            control_flow_graph_result: None,
+            data_flow_result: None,
+            ssa_result: None,
+            function_call_result: None,
+            marker: PhantomData,
+        };
+        let t = model2.image_scanner_result;
+        let model3 = Model::<ControlFlowGraphComplete> {
+            image_scanner_result: Some(ImageScannerResult {
                 recognized_functions: vec![],
                 data_segments: vec![],
-            },
-            functions: HashMap::new(),
-        },
-    };
-    let csi = &model6
-        .functions(&FunctionId::from(0))
-        .blocks(&BlockId::from(0))
-        .call_site_info();
-    let callee_info = &model6.functions(&FunctionId::from(0)).callee_info();
+            }),
+            control_flow_graph_result: Some(ControlFlowGraphResult {
+                functions: HashMap::new(),
+            }),
+            data_flow_result: None,
+            ssa_result: None,
+            function_call_result: None,
+            marker: PhantomData,
+        };
+        model3.image_scanner_result();
+        let function_view = model3.function(&FunctionId::from(0));
+        let m = function_view.block(&BlockId::from(0));
+        assert!(m.block_id() == BlockId::from(0));
+
+        let model4 = Model::<DataFlowComplete> {
+            image_scanner_result: Some(ImageScannerResult {
+                recognized_functions: vec![],
+                data_segments: vec![],
+            }),
+            control_flow_graph_result: Some(ControlFlowGraphResult {
+                functions: HashMap::new(),
+            }),
+            data_flow_result: Some(DataFlowResult {
+                blocks: HashMap::new(),
+            }),
+            ssa_result: None,
+            function_call_result: None,
+            marker: PhantomData,
+        };
+
+        model4.image_scanner_result();
+        let function_view = model4.function(&FunctionId::from(0));
+        let block_data_flow = model4.data_flow_result();
+        let m = function_view.function_id();
+        let t = function_view.block(&BlockId::from(0));
+        let live_in = &t.data_flow().live_in;
+
+        let model5 = Model::<SsaComplete> {
+            image_scanner_result: Some(ImageScannerResult {
+                recognized_functions: vec![],
+                data_segments: vec![],
+            }),
+            control_flow_graph_result: Some(ControlFlowGraphResult {
+                functions: HashMap::new(),
+            }),
+            data_flow_result: Some(DataFlowResult {
+                blocks: HashMap::new(),
+            }),
+            ssa_result: Some(SsaResult {
+                blocks: HashMap::new(),
+            }),
+            function_call_result: None,
+            marker: PhantomData,
+        };
+        let p = &model5.image_scanner_result().data_segments;
+        let q = &model5
+            .function(&FunctionId::from(0))
+            .block(&BlockId::from(0))
+            .ssa();
+        let d = &model5
+            .function(&FunctionId::from(0))
+            .block(&BlockId::from(0))
+            .data_flow();
+
+        let model6 = Model::<FunctionCallComplete> {
+            image_scanner_result: Some(ImageScannerResult {
+                recognized_functions: vec![],
+                data_segments: vec![],
+            }),
+            control_flow_graph_result: Some(ControlFlowGraphResult {
+                functions: HashMap::new(),
+            }),
+            data_flow_result: Some(DataFlowResult {
+                blocks: HashMap::new(),
+            }),
+            ssa_result: Some(SsaResult {
+                blocks: HashMap::new(),
+            }),
+            function_call_result: Some(FunctionCallAnalysisResult {
+                functions: HashMap::new(),
+                blocks: HashMap::new(),
+            }),
+            marker: PhantomData,
+        };
+        let csi = &model6
+            .function(&FunctionId::from(0))
+            .block(&BlockId::from(0))
+            .call_site_info();
+        let callee_info = &model6.function(&FunctionId::from(0)).callee_info();
+    }
 }
