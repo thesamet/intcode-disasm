@@ -3,11 +3,11 @@ mod tests {
     use super::super::{ControlFlowGraphBuilder, Function};
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v2::control_flow::{NextKind, PredecessorKind, Condition};
+    use crate::disasm::v2::control_flow::{Condition, NextKind, PredecessorKind};
+    use crate::disasm::v3::common::Span;
     use crate::disasm::v3::id_types::{BlockId, FunctionId};
     use crate::disasm::v3::image_scanner::ImageScanner;
     use crate::disasm::v3::model::{InitialState, Model};
-    use crate::disasm::v3::common::Span;
     use itertools::Itertools;
 
     fn parse_and_build_cfg(code: &str) -> super::super::ControlFlowGraphResult {
@@ -21,7 +21,7 @@ mod tests {
     #[test]
     fn test_simple_function_cfg() {
         init_logging();
-        
+
         let result = parse_and_build_cfg(
             r#"
             R += 5
@@ -31,20 +31,20 @@ mod tests {
             goto [R]
             "#,
         );
-        
+
         assert_eq!(result.functions.len(), 1);
-        
+
         // Get the function
         let function_id = *result.functions.keys().next().unwrap();
         let function = &result.functions[&function_id];
-        
+
         // Check function properties
         assert_eq!(function.stack_size, 5);
         assert!(function.return_block.is_some());
-        
+
         // Check blocks
         assert!(!function.blocks.is_empty());
-        
+
         // Check entry block
         let entry_block = &function.blocks[&function.entry_block];
         assert_eq!(entry_block.containing_function_id, function_id);
@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn test_function_with_call() {
         init_logging();
-        
+
         let result = parse_and_build_cfg(
             r#"
             R += 5      ;0
@@ -71,32 +71,33 @@ mod tests {
             goto [R]
             "#,
         );
-        
+
         assert_eq!(result.functions.len(), 2);
-        
+
         // Find the main function (first one)
         let main_id = *result.functions.keys().next().unwrap();
         let main = &result.functions[&main_id];
-        
+
         // Find the other function (second one)
         let other_id = *result.functions.keys().skip(1).next().unwrap();
         let other = &result.functions[&other_id];
-        
+
         // Check function properties
         assert_eq!(main.stack_size, 5);
         assert_eq!(other.stack_size, 3);
-        
+
         // Check that the main function has a function call
-        let call_block = main.blocks.values().find(|block| {
-            matches!(block.next, NextKind::FunctionCall { .. })
-        });
+        let call_block = main
+            .blocks
+            .values()
+            .find(|block| matches!(block.next, NextKind::FunctionCall { .. }));
         assert!(call_block.is_some());
     }
 
     #[test]
     fn test_function_with_jumps() {
         init_logging();
-        
+
         let result = parse_and_build_cfg(
             r#"
             R += 5                   ; 0
@@ -110,27 +111,28 @@ mod tests {
             goto [R]                 ; 18
             "#,
         );
-        
+
         assert_eq!(result.functions.len(), 1);
-        
+
         // Get the function
         let function_id = *result.functions.keys().next().unwrap();
         let function = &result.functions[&function_id];
-        
+
         // Check that we have at least 3 blocks (entry, branch, merge)
         assert!(function.blocks.len() >= 3);
-        
+
         // Find the conditional jump block
-        let cond_block = function.blocks.values().find(|block| {
-            matches!(block.next, NextKind::ConditionalJump { .. })
-        });
+        let cond_block = function
+            .blocks
+            .values()
+            .find(|block| matches!(block.next, NextKind::Condition { .. }));
         assert!(cond_block.is_some());
     }
 
     #[test]
     fn test_simple_return_function() {
         init_logging();
-        
+
         let result = parse_and_build_cfg(
             r#"
             ; Offset 0
@@ -163,7 +165,8 @@ mod tests {
         assert_eq!(block1.span, Span::new(2, 7));
         assert_eq!(block1.next, NextKind::Return);
         assert_eq!(
-            block1.predecessors.len(), 1,
+            block1.predecessors.len(),
+            1,
             "Return block should have exactly one predecessor"
         );
         assert!(matches!(
@@ -175,7 +178,7 @@ mod tests {
     #[test]
     fn test_loop_function() {
         init_logging();
-        
+
         let result = parse_and_build_cfg(
             r#"
             ; Offset 0
@@ -207,11 +210,19 @@ mod tests {
         // Block 2 (Loop Body)
         let block2 = &func.blocks[&BlockId::from(2)];
         assert_eq!(block2.span, Span::new(2, 9));
-        
+
         // Check that the loop body has a conditional jump back to itself
         if let NextKind::Condition(cond) = &block2.next {
-            assert_eq!(cond.target_block, BlockId::from(2), "Loop should target itself");
-            assert_eq!(cond.follows_block, BlockId::from(9), "Loop exit should go to block 9");
+            assert_eq!(
+                cond.target_block,
+                BlockId::from(2),
+                "Loop should target itself"
+            );
+            assert_eq!(
+                cond.follows_block,
+                BlockId::from(9),
+                "Loop exit should go to block 9"
+            );
         } else {
             panic!("Expected block2.next to be a Condition");
         }
@@ -221,7 +232,7 @@ mod tests {
         assert_eq!(block9.low_instructions.len(), 1); // Just Return instruction
         assert_eq!(block9.span, Span::new(9, 14));
         assert_eq!(block9.next, NextKind::Return);
-        
+
         // Check that Block 9 has a predecessor from the loop condition
         assert_eq!(
             block9.predecessors.len(),
@@ -237,7 +248,7 @@ mod tests {
     #[test]
     fn test_function_call() {
         init_logging();
-        
+
         let result = parse_and_build_cfg(
             r#"
             ; Main Function (Offset 0)
@@ -285,12 +296,14 @@ mod tests {
         // Check function properties
         assert_eq!(main.stack_size, 5);
         assert_eq!(callee.stack_size, 4);
-        
+
         // Find the call block in main
-        let call_block = main.blocks.values().find(|block| {
-            matches!(block.next, NextKind::FunctionCall { .. })
-        }).unwrap();
-        
+        let call_block = main
+            .blocks
+            .values()
+            .find(|block| matches!(block.next, NextKind::FunctionCall { .. }))
+            .unwrap();
+
         // Check the function call
         if let NextKind::FunctionCall(call) = &call_block.next {
             assert_eq!(call.return_block, BlockId::from(17));
@@ -298,7 +311,7 @@ mod tests {
         } else {
             panic!("Expected FunctionCall");
         }
-        
+
         // Check the return block in main
         let return_block = &main.blocks[&BlockId::from(17)];
         assert_eq!(return_block.predecessors.len(), 1);
