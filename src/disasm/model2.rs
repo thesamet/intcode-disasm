@@ -101,11 +101,11 @@ impl<'a, S: ModelState> FunctionView<'a, S> {
 
 impl<'a, S: ModelState> FunctionView<'a, S>
 where
-    S: HasFunctionCallResult,
+    S: HasFunctionCallAnalysisResult,
 {
     fn callee_info(&self) -> &CalleeInfo {
         self.model
-            .function_call_result()
+            .function_call_analysis_result()
             .functions
             .get(&self.function_id())
             .unwrap_or_else(|| {
@@ -117,56 +117,98 @@ where
     }
 }
 
-pub struct Model<S: ModelState> {
-    image_scanner_result: Option<ImageScannerResult>,
-    control_flow_graph_result: Option<ControlFlowGraphResult>,
-    data_flow_result: Option<DataFlowResult>,
-    ssa_result: Option<SsaResult>,
-    function_call_result: Option<FunctionCallAnalysisResult>,
-    marker: PhantomData<S>,
+macro_rules! make_model {
+    ($model:ident, $state:ident, { $($field:ty),* }) => {
+        paste::paste! {
+            pub struct $model<S: $state> {
+                $([<$field:snake:lower>]: Option<$field>,)*
+                pub marker: std::marker::PhantomData<S>,
+            }
+
+            $(
+              pub trait [<Has $field>] {}
+            )*
+
+            $(
+            impl<S: $state> $model<S>
+            where
+                S: [<Has $field>]
+            {
+                fn [<$field:snake:lower>](&self) -> &$field {
+                    self.[<$field:snake:lower>].as_ref().unwrap()
+                }
+            })*
+        }
+    }
 }
 
-pub trait HasImageScannerResult {}
+macro_rules! add_block_view_when {
+    ($result_type:ident, $result_var:ident) => {
+        paste::paste! {
+            add_block_view_when!($result_type, $result_var, [<$result_type Block>]);
+        }
+    };
+    ($result_type:ident, $result_var:ident, $block_type:ty) => {
+        paste::paste! {
+            impl<'a, S: ModelState> BlockView<'a, S>
+            where
+                S: [<Has $result_type Result>],
+            {
+                fn $result_var(&self) -> &$block_type {
+                    self.model
+                        .[<$result_type:snake:lower _result>]()
+                        .blocks
+                        .get(&self.block_id())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Could not find {} information for block {}",
+                                stringify!($result_var),
+                                self.block_id()
+                            )
+                        })
+                }
+            }
+        }
+    };
+}
+
+add_block_view_when!(DataFlow, data_flow);
+add_block_view_when!(Ssa, ssa);
+add_block_view_when!(FunctionCallAnalysis, call_site_info, CallSiteInfo);
+
+pub struct DataFlowResult {
+    blocks: HashMap<BlockId, DataFlowBlock>,
+}
+
+make_model!(Model, ModelState, {
+    ImageScannerResult,
+    ControlFlowGraphResult,
+    DataFlowResult,
+    SsaResult,
+    FunctionCallAnalysisResult
+});
 impl HasImageScannerResult for ControlFlowGraphComplete {}
 impl HasImageScannerResult for DataFlowComplete {}
 impl HasImageScannerResult for SsaComplete {}
 impl HasImageScannerResult for FunctionCallComplete {}
 
-pub trait HasControlFlowGraphResult {}
 impl HasControlFlowGraphResult for ControlFlowGraphComplete {}
 impl HasControlFlowGraphResult for DataFlowComplete {}
 impl HasControlFlowGraphResult for SsaComplete {}
 impl HasControlFlowGraphResult for FunctionCallComplete {}
 
-pub trait HasDataFlowResult {}
 impl HasDataFlowResult for DataFlowComplete {}
 impl HasDataFlowResult for SsaComplete {}
 impl HasDataFlowResult for FunctionCallComplete {}
 
-pub trait HasSsaResult {}
 impl HasSsaResult for SsaComplete {}
 impl HasSsaResult for FunctionCallComplete {}
-
-pub trait HasFunctionCallResult {}
-impl HasFunctionCallResult for FunctionCallComplete {}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasImageScannerResult,
-{
-    fn image_scanner_result(&self) -> &ImageScannerResult {
-        self.image_scanner_result.as_ref().unwrap()
-    }
-}
+impl HasFunctionCallAnalysisResult for FunctionCallComplete {}
 
 impl<S: ModelState> Model<S>
 where
     S: HasControlFlowGraphResult,
 {
-    fn control_flow_graph_result(&self) -> &ControlFlowGraphResult {
-        self.control_flow_graph_result.as_ref().unwrap()
-    }
-
     fn function(&self, function_id: &FunctionId) -> FunctionView<'_, S> {
         FunctionView::new(
             self,
@@ -178,33 +220,6 @@ where
     }
 }
 
-impl<S: ModelState> Model<S>
-where
-    S: HasDataFlowResult,
-{
-    fn data_flow_result(&self) -> &DataFlowResult {
-        self.data_flow_result.as_ref().unwrap()
-    }
-}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasSsaResult,
-{
-    fn ssa_result(&self) -> &SsaResult {
-        self.ssa_result.as_ref().unwrap()
-    }
-}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasFunctionCallResult,
-{
-    fn function_call_result(&self) -> &FunctionCallAnalysisResult {
-        self.function_call_result.as_ref().unwrap()
-    }
-}
-
 impl<S: ModelState> Model<S> {
     pub fn new() -> Model<InitialState> {
         Model {
@@ -212,7 +227,7 @@ impl<S: ModelState> Model<S> {
             control_flow_graph_result: None,
             data_flow_result: None,
             ssa_result: None,
-            function_call_result: None,
+            function_call_analysis_result: None,
             marker: PhantomData,
         }
     }
@@ -257,62 +272,10 @@ impl<'a, S: ModelState> BlockView<'a, S> {
     }
 }
 
-impl<'a, S: ModelState> BlockView<'a, S>
-where
-    S: HasDataFlowResult,
-{
-    fn data_flow(&self) -> &DataFlowBlock {
-        self.model
-            .data_flow_result()
-            .blocks
-            .get(&self.block_id())
-            .unwrap_or_else(|| {
-                panic!(
-                    "Could not find data flow information for block {}",
-                    self.block_id()
-                )
-            })
-    }
-}
-
-impl<'a, S: ModelState> BlockView<'a, S>
-where
-    S: HasSsaResult,
-{
-    fn ssa(&self) -> &SsaBlock {
-        self.model
-            .ssa_result()
-            .blocks
-            .get(&self.block_id())
-            .unwrap_or_else(|| {
-                panic!(
-                    "Could not find ssa information for block {}",
-                    self.block_id()
-                )
-            })
-    }
-}
-
-impl<'a, S: ModelState> BlockView<'a, S>
-where
-    S: HasFunctionCallResult,
-{
-    fn call_site_info(&self) -> Option<&CallSiteInfo> {
-        self.model
-            .function_call_result()
-            .blocks
-            .get(&self.block_id())
-    }
-}
-
 // --- Analysis Results ---
 
 pub struct ControlFlowGraphResult {
     functions: HashMap<FunctionId, Function>,
-}
-
-pub struct DataFlowResult {
-    blocks: HashMap<BlockId, DataFlowBlock>,
 }
 
 pub struct SsaResult {
@@ -407,7 +370,7 @@ mod tests {
             control_flow_graph_result: None,
             data_flow_result: None,
             ssa_result: None,
-            function_call_result: None,
+            function_call_analysis_result: None,
             marker: PhantomData,
         };
         let t = model2.image_scanner_result;
@@ -421,7 +384,7 @@ mod tests {
             }),
             data_flow_result: None,
             ssa_result: None,
-            function_call_result: None,
+            function_call_analysis_result: None,
             marker: PhantomData,
         };
         model3.image_scanner_result();
@@ -441,7 +404,7 @@ mod tests {
                 blocks: HashMap::new(),
             }),
             ssa_result: None,
-            function_call_result: None,
+            function_call_analysis_result: None,
             marker: PhantomData,
         };
 
@@ -466,7 +429,7 @@ mod tests {
             ssa_result: Some(SsaResult {
                 blocks: HashMap::new(),
             }),
-            function_call_result: None,
+            function_call_analysis_result: None,
             marker: PhantomData,
         };
         let p = &model5.image_scanner_result().data_segments;
@@ -493,7 +456,7 @@ mod tests {
             ssa_result: Some(SsaResult {
                 blocks: HashMap::new(),
             }),
-            function_call_result: Some(FunctionCallAnalysisResult {
+            function_call_analysis_result: Some(FunctionCallAnalysisResult {
                 functions: HashMap::new(),
                 blocks: HashMap::new(),
             }),
