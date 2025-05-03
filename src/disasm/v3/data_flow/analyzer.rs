@@ -4,19 +4,21 @@ use super::result::DataFlowResult;
 use std::collections::HashMap;
 
 /// Analyzes data flow in the control flow graph
-pub struct DataFlowAnalyzer;
+pub struct DataFlowAnalyzer {
+    model: Model<ControlFlowGraphComplete>,
+}
 
 impl DataFlowAnalyzer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(model: Model<ControlFlowGraphComplete>) -> Self {
+        Self { model }
     }
     
-    pub fn run(&self, model: Model<ControlFlowGraphComplete>) -> Result<Model<DataFlowComplete>, Error> {
-        let model = self.analyze(model)?;
-        Ok(model)
+    pub fn run(model: Model<ControlFlowGraphComplete>) -> Result<Model<DataFlowComplete>, Error> {
+        let analyzer = Self::new(model);
+        analyzer.analyze()
     }
     
-    fn analyze(&self, model: Model<ControlFlowGraphComplete>) -> Result<Model<DataFlowComplete>, Error> {
+    fn analyze(&self) -> Result<Model<DataFlowComplete>, Error> {
         // Create the data flow result
         let result = DataFlowResult {
             blocks: HashMap::new(),
@@ -24,8 +26,8 @@ impl DataFlowAnalyzer {
         
         // Return a new model with the updated state
         Ok(Model {
-            image_scanner_result: model.image_scanner_result,
-            control_flow_graph_result: model.control_flow_graph_result,
+            image_scanner_result: self.model.image_scanner_result.clone(),
+            control_flow_graph_result: self.model.control_flow_graph_result.clone(),
             data_flow_result: Some(result),
             ssa_result: None,
             function_call_analysis_result: None,

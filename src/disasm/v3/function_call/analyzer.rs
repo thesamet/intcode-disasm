@@ -4,19 +4,21 @@ use super::result::FunctionCallAnalysisResult;
 use std::collections::HashMap;
 
 /// Analyzes function calls in the program
-pub struct FunctionCallAnalyzer;
+pub struct FunctionCallAnalyzer {
+    model: Model<SsaComplete>,
+}
 
 impl FunctionCallAnalyzer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(model: Model<SsaComplete>) -> Self {
+        Self { model }
     }
     
-    pub fn run(&self, model: Model<SsaComplete>) -> Result<Model<FunctionCallComplete>, Error> {
-        let model = self.analyze(model)?;
-        Ok(model)
+    pub fn run(model: Model<SsaComplete>) -> Result<Model<FunctionCallComplete>, Error> {
+        let analyzer = Self::new(model);
+        analyzer.analyze()
     }
     
-    fn analyze(&self, model: Model<SsaComplete>) -> Result<Model<FunctionCallComplete>, Error> {
+    fn analyze(&self) -> Result<Model<FunctionCallComplete>, Error> {
         // Create the function call analysis result
         let result = FunctionCallAnalysisResult {
             functions: HashMap::new(),
@@ -25,10 +27,10 @@ impl FunctionCallAnalyzer {
         
         // Return a new model with the updated state
         Ok(Model {
-            image_scanner_result: model.image_scanner_result,
-            control_flow_graph_result: model.control_flow_graph_result,
-            data_flow_result: model.data_flow_result,
-            ssa_result: model.ssa_result,
+            image_scanner_result: self.model.image_scanner_result.clone(),
+            control_flow_graph_result: self.model.control_flow_graph_result.clone(),
+            data_flow_result: self.model.data_flow_result.clone(),
+            ssa_result: self.model.ssa_result.clone(),
             function_call_analysis_result: Some(result),
             marker: std::marker::PhantomData,
         })

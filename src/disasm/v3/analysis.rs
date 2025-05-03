@@ -15,20 +15,11 @@ pub fn run_analysis(image: Vec<i128>) -> Result<Model<FunctionCallComplete>, Err
     let model = Model::<InitialState>::new().with_image(image.clone());
     
     // Run each analysis phase in sequence
-    let scanner = ImageScanner::new();
-    let model = scanner.run(image, model)?;
-    
-    let builder = ControlFlowGraphBuilder::new();
-    let model = builder.run(model)?;
-    
-    let analyzer = DataFlowAnalyzer::new();
-    let model = analyzer.run(model)?;
-    
-    let converter = SsaConverter::new();
-    let model = converter.run(model)?;
-    
-    let analyzer = FunctionCallAnalyzer::new();
-    let model = analyzer.run(model)?;
+    let model = ImageScanner::run(image, model)?;
+    let model = ControlFlowGraphBuilder::run(model)?;
+    let model = DataFlowAnalyzer::run(model)?;
+    let model = SsaConverter::run(model)?;
+    let model = FunctionCallAnalyzer::run(model)?;
     
     // Return the final model
     Ok(model)
@@ -40,17 +31,10 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> Result<Model<SsaComplete>, Error> {
     let model = Model::<InitialState>::new().with_image(image.clone());
     
     // Run each analysis phase in sequence up to SSA
-    let scanner = ImageScanner::new();
-    let model = scanner.run(image, model)?;
-    
-    let builder = ControlFlowGraphBuilder::new();
-    let model = builder.run(model)?;
-    
-    let analyzer = DataFlowAnalyzer::new();
-    let model = analyzer.run(model)?;
-    
-    let converter = SsaConverter::new();
-    let model = converter.run(model)?;
+    let model = ImageScanner::run(image, model)?;
+    let model = ControlFlowGraphBuilder::run(model)?;
+    let model = DataFlowAnalyzer::run(model)?;
+    let model = SsaConverter::run(model)?;
     
     // Return the model with SSA complete
     Ok(model)

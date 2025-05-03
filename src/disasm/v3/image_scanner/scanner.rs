@@ -3,24 +3,26 @@ use crate::disasm::Error;
 use super::result::ImageScannerResult;
 
 /// Analyzes the raw program image to identify functions and data segments
-pub struct ImageScanner;
+pub struct ImageScanner {
+    image: Vec<i128>,
+}
 
 impl ImageScanner {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(image: Vec<i128>) -> Self {
+        Self { image }
     }
     
-    pub fn run(&self, image: Vec<i128>, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
-        let model = self.scan(image, model)?;
-        Ok(model)
+    pub fn run(image: Vec<i128>, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
+        let scanner = Self::new(image);
+        scanner.scan(model)
     }
     
-    fn scan(&self, image: Vec<i128>, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
+    fn scan(&self, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
         // Create the image scanner result
         let result = ImageScannerResult {
             recognized_functions: Vec::new(),
             data_segments: Vec::new(),
-            image,
+            image: self.image.clone(),
         };
         
         // Return a new model with the updated state
