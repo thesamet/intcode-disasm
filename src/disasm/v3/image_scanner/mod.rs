@@ -4,16 +4,25 @@ mod scanner;
 pub use result::ImageScannerResult;
 pub use scanner::ImageScanner;
 
-use crate::disasm::v3::model::{HasImageScannerResult, Model, ModelState};
-use std::collections::HashMap;
+use crate::disasm::v3::model::{Model, InitialState, ImageScannerComplete};
 
-impl<S: ModelState> Model<S>
-where
-    S: HasImageScannerResult,
-{
-    pub fn image_scanner_result(&self) -> &ImageScannerResult {
-        // This would access the actual result stored in the model
-        // For now it's a placeholder
-        unimplemented!("Access to image scanner result not yet implemented")
+impl ImageScanner {
+    pub fn analyze(image: Vec<i128>, model: Model<InitialState>) -> Model<ImageScannerComplete> {
+        // Create the image scanner result
+        let result = ImageScannerResult {
+            recognized_functions: Vec::new(),
+            data_segments: Vec::new(),
+            image,
+        };
+        
+        // Return a new model with the updated state
+        Model {
+            image_scanner_result: Some(result),
+            control_flow_graph_result: None,
+            data_flow_result: None,
+            ssa_result: None,
+            function_call_analysis_result: None,
+            marker: std::marker::PhantomData,
+        }
     }
 }

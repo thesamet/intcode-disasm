@@ -6,26 +6,24 @@ pub use block::DataFlowBlock;
 pub use result::DataFlowResult;
 pub use analyzer::DataFlowAnalyzer;
 
-use crate::disasm::v3::id_types::BlockId;
-use crate::disasm::v3::model::{HasDataFlowResult, Model, ModelState};
+use crate::disasm::v3::model::{Model, ControlFlowGraphComplete, DataFlowComplete};
+use std::collections::HashMap;
 
-impl<S: ModelState> Model<S>
-where
-    S: HasDataFlowResult,
-{
-    pub fn data_flow_result(&self) -> &DataFlowResult {
-        // This would access the actual result stored in the model
-        // For now it's a placeholder
-        unimplemented!("Access to data flow result not yet implemented")
-    }
-}
-
-// Add trait implementations for BlockView to access data flow information
-impl<'a, S: ModelState> super::control_flow::BlockView<'a, S>
-where
-    S: HasDataFlowResult,
-{
-    pub fn data_flow(&self) -> &DataFlowBlock {
-        unimplemented!("Access to block data flow not yet implemented")
+impl DataFlowAnalyzer {
+    pub fn analyze(model: Model<ControlFlowGraphComplete>) -> Model<DataFlowComplete> {
+        // Create the data flow result
+        let result = DataFlowResult {
+            blocks: HashMap::new(),
+        };
+        
+        // Return a new model with the updated state
+        Model {
+            image_scanner_result: model.image_scanner_result,
+            control_flow_graph_result: model.control_flow_graph_result,
+            data_flow_result: Some(result),
+            ssa_result: None,
+            function_call_analysis_result: None,
+            marker: std::marker::PhantomData,
+        }
     }
 }
