@@ -196,7 +196,7 @@ impl ControlFlowGraphBuilder {
                     predecessors_map
                         .entry(*target_id)
                         .or_default()
-                        .push(PredecessorKind::FollowsFrom(*block_id));
+                        .push(PredecessorKind::FollowsFrom(V2BlockId::from(block_id.0)));
                 }
                 NextKind::Goto(target_block_id) => {
                     assert!(self.blocks.contains_key(target_block_id), "Block {} not found", target_block_id);
