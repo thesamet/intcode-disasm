@@ -20,5 +20,4 @@ pub struct SsaBlock {
     /// Control flow information using SSA operands
     pub next: NextKind<SsaMemoryReference>,
     pub predecessors: Vec<PredecessorKind<SsaMemoryReference>>,
-    pub data_flow_block: DataFlowBlock,
 }

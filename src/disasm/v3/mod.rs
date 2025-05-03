@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod model;
 pub mod id_types;
 pub mod common;

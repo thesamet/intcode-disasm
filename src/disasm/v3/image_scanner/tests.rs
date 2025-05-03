@@ -3,6 +3,7 @@ mod tests {
     use super::super::{DataSegment, DataType, ImageScanner};
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
+    use crate::disasm::v3::analysis::disassemble;
     use crate::disasm::v3::id_types::FunctionId;
     use crate::disasm::v3::model::{InitialState, Model};
     use std::collections::HashMap;
@@ -40,8 +41,7 @@ mod tests {
         let image = vec![1, 2, 3, 4, 5];
 
         // Run the disassemble function
-        let result =
-            crate::disasm::v3::analysis::disassemble(image.clone()).expect("Disassembly failed");
+        let result = disassemble(image.clone()).expect("Disassembly failed");
 
         // Verify the result
         assert_eq!(result.image, image);
@@ -96,7 +96,7 @@ mod tests {
             );
         }
     }
-    
+
     #[test]
     fn test_simple_function() {
         let result = parse_and_scan(
@@ -135,11 +135,11 @@ mod tests {
             "#,
         );
         assert_eq!(result.recognized_functions.len(), 2);
-        
+
         // Get the main function (first one)
         let main_id = result.recognized_functions[0];
         let main = &result.function_details[&main_id];
-        
+
         // Get the other function (second one)
         let other_id = result.recognized_functions[1];
         let other = &result.function_details[&other_id];
@@ -235,11 +235,11 @@ mod tests {
             "#,
         );
         assert_eq!(result.recognized_functions.len(), 2);
-        
+
         // Get the main function (first one)
         let main_id = result.recognized_functions[0];
         let main = &result.function_details[&main_id];
-        
+
         // Get the callee function (second one)
         let callee_id = result.recognized_functions[1];
         let callee = &result.function_details[&callee_id];

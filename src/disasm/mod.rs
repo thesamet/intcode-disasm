@@ -4,6 +4,7 @@ pub mod model2;
 pub mod parser;
 mod test_utils;
 pub mod v2;
+pub mod v3;
 
 use thiserror::Error;
 /*

@@ -3,19 +3,21 @@ use std::{
     marker::PhantomData,
 };
 
-use super::v2::{
-    self,
-    control_flow::{FunctionCall, NextKind, PredecessorKind},
-    data_flow::{BlockDataFlow, Definition, OriginationPoint},
-    instructions::{InstructionId, InstructionNode, MemoryReference},
-    listeners::{
-        function_call_analyzer::{CallSiteInfo, CalleeInfo},
-        image_scanner::ImageScannerResult,
+use super::{
+    v2::{
+        self,
+        control_flow::{FunctionCall, NextKind, PredecessorKind},
+        data_flow::{BlockDataFlow, Definition, OriginationPoint},
+        instructions::{InstructionId, InstructionNode, MemoryReference},
+        listeners::{
+            function_call_analyzer::{CallSiteInfo, CalleeInfo},
+            image_scanner::ImageScannerResult,
+        },
+        model::{BlockId, FunctionId},
+        native::NativeInstruction,
+        ssa_form::{PhiFunction, SsaMemoryReference, VersionRegistry},
     },
-    model::{BlockId, FunctionId},
-    native::NativeInstruction,
-    ssa_form::{PhiFunction, SsaMemoryReference, VersionRegistry},
-    Span,
+    v3::Span,
 };
 
 // --- State Types ---
