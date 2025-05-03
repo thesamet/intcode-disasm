@@ -208,11 +208,11 @@ mod tests {
         assert_eq!(block2.span, Span::new(2, 9));
         
         // Check that the loop body has a conditional jump back to itself
-        if let NextKind::ConditionalJump { true_branch, false_branch, .. } = &block2.next {
-            assert_eq!(*true_branch, BlockId::from(2), "Loop should target itself");
-            assert_eq!(*false_branch, BlockId::from(9), "Loop exit should go to block 9");
+        if let NextKind::Condition(cond) = &block2.next {
+            assert_eq!(cond.target_block, V2BlockId::from(2), "Loop should target itself");
+            assert_eq!(cond.follows_block, V2BlockId::from(9), "Loop exit should go to block 9");
         } else {
-            panic!("Expected block2.next to be a ConditionalJump");
+            panic!("Expected block2.next to be a Condition");
         }
 
         // Block 9 (Exit & Return)

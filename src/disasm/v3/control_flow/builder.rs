@@ -4,8 +4,8 @@ use log::{debug, info, trace};
 
 use crate::disasm::Error;
 use crate::disasm::v2::control_flow::{NextKind, PredecessorKind, Condition, FunctionCall};
-use crate::disasm::v2::instructions::{BinaryOperator, Expression, Instruction, InstructionNode, MemoryReference};
-use crate::disasm::v2::native::{NativeInstruction, Opcode, OperandKind, Operand};
+use crate::disasm::v2::instructions::{Expression, Instruction, InstructionNode, MemoryReference};
+use crate::disasm::v2::model::BlockId as V2BlockId;
 
 use super::block::Block;
 use super::function::Function;
@@ -13,7 +13,7 @@ use super::result::ControlFlowGraphResult;
 use crate::disasm::v3::common::Span;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
 use crate::disasm::v3::model::{Model, ImageScannerComplete, ControlFlowGraphComplete};
-use crate::disasm::v3::image_scanner::result::RecognizedFunction;
+use crate::disasm::v3::image_scanner::RecognizedFunction;
 
 /// Builds the control flow graph from the image scanner results
 pub struct ControlFlowGraphBuilder {
@@ -64,7 +64,7 @@ impl ControlFlowGraphBuilder {
         })
     }
     
-    fn process_function(&mut self, function_id: FunctionId, function_details: &RecognizedFunction, scanner_result: &crate::disasm::v3::image_scanner::ImageScannerResult) -> Result<(), Error> {
+    fn process_function(&mut self, function_id: FunctionId, function_details: &RecognizedFunction, scanner_result: &crate::disasm::v3::image_scanner::result::ImageScannerResult) -> Result<(), Error> {
         debug!("Processing function {}", function_id);
         
         // --- Pre-calculate all block boundaries ---
@@ -182,7 +182,7 @@ impl ControlFlowGraphBuilder {
                 // It only had the SET R+=<Stack> command, so follower is block start+2.
                 let next_block = BlockId::from(function_details.span.start + 2);
                 assert!(self.blocks.contains_key(&next_block), "Block {} not found", next_block);
-                NextKind::Follows(next_block)
+                NextKind::Follows(V2BlockId::from(next_block.0))
             } else if let Some(last_instr) = block.low_instructions.last() {
                 self.determine_next_kind(*block_id, last_instr, block.span.end)
             } else {
@@ -201,13 +201,13 @@ impl ControlFlowGraphBuilder {
                 NextKind::Goto(target_block_id) => {
                     assert!(self.blocks.contains_key(target_block_id), "Block {} not found", target_block_id);
                     predecessors_map
-                        .entry(*target_block_id)
+                        .entry(V2BlockId::from(target_block_id.0))
                         .or_default()
-                        .push(PredecessorKind::GotoFrom(*block_id));
+                        .push(PredecessorKind::GotoFrom(V2BlockId::from(block_id.0)));
                 }
                 NextKind::FunctionCall(call) => {
                     assert!(
-                        self.blocks.contains_key(&call.return_block),
+                        self.blocks.contains_key(&BlockId::from(call.return_block.0)),
                         "Return block {:?} does not exist",
                         call.return_block
                     );
@@ -216,28 +216,30 @@ impl ControlFlowGraphBuilder {
                         .or_default()
                         .push(PredecessorKind::FunctionCallReturns(call.clone()));
                 }
-                NextKind::ConditionalJump { condition, true_branch, false_branch } => {
-                    assert!(self.blocks.contains_key(&true_branch), "Block {} not found", true_branch);
-                    assert!(self.blocks.contains_key(&false_branch), "Block {} not found", false_branch);
+                NextKind::Condition(condition) => {
+                    let true_branch = condition.target_block;
+                    let false_branch = condition.follows_block;
+                    assert!(self.blocks.contains_key(&BlockId::from(true_branch.0)), "Block {} not found", true_branch);
+                    assert!(self.blocks.contains_key(&BlockId::from(false_branch.0)), "Block {} not found", false_branch);
                     predecessors_map
-                        .entry(*true_branch)
+                        .entry(true_branch)
                         .or_default()
                         .push(PredecessorKind::ConditionalJump(Condition {
-                            from_block: *block_id,
-                            condition_operand: condition.clone(),
+                            from_block: V2BlockId::from(block_id.0),
+                            condition_operand: condition.condition_operand.clone(),
                             jump_if_true: true,
-                            target_block: *true_branch,
-                            follows_block: *false_branch,
+                            target_block: true_branch,
+                            follows_block: false_branch,
                         }));
                     predecessors_map
-                        .entry(*false_branch)
+                        .entry(false_branch)
                         .or_default()
                         .push(PredecessorKind::ConditionalFollow(Condition {
-                            from_block: *block_id,
-                            condition_operand: condition.clone(),
+                            from_block: V2BlockId::from(block_id.0),
+                            condition_operand: condition.condition_operand.clone(),
                             jump_if_true: true,
-                            target_block: *true_branch,
-                            follows_block: *false_branch,
+                            target_block: true_branch,
+                            follows_block: false_branch,
                         }));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
@@ -287,25 +289,31 @@ impl ControlFlowGraphBuilder {
         last_instr: &InstructionNode<MemoryReference>,
         block_end_addr: usize,
     ) -> NextKind<MemoryReference> {
-        match &last_instr.instruction {
+        match &last_instr.kind {
             Instruction::Halt => NextKind::Halt,
-            Instruction::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
+            Instruction::Goto(target_addr) => NextKind::Goto(V2BlockId::from(*target_addr)),
             Instruction::Call { addr, return_to } => {
-                NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), BlockId::from(*return_to)))
+                NextKind::FunctionCall(FunctionCall::new(
+                    V2BlockId::from(block_id.0), 
+                    addr.clone(), 
+                    V2BlockId::from(*return_to)
+                ))
             }
             Instruction::Return => NextKind::Return,
             Instruction::If { cond, then_addr, else_addr } => {
-                NextKind::ConditionalJump {
-                    condition: cond.clone(),
-                    true_branch: BlockId::from(*then_addr),
-                    false_branch: BlockId::from(*else_addr),
-                }
+                NextKind::Condition(Condition {
+                    from_block: V2BlockId::from(block_id.0),
+                    condition_operand: cond.clone(),
+                    jump_if_true: true,
+                    target_block: V2BlockId::from(*then_addr),
+                    follows_block: V2BlockId::from(*else_addr),
+                })
             }
             _ => {
                 // Find the next block by address
                 let next_block_id = BlockId::from(block_end_addr);
                 if self.blocks.contains_key(&next_block_id) {
-                    NextKind::Follows(next_block_id)
+                    NextKind::Follows(V2BlockId::from(block_end_addr))
                 } else {
                     // If there's no block at the exact end address, this might be the end of the function
                     NextKind::Halt
