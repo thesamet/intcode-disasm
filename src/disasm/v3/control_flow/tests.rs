@@ -7,6 +7,7 @@ mod tests {
     use crate::disasm::v3::id_types::{BlockId, FunctionId};
     use crate::disasm::v3::image_scanner::ImageScanner;
     use crate::disasm::v3::model::{InitialState, Model};
+    use crate::disasm::v3::common::Span;
 
     fn parse_and_build_cfg(code: &str) -> super::super::ControlFlowGraphResult {
         let binary = parser::compile(code);

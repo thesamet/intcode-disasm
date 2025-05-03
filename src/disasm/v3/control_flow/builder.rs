@@ -220,24 +220,24 @@ impl ControlFlowGraphBuilder {
                     assert!(self.blocks.contains_key(&true_branch), "Block {} not found", true_branch);
                     assert!(self.blocks.contains_key(&false_branch), "Block {} not found", false_branch);
                     predecessors_map
-                        .entry(true_branch)
+                        .entry(*true_branch)
                         .or_default()
                         .push(PredecessorKind::ConditionalJump(Condition {
                             from_block: *block_id,
                             condition_operand: condition.clone(),
                             jump_if_true: true,
-                            target_block: true_branch,
-                            follows_block: false_branch,
+                            target_block: *true_branch,
+                            follows_block: *false_branch,
                         }));
                     predecessors_map
-                        .entry(false_branch)
+                        .entry(*false_branch)
                         .or_default()
                         .push(PredecessorKind::ConditionalFollow(Condition {
                             from_block: *block_id,
                             condition_operand: condition.clone(),
                             jump_if_true: true,
-                            target_block: true_branch,
-                            follows_block: false_branch,
+                            target_block: *true_branch,
+                            follows_block: *false_branch,
                         }));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
