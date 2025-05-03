@@ -14,6 +14,10 @@ impl Span {
     pub fn contains(&self, s: &Span) -> bool {
         self.start <= s.start && s.end <= self.end
     }
+    
+    pub fn contains_address(&self, addr: usize) -> bool {
+        self.start <= addr && addr < self.end
+    }
 
     pub fn with_start(&self, start: usize) -> Self {
         assert!(start <= self.end);
