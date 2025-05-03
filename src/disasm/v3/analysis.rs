@@ -8,9 +8,12 @@ use super::{
 };
 
 use crate::disasm::Error;
+use log::info;
 
 /// Run the complete analysis pipeline
 pub fn run_analysis(image: Vec<i128>) -> Result<Model<FunctionCallComplete>, Error> {
+    info!("Starting complete analysis pipeline");
+    
     // Create initial model
     let model = Model::<InitialState>::new().with_image(image.clone());
     
@@ -21,12 +24,16 @@ pub fn run_analysis(image: Vec<i128>) -> Result<Model<FunctionCallComplete>, Err
     let model = SsaConverter::run(model)?;
     let model = FunctionCallAnalyzer::run(model)?;
     
+    info!("Analysis pipeline complete");
+    
     // Return the final model
     Ok(model)
 }
 
 /// Run the analysis pipeline up to SSA conversion
 pub fn run_analysis_ssa(image: Vec<i128>) -> Result<Model<SsaComplete>, Error> {
+    info!("Starting analysis pipeline up to SSA conversion");
+    
     // Create initial model
     let model = Model::<InitialState>::new().with_image(image.clone());
     
@@ -36,6 +43,24 @@ pub fn run_analysis_ssa(image: Vec<i128>) -> Result<Model<SsaComplete>, Error> {
     let model = DataFlowAnalyzer::run(model)?;
     let model = SsaConverter::run(model)?;
     
+    info!("SSA analysis pipeline complete");
+    
     // Return the model with SSA complete
     Ok(model)
+}
+
+/// Disassemble the image and return just the image scanner result
+pub fn disassemble(image: Vec<i128>) -> Result<super::image_scanner::ImageScannerResult, Error> {
+    info!("Starting disassembly");
+    
+    // Create initial model
+    let model = Model::<InitialState>::new().with_image(image.clone());
+    
+    // Run only the image scanner phase
+    let model = ImageScanner::run(image, model)?;
+    
+    info!("Disassembly complete");
+    
+    // Return just the image scanner result
+    Ok(model.image_scanner_result.unwrap())
 }
