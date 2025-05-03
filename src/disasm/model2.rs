@@ -10,7 +10,7 @@ use super::v2::{
     listeners::{function_call_analyzer::CalleeInfo, image_scanner::ImageScannerResult},
     model::{BlockId, FunctionId},
     native::NativeInstruction,
-    ssa_form::{PhiFunction, SsaFunction, SsaMemoryReference, VersionRegistry},
+    ssa_form::{PhiFunction, SsaMemoryReference, VersionRegistry},
     Span,
 };
 
@@ -20,10 +20,10 @@ use super::v2::{
 pub trait StateTypes {
     /// The type containing model-level data for this state
     type ModelData;
-    
+
     /// The type containing block-level data for this state
     type BlockData;
-    
+
     /// The type containing function-level data for this state
     type FunctionData;
 }
@@ -97,15 +97,15 @@ pub struct Block<S: ModelState> {
     data: S::BlockData,
 }
 
-struct Function<S: ModelState> {
-    function_id: FunctionId,
-    entry_block: BlockId,
-    stack_size: usize,
-    all_block_ids: Vec<BlockId>, // list of blocks in this function
+pub struct Function<S: ModelState> {
+    pub function_id: FunctionId,
+    pub entry_block: BlockId,
+    pub stack_size: usize,
+    pub all_block_ids: Vec<BlockId>, // list of blocks in this function
 
     // The block containing the R -= N; goto [R] sequence.
     // Function may not have a return block. For example, if it reaches the end of the image, is a loop, or it halts.
-    return_block: Option<BlockId>,
+    pub return_block: Option<BlockId>,
 
     blocks: HashMap<BlockId, Block<S>>,
     state_data: S::FunctionData,
@@ -386,6 +386,7 @@ fn test1() {
         .functions(&FunctionId::from(0))
         .blocks(&BlockId::from(0))
         .containing_function_id;
+    assert!(m == FunctionId::from(0));
     let model4 = Model::<DataFlowTypes> {
         data: DataFlowResult {
             image_scanner_result: ImageScannerResult {
