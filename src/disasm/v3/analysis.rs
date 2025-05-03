@@ -1,5 +1,5 @@
 use super::{
-    model::{Model, InitialState, FunctionCallComplete},
+    model::{Model, InitialState, FunctionCallComplete, SsaComplete},
     image_scanner::ImageScanner,
     control_flow::ControlFlowGraphBuilder,
     data_flow::DataFlowAnalyzer,
@@ -15,26 +15,42 @@ pub fn run_analysis(image: Vec<i128>) -> Result<Model<FunctionCallComplete>, Err
     let model = Model::<InitialState>::new().with_image(image.clone());
     
     // Run each analysis phase in sequence
-    let model = ImageScanner::analyze(image, model);
-    let model = ControlFlowGraphBuilder::analyze(model);
-    let model = DataFlowAnalyzer::analyze(model);
-    let model = SsaConverter::analyze(model);
-    let model = FunctionCallAnalyzer::analyze(model);
+    let scanner = ImageScanner::new();
+    let model = scanner.run(image, model)?;
+    
+    let builder = ControlFlowGraphBuilder::new();
+    let model = builder.run(model)?;
+    
+    let analyzer = DataFlowAnalyzer::new();
+    let model = analyzer.run(model)?;
+    
+    let converter = SsaConverter::new();
+    let model = converter.run(model)?;
+    
+    let analyzer = FunctionCallAnalyzer::new();
+    let model = analyzer.run(model)?;
     
     // Return the final model
     Ok(model)
 }
 
 /// Run the analysis pipeline up to SSA conversion
-pub fn run_analysis_ssa(image: Vec<i128>) -> Result<Model<super::model::SsaComplete>, Error> {
+pub fn run_analysis_ssa(image: Vec<i128>) -> Result<Model<SsaComplete>, Error> {
     // Create initial model
     let model = Model::<InitialState>::new().with_image(image.clone());
     
     // Run each analysis phase in sequence up to SSA
-    let model = ImageScanner::analyze(image, model);
-    let model = ControlFlowGraphBuilder::analyze(model);
-    let model = DataFlowAnalyzer::analyze(model);
-    let model = SsaConverter::analyze(model);
+    let scanner = ImageScanner::new();
+    let model = scanner.run(image, model)?;
+    
+    let builder = ControlFlowGraphBuilder::new();
+    let model = builder.run(model)?;
+    
+    let analyzer = DataFlowAnalyzer::new();
+    let model = analyzer.run(model)?;
+    
+    let converter = SsaConverter::new();
+    let model = converter.run(model)?;
     
     // Return the model with SSA complete
     Ok(model)
