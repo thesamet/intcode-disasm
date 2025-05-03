@@ -8,13 +8,13 @@ use crate::disasm::v2::control_flow::{NextKind, PredecessorKind};
 #[derive(Debug, Clone)]
 pub struct Block {
     pub id: BlockId,
-    // To which function does this block belong?
+    /// To which function does this block belong?
     pub containing_function_id: FunctionId,
     pub span: Span,
     pub native_instructions: Vec<NativeInstruction>,
     pub low_instructions: Vec<InstructionNode<MemoryReference>>,
 
-    // CFG Information (added by ControlFlowGraphBuilder)
+    /// Control flow information
     pub next: NextKind<MemoryReference>,
     pub predecessors: Vec<PredecessorKind<MemoryReference>>,
 }
