@@ -3,11 +3,12 @@ mod tests {
     use super::super::{ControlFlowGraphBuilder, Function};
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v2::control_flow::{NextKind, PredecessorKind};
+    use crate::disasm::v2::control_flow::{NextKind, PredecessorKind, Condition};
     use crate::disasm::v3::id_types::{BlockId, FunctionId};
     use crate::disasm::v3::image_scanner::ImageScanner;
     use crate::disasm::v3::model::{InitialState, Model};
     use crate::disasm::v3::common::Span;
+    use itertools::Itertools;
 
     fn parse_and_build_cfg(code: &str) -> super::super::ControlFlowGraphResult {
         let binary = parser::compile(code);
@@ -209,8 +210,8 @@ mod tests {
         
         // Check that the loop body has a conditional jump back to itself
         if let NextKind::Condition(cond) = &block2.next {
-            assert_eq!(cond.target_block, V2BlockId::from(2), "Loop should target itself");
-            assert_eq!(cond.follows_block, V2BlockId::from(9), "Loop exit should go to block 9");
+            assert_eq!(cond.target_block, BlockId::from(2), "Loop should target itself");
+            assert_eq!(cond.follows_block, BlockId::from(9), "Loop exit should go to block 9");
         } else {
             panic!("Expected block2.next to be a Condition");
         }
