@@ -88,6 +88,12 @@ pub struct CallSiteInfo {
     pub return_map: HashMap<VersionedMemoryReference, VersionedMemoryReference>,
 }
 
+impl AsRef<CallSiteInfo> for CallSiteInfo {
+    fn as_ref(&self) -> &CallSiteInfo {
+        self
+    }
+}
+
 impl FunctionCallAnalysis {
     pub fn get_effective_return_values(
         &self,
