@@ -312,7 +312,7 @@ impl ControlFlowGraphBuilder {
                 // Find the next block by address
                 let next_block_id = BlockId::from(block_end_addr);
                 if self.blocks.contains_key(&next_block_id) {
-                    NextKind::Follows(V2BlockId::from(block_end_addr))
+                    NextKind::Follows(BlockId::from(block_end_addr))
                 } else {
                     // If there's no block at the exact end address, this might be the end of the function
                     NextKind::Halt
