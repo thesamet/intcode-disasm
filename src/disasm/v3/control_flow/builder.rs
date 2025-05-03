@@ -181,7 +181,7 @@ impl ControlFlowGraphBuilder {
                 // It only had the SET R+=<Stack> command, so follower is block start+2.
                 let next_block = BlockId::from(function_details.span.start + 2);
                 assert!(self.blocks.contains_key(&next_block), "Block {} not found", next_block);
-                NextKind::Follows(V2BlockId::from(next_block.0))
+                NextKind::Follows(BlockId::from(next_block.0))
             } else if let Some(last_instr) = block.low_instructions.last() {
                 self.determine_next_kind(*block_id, last_instr, block.span.end)
             } else {
@@ -290,7 +290,7 @@ impl ControlFlowGraphBuilder {
     ) -> NextKind<MemoryReference> {
         match &last_instr.kind {
             Instruction::Halt => NextKind::Halt,
-            Instruction::Goto(target_addr) => NextKind::Goto(V2BlockId::from(*target_addr)),
+            Instruction::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
             Instruction::Call { addr, return_to } => {
                 NextKind::FunctionCall(FunctionCall::new(
                     BlockId::from(block_id.0), 
