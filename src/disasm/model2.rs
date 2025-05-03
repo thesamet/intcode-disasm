@@ -14,55 +14,71 @@ use super::v2::{
     Span,
 };
 
-// --- Model States ---
+// --- State Types ---
 
-trait ModelState {
-    type ModelType;
-    type BlockType;
-    type FunctionType;
+/// Defines the family of types associated with a particular analysis state
+pub trait StateTypes {
+    /// The type containing model-level data for this state
+    type ModelData;
+    
+    /// The type containing block-level data for this state
+    type BlockData;
+    
+    /// The type containing function-level data for this state
+    type FunctionData;
 }
 
-struct InitialState;
-impl ModelState for InitialState {
-    type ModelType = ();
-    type BlockType = ();
-    type FunctionType = ();
-}
+/// A marker trait for model states
+pub trait ModelState: StateTypes {}
 
-struct ImageScannerComplete(ImageScannerResult);
-impl ModelState for ImageScannerComplete {
-    type ModelType = ImageScannerResult;
-    type BlockType = ();
-    type FunctionType = ();
+// Define concrete state types
+pub struct InitialTypes;
+impl StateTypes for InitialTypes {
+    type ModelData = ();
+    type BlockData = ();
+    type FunctionData = ();
 }
+impl ModelState for InitialTypes {}
 
-struct ControlFlowGraphComplete(ControlFlowGraphResult);
-impl ModelState for ControlFlowGraphComplete {
-    type ModelType = ControlFlowGraphResult;
-    type BlockType = ();
-    type FunctionType = ();
+pub struct ImageScannerTypes;
+impl StateTypes for ImageScannerTypes {
+    type ModelData = ImageScannerResult;
+    type BlockData = ();
+    type FunctionData = ();
 }
+impl ModelState for ImageScannerTypes {}
 
-struct DataFlowComplete(DataFlowResult);
-impl ModelState for DataFlowComplete {
-    type ModelType = DataFlowResult;
-    type BlockType = DataFlowBlock;
-    type FunctionType = ();
+pub struct ControlFlowTypes;
+impl StateTypes for ControlFlowTypes {
+    type ModelData = ControlFlowGraphResult;
+    type BlockData = ();
+    type FunctionData = ();
 }
+impl ModelState for ControlFlowTypes {}
 
-struct SsaConversionComplete(SsaResult);
-impl ModelState for SsaConversionComplete {
-    type ModelType = SsaResult;
-    type BlockType = SsaBlock;
-    type FunctionType = ();
+pub struct DataFlowTypes;
+impl StateTypes for DataFlowTypes {
+    type ModelData = DataFlowResult;
+    type BlockData = DataFlowBlock;
+    type FunctionData = ();
 }
+impl ModelState for DataFlowTypes {}
 
-struct FunctionCallAnalysisComplete(FunctionCallAnalysisResult);
-impl ModelState for FunctionCallAnalysisComplete {
-    type ModelType = FunctionCallAnalysisResult;
-    type BlockType = v2::listeners::function_call_analyzer::CallSiteInfo;
-    type FunctionType = CalleeInfo;
+pub struct SsaTypes;
+impl StateTypes for SsaTypes {
+    type ModelData = SsaResult;
+    type BlockData = SsaBlock;
+    type FunctionData = ();
 }
+impl ModelState for SsaTypes {}
+
+pub struct FunctionCallTypes;
+impl StateTypes for FunctionCallTypes {
+    type ModelData = FunctionCallAnalysisResult;
+    type BlockData = v2::listeners::function_call_analyzer::CallSiteInfo;
+    type FunctionData = CalleeInfo;
+}
+impl ModelState for FunctionCallTypes {}
 
 // --- Core Data Structures ---
 
@@ -78,7 +94,7 @@ pub struct Block<S: ModelState> {
     // CFG Information (added by ControlFlowGraphBuilder)
     pub next: NextKind<MemoryReference>,
     pub predecessors: Vec<PredecessorKind<MemoryReference>>,
-    data: S::BlockType,
+    data: S::BlockData,
 }
 
 struct Function<S: ModelState> {
@@ -92,36 +108,36 @@ struct Function<S: ModelState> {
     return_block: Option<BlockId>,
 
     blocks: HashMap<BlockId, Block<S>>,
-    state_data: S::FunctionType,
+    state_data: S::FunctionData,
 }
 
 struct Model<S: ModelState> {
-    data: S::ModelType,
+    data: S::ModelData,
 }
 
 // --- Extensions and Traits ---
 
-trait ImageScannerResultExtension {
+pub trait ImageDataAccess<S: ModelState> {
     fn image_data(&self) -> &ImageScannerResult;
 }
 
-trait HasFunctions<S: ModelState> {
+pub trait HasFunctions<S: ModelState> {
     fn functions(&self, function_id: &FunctionId) -> &Function<S>;
 }
 
-pub trait DataFlowBlockExtension {
+pub trait DataFlowAccess {
     fn data_flow(&self) -> &DataFlowBlock;
 }
 
-pub trait SsaBlockExtension<S: ModelState> {
+pub trait SsaAccess {
     fn ssa(&self) -> &SsaBlock;
 }
 
-pub trait CallSiteBlockExtension<S: ModelState> {
+pub trait CallSiteAccess {
     fn call_site_info(&self) -> &v2::listeners::function_call_analyzer::CallSiteInfo;
 }
 
-pub trait FunctionCallAnalysisFunctionExtension<S: ModelState> {
+pub trait CalleeAccess {
     fn callee_info(&self) -> &CalleeInfo;
 }
 
@@ -133,27 +149,27 @@ impl<S: ModelState> Function<S> {
     }
 }
 
-impl<S: ModelState> DataFlowBlockExtension for Block<S>
+impl<S: ModelState> DataFlowAccess for Block<S>
 where
-    S::BlockType: AsRef<DataFlowBlock>,
+    S::BlockData: AsRef<DataFlowBlock>,
 {
     fn data_flow(&self) -> &DataFlowBlock {
         self.data.as_ref()
     }
 }
 
-impl<S: ModelState> SsaBlockExtension<S> for Block<S>
+impl<S: ModelState> SsaAccess for Block<S>
 where
-    S::BlockType: AsRef<SsaBlock>,
+    S::BlockData: AsRef<SsaBlock>,
 {
     fn ssa(&self) -> &SsaBlock {
         self.data.as_ref()
     }
 }
 
-impl<S: ModelState> CallSiteBlockExtension<S> for Block<S>
+impl<S: ModelState> CallSiteAccess for Block<S>
 where
-    S::BlockType: AsRef<v2::listeners::function_call_analyzer::CallSiteInfo>,
+    S::BlockData: AsRef<v2::listeners::function_call_analyzer::CallSiteInfo>,
 {
     fn call_site_info(&self) -> &v2::listeners::function_call_analyzer::CallSiteInfo {
         self.data.as_ref()
@@ -166,9 +182,9 @@ impl AsRef<ImageScannerResult> for ImageScannerResult {
     }
 }
 
-impl<S: ModelState> ImageScannerResultExtension for Model<S>
+impl<S: ModelState> ImageDataAccess<S> for Model<S>
 where
-    S::ModelType: AsRef<ImageScannerResult>,
+    S::ModelData: AsRef<ImageScannerResult>,
 {
     fn image_data(&self) -> &ImageScannerResult {
         self.data.as_ref()
@@ -177,16 +193,16 @@ where
 
 impl<S: ModelState> HasFunctions<S> for Model<S>
 where
-    S::ModelType: AsRef<HashMap<FunctionId, Function<S>>>,
+    S::ModelData: AsRef<HashMap<FunctionId, Function<S>>>,
 {
     fn functions(&self, function_id: &FunctionId) -> &Function<S> {
         self.data.as_ref().get(function_id).unwrap()
     }
 }
 
-impl<S: ModelState> FunctionCallAnalysisFunctionExtension<S> for Function<S>
+impl<S: ModelState> CalleeAccess for Function<S>
 where
-    S::FunctionType: AsRef<CalleeInfo>,
+    S::FunctionData: AsRef<CalleeInfo>,
 {
     fn callee_info(&self) -> &CalleeInfo {
         self.state_data.as_ref()
@@ -242,7 +258,7 @@ pub struct ControlFlowGraphResult {
     #[as_ref]
     image_scanner_result: ImageScannerResult,
     #[as_ref]
-    functions: HashMap<FunctionId, Function<ControlFlowGraphComplete>>,
+    functions: HashMap<FunctionId, Function<ControlFlowTypes>>,
 }
 
 #[derive(AsRef)]
@@ -250,13 +266,13 @@ pub struct DataFlowResult {
     #[as_ref]
     image_scanner_result: ImageScannerResult,
     #[as_ref]
-    functions: HashMap<FunctionId, Function<DataFlowComplete>>,
+    functions: HashMap<FunctionId, Function<DataFlowTypes>>,
 }
 
 impl DataFlowResult {
     fn new(
         image_scanner_result: ImageScannerResult,
-        functions: HashMap<FunctionId, Function<DataFlowComplete>>,
+        functions: HashMap<FunctionId, Function<DataFlowTypes>>,
     ) -> Self {
         Self {
             image_scanner_result,
@@ -270,7 +286,7 @@ pub struct SsaResult {
     #[as_ref]
     image_scanner_result: ImageScannerResult,
     #[as_ref]
-    pub functions: HashMap<FunctionId, Function<SsaConversionComplete>>,
+    pub functions: HashMap<FunctionId, Function<SsaTypes>>,
 }
 
 #[derive(AsRef)]
@@ -278,7 +294,7 @@ pub struct FunctionCallAnalysisResult {
     #[as_ref]
     image_scanner_result: ImageScannerResult,
     #[as_ref]
-    pub functions: HashMap<FunctionId, Function<FunctionCallAnalysisComplete>>,
+    pub functions: HashMap<FunctionId, Function<FunctionCallTypes>>,
 }
 
 // --- Specialized Blocks ---
@@ -348,15 +364,15 @@ pub struct SsaBlock {
 // --- Test Function ---
 
 fn test1() {
-    let model1 = Model::<InitialState> { data: () };
-    let model2 = Model::<ImageScannerComplete> {
+    let model1 = Model::<InitialTypes> { data: () };
+    let model2 = Model::<ImageScannerTypes> {
         data: ImageScannerResult {
             recognized_functions: vec![],
             data_segments: vec![],
         },
     };
     model2.image_data();
-    let model3 = Model::<ControlFlowGraphComplete> {
+    let model3 = Model::<ControlFlowTypes> {
         data: ControlFlowGraphResult {
             image_scanner_result: ImageScannerResult {
                 recognized_functions: vec![],
@@ -370,7 +386,7 @@ fn test1() {
         .functions(&FunctionId::from(0))
         .blocks(&BlockId::from(0))
         .containing_function_id;
-    let model4 = Model::<DataFlowComplete> {
+    let model4 = Model::<DataFlowTypes> {
         data: DataFlowResult {
             image_scanner_result: ImageScannerResult {
                 recognized_functions: vec![],
@@ -401,7 +417,7 @@ fn test1() {
         .blocks(&BlockId::from(0))
         .data_flow();
 
-    let model5 = Model::<SsaConversionComplete> {
+    let model5 = Model::<SsaTypes> {
         data: SsaResult {
             image_scanner_result: ImageScannerResult {
                 recognized_functions: vec![],
@@ -420,7 +436,7 @@ fn test1() {
         .blocks(&BlockId::from(0))
         .data_flow();
 
-    let model6 = Model::<FunctionCallAnalysisComplete> {
+    let model6 = Model::<FunctionCallTypes> {
         data: FunctionCallAnalysisResult {
             image_scanner_result: ImageScannerResult {
                 recognized_functions: vec![],
