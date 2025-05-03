@@ -24,7 +24,7 @@ impl ImageScanner {
         debug!("Starting image scanning...");
         
         // Identify function entry points
-        let mut function_entry_points = self.identify_function_entry_points();
+        let function_entry_points = self.identify_function_entry_points();
         
         // Create function IDs for each entry point
         let mut address_to_function = HashMap::new();
