@@ -1255,17 +1255,17 @@ mod tests {
 
     struct TestContext {
         main_function: SsaFunction,
-        model: ProgramModel,
+        v3_model: Model<DataFlowComplete>, // Store v3 model if needed for direct inspection
+        v2_model: ProgramModel,            // Store v2 model for results/pretty printing
     }
 
     impl TestContext {
         fn new(assembly: &str) -> Self {
-            init_logging();
-            let model = setup_analyzed_model(assembly);
+            let (v3_model, v2_model) = setup_analyzed_models(assembly);
 
-            // Extract the main function (always at ID 0)
+            // Extract the main function (always at ID 0) from the v2 model's result
             let func_id = FunctionId::from(0);
-            let main_function = model
+            let main_function = v2_model // Access result from v2 model
                 .get_ssa_result()
                 .unwrap()
                 .functions
@@ -1275,34 +1275,44 @@ mod tests {
 
             TestContext {
                 main_function,
-                model,
+                v3_model,
+                v2_model,
             }
         }
     }
 
-    fn setup_analyzed_model(assembly: &str) -> ProgramModel {
+    // Modify setup to return both the v3 model needed for SSA and the v2 model for other checks
+    fn setup_analyzed_models(assembly: &str) -> (Model<DataFlowComplete>, ProgramModel) {
+        init_logging(); // Ensure logging is initialized
         let binary = parser::compile(assembly);
-        let mut model = ProgramModel::new();
+        let mut v2_model = ProgramModel::new();
         let mut publisher = EventPublisher::<Event, ProgramModel>::new();
 
         // Register listeners for the pipeline
         publisher.add_listener(Box::new(ImageScanner::new()));
         publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
         publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
-        publisher.add_listener(Box::new(SsaConverter::new()));
+        publisher.add_listener(Box::new(SsaConverter::new())); // This listener now runs v3 analysis internally
 
-        // Run the pipeline
-        model.load_image(&binary, &mut publisher);
-        publisher.process_events(&mut model).unwrap();
+        // Run the v2 pipeline (which triggers the modified SsaConverter)
+        v2_model.load_image(&binary, &mut publisher);
+        publisher.process_events(&mut v2_model).unwrap();
 
-        model
+        // Re-run the v3 analysis pipeline explicitly to get the DataFlowComplete model
+        // This duplicates work done by the listener but ensures tests have the correct input type
+        let v3_model_initial = Model::<InitialState>::new();
+        let v3_model_scanned = ImageScanner::run(binary, v3_model_initial).unwrap();
+        let v3_model_cfg = ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
+        let v3_model_data_flow = DataFlowAnalyzer::run(v3_model_cfg).unwrap();
+
+        (v3_model_data_flow, v2_model)
     }
 
     // Test simple SSA conversion for basic blocks
     #[test]
     fn test_basic_ssa_conversion() {
         // Simple program with variable definitions and uses
-        let model = setup_analyzed_model(
+        let (v3_model, v2_model) = setup_analyzed_models(
             r#"
             ; Offset 0
             R += 3          ; stack frame setup
@@ -1315,8 +1325,8 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form
-        let ssa_result = SsaResult::from_program_model(&model);
+        // Convert to SSA form using the v3 model
+        let ssa_result = SsaResult::from_program_model(&v3_model);
 
         // Expect a single function (at offset 0)
         assert_eq!(ssa_result.functions.len(), 1);
@@ -1339,7 +1349,7 @@ mod tests {
     #[test]
     fn test_ssa_conversion_with_phi_functions() {
         // Program with conditional paths that need phi functions
-        let model = setup_analyzed_model(
+        let (v3_model, v2_model) = setup_analyzed_models(
             r#"
             ; Offset 0: Entry Block
             R += 3
@@ -1362,8 +1372,8 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form
-        let ssa_result = SsaResult::from_program_model(&model);
+        // Convert to SSA form using the v3 model
+        let ssa_result = SsaResult::from_program_model(&v3_model);
 
         // Print block information to debug
         for (func_id, function) in &ssa_result.functions {
@@ -1463,7 +1473,7 @@ mod tests {
     #[test]
     fn test_ssa_conversion_with_function_calls() {
         // Program with a function call and return values
-        let model = setup_analyzed_model(
+        let (v3_model, v2_model) = setup_analyzed_models(
             r#"
             ; Main function @ 0
             R += 3
@@ -1484,8 +1494,8 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form
-        let ssa_result = SsaResult::from_program_model(&model);
+        // Convert to SSA form using the v3 model
+        let ssa_result = SsaResult::from_program_model(&v3_model);
 
         // Print block information to debug
         for (func_id, function) in &ssa_result.functions {
@@ -1556,7 +1566,7 @@ mod tests {
     #[test]
     fn test_proper_version_increments_for_writes() {
         // Test a simple program that reads and writes the same register
-        let model = setup_analyzed_model(
+        let (v3_model, v2_model) = setup_analyzed_models(
             r#"
             ; Offset 0
             R += 3                  ; stack frame setup
@@ -1568,13 +1578,13 @@ mod tests {
             "#,
         );
 
-        // Print the SSA program for debugging
-        pretty_print_ssa(&model);
+        // Print the SSA program for debugging using the v2 model
+        pretty_print_ssa(&v2_model);
 
         // Get the function
         let func_id = FunctionId::from(0);
-        // Convert to SSA form
-        let ssa_result = SsaResult::from_program_model(&model);
+        // Convert to SSA form using the v3 model
+        let ssa_result = SsaResult::from_program_model(&v3_model);
 
         let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
@@ -1647,7 +1657,7 @@ mod tests {
                 halt
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
@@ -1678,7 +1688,7 @@ mod tests {
                 halt
                 "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(23, 2));
         assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(23, 3));
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3));
@@ -1695,7 +1705,7 @@ mod tests {
                 halt
                 "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
     }
@@ -1713,7 +1723,7 @@ mod tests {
                 halt
                 "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(16, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(16, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(16, 3));
@@ -1762,7 +1772,7 @@ mod tests {
               goto [R]                        ; Return
                 "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
 
         // Initial assignments before loop
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
@@ -1802,14 +1812,16 @@ mod tests {
         goto [R]
         "#,
         );
+        // Access function info from v2_model
         let return_block_id = ctx
-            .model
+            .v2_model
             .get_function(FunctionId::from(0))
             .return_block
             .unwrap();
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // Access SSA result from v2_model
         let f0 = ctx
-            .model
+            .v2_model
             .get_ssa_result()
             .unwrap()
             .functions
@@ -1856,14 +1868,16 @@ exit:
     goto [R]
     "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // Access function info from v2_model
         let return_block_id = ctx
-            .model
+            .v2_model
             .get_function(FunctionId::from(0))
             .return_block
             .unwrap();
+        // Access SSA result from v2_model
         let f0 = ctx
-            .model
+            .v2_model
             .get_ssa_result()
             .unwrap()
             .functions
@@ -1897,7 +1911,7 @@ exit:
             goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
@@ -1921,7 +1935,7 @@ exit:
             goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
@@ -1953,7 +1967,7 @@ exit:
 
           "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
@@ -1979,7 +1993,7 @@ exit:
             goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
