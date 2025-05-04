@@ -1,8 +1,8 @@
 use crate::disasm::v2::data_flow::NativeOriginationPoint;
-use crate::disasm::v2::instructions::MemoryReferenceInfo; // Removed ReadAddressExtractor import
+use crate::disasm::v2::instructions::{Instruction, MemoryReferenceInfo}; // Added Instruction
 use crate::disasm::v2::{
     control_flow::NextKind,
-    data_flow::OriginationPoint,
+    data_flow::OriginationPoint, // Removed ReadAddressExtractor import
     dispatching::{EventCollector, EventListener},
     events::{self, Event},
     instructions::Expression,
@@ -148,12 +148,25 @@ fn find_lowest_version_of(
                 }
             }
         }
-        // Check instruction operands
-        for instr in &block.instructions {
-            // Consider all read operands.
-            let operands_in_instr = instr.kind.collect_read_addresses();
-            for var in operands_in_instr {
-                if let Some(var) = var.as_versioned() {
+        // Check instruction operands (manual extraction for v2::Instruction)
+        for instr_node in &block.instructions {
+            let mut reads_in_instr: Vec<&SsaMemoryReference> = Vec::new();
+
+            // Extract reads from write target (for Deref)
+            if let Some(target) = instr_node.kind.get_write_address() {
+                reads_in_instr.extend(target.extract_read_addresses());
+            }
+            // Extract reads from source expressions
+            reads_in_instr.extend(
+                instr_node
+                    .kind
+                    .collect_source_expressions()
+                    .iter()
+                    .flat_map(|expr| expr.collect_read_addresses()),
+            );
+
+            for ssa_mem_ref in reads_in_instr {
+                if let Some(var) = ssa_mem_ref.as_versioned() {
                     if &var.kind == kind
                         && (min_var.is_none() || var.version < min_var_version(min_var))
                     {
@@ -306,13 +319,23 @@ impl FunctionCallAnalyzer {
                             .flat_map(|b| b.instructions.iter())
                             .find(|i| i.id == instr_id)
                             .unwrap();
-                        // Use collect_source_expressions and then collect_read_addresses on the expression
-                        let read_var = *instr
-                            .kind
-                            .collect_source_expressions() // Get source expressions first
+                        // Manually extract reads like in find_lowest_version_of
+                        let mut reads_in_instr: Vec<&SsaMemoryReference> = Vec::new();
+                        if let Some(target) = instr.kind.get_write_address() {
+                            reads_in_instr.extend(target.extract_read_addresses());
+                        }
+                        reads_in_instr.extend(
+                            instr
+                                .kind
+                                .collect_source_expressions()
+                                .iter()
+                                .flat_map(|expr| expr.collect_read_addresses()),
+                        );
+
+                        let read_var = *reads_in_instr
                             .iter()
-                            .flat_map(|expr| expr.collect_read_addresses()) // Then collect reads from expressions
-                            .find(|r| r.as_stack_relative() == Some(offset)) // Call trait method on reference
+                            // Dereference r once here
+                            .find(|r| (*r).as_stack_relative() == Some(offset))
                             .expect("Could not find read variable for return value")
                             .as_versioned()
                             .unwrap();

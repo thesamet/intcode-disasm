@@ -962,8 +962,9 @@ impl<'a> SSAConversionState<'a> {
                     let pred_id = pred.source_block_id();
                     // Need read-only access to predecessor's end state
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
+                    // Add reference for as_stack_relative call
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && phi.result.as_stack_relative().is_some_and(|x| x > 0)
+                        && (&phi.result).as_stack_relative().is_some_and(|x| x > 0)
                     {
                         phi_inputs.insert(pred.clone(), phi.result.clone());
                     } else {
