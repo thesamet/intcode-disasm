@@ -90,7 +90,7 @@ impl DataFlowAnalyzer {
             for instr in block.low_instructions() {
                 // Calculate USE for this instruction
                 for r in instr.kind.collect_read_addresses().into_iter() {
-                    if !defined_in_block.contains::<&MemoryReference>(r) {
+                    if !defined_in_block.contains(r) {
                         // Specify type for contains
                         block_flow.use_before_def.insert(r.clone(), instr.id); // Use instr.id, r.clone() is correct
                     }
@@ -229,7 +229,7 @@ impl DataFlowAnalyzer {
                 // definitions flow forward.
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
-                    current_defs_out.retain(|d| !d.is_outgoing_parameter()); // Use MemoryReferenceInfo trait directly on MemoryReference
+                    current_defs_out.retain(|d| !d.kind.as_stack_relative().is_some_and(|n| n > 0)); // Check if it's an outgoing parameter
                 }
 
                 // Update block's OUT set if changed
@@ -273,7 +273,7 @@ impl DataFlowAnalyzer {
                     other_flow
                         .use_before_def
                         .keys()
-                        .filter(|k| k.is_local_or_parameter()) // Use MemoryReferenceInfo trait directly on MemoryReference
+                        .filter(|k| k.as_stack_relative().is_some_and(|n| n <= 0)) // Check if it's a local or parameter
                         .map(|k| Definition {
                             source: OriginationPoint::FunctionInput,
                             kind: k.clone(),

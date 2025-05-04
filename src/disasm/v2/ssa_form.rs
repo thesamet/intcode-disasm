@@ -978,7 +978,7 @@ impl<'a> SSAConversionState<'a> {
             let mut phi_functions = vec![];
             for phi in &ssa_block.phi_functions {
                 let mut phi_inputs = HashMap::new();
-                for pred in block.predecessors() {
+                for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_)) {

@@ -269,6 +269,9 @@ impl<'a> PrettyPrinter<'a> {
             .get_type_inference_result()
             // .and_then(|m| m.get_function_signature(&function.original_id));
             .and_then(|_m| panic!("Migration uncomment")); // Use _m to avoid unused variable warning
+        
+        // Return empty string during migration
+        "".to_string()
         /* Migration: Commented out unreachable code block
         let sig = if let Some((args, rets)) = args_rets {
             let mut args = args.iter().map(|(_, v, _)| {

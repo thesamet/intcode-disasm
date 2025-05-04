@@ -180,7 +180,7 @@ impl ControlFlowGraphBuilder {
                 span: Span::new(start_addr, current_block_end),
                 // native_instructions: current_block_instructions.clone(), // Removed - unresolved
                 // Assuming convert_block now returns Vec<InstructionNode<v3::lir::MemoryReference>>
-                low_instructions: InstructionNode::convert_block(&current_block_instructions), // Pass reference
+                low_instructions: InstructionNode::convert_block(current_block_instructions.clone()), // Clone to satisfy IntoIterator
                 next: NextKind::Unknown,  // Specify type
                 predecessors: Vec::new(), // Will use v3 MemoryReference
             };
