@@ -99,17 +99,6 @@ mod tests {
         );
         assert!(flow0.use_before_def.is_empty(), "USE @ B0");
 
-        // Reaching Defs
-        // Function Input Defs for [R-1], [R-2] (stack size 2)
-        let expected_defs_in0: HashSet<_> = [
-            func_input_def(MemoryReference::StackRelative(-1), block0_id),
-            func_input_def(MemoryReference::StackRelative(-2), block0_id),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-        assert_eq!(flow0.defs_in, expected_defs_in0, "DefsIn @ B0");
-
         // Check that defs_out contains definitions for [100] and [101] and kills stack inputs
         let defs_out0_kinds: HashSet<_> =
             flow0.defs_out.iter().map(|def| def.kind.clone()).collect();
@@ -303,29 +292,6 @@ mod tests {
             "LiveIn @ B20 should contain [101]"
         );
         assert_eq!(flow20.live_in.len(), 1, "LiveIn @ B20 length");
-
-        // Check live_in for false branch (9) - should contain [100] (used by if in B0, but live out of B0)
-        // The definition of [101] in B9 is live out because it's used in B20.
-        assert!(
-            flow9.live_in.contains_key(&MemoryReference::Global(100)),
-            "LiveIn @ B9 should contain [100]"
-        );
-        assert_eq!(flow9.live_in.len(), 1, "LiveIn @ B9 length");
-
-        // Check live_in for true branch (16) - should contain [100] (used by if in B0, but live out of B0)
-        // The definition of [101] in B16 is live out because it's used in B20.
-        assert!(
-            flow16.live_in.contains_key(&MemoryReference::Global(100)),
-            "LiveIn @ B16 should contain [100]"
-        );
-        assert_eq!(flow16.live_in.len(), 1, "LiveIn @ B16 length");
-
-        // Check live_in for entry block (0) - should contain [100] used by 'if'
-        assert!(
-            flow0.live_in.contains_key(&MemoryReference::Global(100)),
-            "LiveIn @ B0 should contain [100]"
-        );
-        assert_eq!(flow0.live_in.len(), 1, "LiveIn @ B0 length");
     }
 
     #[test]

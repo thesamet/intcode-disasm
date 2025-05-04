@@ -268,7 +268,7 @@ impl DataFlowAnalyzer {
                     other_flow
                         .use_before_def
                         .keys()
-                        .filter(|k| k.as_stack_relative().is_some_and(|n| n <= 0)) // Check if it's a local or parameter
+                        .filter(|k| (*k).is_local_or_parameter()) // Check if it's a local or parameter
                         .map(|k| Definition {
                             source: OriginationPoint::FunctionInput,
                             kind: k.clone(),
@@ -387,7 +387,11 @@ impl DataFlowAnalyzer {
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
                 let dfr = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
-                for gen in dfr.gen.keys().filter(|k| k.as_stack_relative().is_some_and(|n| n < 0)) {
+                for gen in dfr
+                    .gen
+                    .keys()
+                    .filter(|k| k.as_stack_relative().is_some_and(|n| n < 0))
+                {
                     // Only include negative stack relative references (return values)
                     // This matches v2 behavior where only negative stack relative references are considered
                     new_live_out
@@ -431,13 +435,14 @@ impl DataFlowAnalyzer {
 
                 // Now, get the DataFlowBlock for the *calling* block and update its CallSiteInfo.
                 let calling_block_flow = df_result.blocks.get_mut(&calling_block_id).unwrap();
-                let calling_block_call_site_info = calling_block_flow.call_site_info.as_mut().unwrap();
-                
+                let calling_block_call_site_info =
+                    calling_block_flow.call_site_info.as_mut().unwrap();
+
                 // Add the identified return value usages to the `return_values_accessed` map.
                 calling_block_call_site_info
                     .return_values_accessed
                     .extend(return_usages_in_block.clone()); // Clone the vec to extend
-                
+
                 debug!(
                     "Updated call site info for block {:?}: added return usages {:?}",
                     calling_block_id, return_usages_in_block
