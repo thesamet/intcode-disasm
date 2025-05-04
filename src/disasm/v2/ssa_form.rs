@@ -945,20 +945,26 @@ impl<'a> SSAConversionState<'a> {
         function: &Function,
         ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
     ) {
+        // Temporary storage for predecessor updates to avoid borrow conflicts
+        let mut predecessor_updates: Vec<(BlockId, PredecessorKind<SsaMemoryReference>)> =
+            Vec::new();
+
+        // First pass: Calculate final instructions, phis, and next state for each block
         for block_id in &function.all_block_ids {
-            let block = self.model.get_block(*block_id);
-            let ssa_block = ssa_blocks.get(block_id).unwrap();
-            let mut phi_functions = vec![];
-            for phi in &ssa_block.phi_functions {
-                let mut phi_inputs = HashMap::new();
+            let block = self.model.get_block(*block_id); // Original block info
+            let ssa_block_ro = ssa_blocks.get(block_id).unwrap(); // Read-only access for now
+
+            // Calculate final phi functions
+            let mut final_phi_functions = vec![];
+            for phi in &ssa_block_ro.phi_functions {
+                let mut phi_inputs = HashMap::new(); // Initialize inside this loop
                 for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
+                    // Need read-only access to predecessor's end state
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
                         && phi.result.as_stack_relative().is_some_and(|x| x > 0)
                     {
-                        // For function returns, the phi result itself represents the value.
-                        // Wrap the SsaVar result in SsaOperand::Variable.
                         phi_inputs.insert(pred.clone(), phi.result.clone());
                     } else {
                         phi_inputs.insert(
@@ -967,18 +973,17 @@ impl<'a> SSAConversionState<'a> {
                         );
                     }
                 }
-                let mut phi = phi.clone();
-                phi.inputs = phi_inputs;
-                phi_functions.push(phi);
+                let mut final_phi = phi.clone();
+                final_phi.inputs = phi_inputs; // Assign the calculated inputs
+                final_phi_functions.push(final_phi);
             }
-            let mut instructions = vec![];
-            let mut registry = ssa_block.start_state.clone();
-            for instr in &ssa_block.instructions {
-                let mut instr = instr.clone();
-                if instr.id == InstructionId::from(6) {
-                    print!("Outside map_rw: {:?}", registry);
-                }
-                instr = instr.map_rw(
+
+            // Calculate final instructions
+            let mut final_instructions = vec![];
+            let mut registry = ssa_block_ro.start_state.clone();
+            for instr in &ssa_block_ro.instructions {
+                let mut final_instr = instr.clone();
+                final_instr = final_instr.map_rw(
                     &mut registry,
                     |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
                     |reg, ssa_memory_reference| match ssa_memory_reference {
@@ -988,61 +993,69 @@ impl<'a> SSAConversionState<'a> {
                         _ => ssa_memory_reference.clone(),
                     },
                 );
-                if let Some(write) = instr.kind.get_write_address() {
+                if let Some(write) = final_instr.kind.get_write_address() {
                     if let Some(write) = write.as_versioned() {
                         registry.set_version(write.kind, *write);
                     }
                 }
-                instructions.push(instr);
+                final_instructions.push(final_instr);
             }
+
+            // Calculate final next state
             let ssa_block_next = {
                 block
                     .next
-                    .map(&mut |op| ssa_block.end_state.current_memory_reference(op))
+                    .map(&mut |op| ssa_block_ro.end_state.current_memory_reference(op))
             };
-            let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
-            ssa_block.instructions = instructions;
-            ssa_block.phi_functions = phi_functions;
+
+            // Store predecessor updates needed for the next pass
             match &ssa_block_next {
                 NextKind::Follows(target_id) => {
-                    ssa_blocks
-                        .get_mut(&target_id)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::FollowsFrom(*block_id));
+                    predecessor_updates.push((*target_id, PredecessorKind::FollowsFrom(*block_id)));
                 }
                 NextKind::Goto(target_block_id) => {
-                    ssa_blocks
-                        .get_mut(&target_block_id)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
+                    predecessor_updates
+                        .push((*target_block_id, PredecessorKind::GotoFrom(*block_id)));
                 }
                 NextKind::FunctionCall(call) => {
-                    // Add the current block as a predecessor to the function's entry block (this seems incorrect, handled elsewhere?)
-                    // Add the current block (call site) as predecessor to the return block
-                    ssa_blocks
-                        .get_mut(&call.return_block)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
+                    predecessor_updates.push((
+                        call.return_block,
+                        PredecessorKind::FunctionCallReturns(call.clone()),
+                    ));
                 }
                 NextKind::Condition(cond) => {
-                    // Add current block as predecessor to the target block
-                    ssa_blocks
-                        .get_mut(&cond.target_block)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::ConditionalJump(cond.clone()));
-                    ssa_blocks
-                        .get_mut(&cond.follows_block)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
+                    predecessor_updates.push((
+                        cond.target_block,
+                        PredecessorKind::ConditionalJump(cond.clone()),
+                    ));
+                    predecessor_updates.push((
+                        cond.follows_block,
+                        PredecessorKind::ConditionalFollow(cond.clone()),
+                    ));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             }
-            ssa_blocks.get_mut(block_id).unwrap().next = ssa_block_next;
+
+            // Update the current block's calculated fields (mutable borrow needed here)
+            let ssa_block_mut = ssa_blocks.get_mut(block_id).unwrap();
+            ssa_block_mut.instructions = final_instructions;
+            ssa_block_mut.phi_functions = final_phi_functions;
+            ssa_block_mut.next = ssa_block_next;
+        }
+
+        // Second pass: Apply predecessor updates
+        for (target_block_id, predecessor_kind) in predecessor_updates {
+            if let Some(target_block) = ssa_blocks.get_mut(&target_block_id) {
+                target_block.predecessors.push(predecessor_kind);
+            } else {
+                // Handle cases where the target block might not be in the current function's ssa_blocks
+                // This might happen with inter-functional calls or jumps, though less common in SSA directly.
+                // Depending on the desired behavior, you might log a warning or handle it differently.
+                log::warn!(
+                    "Target block {:?} for predecessor update not found in current function's SSA blocks.",
+                    target_block_id
+                );
+            }
         }
     }
 }
