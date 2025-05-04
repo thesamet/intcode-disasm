@@ -696,11 +696,10 @@ impl<'a> SSAConversionState<'a> {
         ) -> SsaMemoryReference {
             match MemoryReferenceType::try_from(op) {
                 Ok(mem_ref) => {
-                    // Assign next version in 'current' (global) and update 'end' (block local)
-                    // Assign next version in 'current' (global) and update 'end' (block specific)
-                    let next_var = current.create_next_version(&mem_ref); // Creates v_n+1 in 'current'
-                    let next_var = current.create_next_version(&mem_ref);
-                    end.set_version(mem_ref, next_var);
+                    // Assign next version in 'current' (global) registry and update 'end' (block-local) state
+                    let next_var = current.create_next_version(&mem_ref); // Increments global counter, gets v_n+1
+                    end.set_version(mem_ref, next_var);                   // Store v_n+1 in block's end state
+                    // Return the correctly incremented version
                     next_var.into()
                 }
                 Err(_) => {
