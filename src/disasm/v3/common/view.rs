@@ -1,17 +1,16 @@
 // Corrected imports based on actual structure and public modules
 use crate::disasm::v3::{
     common::{
-        function_call::CallSiteInfo, // Use v3 CallSiteInfo
-        // instruction::InstructionNode, // Removed - unresolved
-        memory_reference::MemoryReference,
+        function_call::CallSiteInfo, // Use v3 CallSiteInfo (still in common for now)
         span::Span,
     },
     control_flow::{Block, Function, NextKind, PredecessorKind}, // Use pub use from control_flow::mod
     data_flow::block::DataFlowBlock, // Use pub use from data_flow::mod
     function_call::result::CalleeInfo, // Use v3 CalleeInfo (now public)
     id_types::{BlockId, FunctionId},
+    lir::{InstructionNode, MemoryReference}, // Use LIR types
     model::{DataFlowComplete, FunctionCallComplete, Model, ModelState, SsaComplete}, // Correct path for DataFlowComplete
-    // native::NativeInstruction, // Removed - unresolved
+    native::NativeInstruction, // Use Native types
     ssa::block::SsaBlock,      // Use pub use from ssa::mod
 };
 use std::fmt::Debug;
