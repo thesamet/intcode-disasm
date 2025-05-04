@@ -400,6 +400,3 @@ impl DataFlowAnalyzer {
         new_live_out
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -5,3 +5,5 @@ pub mod analyzer; // Make public
 pub use block::{DataFlowBlock, Definition, OriginationPoint};
 pub use result::DataFlowResult;
 pub use analyzer::DataFlowAnalyzer;
+
+mod tests;
