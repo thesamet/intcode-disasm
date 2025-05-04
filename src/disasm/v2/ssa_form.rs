@@ -464,40 +464,7 @@ pub struct SsaFunction {
     pub blocks: HashMap<BlockId, SsaBlock>,
 }
 
-impl<'a> FunctionView<'a, SsaComplete> {
-    // Helper to find an SSA variable with a specific debug marker
-    #[cfg(test)]
-    pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult<'a>> {
-        panic!("For now!")
-        /*
-        use super::instructions::Instruction;
-
-        for block in self.blocks.values() {
-            for instr in &block.instructions {
-                if let Instruction::Assign {
-                    target,
-                    target_debug_marker: Some(target_debug_marker),
-                    ..
-                } = &instr.kind
-                {
-                    if *target_debug_marker == marker {
-                        return Some(MarkerSearchResult::SsaAddressable(target));
-                    }
-                };
-                if let Some(found) = instr
-                    .kind
-                    .collect_source_expressions()
-                    .iter()
-                    .find_map(|x| x.find_debug_marker(marker))
-                {
-                    return Some(MarkerSearchResult::Expr(found));
-                }
-            }
-        }
-        None
-        */
-    }
-}
+// Removed duplicate impl block for FunctionView<SsaComplete> with find_marker
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MarkerSearchResult<'a> {
@@ -519,7 +486,7 @@ impl SsaResult {
 
     // Modified to accept v3 Model<DataFlowComplete>
     pub fn from_program_model(model: &Model<DataFlowComplete>) -> Model<SsaComplete> {
-        let mut ssa_result = Self::new();
+        // let mut ssa_result = Self::new(); // Removed as SsaResult is built implicitly
 
         let mut blocks = HashMap::new();
         // Process each function using the v3 model's function iterator
@@ -1310,28 +1277,19 @@ mod tests {
         // Access the main function view from the resulting model
         let func_view = model
             .function(&V3FunctionId::new(0))
-            .expect("Main function not found");
+            .unwrap(); // Use unwrap for Option<FunctionView>
 
         // Expect the function to have blocks
         assert!(!func_view.blocks().is_empty());
-
-        // Expect the function to have blocks
-        assert!(!ssa_function.blocks.is_empty());
-
-        // Check the entry block (0)
-        let entry_block_id = BlockId::from(0);
-        let entry_block = ssa_function.blocks.get(&entry_block_id).unwrap();
 
         // Check the entry block (0)
         let entry_block_id = BlockId::from(0);
         let entry_block_view = func_view
             .block(&entry_block_id)
-            .expect("Entry block not found");
+            .expect("Entry block not found"); // Keep expect for Option<BlockView>
 
-        // The entry block should have instructions (accessing via SsaBlock stored in model)
-        assert!(!model.ssa_result().unwrap().blocks[&entry_block_id]
-            .instructions
-            .is_empty());
+        // The entry block should have instructions (accessing via BlockView::ssa())
+        assert!(!entry_block_view.ssa().instructions.is_empty());
     }
 
     // Test conversion with dominance frontiers and phi functions
@@ -1361,20 +1319,15 @@ mod tests {
             "#,
         );
 
-        // Access the SSA result from the model
-        let ssa_result_data = model.ssa_result().expect("SSA result missing");
-
         // Find the block with the output instruction (the merge block)
+        let main_func_view = model.function(&V3FunctionId::new(0)).unwrap();
         let mut merge_block_id = None;
-        // Iterate through blocks in the SsaResult
-        for (block_id, block) in &ssa_result_data.blocks {
-            // Check if the block belongs to the main function (optional, but good practice)
-            if model
-                .block(block_id)
-                .map_or(false, |b| b.containing_function_id() == V3FunctionId::new(0))
-            {
-                if block
-                    .instructions
+        // Iterate through blocks in the FunctionView
+        for (block_id, block_view) in main_func_view.blocks() {
+            // Access SSA block data via the view
+            let ssa_block = block_view.ssa();
+            if ssa_block
+                .instructions
                     .iter()
                     .any(|instr| matches!(instr.kind, Instruction::Output(_)))
                 {
@@ -1390,11 +1343,12 @@ mod tests {
         );
         let merge_block_id = merge_block_id.unwrap();
 
-        // Get the merge block from the SsaResult
-        let merge_block = ssa_result_data.blocks.get(&merge_block_id).unwrap();
+        // Get the merge block view and its SSA data
+        let merge_block_view = main_func_view.block(&merge_block_id).unwrap();
+        let merge_ssa_block = merge_block_view.ssa();
 
         // Verify that the instruction that reads from [100] is using the correct SSA var
-        let output_instr = merge_block
+        let output_instr = merge_ssa_block
             .instructions
             .iter()
             .find(|instr| matches!(instr.kind, Instruction::Output(_)))
@@ -1456,25 +1410,19 @@ mod tests {
             "#,
         );
 
-        // Access the SSA result from the model
-        let ssa_result_data = model.ssa_result().expect("SSA result missing");
-
         // Find the return block by searching for one that contains output instruction
+        let main_func_view = model.function(&V3FunctionId::new(0)).unwrap();
         let mut found_return_block = None;
-        // Iterate through blocks in the SsaResult
-        for (block_id, block) in &ssa_result_data.blocks {
-            // Check if the block belongs to the main function (optional, but good practice)
-            if model
-                .block(block_id)
-                .map_or(false, |b| b.containing_function_id() == V3FunctionId::new(0))
-            {
-                if !block.instructions.is_empty() {
-                    let first_instr = &block.instructions[0];
-                    if matches!(first_instr.kind, Instruction::Output(_)) {
-                        println!("Found block with output: {}", block_id);
-                        found_return_block = Some(block);
-                        break;
-                    }
+        // Iterate through blocks in the FunctionView
+        for (block_id, block_view) in main_func_view.blocks() {
+            // Access SSA block data via the view
+            let ssa_block = block_view.ssa();
+            if !ssa_block.instructions.is_empty() {
+                let first_instr = &ssa_block.instructions[0];
+                if matches!(first_instr.kind, Instruction::Output(_)) {
+                    println!("Found block with output: {}", block_id);
+                    found_return_block = Some(ssa_block); // Store the SsaBlock
+                    break;
                 }
             }
         }
@@ -1535,12 +1483,14 @@ mod tests {
             "#,
         );
 
-        // Access the SSA result from the model
-        let ssa_result_data = model.ssa_result().expect("SSA result missing");
-
-        // Get the block
+        // Get the block view and its SSA data
         let block_id = BlockId::from(0);
-        let block = ssa_result_data.blocks.get(&block_id).unwrap();
+        let block_view = model
+            .function(&V3FunctionId::new(0))
+            .unwrap()
+            .block(&block_id)
+            .unwrap();
+        let block = block_view.ssa(); // Get the SsaBlock
 
         // Now find the instruction: [R-4] = [R-4] + 10
         let add_instr = block
@@ -1772,23 +1722,23 @@ mod tests {
         // Access function info from v3 model
         let func_view = ctx.main_function();
         let return_block_id = func_view.return_block().expect("Return block not found");
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
-        // Access SSA result from v3 model
-        let ssa_result_data = ctx.model.ssa_result().unwrap();
+        // Access SSA block data via the view
         assert_eq!(
-            ssa_result_data
-                .blocks
-                .get(&return_block_id)
-                .unwrap() // Use v3 return_block_id
+            func_view
+                .block(&return_block_id)
+                .unwrap()
+                .ssa() // Get SsaBlock via view
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
             3 // Expecting version 3 based on the control flow
         );
+        // Access block 13 via the view
         assert_eq!(
-            f0.blocks
-                .get(&BlockId::from(13))
+            func_view
+                .block(&BlockId::from(13))
                 .unwrap()
+                .ssa() // Get SsaBlock via view
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
@@ -1821,12 +1771,11 @@ exit:
         // Access function info from v3 model
         let func_view = ctx.main_function();
         let return_block_id = func_view.return_block().expect("Return block not found");
-        // Access SSA result from v3 model
-        let ssa_result_data = ctx.model.ssa_result().unwrap();
-        let return_block = ssa_result_data.blocks.get(&return_block_id).unwrap();
+        // Access SSA block data via the view
+        let return_block = func_view.block(&return_block_id).unwrap().ssa();
         assert_eq!(
             return_block
-                .end_state // Access end_state from SsaBlock in v3 model
+                .end_state // Access end_state from SsaBlock
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
             return_block.phi_functions[0].result.version // Compare with phi result version
@@ -1938,15 +1887,12 @@ exit:
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
 
-        // Check the merge block has a phi function for [R+1] using the v3 model's SsaResult
-        let merge_block = ctx
-            .model // Use model field from TestContext
-            .ssa_result()
-            .unwrap()
-            .blocks // Access blocks directly from v3::SsaResult
-            .iter()
-            .filter(|(id, _)| ctx.main_function().contains_block(id)) // Filter for main function blocks
-            .sorted_by_key(|(k, _)| *k)
+        // Check the merge block has a phi function for [R+1] using the v3 model views
+        let main_func_view = ctx.main_function();
+        let merge_block = main_func_view
+            .blocks() // Iterate through blocks in the view
+            .map(|(_, block_view)| block_view.ssa()) // Get SsaBlock for each
+            .sorted_by_key(|ssa_block| ssa_block.original_id) // Sort by original ID
             .nth(3)
             .unwrap()
             .1;
