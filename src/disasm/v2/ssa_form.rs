@@ -609,8 +609,15 @@ impl VersionRegistry {
         expr.map(&mut |op: &SsaMemoryReference| { // Input is already SsaMemoryReference
             match op {
                 SsaMemoryReference::Versioned(v_partial) => {
-                    // Look up the final version in this registry
-                    self.current_version(&v_partial.kind).into()
+                    // Check if this registry (self, the start_state) has a definition for this kind
+                    if self.has_version_for(&v_partial.kind) {
+                        // If yes, the version in this registry dominates. Use it.
+                        self.current_version(&v_partial.kind).into()
+                    } else {
+                        // If no, the version already present (v_partial) is the one to keep,
+                        // as it must have been defined within the current block in the first pass.
+                        SsaMemoryReference::Versioned(*v_partial) // Clone v_partial
+                    }
                 }
                 SsaMemoryReference::Deref(inner_ssa_expr) => {
                     // Recursively resolve the inner SSA expression using *this* same registry
@@ -1083,17 +1090,24 @@ impl<'a> SSAConversionState<'a> {
                 // Map reads using start_state, map writes by cloning (version is already final)
                 let read_mapped_instr = instr_node.map_rw(
                     &mut start_state, // Pass start_state as context
-                    |reg, ssa_mem_ref: &SsaMemoryReference| {
-                        // map_read closure: Resolve reads using the start_state (reg)
+                    |reg, ssa_mem_ref: &SsaMemoryReference| { // reg is the start_state
+                        // map_read closure: Resolve reads using the start_state (reg) or the existing version
                         match ssa_mem_ref {
-                            SsaMemoryReference::Versioned(v) => {
-                                // Find the current version of this variable kind in the start state
-                                // Look up the final version in the start_state (reg)
-                                reg.current_version(&v.kind).into()
+                            SsaMemoryReference::Versioned(v_local) => {
+                                // Check if the start state (reg) has a definition for this kind
+                                if reg.has_version_for(&v_local.kind) {
+                                    // If yes, the start state version dominates. Use it.
+                                    reg.current_version(&v_local.kind).into()
+                                } else {
+                                    // If no, the version assigned in the first pass (v_local) is correct
+                                    // for reads defined within the block before this read.
+                                    SsaMemoryReference::Versioned(*v_local) // Clone the existing versioned ref
+                                }
                             }
-                            SsaMemoryReference::Deref(expr) => { // expr is Box<Expression<SsaMemoryReference>>
-                                // Recursively resolve the inner *SSA* expression using the start state registry
-                                let resolved_inner_expr = reg.resolve_ssa_expression(expr.as_ref());
+                            SsaMemoryReference::Deref(expr_local) => { // expr_local is Box<Expression<SsaMemoryReference>>
+                                // Resolve the inner expression using the start state registry (reg)
+                                // This recursive call uses resolve_ssa_expression, which now has the correct logic.
+                                let resolved_inner_expr = reg.resolve_ssa_expression(expr_local.as_ref());
                                 SsaMemoryReference::Deref(Box::new(resolved_inner_expr))
                             }
                         }
