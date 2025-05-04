@@ -60,12 +60,15 @@ macro_rules! make_model {
                         marker: std::marker::PhantomData,
                     }
                 }
-                // Define with_ methods for each field
                 $(
-                pub fn [<with_ $field:snake:lower>](mut self, [<$field:snake:lower>]: $field) -> Self {
-                    self.[<$field:snake:lower>] = Some([<$field:snake:lower>]);
-                    self
-                })*
+                let $field = update_fields_helper!(
+                                    $model,
+                                    $field,           // Pass the type of the outer field
+                                    { $($field),* }   // Pass the full list of all field types
+                                );
+                )*;
+
+                // Define with_ methods for each field
             }
             // Define Has traits for each field
             $(
@@ -85,6 +88,12 @@ macro_rules! make_model {
     }
 }
 
+macro_rules! generate_with_method {
+    ($model: ident, $outer: ty, list: { $( $field:ty ),*} ) => {
+        $( fn with_thing(mut self, $outer, $list) {}; )*;
+    };
+}
+
 macro_rules! add_block_view_when {
     ($result_type:ident, $result_var:ident) => {
         paste::paste! {
@@ -97,7 +106,7 @@ macro_rules! add_block_view_when {
             where
                 S: crate::disasm::v3::model::[<Has $result_type Result>],
             {
-                fn $result_var(&self) -> &$block_type {
+                pub fn $result_var(&self) -> &$block_type {
                     self.model
                         .[<$result_type:snake:lower _result>]()
                         .blocks
@@ -128,8 +137,14 @@ make_model!(Model, ModelState, {
 mod tests {
 
     use crate::disasm::{
-        v2::instructions::{Instruction, InstructionNode},
-        v3::{common::MemoryReference, Block, InstructionId, NextKind, Span},
+        v2::{
+            instructions::{Instruction, InstructionNode},
+            ssa_form::VersionRegistry,
+        },
+        v3::{
+            common::CallSiteInfo, data_flow::DataFlowBlock, function_call::result::CalleeInfo,
+            lir::MemoryReference, ssa::SsaBlock, Block, InstructionId, NextKind, Span,
+        },
     };
 
     use super::*;
@@ -152,7 +167,6 @@ mod tests {
             id: block_id,
             containing_function_id: function_id,
             span: Span { start: 0, end: 10 },
-            native_instructions: vec![],
             low_instructions: vec![InstructionNode {
                 id: InstructionId::fresh(),
                 kind: Instruction::Halt,
@@ -199,24 +213,12 @@ mod tests {
                 phi_functions: vec![],
                 instructions: vec![InstructionNode {
                     id: InstructionId::fresh(),
-                    kind: v2::instructions::Instruction::Halt,
+                    kind: Instruction::Halt,
                 }],
                 start_state: VersionRegistry::new(function_id),
                 end_state: VersionRegistry::new(function_id),
                 next: NextKind::Halt,
                 predecessors: vec![],
-                data_flow_block: DataFlowBlock {
-                    defs_in: HashSet::new(),
-                    defs_out: HashSet::new(),
-                    live_in: HashMap::new(),
-                    live_out: HashMap::new(),
-                    gen: HashMap::new(),
-                    use_before_def: HashMap::new(),
-                    writes_above_r: false,
-                    function_returns_in: HashSet::new(),
-                    function_returns_out: HashSet::new(),
-                    call_site_info: None,
-                },
             },
         );
 
@@ -231,20 +233,7 @@ mod tests {
         function_call_functions.insert(function_id, CalleeInfo::default());
 
         let mut function_call_blocks = HashMap::new();
-        function_call_blocks.insert(
-            block_id,
-            CallSiteInfo {
-                calling_block_id: block_id,
-                calling_function_id: function_id,
-                target_function_id: Some(function_id),
-                target_address_var: None,
-                argument_writes: HashMap::new(),
-                return_reads: HashMap::new(),
-                return_block_id: block_id,
-                parameter_map: HashMap::new(),
-                return_map: HashMap::new(),
-            },
-        );
+        function_call_blocks.insert(block_id, CallSiteInfo::default());
 
         FunctionCallAnalysisResult {
             functions: function_call_functions,
@@ -385,7 +374,6 @@ mod tests {
         assert_eq!(function_view.return_block(), Some(block_id));
 
         // Test block details
-        assert_eq!(block_view.native_instructions().len(), 0);
         assert_eq!(block_view.low_instructions().len(), 1);
         assert!(matches!(block_view.next(), NextKind::Halt));
     }
@@ -448,9 +436,7 @@ mod tests {
         let block_view = function_view.block(&block_id);
         let call_site_info = block_view.call_site_info();
 
-        assert_eq!(call_site_info.calling_block_id, block_id);
-        assert_eq!(call_site_info.calling_function_id, function_id);
-        assert_eq!(call_site_info.target_function_id, Some(function_id));
+        assert_eq!(call_site_info.return_values_accessed.len(), 0);
 
         // Test callee info access
         let callee_info = function_view.callee_info();
