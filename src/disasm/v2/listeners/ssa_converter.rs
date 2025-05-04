@@ -52,7 +52,7 @@ impl ModelEventListener for SsaConverter {
         let ssa_result = SsaResult::from_program_model(&v3_model_data_flow); // Pass v3 model
 
         // 4. Store the v2 SsaResult back into the v2 ProgramModel
-        model.set_ssa_result(ssa_result);
+        // model.set_ssa_result(ssa_result);
 
         info!("SSA conversion (using v3 data) complete");
         collector.publish(SsaConversionComplete {});

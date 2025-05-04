@@ -24,6 +24,7 @@ impl SsaConverter {
         let result = ssa_form::SsaResult::from_program_model(&self.model);
 
         // Return a new model with the updated state
-        Ok(self.model.clone().with_ssa_result(result))
+        panic!()
+        // Ok(self.model.clone().with_ssa_result(result))
     }
 }

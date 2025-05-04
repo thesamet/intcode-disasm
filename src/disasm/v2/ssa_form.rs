@@ -10,25 +10,25 @@ use crate::disasm::{
         native::{Operand, OperandKind},            // Keep v2 Operand for tests/conversion?
     },
     v3::{
+        self,
         control_flow::FunctionView,
         data_flow::OriginationPoint,
         id_types::FunctionId as V3FunctionId,
         lir::{Expression, Instruction, InstructionNode, MemoryReference, MemoryReferenceInfo},
-        model::{DataFlowComplete, Model},
+        model::{DataFlowComplete, Model, SsaComplete},
     },
 };
-
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-};
-// Removed duplicate std::fmt import
 
 use super::{
     instructions::{InstructionId, PointerId}, // Keep v2 InstructionId, PointerId for now
     model::Function,                          // Keep v2 Function struct for SsaFunction output
     native::GenericNativeInstruction,         // Keep v2 native instruction for SsaBlock output
 };
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
+pub use v3::ssa::SsaBlock;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum MemoryReferenceType {
@@ -455,24 +455,6 @@ pub struct PhiFunction {
 
 pub type SsaInstruction = GenericNativeInstruction<SsaOperand>; // Keep using v2 native instruction type for now
 
-/// Represents a basic block in SSA form
-#[derive(Debug, Clone)]
-pub struct SsaBlock {
-    /// Original block ID
-    pub original_id: BlockId,
-    /// Phi functions at the start of this block
-    pub phi_functions: Vec<PhiFunction>,
-    // Instructions in SSA form (LIR)
-    pub instructions: Vec<InstructionNode<SsaMemoryReference>>,
-    // Start state: the state of all versioned variables at the start of this block (LIR)
-    pub start_state: VersionRegistry, // Track only versioned variables
-    /// End state: the state of all versioned variables at the end of this block (LIR)
-    pub end_state: VersionRegistry, // Track only versioned variables
-    /// Control flow information using SSA operands (using v3 types)
-    pub next: crate::disasm::v3::control_flow::NextKind<SsaMemoryReference>,
-    pub predecessors: Vec<crate::disasm::v3::control_flow::PredecessorKind<SsaMemoryReference>>,
-}
-
 /// Represents a function in SSA form
 #[derive(Debug, Clone)]
 pub struct SsaFunction {
@@ -482,10 +464,10 @@ pub struct SsaFunction {
     pub blocks: HashMap<BlockId, SsaBlock>,
 }
 
-impl SsaFunction {
+impl<'a> FunctionView<'a, SsaComplete> {
     // Helper to find an SSA variable with a specific debug marker
     #[cfg(test)]
-    pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult> {
+    pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult<'a>> {
         panic!("For now!")
         /*
         use super::instructions::Instruction;
@@ -536,9 +518,10 @@ impl SsaResult {
     }
 
     // Modified to accept v3 Model<DataFlowComplete>
-    pub fn from_program_model(model: &Model<DataFlowComplete>) -> Self {
+    pub fn from_program_model(model: &Model<DataFlowComplete>) -> Model<SsaComplete> {
         let mut ssa_result = Self::new();
 
+        let mut blocks = HashMap::new();
         // Process each function using the v3 model's function iterator
         for (v3_function_id, function_view) in model.functions() {
             // Convert v3 FunctionId to v2 FunctionId for SsaResult key and internal use
@@ -548,21 +531,10 @@ impl SsaResult {
 
             // Pass the v3 model and the specific function view to the converter
             let mut converter = SSAConversionState::new(model, function_view);
-            let ssa_func = SsaFunction {
-                original_id: v2_function_id, // Store the v2 ID
-                blocks: converter.convert_function(),
-            };
-            ssa_result.functions.insert(v2_function_id, ssa_func);
+            blocks.extend(converter.convert_function());
         }
-
-        ssa_result
-    }
-
-    #[cfg(test)]
-    pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult> {
-        self.functions
-            .values()
-            .find_map(|func| func.find_marker(marker))
+        let c = model.clone();
+        c.with_ssa_result(v3::ssa::SsaResult { blocks })
     }
 }
 
@@ -1204,7 +1176,9 @@ mod tests {
     use crate::disasm::v2::model::ProgramModel;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
-    use crate::disasm::v2::{dispatching::EventPublisher, events::Event}; // Keep v2 dispatching
+    use crate::disasm::v2::{dispatching::EventPublisher, events::Event};
+    use crate::disasm::v3::model::SsaComplete;
+    // Keep v2 dispatching
     use crate::disasm::v3::{
         control_flow::ControlFlowGraphBuilder as V3ControlFlowGraphBuilder, // Alias v3 CFG Builder
         data_flow::DataFlowAnalyzer as V3DataFlowAnalyzer, // Alias v3 Data Flow Analyzer
@@ -1252,7 +1226,7 @@ mod tests {
         ($ctx:expr, $marker:expr, $expected_operand:expr) => {{
             // Find the SsaOperand with the given debug marker
             let found_operand = $ctx
-                .main_function
+                .main_function()
                 .find_marker($marker) // Use the new function name
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
@@ -1273,35 +1247,23 @@ mod tests {
     }
 
     struct TestContext {
-        main_function: SsaFunction,
-        v3_model: Model<DataFlowComplete>, // Store v3 model if needed for direct inspection
-        v2_model: ProgramModel,            // Store v2 model for results/pretty printing
+        model: Model<SsaComplete>, // Store v3 model if needed for direct inspection
     }
 
     impl TestContext {
         fn new(assembly: &str) -> Self {
-            let (v3_model, v2_model) = setup_analyzed_models(assembly);
+            let model = setup_analyzed_models(assembly);
 
-            // Extract the main function (always at ID 0) from the v2 model's result
-            let func_id = FunctionId::from(0);
-            let main_function = v2_model // Access result from v2 model
-                .get_ssa_result()
-                .unwrap()
-                .functions
-                .get(&func_id)
-                .expect("Main function not found in SSA program")
-                .clone();
+            TestContext { model }
+        }
 
-            TestContext {
-                main_function,
-                v3_model,
-                v2_model,
-            }
+        fn main_function(&self) -> FunctionView<SsaComplete> {
+            self.model.function(&FunctionId::new(0))
         }
     }
 
     // Modify setup to return both the v3 model needed for SSA and the v2 model for other checks
-    fn setup_analyzed_models(assembly: &str) -> SsaResult {
+    fn setup_analyzed_models(assembly: &str) -> Model<SsaComplete> {
         init_logging(); // Ensure logging is initialized
         let binary = parser::compile(assembly);
 
@@ -1312,16 +1274,14 @@ mod tests {
         let v3_model_scanned = V3ImageScanner::run(binary, v3_model_initial).unwrap();
         let v3_model_cfg = V3ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
         let v3_model_data_flow = V3DataFlowAnalyzer::run(v3_model_cfg).unwrap();
-        let v3_model_ssa = SsaResult::from_program_model(&v3_model_data_flow);
-
-        v3_model_ssa
+        SsaResult::from_program_model(&v3_model_data_flow)
     }
 
     // Test simple SSA conversion for basic blocks
     #[test]
     fn test_basic_ssa_conversion() {
         // Simple program with variable definitions and uses
-        let (v3_model, v2_model) = setup_analyzed_models(
+        let v3_model = setup_analyzed_models(
             r#"
             ; Offset 0
             R += 3          ; stack frame setup
@@ -1338,8 +1298,6 @@ mod tests {
         let ssa_result = SsaResult::from_program_model(&v3_model);
 
         // Expect a single function (at offset 0)
-        assert_eq!(ssa_result.functions.len(), 1);
-
         let func_id = FunctionId::from(0);
         let ssa_function = ssa_result.functions.get(&func_id).unwrap();
 
