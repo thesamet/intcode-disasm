@@ -1102,9 +1102,22 @@ impl<'a> SSAConversionState<'a> {
             for instr_node in &ssa_block.instructions { // Iterate over instructions with finalized writes
                 // Map reads using start_state, map writes by cloning (version is already final)
                 let read_mapped_instr = instr_node.map_rw(
-                    &mut (), // No context needed for these simple closures
-                    |_, ssa_mem_ref| start_state.current_memory_reference(ssa_mem_ref), // map_read
-                    |_, ssa_mem_ref| ssa_mem_ref.clone(), // map_write (just clone)
+                    start_state, // Pass start_state as context
+                    |reg, ssa_mem_ref: &SsaMemoryReference| {
+                        // map_read closure: Resolve reads using the start_state (reg)
+                        match ssa_mem_ref {
+                            SsaMemoryReference::Versioned(v) => {
+                                // Find the current version of this variable kind in the start state
+                                reg.current_version(&v.kind).into()
+                            }
+                            SsaMemoryReference::Deref(expr) => {
+                                // Recursively resolve the inner expression using the start state
+                                let resolved_inner_expr = reg.current_expression(expr);
+                                SsaMemoryReference::Deref(Box::new(resolved_inner_expr))
+                            }
+                        }
+                    },
+                    |_, ssa_mem_ref| ssa_mem_ref.clone(), // map_write: Write target version is already final, just clone.
                 );
                 populated_instructions.push(read_mapped_instr);
             }
