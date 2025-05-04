@@ -56,8 +56,8 @@ impl DataFlowAnalyzer {
 
     /// Performs the main data flow analysis passes for a given function.
     fn analyze_function(&self, func_id: FunctionId, df_result: &mut DataFlowResult) {
-        let function = self.model.function(&func_id);
-        let block_ids = function.all_block_ids();
+        let function = &self.model.control_flow_graph_result().functions[&func_id];
+        let block_ids: Vec<BlockId> = function.blocks.keys().cloned().collect();
 
         // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
         self.initialize_gen_use_func_in(&function, &block_ids, df_result);
@@ -77,12 +77,12 @@ impl DataFlowAnalyzer {
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
     fn initialize_gen_use_func_in(
         &self,
-        function: &FunctionView,
+        function: &crate::disasm::v3::model::Function,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
         for &block_id in block_ids {
-            let block = function.block(&block_id);
+            let block = &self.model.control_flow_graph_result().blocks[&block_id];
             let block_flow = df_result
                 .blocks
                 .entry(block_id)
@@ -134,7 +134,7 @@ impl DataFlowAnalyzer {
     // Pass 2: calculate function returns
     fn run_function_returns_analysis(
         &self,
-        function: &FunctionView,
+        function: &crate::disasm::v3::model::Function,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -162,10 +162,10 @@ impl DataFlowAnalyzer {
 
     fn calculate_function_returns_in(
         &self,
-        function: &FunctionView,
+        function: &crate::disasm::v3::model::Function,
         block_id: BlockId,
         df_result: &DataFlowResult,
-    ) -> HashSet<crate::disasm::v3::control_flow::FunctionCall<MemoryReference>> {
+    ) -> HashSet<FunctionCall<MemoryReference>> {
         let block = function.block(&block_id);
         let flow = df_result.blocks.get(&block_id).unwrap();
         let mut new_func_in = flow.function_returns_in.clone();
@@ -190,14 +190,14 @@ impl DataFlowAnalyzer {
     /// Pass 3: Computes Reaching Definitions iteratively.
     fn run_reaching_definitions_analysis(
         &self,
-        function: &FunctionView,
+        function: &crate::disasm::v3::model::Function,
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
-            for block_id in function.all_block_ids() {
-                let block = function.block(&block_id);
+            for block_id in function.blocks.keys() {
+                let block = &self.model.control_flow_graph_result().blocks[block_id];
                 // Definitions
                 let new_defs_in = self.calculate_defs_in(function, &block, df_result);
 
@@ -242,8 +242,8 @@ impl DataFlowAnalyzer {
     /// Calculates the Defs-In set for a single block based on its predecessors.
     fn calculate_defs_in(
         &self,
-        function: &FunctionView,
-        block: &BlockView,
+        function: &crate::disasm::v3::model::Function,
+        block: &Block,
         df_result: &DataFlowResult,
     ) -> HashSet<Definition> {
         let mut new_defs_in = HashSet::new();
@@ -256,12 +256,12 @@ impl DataFlowAnalyzer {
             new_defs_in.extend(pred_flow.defs_out.iter().cloned());
         }
 
-        if function.entry_block() == block.id() {
+        if function.entry_block == block.id {
             // Create synthetic definitions for any potential input parameters
             // to this function. We take the union of all the use_before_def sets
             // for all blocks in the function, since it is a superset (which is still
             // smaller than all the reads).
-            for &other_block_id in function.all_block_ids() {
+            for &other_block_id in function.blocks.keys() {
                 let other_flow = df_result.blocks.get(&other_block_id).unwrap();
                 new_defs_in.extend(
                     other_flow
@@ -283,7 +283,7 @@ impl DataFlowAnalyzer {
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
         &self,
-        function: &FunctionView,
+        function: &crate::disasm::v3::model::Function,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -314,11 +314,8 @@ impl DataFlowAnalyzer {
                 let mut current_live_in = block_flow.live_out.clone();
 
                 // add potential_function_call_params.
-                if function
-                    .block(&block_id)
-                    .next()
-                    .as_function_call()
-                    .is_some()
+                let block = &self.model.control_flow_graph_result().blocks[&block_id];
+                if matches!(block.next, NextKind::FunctionCall(_))
                 {
                     for d in &block_flow.defs_in {
                         if d.kind.is_outgoing_parameter() {
@@ -354,11 +351,11 @@ impl DataFlowAnalyzer {
     /// Calculates the Live-Out set for a single block based on its successors' Live-In sets.
     fn calculate_live_out(
         &self,
-        function: &FunctionView,
+        function: &crate::disasm::v3::model::Function,
         block_id: BlockId,
         df_result: &DataFlowResult, // Read-only access for successor IN sets
     ) -> HashMap<MemoryReference, HashSet<OriginationPoint>> {
-        let block = function.block(&block_id);
+        let block = &self.model.control_flow_graph_result().blocks[&block_id];
         let mut new_live_out = HashMap::new();
 
         for succ_id in block.next().successors() {
@@ -370,13 +367,13 @@ impl DataFlowAnalyzer {
             }
         }
 
-        if Some(block_id) == function.return_block() {
+        if Some(block_id) == function.return_block {
             // If this is a function return, we need to add all potential return arguments
             // to live out So we will have phi's automatically created for them at the right junctions.
             // We mark the live out as "FunctionOutput" to indicate that it is a return value.
             // This prevents from potential return values to appear as function inputs by propogating
             // to the entry point's live in.
-            for block_id in function.all_block_ids() {
+            for block_id in function.blocks.keys() {
                 let dfr = df_result.blocks.get(&block_id).unwrap();
                 for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) {
                     new_live_out
@@ -407,7 +404,7 @@ mod tests {
         // Create model and run image scanner
         let model = Model::new();
         let model = model.with_image(binary);
-        let model = ImageScanner::run(binary, model).unwrap();
+        let model = ImageScanner::run(binary.clone(), model).unwrap();
 
         // Build control flow graph
         let model = ControlFlowGraphBuilder::run(model).unwrap();

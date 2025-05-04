@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use crate::disasm::v3::control_flow::FunctionCall;
 use crate::disasm::v3::id_types::InstructionId;
-use crate::disasm::v3::common::MemoryReference;
-use crate::disasm::v3::function_call::CallSiteInfo;
+use crate::disasm::v3::common::{MemoryReference, FunctionCall, CallSiteInfo};
 
 #[derive(Clone, Debug, Default)]
 pub struct DataFlowBlock {
