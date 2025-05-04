@@ -172,7 +172,7 @@ impl<T: Clone + PartialEq + Eq + std::hash::Hash> PredecessorKind<T> {
     pub fn map<F, S>(&self, map: &mut F) -> PredecessorKind<S>
     where
         F: FnMut(&T) -> S,
-        S: Copy + Clone + PartialEq + Eq + std::hash::Hash,
+        S: Clone + PartialEq + Eq + std::hash::Hash,
     {
         match self {
             PredecessorKind::FollowsFrom(id) => PredecessorKind::FollowsFrom(*id),
