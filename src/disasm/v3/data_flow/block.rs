@@ -1,5 +1,6 @@
-use crate::disasm::v3::common::{CallSiteInfo, FunctionCall, MemoryReference};
-use crate::disasm::v3::id_types::InstructionId;
+use crate::disasm::v3::common::{CallSiteInfo, FunctionCall}; // Keep FunctionCall from common
+use crate::disasm::v3::id_types::{BlockId, InstructionId}; // Added BlockId import
+use crate::disasm::v3::lir::MemoryReference; // Use LIR MemoryReference
 use crate::disasm::v3::model::add_block_view_when;
 use std::collections::{HashMap, HashSet};
 
