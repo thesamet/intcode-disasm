@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::disasm::v3::common::memory_reference::MemoryReferenceInfo;
 use crate::disasm::v3::common::{Expression, FunctionCall, MemoryReference};
 use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind};
-use crate::disasm::v3::common::instruction::InstructionNode; // Assuming this is the correct path
+// use crate::disasm::v3::common::instruction::InstructionNode; // Commented out - unresolved
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId};
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;

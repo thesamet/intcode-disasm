@@ -7,7 +7,7 @@ use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId}; // Added 
 use crate::disasm::v3::model::{Model, ModelState};
 // use crate::disasm::v3::native::NativeInstruction; // Removed - unresolved
 use crate::disasm::v3::FunctionCall;
-use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Assuming this is the correct path
+// use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Commented out - unresolved
 
 /// A block in the control flow graph
 #[derive(Debug, Clone)]

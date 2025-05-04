@@ -10,7 +10,7 @@ use crate::disasm::v3::common::{
 };
 use crate::disasm::v3::control_flow::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
 use crate::disasm::Error;
-use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Assuming this is the correct path
+// use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Commented out - unresolved
 
 use super::block::Block;
 use super::function::Function;
