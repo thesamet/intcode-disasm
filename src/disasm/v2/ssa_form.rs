@@ -1223,6 +1223,7 @@ mod tests {
              Expression::Unary { arg, .. } => find_first_addressable_in_expr(arg),
              Expression::DebugMarker(_, inner_expr) => find_first_addressable_in_expr(inner_expr),
              Expression::Constant(_) => None,
+             Expression::Input() => None, // Handle the Input variant
          }
     }
 
