@@ -3,21 +3,30 @@ use itertools::Itertools;
 use log::trace;
 use std::convert::From;
 
-use crate::disasm::v2::{
-    control_flow::{NextKind, PredecessorKind},
-    data_flow::OriginationPoint,
-    model::{BlockId, FunctionId, ProgramModel},
-    native::{Operand, OperandKind},
+use crate::disasm::{
+    v2::{
+        control_flow::{NextKind, PredecessorKind}, // Keep v2 CFG types for Phi inputs for now
+        model::{BlockId, FunctionId},              // Keep v2 IDs
+        native::{Operand, OperandKind},            // Keep v2 Operand for tests/conversion?
+    },
+    v3::{
+        control_flow::FunctionView,
+        data_flow::OriginationPoint,
+        id_types::FunctionId as V3FunctionId,
+        lir::{Expression, Instruction, InstructionNode, MemoryReference, MemoryReferenceInfo},
+        model::{DataFlowComplete, Model}, // Use v3 Model states
+    },
 };
-use std::collections::{HashMap, HashSet};
-use std::fmt;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
+// Removed duplicate std::fmt import
 
 use super::{
-    instructions::{
-        Expression, InstructionId, InstructionNode, MemoryReference, MemoryReferenceInfo, PointerId,
-    },
-    model::Function,
-    native::GenericNativeInstruction,
+    instructions::{InstructionId, PointerId}, // Keep v2 InstructionId, PointerId for now
+    model::Function,                          // Keep v2 Function struct for SsaFunction output
+    native::GenericNativeInstruction,         // Keep v2 native instruction for SsaBlock output
 };
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -526,19 +535,24 @@ impl SsaResult {
         }
     }
 
-    pub fn from_program_model(model: &ProgramModel) -> Self {
-        assert!(model.get_data_flow_result().is_some());
-
+    // Modified to accept v3 Model<DataFlowComplete>
+    pub fn from_program_model(model: &Model<DataFlowComplete>) -> Self {
         let mut ssa_result = Self::new();
 
-        // Process each function in the model
-        for &function_id in model.functions().keys() {
-            let mut converter = SSAConversionState::new(model, function_id);
+        // Process each function using the v3 model's function iterator
+        for (v3_function_id, function_view) in model.functions() {
+            // Convert v3 FunctionId to v2 FunctionId for SsaResult key and internal use
+            // Assuming a simple usize conversion is okay for now.
+            // TODO: Revisit ID conversions if they become more complex.
+            let v2_function_id = FunctionId::new(v3_function_id.index());
+
+            // Pass the v3 model and the specific function view to the converter
+            let mut converter = SSAConversionState::new(model, function_view);
             let ssa_func = SsaFunction {
-                original_id: function_id,
+                original_id: v2_function_id, // Store the v2 ID
                 blocks: converter.convert_function(),
             };
-            ssa_result.functions.insert(function_id, ssa_func);
+            ssa_result.functions.insert(v2_function_id, ssa_func);
         }
 
         ssa_result
@@ -552,9 +566,12 @@ impl SsaResult {
     }
 }
 
+// Modified to hold v3 model and function view
 struct SSAConversionState<'a> {
-    model: &'a ProgramModel,
-    function_id: FunctionId,
+    model: &'a Model<DataFlowComplete>,
+    function_view: FunctionView<'a, DataFlowComplete>,
+    // Store the v2 function ID for convenience in creating v2 SSA types
+    v2_function_id: FunctionId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -657,24 +674,35 @@ impl VersionRegistry {
 // Creates the NextKind using SsaOperands based on the current versions.
 
 impl<'a> SSAConversionState<'a> {
-    fn new(model: &'a ProgramModel, function_id: FunctionId) -> Self {
-        Self { model, function_id }
+    // Modified constructor
+    fn new(
+        model: &'a Model<DataFlowComplete>,
+        function_view: FunctionView<'a, DataFlowComplete>,
+    ) -> Self {
+        // Convert v3 FunctionId to v2 FunctionId
+        let v2_function_id = FunctionId::new(function_view.function_id().index());
+        Self {
+            model,
+            function_view,
+            v2_function_id,
+        }
     }
 
     fn convert_function(&mut self) -> HashMap<BlockId, SsaBlock> {
-        let function_id = self.function_id;
-        // Step 1: Place phi functions where needed
-        let phi_placements = self.place_phi_functions(function_id);
+        let v2_function_id = self.v2_function_id; // Use stored v2 ID
+
+        // Step 1: Place phi functions where needed (will need adaptation)
+        let phi_placements = self.place_phi_functions();
 
         // Step 2: Populate versions for phi results and targets of writes in top-bottom order.
-        let function = self.model.get_function(function_id);
-        let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(function, &phi_placements);
+        // We no longer need the v2 Function struct here. We use self.function_view.
+        let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(&phi_placements);
 
-        // Step 3: Compute start and end states for all blocks.
+        // Step 3: Compute start and end states for all blocks (will need adaptation)
         self.compute_start_end_states(&mut ssa_blocks);
 
-        // Step 4: Populate reads and phis.
-        self.populate_reads_and_phis(function, &mut ssa_blocks);
+        // Step 4: Populate reads and phis (will need adaptation)
+        self.populate_reads_and_phis(&mut ssa_blocks);
 
         ssa_blocks
     }
