@@ -42,14 +42,14 @@ mod tests {
 
         let block0 = func.block(&BlockId::from(0));
         assert_eq!(block0.block_id(), BlockId::from(0));
-        assert_eq!(block0.containing_function_id(), *func_id);
+        assert_eq!(block0.containing_function_id(), func_id);
         assert_eq!(block0.low_instructions().len(), 0); // Entry block has no low instructions (just R+=5)
         assert_eq!(block0.span(), &Span::new(0, 2));
         assert_eq!(block0.next(), &NextKind::Follows(BlockId::from(2)));
 
         let block1 = func.block(&BlockId::from(2));
         assert_eq!(block1.block_id(), BlockId::from(2));
-        assert_eq!(block1.containing_function_id(), *func_id);
+        assert_eq!(block1.containing_function_id(), func_id);
         assert_eq!(block1.low_instructions().len(), 1); // Just the Return instruction
         assert_eq!(block1.span(), &Span::new(2, 7));
         assert_eq!(block1.next(), &NextKind::Return);

@@ -7,7 +7,9 @@ mod tests {
         v3::{
             control_flow::ControlFlowGraphBuilder, // v3 CFG Builder
             data_flow::{
-                analyzer::DataFlowAnalyzer, block::OriginationPoint, block::Definition, // v3 DataFlow types
+                analyzer::DataFlowAnalyzer,
+                block::Definition, // v3 DataFlow types
+                block::OriginationPoint,
                 DataFlowBlock,
             },
             id_types::{BlockId, InstructionId, PointerId}, // v3 IDs
@@ -28,7 +30,8 @@ mod tests {
 
         // v3 Pipeline
         // Pass binary by value (ownership)
-        let image_scanned = ImageScanner::run(binary, initial_model).expect("Image scanning failed");
+        let image_scanned =
+            ImageScanner::run(binary, initial_model).expect("Image scanning failed");
         let cfg_built = ControlFlowGraphBuilder::run(image_scanned).expect("CFG building failed");
         let data_flow_analyzed =
             DataFlowAnalyzer::run(cfg_built).expect("Data flow analysis failed");
@@ -37,30 +40,16 @@ mod tests {
     }
 
     // Helper to get DataFlowBlock for assertions
-    fn get_flow<'a>(
-        model: &'a Model<DataFlowComplete>,
-        block_id: BlockId,
-    ) -> &'a DataFlowBlock {
+    fn get_flow<'a>(model: &'a Model<DataFlowComplete>, block_id: BlockId) -> &'a DataFlowBlock {
         // Access CFG result to find the function ID for the block
-        let function_id = model
-            .control_flow_graph_result() // Access the CFG result stored in the model
-            .functions // Get the functions map
-            .values() // Iterate over functions
-            .find_map(|f| f.blocks.get(&block_id).map(|b| b.containing_function_id)) // Find the block and get its function ID
-            .unwrap_or_else(|| panic!("Could not find function ID for block {:?}", block_id));
-
         model
-            .function(&function_id) // Get the FunctionView using the found ID
-            .block(&block_id)       // Get the BlockView
-            .data_flow()            // Get the DataFlowBlock from the view
+            .find_block(&block_id)
+            .map(|b| b.data_flow())
+            .unwrap_or_else(|| panic!("Could not find function ID for block {:?}", block_id))
     }
 
     // Helper to create a Definition for assertions (using v3 types)
-    fn def(
-        instr_id: InstructionId,
-        location: MemoryReference,
-        block_id: BlockId,
-    ) -> Definition {
+    fn def(instr_id: InstructionId, location: MemoryReference, block_id: BlockId) -> Definition {
         Definition {
             source: OriginationPoint::Instruction(instr_id),
             kind: location,
@@ -483,6 +472,14 @@ mod tests {
         let block30_id = BlockId::from(30); // callee entry
         let block40_id = BlockId::from(40); // callee return
 
+        for (_, func) in &model.image_scanner_result().function_details {
+            println!("function {}", func.span.start);
+            for inst in &func.instructions {
+                println!("{:8}  {}", inst.span.start, inst);
+            }
+            println!();
+        }
+
         let flow0 = get_flow(&model, block0_id);
         let flow21 = get_flow(&model, block21_id);
         let flow25 = get_flow(&model, block25_id);
@@ -565,11 +562,15 @@ mod tests {
 
         // Check live_in for return block (21) - should contain [R+1] and [R+2] used by output
         assert!(
-            flow21.live_in.contains_key(&MemoryReference::StackRelative(1)),
+            flow21
+                .live_in
+                .contains_key(&MemoryReference::StackRelative(1)),
             "LiveIn @ B21 should contain [R+1]"
         );
         assert!(
-            flow21.live_in.contains_key(&MemoryReference::StackRelative(2)),
+            flow21
+                .live_in
+                .contains_key(&MemoryReference::StackRelative(2)),
             "LiveIn @ B21 should contain [R+2]"
         );
         assert_eq!(flow21.live_in.len(), 2, "LiveIn @ B21 length");
@@ -581,22 +582,30 @@ mod tests {
             "LiveIn @ B0 should contain [100]"
         );
         assert!(
-            flow0.live_in.contains_key(&MemoryReference::StackRelative(1)),
+            flow0
+                .live_in
+                .contains_key(&MemoryReference::StackRelative(1)),
             "LiveIn @ B0 should contain [R+1] (as potential parameter)"
         );
         assert!(
-            flow0.live_in.contains_key(&MemoryReference::StackRelative(2)),
+            flow0
+                .live_in
+                .contains_key(&MemoryReference::StackRelative(2)),
             "LiveIn @ B0 should contain [R+2] (as potential parameter)"
         );
         assert_eq!(flow0.live_in.len(), 3, "LiveIn @ B0 length");
 
         // Check live_in for callee entry (30) - should contain [R-3] and [R-4] (parameters)
         assert!(
-            flow30.live_in.contains_key(&MemoryReference::StackRelative(-3)),
+            flow30
+                .live_in
+                .contains_key(&MemoryReference::StackRelative(-3)),
             "LiveIn @ B30 should contain [R-3]"
         );
         assert!(
-            flow30.live_in.contains_key(&MemoryReference::StackRelative(-4)),
+            flow30
+                .live_in
+                .contains_key(&MemoryReference::StackRelative(-4)),
             "LiveIn @ B30 should contain [R-4]"
         );
         assert_eq!(flow30.live_in.len(), 2, "LiveIn @ B30 length");
@@ -649,9 +658,11 @@ mod tests {
         // Instruction [100] = 10 is the second instruction in the block (index 1)
         // Let's find its actual ID
         let block0_instrs = model
-            .function(&model.get_block_function_id(&block0_id).unwrap())
-            .block(&block0_id)
-            .low_instructions();
+            .find_block(&block0_id)
+            .unwrap()
+            .low_instructions()
+            .into_iter()
+            .collect_vec();
         let expected_gen_instr_id = block0_instrs[1].id; // ID of '[100] = 10'
         assert_eq!(
             *gen_instr_id, expected_gen_instr_id,
@@ -791,14 +802,16 @@ mod tests {
         // --- Function Return Propagation Checks ---
 
         // Helper to check if a block's function_returns_in contains a call originating from `calling_block` to `func_addr`
-        let check_returns_in =
-            |model: &Model<DataFlowComplete>, block_id: BlockId, calling_block: BlockId, func_addr: i128| {
-                let flow = get_flow(model, block_id);
-                flow.function_returns_in.iter().any(|fc| {
-                    fc.calling_block == calling_block
-                        && fc.function_addr == Expression::Constant(func_addr)
-                })
-            };
+        let check_returns_in = |model: &Model<DataFlowComplete>,
+                                block_id: BlockId,
+                                calling_block: BlockId,
+                                func_addr: i128| {
+            let flow = get_flow(model, block_id);
+            flow.function_returns_in.iter().any(|fc| {
+                fc.calling_block == calling_block
+                    && fc.function_addr == Expression::Constant(func_addr)
+            })
+        };
 
         // Call to func0 (addr 97) from block 0, returns to block 9
         assert!(
@@ -923,10 +936,7 @@ mod tests {
 
         // Find the actual PointerIds created by the analysis for ptr1 and ptr2
         // They depend on the InstructionIds assigned during CFG building.
-        let block0_instrs = model
-            .function(&model.get_block_function_id(&block0_id).unwrap())
-            .block(&block0_id)
-            .low_instructions();
+        let block0_instrs = model.find_block(&block0_id).unwrap().low_instructions();
         // ptr1 = 2 is the first instruction ([100]=2), ptr2 = 4 is the second ([101]=4)
         // Assuming the LIR converter creates PointerIds based on the instruction ID writing to the pointer variable's memory location.
         // Let's find the instruction IDs for the assignments `[100]=2` and `[101]=4` which represent ptr1 and ptr2 definitions.
@@ -951,7 +961,11 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(live_in_pointers.len(), 2, "Expected two distinct PointerIds in live_in set for ptr1 and ptr2");
+        assert_eq!(
+            live_in_pointers.len(),
+            2,
+            "Expected two distinct PointerIds in live_in set for ptr1 and ptr2"
+        );
         // We can't easily know the exact PointerId values here without deeper inspection
         // of the LIR conversion, so we'll just check for their presence generically.
         let ptr1_id = *live_in_pointers.iter().next().unwrap(); // Get one ID
@@ -964,11 +978,17 @@ mod tests {
         // ptr2 is used in '[R+2] = *ptr2'
         // Both pointer *values* (addresses) need to be live at the start of block 13.
         assert!(
-            flow13.live_in.keys().any(|k| matches!(k, MemoryReference::Pointer(pid) if *pid == ptr1_id)),
+            flow13
+                .live_in
+                .keys()
+                .any(|k| matches!(k, MemoryReference::Pointer(pid) if *pid == ptr1_id)),
             "Pointer associated with ptr1 should be live_in for dereference write"
         );
         assert!(
-            flow13.live_in.keys().any(|k| matches!(k, MemoryReference::Pointer(pid) if *pid == ptr2_id)),
+            flow13
+                .live_in
+                .keys()
+                .any(|k| matches!(k, MemoryReference::Pointer(pid) if *pid == ptr2_id)),
             "Pointer associated with ptr2 should be live_in for dereference read"
         );
 

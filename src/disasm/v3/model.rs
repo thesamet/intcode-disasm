@@ -107,7 +107,7 @@ macro_rules! add_block_view_when {
             where
                 S: crate::disasm::v3::model::[<Has $result_type Result>],
             {
-                pub fn $result_var(&self) -> &$block_type {
+                pub fn $result_var(&self) -> &'a $block_type {
                     self.model
                         .[<$result_type:snake:lower _result>]()
                         .blocks
@@ -125,6 +125,30 @@ macro_rules! add_block_view_when {
     };
 }
 pub(crate) use add_block_view_when;
+use itertools::Itertools;
+
+use super::control_flow::BlockView;
+
+impl<S: ModelState> Model<S>
+where
+    S: HasControlFlowGraphResult,
+{
+    pub fn find_block<'a>(&'a self, block_id: &BlockId) -> Option<BlockView<'a, S>> {
+        self.all_blocks()
+            .find(|(id, _)| id == block_id)
+            .map(|(_, b)| b)
+    }
+
+    pub fn all_blocks<'a>(&'a self) -> impl Iterator<Item = (BlockId, BlockView<'a, S>)> {
+        self.functions().flat_map(move |(_, function)| {
+            function
+                .blocks()
+                .map(move |(block_id, block)| (block_id, block))
+        })
+    }
+}
+
+impl<S: ModelState> Model<S> where S: HasControlFlowGraphResult {}
 
 // Define Has traits for each field type
 // Implement traits for appropriate state types

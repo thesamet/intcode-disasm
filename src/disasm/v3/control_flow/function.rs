@@ -62,7 +62,7 @@ impl<'a, S: ModelState> FunctionView<'a, S> {
         self.function.stack_size
     }
 
-    pub fn all_block_ids(&self) -> impl Iterator<Item = &BlockId> {
+    pub fn all_block_ids(&self) -> impl Iterator<Item = &'a BlockId> {
         self.function.all_block_ids()
     }
 
@@ -79,10 +79,13 @@ impl<'a, S: ModelState> FunctionView<'a, S> {
         BlockView::new(self.model, block)
     }
 
-    pub fn blocks(&self) -> impl Iterator<Item = (&BlockId, BlockView<S>)> {
+    pub fn blocks(&self) -> impl Iterator<Item = (BlockId, BlockView<'a, S>)> {
+        // It's critical that the block views in the returned itetaror declared to have the lifetime 'a,
+        // of the model and not this FunctionView, so they can outlast it.  This is useful for nested iterator
+        // where the containing function view is not passed over.
         self.function
             .blocks
             .iter()
-            .map(|(id, block)| (id, BlockView::new(self.model, block)))
+            .map(|(id, block)| (*id, BlockView::new(self.model, block)))
     }
 }

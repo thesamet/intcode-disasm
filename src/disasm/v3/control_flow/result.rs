@@ -43,10 +43,10 @@ where
     ///
     /// # Returns
     /// An iterator that yields tuples of function IDs and their corresponding function views
-    pub fn functions(&self) -> impl Iterator<Item = (&FunctionId, FunctionView<'_, S>)> {
+    pub fn functions(&self) -> impl Iterator<Item = (FunctionId, FunctionView<'_, S>)> {
         self.control_flow_graph_result()
             .functions
             .iter()
-            .map(|(id, function)| (id, FunctionView::new(self, function)))
+            .map(|(id, function)| (*id, FunctionView::new(self, function)))
     }
 }

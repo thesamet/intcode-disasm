@@ -2,7 +2,7 @@ use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::disasm::v3::common::FunctionCall; // Keep FunctionCall from common
+use crate::disasm::v3::common::{CallSiteInfo, FunctionCall}; // Keep FunctionCall from common
 use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind};
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId};
 use crate::disasm::v3::lir::{Expression, MemoryReference, MemoryReferenceInfo}; // Use LIR types
@@ -405,14 +405,17 @@ impl DataFlowAnalyzer {
     /// identifies the unique function call that provided these values, and updates the
     /// `return_values_accessed` field in the `CallSiteInfo` of the calling block.
     fn update_call_site_info(&self, function: &Function, df_result: &mut DataFlowResult) {
-        for (block_id, block_flow) in df_result.blocks.iter_mut() {
+        for block_id in function.all_block_ids() {
             // Find usages of positive stack offsets ([R+n]) that occur *before* any definition within this block.
             // These represent potential reads of function return values.
-            let return_usages_in_block = block_flow
+            let block_flow = df_result.blocks.get(&block_id).unwrap();
+            let return_usages_in_block = df_result.blocks[block_id]
                 .use_before_def
                 .iter()
                 .filter_map(|(mem_ref, instr_id)| {
-                    mem_ref.as_stack_relative().map(|offset| (offset, *instr_id))
+                    mem_ref
+                        .as_stack_relative()
+                        .map(|offset| (offset, *instr_id))
                 })
                 .filter(|&(offset, _)| offset > 0) // Only positive offsets are return values
                 .collect_vec(); // Collect as Vec<(i128, InstructionId)>

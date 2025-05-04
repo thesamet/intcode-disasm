@@ -2,7 +2,10 @@
 use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types here
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId}; // Added InstructionId
 use crate::disasm::v3::lir::{
-    Expression, Instruction, InstructionNode, MemoryReference, // Use LIR types
+    Expression,
+    Instruction,
+    InstructionNode,
+    MemoryReference, // Use LIR types
 };
 use crate::disasm::v3::model::{Model, ModelState};
 // use crate::disasm::v3::native::NativeInstruction; // Removed - unresolved
@@ -46,19 +49,15 @@ impl<'a, S: ModelState> BlockView<'a, S> {
         &self.block.span
     }
 
-    // pub fn native_instructions(&self) -> &[NativeInstruction] { // Removed - unresolved
-    //     &self.block.native_instructions
-    // }
-
-    pub fn low_instructions(&self) -> &[InstructionNode<MemoryReference>] {
+    pub fn low_instructions(&self) -> &'a [InstructionNode<MemoryReference>] {
         &self.block.low_instructions
     }
 
-    pub fn next(&self) -> &NextKind<MemoryReference> {
+    pub fn next(&self) -> &'a NextKind<MemoryReference> {
         &self.block.next
     }
 
-    pub fn predecessors(&self) -> &[PredecessorKind<MemoryReference>] {
+    pub fn predecessors(&self) -> &'a [PredecessorKind<MemoryReference>] {
         &self.block.predecessors
     }
 }
