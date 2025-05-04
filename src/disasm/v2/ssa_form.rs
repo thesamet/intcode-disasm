@@ -1036,98 +1036,126 @@ impl<'a> SSAConversionState<'a> {
 
             for phi in &initial_phis {
                 let mut phi_inputs = HashMap::new();
-                for pred in &block.predecessors {
+                // Use v3 predecessors from the block_view
+                for pred in block_view.predecessors() {
                     let pred_id = pred.source_block_id();
-                    let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
-                    if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && phi.result.as_stack_relative().is_some_and(|x| x > 0)
+                    // Get the end state of the predecessor block from the ssa_blocks map
+                    let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap_or_else(|| {
+                        panic!(
+                            "Predecessor block {} not found for block {}",
+                            pred_id, block_id
+                        )
+                    });
+
+                    // Convert v3 PredecessorKind to v2 PredecessorKind for the map key
+                    // TODO: Implement a proper conversion function or adapt PhiFunction.inputs key type
+                    let v2_pred = map_v3_predecessor_to_v2(pred, &pred_ssa_block.end_state); // Placeholder
+
+                    if matches!(pred, crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_))
+                        && phi.result.kind.as_stack_relative().is_some_and(|x| x > 0)
                     {
                         // For function returns, the phi result itself represents the value.
-                        // Wrap the SsaVar result in SsaOperand::Variable.
-                        phi_inputs.insert(pred.clone(), phi.result.clone());
+                        phi_inputs.insert(v2_pred, phi.result); // Use the phi result directly
                     } else {
-                        phi_inputs.insert(
-                            pred.clone(),
-                            pred_ssa_block.end_state.current_version(&phi.result.kind),
-                        );
+                        // Get the version from the predecessor's end state
+                        let input_version = pred_ssa_block
+                            .end_state
+                            .current_version(&phi.result.kind);
+                        phi_inputs.insert(v2_pred, input_version);
                     }
                 }
-                let mut phi = phi.clone();
-                phi.inputs = phi_inputs;
-                phi_functions.push(phi);
+                // Create the final PhiFunction with populated inputs
+                populated_phis.push(PhiFunction {
+                    result: phi.result,
+                    inputs: phi_inputs,
+                });
             }
-            let mut instructions = vec![];
-            let mut registry = ssa_block.start_state.clone();
-            for instr in &ssa_block.instructions {
-                let mut instr = instr.clone();
-                if instr.id == InstructionId::from(6) {
-                    print!("Outside map_rw: {:?}", registry);
-                }
-                instr = instr.map_rw(
-                    &mut registry,
-                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
-                    |reg, ssa_memory_reference| match ssa_memory_reference {
-                        SsaMemoryReference::Deref(expr) => {
-                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
-                        }
-                        _ => ssa_memory_reference.clone(),
-                    },
+
+            // Now, process instructions using the computed start state
+            let start_state = ssa_block.start_state.clone(); // Clone start state for this block
+            let mut current_registry = start_state.clone(); // Registry to track versions within the block
+            let mut populated_instructions = Vec::with_capacity(ssa_block.instructions.len());
+
+            for instr_node in &ssa_block.instructions { // Iterate over the already versioned instructions
+                // Map reads using the current_registry state
+                let read_mapped_instr = instr_node.map_read(
+                    &mut current_registry,
+                    |reg, ssa_mem_ref| reg.current_memory_reference(ssa_mem_ref),
                 );
-                if let Some(write) = instr.kind.get_write_address() {
-                    if let Some(write) = write.as_versioned() {
-                        registry.set_version(write.kind, *write);
+
+                // Update the current_registry if the instruction writes a versioned variable
+                if let Some(write_target) = read_mapped_instr.kind.get_write_address() {
+                    if let Some(versioned_write) = write_target.as_versioned() {
+                        // Update the registry with the version produced by this instruction
+                        current_registry.set_version(versioned_write.kind, *versioned_write);
                     }
                 }
-                instructions.push(instr);
+                populated_instructions.push(read_mapped_instr);
             }
+
+            // Map the NextKind using the final end_state of the block
             let ssa_block_next = {
-                block
-                    .next
-                    .map(&mut |op| ssa_block.end_state.current_memory_reference(op))
+                // Use v3 next kind from block_view
+                block_view.next().map(&mut |op| {
+                    // Use the computed end_state for the block
+                    ssa_block.end_state.current_memory_reference(op)
+                })
             };
-            let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
-            ssa_block.instructions = instructions;
-            ssa_block.phi_functions = phi_functions;
-            match &ssa_block_next {
+
+            // Update the mutable ssa_block with populated phis and instructions
+            ssa_block.instructions = populated_instructions;
+            ssa_block.phi_functions = populated_phis;
+
+            // Update predecessors of successor blocks based on the mapped NextKind
+            // TODO: Convert v3 NextKind<SsaMemoryReference> to v2 NextKind<SsaMemoryReference>
+            let v2_next_kind = map_v3_next_to_v2(&ssa_block_next); // Placeholder
+
+            match &v2_next_kind {
                 NextKind::Follows(target_id) => {
-                    ssa_blocks
-                        .get_mut(&target_id)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::FollowsFrom(*block_id));
+                    // Need mutable access to successor
+                    if let Some(successor_block) = ssa_blocks.get_mut(target_id) {
+                        // TODO: Convert v3 PredecessorKind to v2
+                        successor_block
+                            .predecessors
+                            .push(PredecessorKind::FollowsFrom(*block_id));
+                    }
                 }
                 NextKind::Goto(target_block_id) => {
-                    ssa_blocks
-                        .get_mut(&target_block_id)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
+                    if let Some(successor_block) = ssa_blocks.get_mut(target_block_id) {
+                        // TODO: Convert v3 PredecessorKind to v2
+                        successor_block
+                            .predecessors
+                            .push(PredecessorKind::GotoFrom(*block_id));
+                    }
                 }
                 NextKind::FunctionCall(call) => {
-                    // Add the current block as a predecessor to the function's entry block (this seems incorrect, handled elsewhere?)
-                    // Add the current block (call site) as predecessor to the return block
-                    ssa_blocks
-                        .get_mut(&call.return_block)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
+                    if let Some(successor_block) = ssa_blocks.get_mut(&call.return_block) {
+                        // TODO: Convert v3 PredecessorKind to v2
+                        // Need to map the FunctionCall<SsaMemoryReference> from v3 to v2
+                        let v2_call = map_v3_call_to_v2(call); // Placeholder
+                        successor_block
+                            .predecessors
+                            .push(PredecessorKind::FunctionCallReturns(v2_call));
+                    }
                 }
                 NextKind::Condition(cond) => {
-                    // Add current block as predecessor to the target block
-                    ssa_blocks
-                        .get_mut(&cond.target_block)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::ConditionalJump(cond.clone()));
-                    ssa_blocks
-                        .get_mut(&cond.follows_block)
-                        .unwrap()
-                        .predecessors
-                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
+                    // TODO: Convert v3 Condition to v2
+                    let v2_cond = map_v3_condition_to_v2(cond); // Placeholder
+                    if let Some(target_block) = ssa_blocks.get_mut(&cond.target_block) {
+                        target_block
+                            .predecessors
+                            .push(PredecessorKind::ConditionalJump(v2_cond.clone()));
+                    }
+                    if let Some(follows_block) = ssa_blocks.get_mut(&cond.follows_block) {
+                        follows_block
+                            .predecessors
+                            .push(PredecessorKind::ConditionalFollow(v2_cond));
+                    }
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             }
-            ssa_blocks.get_mut(block_id).unwrap().next = ssa_block_next;
+            // Store the final v2 NextKind in the block
+            ssa_block.next = v2_next_kind;
         }
     }
 }
