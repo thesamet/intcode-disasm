@@ -1645,7 +1645,7 @@ mod tests {
                 halt
                 "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(23, 2));
         assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(23, 3));
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3));
@@ -1662,7 +1662,7 @@ mod tests {
                 halt
                 "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
     }
@@ -1680,7 +1680,7 @@ mod tests {
                 halt
                 "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(16, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(16, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(16, 3));
@@ -1769,25 +1769,17 @@ mod tests {
         goto [R]
         "#,
         );
-        // Access function info from v2_model
-        let return_block_id = ctx
-            .v2_model
-            .get_function(FunctionId::from(0))
-            .return_block
-            .unwrap();
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
-                                         // Access SSA result from v2_model
-        let f0 = ctx
-            .v2_model
-            .get_ssa_result()
-            .unwrap()
-            .functions
-            .get(&FunctionId::from(0))
-            .unwrap();
+        // Access function info from v3 model
+        let func_view = ctx.main_function();
+        let return_block_id = func_view.return_block().expect("Return block not found");
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        // Access SSA result from v3 model
+        let ssa_result_data = ctx.model.ssa_result().unwrap();
         assert_eq!(
-            f0.blocks
+            ssa_result_data
+                .blocks
                 .get(&return_block_id)
-                .unwrap()
+                .unwrap() // Use v3 return_block_id
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
@@ -1825,25 +1817,16 @@ exit:
     goto [R]
     "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
-                                         // Access function info from v2_model
-        let return_block_id = ctx
-            .v2_model
-            .get_function(FunctionId::from(0))
-            .return_block
-            .unwrap();
-        // Access SSA result from v2_model
-        let f0 = ctx
-            .v2_model
-            .get_ssa_result()
-            .unwrap()
-            .functions
-            .get(&FunctionId::from(0))
-            .unwrap();
-        let return_block = f0.blocks.get(&return_block_id).unwrap();
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        // Access function info from v3 model
+        let func_view = ctx.main_function();
+        let return_block_id = func_view.return_block().expect("Return block not found");
+        // Access SSA result from v3 model
+        let ssa_result_data = ctx.model.ssa_result().unwrap();
+        let return_block = ssa_result_data.blocks.get(&return_block_id).unwrap();
         assert_eq!(
             return_block
-                .end_state
+                .end_state // Access end_state from SsaBlock in v3 model
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
                 .version,
             return_block.phi_functions[0].result.version // Compare with phi result version
