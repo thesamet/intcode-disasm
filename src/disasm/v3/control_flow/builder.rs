@@ -2,10 +2,13 @@ use itertools::Itertools;
 use log::{debug, info, trace};
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::v2::control_flow::{NextKind, PredecessorKind};
-use crate::disasm::v2::instructions::{Expression, Instruction, InstructionNode, MemoryReference};
-use crate::disasm::v3::control_flow::block::Condition;
-use crate::disasm::v3::FunctionCall;
+// Use v3 types consistently
+use crate::disasm::v3::common::{
+    instruction::{Instruction, InstructionNode}, // Assuming v3 Instruction, InstructionNode
+    memory_reference::MemoryReference,           // v3 MemoryReference
+    Expression, FunctionCall, Span,
+};
+use crate::disasm::v3::control_flow::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
 use crate::disasm::Error;
 
 use super::block::Block;
@@ -62,12 +65,9 @@ impl ControlFlowGraphBuilder {
         let result = self.clone();
 
         // Return a new model with the updated state
-        Ok(
-            model.with_control_flow_graph_result(ControlFlowGraphResult::new(
-                self.blocks.clone(),
-                self.functions.clone(),
-            )),
-        )
+        // Corrected call to new (already fixed in previous step, ensuring it stays)
+        Ok(model
+            .with_control_flow_graph_result(ControlFlowGraphResult::new(self.functions.clone())))
     }
 
     fn process_function(
@@ -171,9 +171,10 @@ impl ControlFlowGraphBuilder {
                 containing_function_id: function_id,
                 span: Span::new(start_addr, current_block_end),
                 native_instructions: current_block_instructions.clone(),
+                // Assuming convert_block now returns Vec<InstructionNode<v3::common::MemoryReference>>
                 low_instructions: InstructionNode::convert_block(current_block_instructions),
-                next: NextKind::Unknown,
-                predecessors: Vec::new(), // To be filled later
+                next: NextKind::Unknown, // Will use v3 MemoryReference
+                predecessors: Vec::new(), // Will use v3 MemoryReference
             };
             self.blocks.insert(block_id, block);
 

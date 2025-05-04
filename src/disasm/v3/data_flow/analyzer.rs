@@ -2,9 +2,10 @@ use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::disasm::v3::common::memory_reference::MemoryReferenceInfo; // Added import
-use crate::disasm::v3::common::{Expression, FunctionCall, InstructionNode, MemoryReference};
-use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind}; // Added BlockView, PredecessorKind
+use crate::disasm::v3::common::instruction::InstructionNode; // Corrected path
+use crate::disasm::v3::common::memory_reference::MemoryReferenceInfo;
+use crate::disasm::v3::common::{Expression, FunctionCall, MemoryReference};
+use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind};
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId};
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
@@ -53,20 +54,20 @@ impl DataFlowAnalyzer {
     }
 
     /// Performs the main data flow analysis passes for a given function.
-    fn analyze_function(&self, function: Function, df_result: &mut DataFlowResult) {
+    fn analyze_function(&self, function: &Function, df_result: &mut DataFlowResult) { // Take &Function
         let block_ids: Vec<BlockId> = function.blocks().map(|(id, _)| *id).collect();
 
         // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
-        self.initialize_gen_use_func_in(function, df_result);
+        self.initialize_gen_use_func_in(function, df_result); // Pass reference
 
         // Pass 2: compute function_returns_out and function_returns_in for all blocks (forward analysis)
-        self.run_function_returns_analysis(function, &block_ids, df_result);
+        self.run_function_returns_analysis(function, &block_ids, df_result); // Pass reference
 
         // Pass 3: Reaching Definitions (Forward Analysis)
-        self.run_reaching_definitions_analysis(function, &block_ids, df_result);
+        self.run_reaching_definitions_analysis(function, &block_ids, df_result); // Pass reference
 
         // Pass 4: Liveness Analysis (Backward Analysis)
-        self.run_liveness_analysis(function, &block_ids, df_result); // Added &block_ids
+        self.run_liveness_analysis(function, &block_ids, df_result); // Pass reference
 
         debug!(
             "Data Flow Analysis passes complete for {}",
@@ -75,7 +76,7 @@ impl DataFlowAnalyzer {
     }
 
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
-    fn initialize_gen_use_func_in(&self, function: Function, df_result: &mut DataFlowResult) {
+    fn initialize_gen_use_func_in(&self, function: &Function, df_result: &mut DataFlowResult) { // Take &Function
         for (block_id, block) in function.blocks() {
             let block_flow = df_result
                 .blocks
@@ -129,7 +130,7 @@ impl DataFlowAnalyzer {
     // Pass 2: calculate function returns
     fn run_function_returns_analysis(
         &self,
-        function: Function,
+        function: &Function, // Take &Function
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -158,7 +159,7 @@ impl DataFlowAnalyzer {
 
     fn calculate_function_returns_in(
         &self,
-        function: Function,
+        function: &Function, // Take &Function
         block_id: &BlockId,
         df_result: &DataFlowResult,
     ) -> HashSet<FunctionCall<MemoryReference>> {
@@ -186,8 +187,8 @@ impl DataFlowAnalyzer {
     /// Pass 3: Computes Reaching Definitions iteratively.
     fn run_reaching_definitions_analysis(
         &self,
-        function: Function,
-        block_ids: &[BlockId], // Added block_ids parameter
+        function: &Function, // Take &Function
+        block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
@@ -239,8 +240,8 @@ impl DataFlowAnalyzer {
     /// Calculates the Defs-In set for a single block based on its predecessors.
     fn calculate_defs_in(
         &self,
-        function: Function, // Use FunctionView alias
-        block: &BlockView<ControlFlowGraphComplete>, // Use BlockView
+        function: &Function, // Take &Function
+        block: &BlockView<ControlFlowGraphComplete>,
         df_result: &DataFlowResult,
     ) -> HashSet<Definition> {
         let mut new_defs_in = HashSet::new();
@@ -253,7 +254,7 @@ impl DataFlowAnalyzer {
             new_defs_in.extend(pred_flow.defs_out.iter().cloned());
         }
 
-        if function.entry_block_id() == block.block_id() { // Use view methods
+        if function.entry_block() == block.block_id() { // Use entry_block()
             // Create synthetic definitions for any potential input parameters
             // to this function. We take the union of all the use_before_def sets
             // for all blocks in the function, since it is a superset (which is still
@@ -280,7 +281,7 @@ impl DataFlowAnalyzer {
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
         &self,
-        function: Function, // Use FunctionView alias
+        function: &Function, // Take &Function
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -347,9 +348,9 @@ impl DataFlowAnalyzer {
     /// Calculates the Live-Out set for a single block based on its successors' Live-In sets.
     fn calculate_live_out(
         &self,
-        function: Function, // Use FunctionView alias
-        block_id: &BlockId, // Pass by reference
-        df_result: &DataFlowResult, // Read-only access for successor IN sets
+        function: &Function, // Take &Function
+        block_id: &BlockId,
+        df_result: &DataFlowResult,
     ) -> HashMap<MemoryReference, HashSet<OriginationPoint>> {
         let block_view = function.block(block_id); // Get BlockView
         let mut new_live_out = HashMap::new();
@@ -370,7 +371,7 @@ impl DataFlowAnalyzer {
             }
         }
 
-        if function.return_block_id() == Some(*block_id) { // Use view method
+        if function.return_block() == Some(*block_id) { // Use return_block()
             // If this is a function return, we need to add all potential return arguments
             // to live out So we will have phi's automatically created for them at the right junctions.
             // We mark the live out as "FunctionOutput" to indicate that it is a return value.

@@ -1,8 +1,10 @@
-use crate::disasm::v2::instructions::{InstructionNode, MemoryReference};
-use crate::disasm::v2::native::NativeInstruction;
-use crate::disasm::v3::common::{Expression, Span};
+// Use v3 types
+use crate::disasm::v3::common::{
+    instruction::InstructionNode, memory_reference::MemoryReference, Expression, Span,
+};
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
 use crate::disasm::v3::model::{Model, ModelState};
+use crate::disasm::v3::native::NativeInstruction; // Assuming v3 native instruction type
 use crate::disasm::v3::FunctionCall;
 
 /// A block in the control flow graph
@@ -12,14 +14,16 @@ pub struct Block {
     /// To which function does this block belong?
     pub containing_function_id: FunctionId,
     pub span: Span,
-    pub native_instructions: Vec<NativeInstruction>,
-    pub low_instructions: Vec<InstructionNode<MemoryReference>>,
+    pub native_instructions: Vec<NativeInstruction>, // v3 native
+    pub low_instructions: Vec<InstructionNode<MemoryReference>>, // v3 common MemoryReference
 
     /// Control flow information
-    pub next: NextKind<MemoryReference>,
-    pub predecessors: Vec<PredecessorKind<MemoryReference>>,
+    pub next: NextKind<MemoryReference>, // v3 common MemoryReference
+    pub predecessors: Vec<PredecessorKind<MemoryReference>>, // v3 common MemoryReference
 }
 
+// Add Debug derive here
+#[derive(Debug, Clone, Copy)]
 pub struct BlockView<'a, S: ModelState> {
     pub model: &'a Model<S>,
     block: &'a Block,

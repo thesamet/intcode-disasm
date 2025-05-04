@@ -39,6 +39,7 @@ impl Function {
     }
 }
 
+#[derive(Debug, Copy, Clone)] // Add Copy and Clone
 pub struct FunctionView<'a, S: ModelState> {
     pub model: &'a Model<S>,
     function: &'a Function,
