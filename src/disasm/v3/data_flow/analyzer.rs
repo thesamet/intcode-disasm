@@ -2,10 +2,10 @@ use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::disasm::v3::common::{Expression, MemoryReference};
+use crate::disasm::v3::common::{Expression, MemoryReference, FunctionCall};
 use crate::disasm::v3::control_flow::{Block, NextKind};
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
-use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, FunctionView, Model};
+use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
 
 use super::block::{DataFlowBlock, Definition, OriginationPoint};
