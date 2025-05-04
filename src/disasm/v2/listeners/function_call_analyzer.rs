@@ -188,12 +188,13 @@ impl FunctionCallAnalyzer {
             // Analyze parameters using live_in at entry block
             let entry_flow = model.get_block(entry_block_id).data_flow.as_ref().unwrap();
             for (live_addressable, points) in &entry_flow.live_in {
-                let Ok(live_kind) =
-                    MemoryReferenceType::try_from(live_addressable) // Use TryFrom
+                let Ok(live_kind) = MemoryReferenceType::try_from(live_addressable)
+                // Use TryFrom
                 else {
                     continue;
                 };
-                let Some(offset) = (&live_kind).as_stack_relative() else { // Call trait method on reference
+                let Some(offset) = (&live_kind).as_stack_relative() else {
+                    // Call trait method on reference
                     continue;
                 };
                 if offset >= 0

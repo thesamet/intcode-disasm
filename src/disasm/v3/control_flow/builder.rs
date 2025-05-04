@@ -6,7 +6,10 @@ use std::collections::{HashMap, HashSet};
 use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types
 use crate::disasm::v3::control_flow::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
 use crate::disasm::v3::lir::{
-    Expression, Instruction, InstructionNode, MemoryReference, // Use LIR types
+    Expression,
+    Instruction,
+    InstructionNode,
+    MemoryReference, // Use LIR types
 };
 use crate::disasm::Error;
 
@@ -178,8 +181,8 @@ impl ControlFlowGraphBuilder {
                 // native_instructions: current_block_instructions.clone(), // Removed - unresolved
                 // Assuming convert_block now returns Vec<InstructionNode<v3::lir::MemoryReference>>
                 low_instructions: InstructionNode::convert_block(&current_block_instructions), // Pass reference
-                next: NextKind::<MemoryReference>::Unknown, // Specify type
-                predecessors: Vec::new(),                   // Will use v3 MemoryReference
+                next: NextKind::Unknown,  // Specify type
+                predecessors: Vec::new(), // Will use v3 MemoryReference
             };
             self.blocks.insert(block_id, block);
 
@@ -264,7 +267,8 @@ impl ControlFlowGraphBuilder {
                         "Block {} not found",
                         false_branch
                     );
-                    predecessors_map.entry(true_branch).or_default().push( // Keep as value for entry
+                    predecessors_map.entry(true_branch).or_default().push(
+                        // Keep as value for entry
                         PredecessorKind::ConditionalJump(Condition {
                             from_block: *block_id,
                             condition_operand: condition.condition_operand.clone(),
@@ -273,7 +277,8 @@ impl ControlFlowGraphBuilder {
                             follows_block: false_branch,
                         }),
                     );
-                    predecessors_map.entry(false_branch).or_default().push( // Keep as value for entry
+                    predecessors_map.entry(false_branch).or_default().push(
+                        // Keep as value for entry
                         PredecessorKind::ConditionalFollow(Condition {
                             from_block: *block_id,
                             condition_operand: condition.condition_operand.clone(),

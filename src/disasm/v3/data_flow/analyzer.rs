@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -54,7 +53,8 @@ impl DataFlowAnalyzer {
     }
 
     /// Performs the main data flow analysis passes for a given function.
-    fn analyze_function(&self, function: &Function, df_result: &mut DataFlowResult) { // Take &Function
+    fn analyze_function(&self, function: &Function, df_result: &mut DataFlowResult) {
+        // Take &Function
         let block_ids: Vec<BlockId> = function.blocks().map(|(id, _)| *id).collect();
 
         // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
@@ -76,7 +76,8 @@ impl DataFlowAnalyzer {
     }
 
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
-    fn initialize_gen_use_func_in(&self, function: &Function, df_result: &mut DataFlowResult) { // Take &Function
+    fn initialize_gen_use_func_in(&self, function: &Function, df_result: &mut DataFlowResult) {
+        // Take &Function
         for (block_id, block) in function.blocks() {
             let block_flow = df_result
                 .blocks
@@ -89,13 +90,15 @@ impl DataFlowAnalyzer {
             for instr in block.low_instructions() {
                 // Calculate USE for this instruction
                 for r in instr.kind.collect_read_addresses().into_iter() {
-                    if !defined_in_block.contains::<&MemoryReference>(r) { // Specify type for contains
+                    if !defined_in_block.contains::<&MemoryReference>(r) {
+                        // Specify type for contains
                         block_flow.use_before_def.insert(r.clone(), instr.id); // Use instr.id, r.clone() is correct
                     }
                 }
 
                 // Calculate GEN for this instruction
-                if let Some(write_operand) = instr.kind.get_write_address() { // Use instr.kind
+                if let Some(write_operand) = instr.kind.get_write_address() {
+                    // Use instr.kind
                     block_flow
                         .gen
                         .insert(write_operand.clone(), (instr.id, write_operand.clone())); // Use instr.id
@@ -194,9 +197,10 @@ impl DataFlowAnalyzer {
         let mut changed = true;
         while changed {
             changed = false;
-            for block_id in block_ids { // Iterate over block_ids
+            for block_id in block_ids {
+                // Iterate over block_ids
                 let block_view = function.block(block_id); // Get BlockView
-                // Definitions
+                                                           // Definitions
                 let new_defs_in = self.calculate_defs_in(function, &block_view, df_result); // Pass BlockView
 
                 // Update block's IN set if changed
@@ -223,7 +227,8 @@ impl DataFlowAnalyzer {
 
                 // If we call a function at the end of the block, this block doesn't let [R+n]
                 // definitions flow forward.
-                if matches!(block_view.next(), NextKind::FunctionCall(_)) { // Use block_view
+                if matches!(block_view.next(), NextKind::FunctionCall(_)) {
+                    // Use block_view
                     current_defs_out.retain(|d| !d.is_outgoing_parameter()); // Use MemoryReferenceInfo trait directly on MemoryReference
                 }
 
@@ -246,7 +251,8 @@ impl DataFlowAnalyzer {
     ) -> HashSet<Definition> {
         let mut new_defs_in = HashSet::new();
 
-        for pred_kind in block.predecessors() { // Use block view
+        for pred_kind in block.predecessors() {
+            // Use block view
             let pred_block_id = pred_kind.source_block_id();
             let pred_block = df_result.blocks.get(&pred_block_id);
             let pred_flow = pred_block.as_ref().unwrap(); // TODO: Handle panic
@@ -254,12 +260,14 @@ impl DataFlowAnalyzer {
             new_defs_in.extend(pred_flow.defs_out.iter().cloned());
         }
 
-        if function.entry_block() == block.block_id() { // Use entry_block()
+        if function.entry_block() == block.block_id() {
+            // Use entry_block()
             // Create synthetic definitions for any potential input parameters
             // to this function. We take the union of all the use_before_def sets
             // for all blocks in the function, since it is a superset (which is still
             // smaller than all the reads).
-            for (other_block_id, _) in function.blocks() { // Iterate view blocks
+            for (other_block_id, _) in function.blocks() {
+                // Iterate view blocks
                 let other_flow = df_result.blocks.get(other_block_id).unwrap(); // TODO: Handle panic
                 new_defs_in.extend(
                     other_flow
@@ -313,9 +321,11 @@ impl DataFlowAnalyzer {
 
                 // add potential_function_call_params.
                 let block_view = function.block(&block_id); // Get BlockView
-                if matches!(block_view.next(), NextKind::FunctionCall(_)) { // Use block_view
+                if matches!(block_view.next(), NextKind::FunctionCall(_)) {
+                    // Use block_view
                     for d in &block_flow.defs_in {
-                        if d.kind.is_outgoing_parameter() { // Use MemoryReferenceInfo trait directly on MemoryReference
+                        if d.kind.is_outgoing_parameter() {
+                            // Use MemoryReferenceInfo trait directly on MemoryReference
                             current_live_in
                                 .entry(d.kind.clone())
                                 .or_insert_with(HashSet::new)
@@ -355,8 +365,10 @@ impl DataFlowAnalyzer {
         let block_view = function.block(block_id); // Get BlockView
         let mut new_live_out = HashMap::new();
 
-        for succ_id in block_view.next().successors() { // Use block_view
-            if let Some(succ_flow) = df_result.blocks.get(&succ_id) { // Handle potential missing block
+        for succ_id in block_view.next().successors() {
+            // Use block_view
+            if let Some(succ_flow) = df_result.blocks.get(&succ_id) {
+                // Handle potential missing block
                 for (k, v) in &succ_flow.live_in {
                     new_live_out
                         .entry(k.clone())
@@ -371,15 +383,18 @@ impl DataFlowAnalyzer {
             }
         }
 
-        if function.return_block() == Some(*block_id) { // Use return_block()
+        if function.return_block() == Some(*block_id) {
+            // Use return_block()
             // If this is a function return, we need to add all potential return arguments
             // to live out So we will have phi's automatically created for them at the right junctions.
             // We mark the live out as "FunctionOutput" to indicate that it is a return value.
             // This prevents from potential return values to appear as function inputs by propogating
             // to the entry point's live in.
-            for (other_block_id, _) in function.blocks() { // Iterate view blocks
+            for (other_block_id, _) in function.blocks() {
+                // Iterate view blocks
                 let dfr = df_result.blocks.get(other_block_id).unwrap(); // TODO: Handle panic
-                for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) { // Use MemoryReferenceInfo trait directly on MemoryReference
+                for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) {
+                    // Use MemoryReferenceInfo trait directly on MemoryReference
                     new_live_out
                         .entry(gen.clone())
                         .or_insert_with(HashSet::new)
