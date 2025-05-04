@@ -1,14 +1,14 @@
 // Corrected imports based on actual structure and public modules
 use crate::disasm::v3::{
     common::{
-        function_call::CallSiteInfo, // CalleeInfo is in function_call::result
+        function_call::CallSiteInfo, // Use v3 CallSiteInfo
         // instruction::InstructionNode, // Removed - unresolved
         memory_reference::MemoryReference,
         span::Span,
     },
     control_flow::{Block, Function, NextKind, PredecessorKind}, // Use pub use from control_flow::mod
     data_flow::block::DataFlowBlock, // Use pub use from data_flow::mod
-    function_call::result::CalleeInfo, // Correct path for CalleeInfo
+    function_call::result::CalleeInfo, // Use v3 CalleeInfo (now public)
     id_types::{BlockId, FunctionId},
     model::{DataFlowComplete, FunctionCallComplete, Model, ModelState, SsaComplete}, // Correct path for DataFlowComplete
     // native::NativeInstruction, // Removed - unresolved

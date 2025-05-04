@@ -28,9 +28,9 @@ impl FunctionCallAnalyzer {
         // Return a new model with the updated state
         Ok(Model {
             image_scanner_result: self.model.image_scanner_result.clone(),
-            control_flow_graph_result: self.model.control_flow_graph_result().clone(), // Use accessor
-            data_flow_result: self.model.data_flow_result().clone(), // Use accessor
-            ssa_result: self.model.ssa_result().clone(), // Use accessor
+            control_flow_graph_result: Some(self.model.control_flow_graph_result().clone()), // Wrap in Some
+            data_flow_result: Some(self.model.data_flow_result().clone()), // Wrap in Some
+            ssa_result: Some(self.model.ssa_result().clone()), // Wrap in Some
             function_call_analysis_result: Some(result),
             marker: std::marker::PhantomData,
         })

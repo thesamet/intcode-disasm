@@ -1,5 +1,5 @@
+use crate::disasm::v3::id_types::{BlockId, InstructionId}; // Added InstructionId
 use std::collections::HashMap;
-use crate::disasm::v3::id_types::BlockId;
 use super::Expression;
 
 /// Represents a function call with its source and target information.
@@ -41,13 +41,13 @@ impl<T: Clone + PartialEq + Eq + std::hash::Hash> FunctionCall<T> {
 
 /// Contains flow data about call sites.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CallSiteInfo {
+pub struct CallSiteInfo { // Made public
     // The set of positive offsets `n` identifying return value locations `[R+n]`
     // that are read by subsequent blocks having access to the function's return state.
-    pub return_values_accessed: HashMap<i128, crate::disasm::v3::id_types::InstructionId>,
+    pub return_values_accessed: HashMap<i128, InstructionId>, // Use imported InstructionId
 }
 
-impl CallSiteInfo {
+impl CallSiteInfo { // Made public
     pub fn new() -> Self {
         Self::default()
     }

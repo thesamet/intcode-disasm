@@ -46,7 +46,7 @@ impl DataFlowAnalyzer {
         // Return a new model with the updated state
         Ok(Model {
             image_scanner_result: self.model.image_scanner_result.clone(),
-            control_flow_graph_result: self.model.control_flow_graph_result().clone(), // Use accessor
+            control_flow_graph_result: Some(self.model.control_flow_graph_result().clone()), // Wrap in Some
             data_flow_result: Some(result),
             ssa_result: None,
             function_call_analysis_result: None,
@@ -90,7 +90,7 @@ impl DataFlowAnalyzer {
             for instr in block.low_instructions() {
                 // Calculate USE for this instruction
                 for r in instr.kind.collect_read_addresses().into_iter() {
-                    if !defined_in_block.contains::<&MemoryReference>(r) { // Added type annotation
+                    if !defined_in_block.contains(r) { // Removed type annotation
                         block_flow.use_before_def.insert(r.clone(), instr.id); // Use instr.id, r.clone() is correct
                     }
                 }

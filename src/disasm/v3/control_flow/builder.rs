@@ -66,8 +66,8 @@ impl ControlFlowGraphBuilder {
         let result = ControlFlowGraphResult::new(self.functions.clone());
 
         // Return a new model with the updated state
-        // Corrected call to new (already fixed in previous step, ensuring it stays)
-        Ok(model.with_control_flow_graph_result(result))
+        // Explicitly type the Ok value
+        Ok::<_, Error>(model.with_control_flow_graph_result(result))
     }
 
     fn process_function(
@@ -215,23 +215,23 @@ impl ControlFlowGraphBuilder {
             match &next_kind {
                 NextKind::Follows(target_id) => {
                     assert!(
-                        self.blocks.contains_key(target_id), // Pass reference
+                        self.blocks.contains_key(target_id), // Pass BlockId directly
                         "Block {} not found",
                         target_id
                     );
                     predecessors_map
-                        .entry(*target_id) // Keep deref here for entry key
+                        .entry(*target_id) // Pass BlockId directly
                         .or_default()
                         .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
                     assert!(
-                        self.blocks.contains_key(target_block_id), // Pass reference
+                        self.blocks.contains_key(target_block_id), // Pass BlockId directly
                         "Block {} not found",
                         target_block_id
                     );
                     predecessors_map
-                        .entry(*target_block_id) // Keep deref here for entry key
+                        .entry(*target_block_id) // Pass BlockId directly
                         .or_default()
                         .push(PredecessorKind::GotoFrom(*block_id));
                 }
