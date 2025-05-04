@@ -680,36 +680,38 @@ impl<'a> SSAConversionState<'a> {
         // Get the v2 function ID for VersionRegistry
         let v2_function_id = FunctionId::new(self.function.function_id().index());
 
-        // Helper closure to map v3 MemoryReference reads to v2 SsaMemoryReference
+        // Closure uses the read-only pre-instruction state
         fn map_read(
-            (current, _): &mut (&mut VersionRegistry, &mut VersionRegistry), // 'current' is the global registry
+            (pre_state, _, _): &mut (&VersionRegistry, &mut VersionRegistry, &mut VersionRegistry),
             op: &MemoryReference,
         ) -> SsaMemoryReference {
-            // Use the conversion function based on the global registry's state
-            current.convert_to_ssa_memory_reference(op)
+            // Use the read-only pre_state captured before the instruction's write
+            pre_state.convert_to_ssa_memory_reference(op)
         }
 
-        // Helper closure to map v3 MemoryReference writes to SsaMemoryReference
+        // Closure uses the mutable global ('current') and block-local ('end') states
         fn map_write(
-            (current, end): &mut (&mut VersionRegistry, &mut VersionRegistry),
+            (_, current, end): &mut (&VersionRegistry, &mut VersionRegistry, &mut VersionRegistry),
             op: &MemoryReference,
         ) -> SsaMemoryReference {
             match MemoryReferenceType::try_from(op) {
                 Ok(mem_ref) => {
+                    // Assign next version in 'current' (global) and update 'end' (block local)
                     // Assign next version in 'current' (global) and update 'end' (block specific)
                     let next_var = current.create_next_version(&mem_ref); // Creates v_n+1 in 'current'
-                    end.set_version(mem_ref, next_var);                   // Sets v_n+1 in 'end'
-                    // Return the correctly incremented version (v_n+1)
+                    let next_var = current.create_next_version(&mem_ref);
+                    end.set_version(mem_ref, next_var);
                     next_var.into()
                 }
-                 Err(_) => {
-                    // Non-versionable writes (like Deref targets) are converted using the current state
-                    // This resolves the *pointer* expression but doesn't create a new version for it.
-                     current.convert_to_ssa_memory_reference(op)
-                 }
+                Err(_) => {
+                    // Non-versionable writes (like Deref targets) are still converted using the mutable 'current' state
+                    // This resolves the *pointer* expression based on the latest global version.
+                    current.convert_to_ssa_memory_reference(op)
+                }
             }
         }
-        // Initialize global VersionRegistry with the v2 function ID
+
+        // Initialize the global version registry tracking the latest version created across all blocks/instructions
         let mut version_registry = VersionRegistry::new(v2_function_id);
 
         // Iterate over blocks using the FunctionView, sorted by BlockId
@@ -754,12 +756,15 @@ impl<'a> SSAConversionState<'a> {
 
             // Convert v3 LIR instructions to v2 SSA instructions, updating versions
             let mut instructions = Vec::new();
-            for instr_node in block_view.low_instructions() {
-                // Use v3 low_instructions
-                // Prepare state tuple for map_rw
-                let mut state: (&mut VersionRegistry, &mut VersionRegistry) =
-                    (&mut version_registry, &mut end_state);
-                // Map the v3 instruction node using the read/write mappers
+            for instr_node in block_view.low_instructions() { // Use v3 low_instructions
+                // Capture the read-state *before* this instruction potentially writes
+                let pre_instr_state = version_registry.clone();
+
+                // Prepare the 3-tuple state for map_rw
+                let mut state = (&pre_instr_state, &mut version_registry, &mut end_state);
+
+                // Map the v3 instruction node using the read/write mappers and the new state tuple
+                // map_read will use pre_instr_state, map_write will use version_registry & end_state
                 instructions.push(instr_node.map_rw(&mut state, map_read, map_write));
             }
 
