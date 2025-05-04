@@ -1101,6 +1101,7 @@ impl<'a> SSAConversionState<'a> {
 
             for instr_node in &ssa_block.instructions { // Iterate over instructions with finalized writes
                 // Map reads within the instruction node using the block's start_state
+                // Use the newly added map method
                 let read_mapped_instr = instr_node.map(&mut |ssa_mem_ref: &SsaMemoryReference| {
                     // Use the start_state registry to find the correct version for reads
                     start_state.current_memory_reference(ssa_mem_ref)
@@ -1186,10 +1187,10 @@ mod tests {
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
     use crate::disasm::v3::{
-        control_flow::ControlFlowGraphBuilder, // Use v3 CFG Builder
-        data_flow::DataFlowAnalyzer,           // Use v3 Data Flow Analyzer
-        image_scanner::ImageScanner,           // Use v3 Image Scanner
-        model::InitialState,                   // Import InitialState
+        control_flow::ControlFlowGraphBuilder as V3ControlFlowGraphBuilder, // Alias v3 CFG Builder
+        data_flow::DataFlowAnalyzer as V3DataFlowAnalyzer, // Alias v3 Data Flow Analyzer
+        image_scanner::ImageScanner as V3ImageScanner,     // Alias v3 Image Scanner
+        model::{DataFlowComplete, InitialState, Model},   // Import v3 Model types
     };
     use crate::disasm::v2::{dispatching::EventPublisher, events::Event}; // Keep v2 dispatching
     use pretty_assertions::{assert_eq, assert_matches};
@@ -1301,16 +1302,10 @@ mod tests {
         // Re-run the v3 analysis pipeline explicitly to get the DataFlowComplete model
         // This duplicates work done by the listener but ensures tests have the correct input type
         let v3_model_initial = Model::<InitialState>::new();
-        // Use the imported v3::ImageScanner::run
-        let v3_model_scanned =
-            crate::disasm::v3::image_scanner::ImageScanner::run(binary, v3_model_initial).unwrap();
-        // Use the imported v3::ControlFlowGraphBuilder::run
-        let v3_model_cfg =
-            crate::disasm::v3::control_flow::ControlFlowGraphBuilder::run(v3_model_scanned)
-                .unwrap();
-        // Use the imported v3::DataFlowAnalyzer::run
-        let v3_model_data_flow =
-            crate::disasm::v3::data_flow::DataFlowAnalyzer::run(v3_model_cfg).unwrap();
+        // Use the aliased v3 analyzers
+        let v3_model_scanned = V3ImageScanner::run(binary, v3_model_initial).unwrap();
+        let v3_model_cfg = V3ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
+        let v3_model_data_flow = V3DataFlowAnalyzer::run(v3_model_cfg).unwrap();
 
         (v3_model_data_flow, v2_model)
     }
@@ -2006,7 +2001,10 @@ exit:
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
 
         // Check the merge block has a phi function for [R+1] using v2_model
-        let merge_block = ctx.v2_model.get_ssa_result().unwrap().functions[&FunctionId::from(0)]
+        let merge_block = ctx.v2_model // Use v2_model field
+            .get_ssa_result()
+            .unwrap()
+            .functions[&FunctionId::from(0)]
             .blocks
             .iter()
             .sorted_by_key(|(k, _)| *k)
