@@ -65,7 +65,10 @@ impl DataFlowAnalyzer {
         // Pass 4: Liveness Analysis (Backward Analysis)
         self.run_liveness_analysis(function, df_result);
 
-        debug!("Data Flow Analysis passes complete for {}", func_id);
+        debug!(
+            "Data Flow Analysis passes complete for {}",
+            function.function_id()
+        );
     }
 
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
@@ -230,7 +233,7 @@ impl DataFlowAnalyzer {
     /// Calculates the Defs-In set for a single block based on its predecessors.
     fn calculate_defs_in(
         &self,
-        function: &crate::disasm::v3::model::Function,
+        function: &crate::disasm::v3::control_flow::Function, // Use public Function type
         block: &Block,
         df_result: &DataFlowResult,
     ) -> HashSet<Definition> {
@@ -271,7 +274,7 @@ impl DataFlowAnalyzer {
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
         &self,
-        function: &crate::disasm::v3::model::Function,
+        function: &crate::disasm::v3::control_flow::Function, // Use public Function type
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -338,7 +341,7 @@ impl DataFlowAnalyzer {
     /// Calculates the Live-Out set for a single block based on its successors' Live-In sets.
     fn calculate_live_out(
         &self,
-        function: &crate::disasm::v3::model::Function,
+        function: &crate::disasm::v3::control_flow::Function, // Use public Function type
         block_id: BlockId,
         df_result: &DataFlowResult, // Read-only access for successor IN sets
     ) -> HashMap<MemoryReference, HashSet<OriginationPoint>> {
