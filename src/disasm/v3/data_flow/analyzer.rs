@@ -402,4 +402,4 @@ impl DataFlowAnalyzer {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests;
