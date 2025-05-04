@@ -814,6 +814,16 @@ mod tests {
             "Block 26 should NOT have returns from func2"
         );
 
+        // --- Check Use Before Def for return value ---
+        // Block 53 reads [R+1] which is a return value from func3
+        let flow53 = get_flow(&model, BlockId::from(53));
+        assert!(
+            flow53
+                .use_before_def
+                .contains_key(&MemoryReference::StackRelative(1)),
+            "Block 53 should have [R+1] in use_before_def as a return value from func3"
+        );
+
         // --- Check Call Site Info ---
         // Block 30 calls func3, return is read in block 53 ([R+1])
         let flow30 = get_flow(&model, BlockId::from(30));
