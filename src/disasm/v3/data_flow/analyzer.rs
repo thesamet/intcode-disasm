@@ -33,8 +33,6 @@ impl DataFlowAnalyzer {
         let mut result = DataFlowResult::new();
 
         // Get all functions from the control flow graph
-        let function_ids: Vec<FunctionId> =
-            self.model.functions().map(|(id, _)| id).cloned().collect();
 
         // Analyze each function
         for (_, f) in self.model.functions() {
@@ -47,20 +45,17 @@ impl DataFlowAnalyzer {
 
     /// Performs the main data flow analysis passes for a given function.
     fn analyze_function(&self, function: &Function, df_result: &mut DataFlowResult) {
-        // Take &Function
-        let block_ids: Vec<BlockId> = function.blocks().map(|(id, _)| *id).collect();
-
         // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
         self.initialize_gen_use_func_in(function, df_result); // Pass reference
 
         // Pass 2: compute function_returns_out and function_returns_in for all blocks (forward analysis)
-        self.run_function_returns_analysis(function, &block_ids, df_result); // Pass reference
+        self.run_function_returns_analysis(function, df_result); // Pass reference
 
         // Pass 3: Reaching Definitions (Forward Analysis)
-        self.run_reaching_definitions_analysis(function, &block_ids, df_result); // Pass reference
+        self.run_reaching_definitions_analysis(function, df_result); // Pass reference
 
         // Pass 4: Liveness Analysis (Backward Analysis)
-        self.run_liveness_analysis(function, &block_ids, df_result); // Pass reference
+        self.run_liveness_analysis(function, df_result); // Pass reference
 
         debug!(
             "Data Flow Analysis passes complete for {}",
@@ -74,7 +69,7 @@ impl DataFlowAnalyzer {
         for (block_id, block) in function.blocks() {
             let block_flow = df_result
                 .blocks
-                .entry(*block_id)
+                .entry(block_id)
                 .or_insert_with(DataFlowBlock::new);
 
             let mut defined_in_block = HashSet::new();
@@ -127,13 +122,12 @@ impl DataFlowAnalyzer {
     fn run_function_returns_analysis(
         &self,
         function: &Function, // Take &Function
-        block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
-            for &block_id in block_ids {
+            for &block_id in function.all_block_ids() {
                 // Function returns
                 let new_func_in =
                     self.calculate_function_returns_in(function, &block_id, df_result); // Pass &block_id
@@ -184,13 +178,12 @@ impl DataFlowAnalyzer {
     fn run_reaching_definitions_analysis(
         &self,
         function: &Function, // Take &Function
-        block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
-            for block_id in block_ids {
+            for block_id in function.all_block_ids() {
                 // Iterate over block_ids
                 let block_view = function.block(block_id); // Get BlockView
                                                            // Definitions
@@ -262,7 +255,7 @@ impl DataFlowAnalyzer {
             // smaller than all the reads).
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
-                let other_flow = df_result.blocks.get(other_block_id).unwrap(); // TODO: Handle panic
+                let other_flow = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
                 new_defs_in.extend(
                     other_flow
                         .use_before_def
@@ -284,14 +277,13 @@ impl DataFlowAnalyzer {
     fn run_liveness_analysis(
         &self,
         function: &Function, // Take &Function
-        block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
             // Iterate backwards - often converges faster for backward analyses like liveness
-            for &block_id in block_ids.iter().rev() {
+            for &block_id in function.all_block_ids().collect_vec().iter().rev() {
                 // Liveness
                 let new_live_out = self.calculate_live_out(function, &block_id, df_result); // Pass &block_id
 
@@ -386,7 +378,7 @@ impl DataFlowAnalyzer {
             // to the entry point's live in.
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
-                let dfr = df_result.blocks.get(other_block_id).unwrap(); // TODO: Handle panic
+                let dfr = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
                 for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) {
                     // Use MemoryReferenceInfo trait directly on MemoryReference
                     new_live_out
