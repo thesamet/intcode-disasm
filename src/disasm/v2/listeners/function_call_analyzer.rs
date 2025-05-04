@@ -1,5 +1,5 @@
 use crate::disasm::v2::data_flow::NativeOriginationPoint;
-use crate::disasm::v2::instructions::MemoryReferenceInfo;
+use crate::disasm::v2::instructions::MemoryReferenceInfo; // Removed ReadAddressExtractor import
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::OriginationPoint,
@@ -188,12 +188,12 @@ impl FunctionCallAnalyzer {
             // Analyze parameters using live_in at entry block
             let entry_flow = model.get_block(entry_block_id).data_flow.as_ref().unwrap();
             for (live_addressable, points) in &entry_flow.live_in {
-                let Some(live_kind) =
-                    MemoryReferenceType::try_from_memory_reference(live_addressable)
+                let Ok(live_kind) =
+                    MemoryReferenceType::try_from(live_addressable) // Use TryFrom
                 else {
                     continue;
                 };
-                let Some(offset) = live_kind.as_stack_relative() else {
+                let Some(offset) = (&live_kind).as_stack_relative() else { // Call trait method on reference
                     continue;
                 };
                 if offset >= 0
@@ -305,12 +305,14 @@ impl FunctionCallAnalyzer {
                             .flat_map(|b| b.instructions.iter())
                             .find(|i| i.id == instr_id)
                             .unwrap();
+                        // Use collect_source_expressions and then collect_read_addresses on the expression
                         let read_var = *instr
                             .kind
-                            .collect_read_addresses()
+                            .collect_source_expressions() // Get source expressions first
                             .iter()
-                            .find(|r| (**r).as_stack_relative() == Some(offset))
-                            .unwrap()
+                            .flat_map(|expr| expr.collect_read_addresses()) // Then collect reads from expressions
+                            .find(|r| r.as_stack_relative() == Some(offset)) // Call trait method on reference
+                            .expect("Could not find read variable for return value")
                             .as_versioned()
                             .unwrap();
                         return_reads.entry(offset).or_insert(read_var);

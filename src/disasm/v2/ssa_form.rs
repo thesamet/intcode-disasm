@@ -76,9 +76,20 @@ impl std::fmt::Display for MemoryReferenceType {
     }
 }
 
+// Implement From<&MemoryReferenceType> for MemoryReference
+impl From<&MemoryReferenceType> for MemoryReference {
+    fn from(value: &MemoryReferenceType) -> Self {
+        match value {
+            MemoryReferenceType::Memory(addr) => MemoryReference::Global(*addr),
+            MemoryReferenceType::RelativeMemory(offset) => MemoryReference::StackRelative(*offset),
+            MemoryReferenceType::Pointer(id) => MemoryReference::Pointer(*id),
+        }
+    }
+}
+
 impl<'a> MemoryReferenceInfo<'a> for &'a MemoryReferenceType {
     fn to_memory_reference(&self) -> MemoryReference {
-        (*self).into()
+        self.into() // Now uses the From impl above
     }
 
     fn as_deref(&self) -> Option<Expression<MemoryReference>> {
@@ -107,6 +118,29 @@ impl VersionedMemoryReference {
     }
 }
 
+// Implement From<&VersionedMemoryReference> for MemoryReference
+impl From<&VersionedMemoryReference> for MemoryReference {
+    fn from(value: &VersionedMemoryReference) -> Self {
+        (&value.kind).into() // Convert the inner kind
+    }
+}
+
+// Implement MemoryReferenceInfo for VersionedMemoryReference
+impl<'a> MemoryReferenceInfo<'a> for &'a VersionedMemoryReference {
+    fn to_memory_reference(&self) -> MemoryReference {
+        self.into() // Use the From impl
+    }
+
+    fn as_deref(&self) -> Option<Expression<MemoryReference>> {
+        // VersionedMemoryReference cannot be a deref itself
+        None
+    }
+
+    fn is_deref(&self) -> bool {
+        false
+    }
+}
+
 impl std::fmt::Display for VersionedMemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}_{}_{}", self.kind, self.function_id, self.version)
@@ -131,6 +165,17 @@ impl SsaMemoryReference {
 impl From<VersionedMemoryReference> for SsaMemoryReference {
     fn from(v: VersionedMemoryReference) -> Self {
         SsaMemoryReference::Versioned(v)
+    }
+}
+
+// Implement ReadAddressExtractor for SsaMemoryReference
+use crate::disasm::v3::lir::ReadAddressExtractor; // Import the trait
+impl ReadAddressExtractor for SsaMemoryReference {
+    fn extract_read_addresses(&self) -> Vec<&Self> {
+        match self {
+            SsaMemoryReference::Deref(expr) => expr.collect_read_addresses(),
+            SsaMemoryReference::Versioned(_) => Vec::new(),
+        }
     }
 }
 
@@ -871,8 +916,9 @@ impl<'a> SSAConversionState<'a> {
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
                     // new_in should store SsaVarKind -> SsaVar
                     for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
-                        if !live_in.contains_key(&mem_ref_type.into())
-                            && !mem_ref_type.is_local_or_parameter()
+                        let mem_ref: MemoryReference = mem_ref_type.into(); // Convert once
+                        if !live_in.contains_key(&mem_ref)
+                            && !(&mem_ref).is_local_or_parameter() // Call trait method on reference
                         {
                             // This var doesn't live from here and not a return value
                             trace!("Skipping var {} from predecessor {} because it doesn't live in this block {block_id}", mem_ref_type, pred_id);
@@ -954,12 +1000,12 @@ impl<'a> SSAConversionState<'a> {
                 for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
-                    if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && phi.result.as_stack_relative().is_some_and(|x| x > 0)
-                    {
-                        // For function returns, the phi result itself represents the value.
-                        // Wrap the SsaVar result in SsaOperand::Variable.
-                        phi_inputs.insert(pred.clone(), phi.result.clone());
+                    if matches!(pred, PredecessorKind::FunctionCallReturns(_)) {
+                        let mem_ref: MemoryReference = (&phi.result.kind).into();
+                        if (&mem_ref).as_stack_relative().is_some_and(|x| x > 0) { // Call trait method on reference
+                            // For function returns, the phi result itself represents the value.
+                            // Wrap the SsaVar result in SsaOperand::Variable.
+                            phi_inputs.insert(pred.clone(), phi.result.clone());
                     } else {
                         phi_inputs.insert(
                             pred.clone(),
@@ -980,12 +1026,13 @@ impl<'a> SSAConversionState<'a> {
                 }
                 instr = instr.map_rw(
                     &mut registry,
-                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
-                    |reg, ssa_memory_reference| match ssa_memory_reference {
+                    |reg, ssa_mem_ref| reg.current_memory_reference::<SsaMemoryReference>(ssa_mem_ref), // Specify type T
+                    |reg, ssa_mem_ref| match ssa_mem_ref {
                         SsaMemoryReference::Deref(expr) => {
-                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
+                            // Pass &Expression<SsaMemoryReference> to current_expression
+                            SsaMemoryReference::Deref(Box::new(reg.current_expression::<SsaMemoryReference>(expr.as_ref()))) // Specify type T
                         }
-                        _ => ssa_memory_reference.clone(),
+                        _ => ssa_mem_ref.clone(), // Clone the SsaMemoryReference
                     },
                 );
                 if let Some(write) = instr.kind.get_write_address() {

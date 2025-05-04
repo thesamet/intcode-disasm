@@ -263,7 +263,7 @@ impl<'a> PrettyPrinter<'a> {
     }
 
     pub fn format_call_info(&self, function: &SsaFunction) -> String {
-        return "".to_string();
+        // return "".to_string(); // Removed unreachable return
         let args_rets: Option<String> = self
             .model
             .get_type_inference_result()

@@ -1,8 +1,7 @@
 use crate::disasm::v3::common::function_call::CallSiteInfo; // Use v3 CallSiteInfo
-use crate::disasm::v3::common::memory_reference::MemoryReference; // Need MemoryReference for CalleeInfo
 use crate::disasm::v3::control_flow::FunctionView;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
-// use crate::disasm::v3::listeners::function_call_analyzer::{CallSiteInfo, CalleeInfo}; // Remove v2 import
+use crate::disasm::v3::lir::MemoryReference; // Use LIR MemoryReference
 use crate::disasm::v3::model::{add_block_view_when, HasFunctionCallAnalysisResult, ModelState};
 use std::collections::HashMap;
 
