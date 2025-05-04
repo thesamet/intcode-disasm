@@ -461,17 +461,11 @@ pub struct SsaBlock {
     pub original_id: BlockId,
     /// Phi functions at the start of this block
     pub phi_functions: Vec<PhiFunction>,
-    /// Instructions in SSA form
-    pub native_instructions: Vec<SsaInstruction>,
-    // Instructions in SSA form
+    // Instructions in SSA form (LIR)
     pub instructions: Vec<InstructionNode<SsaMemoryReference>>,
-    // Start state: the state of all versioned variables at the start of this block
-    pub native_start_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
-    // Start state: the state of all versioned variables at the start of this block
+    // Start state: the state of all versioned variables at the start of this block (LIR)
     pub start_state: VersionRegistry, // Track only versioned variables
-    /// End state: the state of all versioned variables at the end of this block
-    pub native_end_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
-    /// End state: the state of all versioned variables at the end of this block
+    /// End state: the state of all versioned variables at the end of this block (LIR)
     pub end_state: VersionRegistry, // Track only versioned variables
     /// Control flow information using SSA operands (using v3 types)
     pub next: crate::disasm::v3::control_flow::NextKind<SsaMemoryReference>,
@@ -785,17 +779,16 @@ impl<'a> SSAConversionState<'a> {
             }
 
             // Create the v2 SsaBlock structure
+            // Create the v2 SsaBlock structure (without native fields)
             let ssa_block = SsaBlock {
                 original_id: *block_id,
                 phi_functions,
                 instructions,
-                native_instructions: vec![],
                 start_state,
                 end_state,
-                next: NextKind::Halt,
+                // Initialize next/predecessors, will be populated in populate_reads_and_phis
+                next: crate::disasm::v3::control_flow::NextKind::Unknown,
                 predecessors: vec![],
-                native_start_state: HashMap::new(),
-                native_end_state: HashMap::new(),
             };
 
             ssa_blocks.insert(*block_id, ssa_block);
