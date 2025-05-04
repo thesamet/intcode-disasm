@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
-use crate::disasm::v2::control_flow::FunctionCall;
-use crate::disasm::v2::data_flow::{Definition, OriginationPoint};
-use crate::disasm::v2::instructions::{InstructionId, MemoryReference};
-use crate::disasm::v3::listeners::function_call_analyzer::CallSiteInfo;
+use crate::disasm::v3::control_flow::FunctionCall;
+use crate::disasm::v3::id_types::InstructionId;
+use crate::disasm::v3::common::MemoryReference;
+use crate::disasm::v3::function_call::CallSiteInfo;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DataFlowBlock {
     /// **Reaching Definitions (IN):** The set of definitions that might reach the entry point of this block.
     pub defs_in: HashSet<Definition>,
@@ -47,4 +47,32 @@ pub struct DataFlowBlock {
 
     // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
     pub call_site_info: Option<CallSiteInfo>,
+}
+
+impl DataFlowBlock {
+    /// Creates a new, empty `DataFlowBlock` record.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Represents a specific definition site for an Addressable operand.
+/// A definition occurs when an instruction writes a value to a memory location
+/// represented by the Operand.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Definition {
+    /// The location where the definition originated from (from defs), or where it is read from for liveness.
+    /// or the ID of the call instruction (`goto @func`) for return values.
+    pub source: OriginationPoint,
+    /// The location kind (memory or register) being defined.
+    pub kind: MemoryReference,
+    /// The ID of the block containing the defining instruction or the call.
+    pub block_id: crate::disasm::v3::id_types::BlockId,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum OriginationPoint {
+    Instruction(InstructionId),
+    FunctionInput,
+    FunctionOutput,
 }
