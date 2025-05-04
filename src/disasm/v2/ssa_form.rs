@@ -1320,7 +1320,7 @@ mod tests {
         );
 
         // Find the block with the output instruction (the merge block)
-        let main_func_view = model.function(&V3FunctionId::new(0)).expect("Main function not found");
+        let main_func_view = model.function(&V3FunctionId::new(0)).expect("Main function not found"); // expect() is called on the Option
         let mut merge_block_id = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1343,7 +1343,7 @@ mod tests {
         let merge_block_id = merge_block_id.unwrap();
 
         // Get the merge block view and its SSA data
-        let merge_block_view = main_func_view.block(&merge_block_id).expect("Merge block not found");
+        let merge_block_view = main_func_view.block(&merge_block_id).expect("Merge block not found"); // expect() is called on the Option
         let merge_ssa_block = merge_block_view.ssa();
 
         // Verify that the instruction that reads from [100] is using the correct SSA var
@@ -1411,7 +1411,7 @@ mod tests {
         );
 
         // Find the return block by searching for one that contains output instruction
-        let main_func_view = model.function(&V3FunctionId::new(0)).expect("Main function not found");
+        let main_func_view = model.function(&V3FunctionId::new(0)).expect("Main function not found"); // expect() is called on the Option
         let mut found_return_block = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1488,9 +1488,9 @@ mod tests {
         let block_id = BlockId::from(0);
         let block_view = model
             .function(&V3FunctionId::new(0))
-            .expect("Main function not found")
+            .expect("Main function not found") // expect() on Option<FunctionView>
             .block(&block_id)
-            .expect("Block 0 not found");
+            .expect("Block 0 not found"); // expect() on Option<BlockView>
         let block = block_view.ssa(); // Get the SsaBlock
 
         // Now find the instruction: [R-4] = [R-4] + 10
@@ -1729,7 +1729,7 @@ mod tests {
         assert_eq!(
             func_view
                 .block(&return_block_id)
-                .expect("Return block view not found")
+                .expect("Return block view not found") // expect() on Option<BlockView>
                 .ssa() // Get SsaBlock via view
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
@@ -1740,7 +1740,7 @@ mod tests {
         assert_eq!(
             func_view
                 .block(&BlockId::from(13))
-                .expect("Block 13 view not found")
+                .expect("Block 13 view not found") // expect() on Option<BlockView>
                 .ssa() // Get SsaBlock via view
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
@@ -1775,7 +1775,7 @@ exit:
         let func_view = ctx.main_function();
         let return_block_id = func_view.return_block().expect("Return block not found");
         // Access SSA block data via the view
-        let return_block = func_view.block(&return_block_id).expect("Return block view not found").ssa();
+        let return_block = func_view.block(&return_block_id).expect("Return block view not found").ssa(); // expect() on Option<BlockView>
         assert_eq!(
             return_block
                 .end_state // Access end_state from SsaBlock
