@@ -1222,18 +1222,30 @@ mod tests {
         };
     }
 
+    // Stub implementation for find_marker on FunctionView<SsaComplete>
+    impl<'a> FunctionView<'a, SsaComplete> {
+        pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult<'a>> {
+            // TODO: Implement proper marker search within SSA blocks/instructions
+            panic!(
+                "Marker search not yet implemented for FunctionView<SsaComplete>. Marker: '{}'",
+                marker
+            );
+            // None
+        }
+    }
+
     macro_rules! assert_marker_at_main {
         ($ctx:expr, $marker:expr, $expected_operand:expr) => {{
-            // Find the SsaOperand with the given debug marker
-            let found_operand = $ctx
-                .main_function()
-                .find_marker($marker) // Use the new function name
+            // Find the SsaOperand with the given debug marker using the v3 model
+            let found_operand = $ctx // ctx is &TestContext
+                .main_function() // Returns FunctionView<SsaComplete>
+                .find_marker($marker) // Call the stubbed method
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
             let res = match found_operand {
                 MarkerSearchResult::SsaAddressable(a) => a,
                 MarkerSearchResult::Expr(Expression::Addressable(a)) => a,
-                _ => panic!("Expected SsaAddressable or LowExpr::Addressable"),
+                _ => panic!("Expected SsaAddressable or Expr::Addressable"),
             };
             pretty_assertions::assert_eq!(
                 &$expected_operand,
@@ -1281,7 +1293,7 @@ mod tests {
     #[test]
     fn test_basic_ssa_conversion() {
         // Simple program with variable definitions and uses
-        let v3_model = setup_analyzed_models(
+        let model = setup_analyzed_models( // Changed variable name
             r#"
             ; Offset 0
             R += 3          ; stack frame setup
@@ -1294,12 +1306,14 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form using the v3 model
-        let ssa_result = SsaResult::from_program_model(&v3_model);
+        // SSA conversion is done within setup_analyzed_models now
+        // Access the main function view from the resulting model
+        let func_view = model
+            .function(&V3FunctionId::new(0))
+            .expect("Main function not found");
 
-        // Expect a single function (at offset 0)
-        let func_id = FunctionId::from(0);
-        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
+        // Expect the function to have blocks
+        assert!(!func_view.blocks().is_empty());
 
         // Expect the function to have blocks
         assert!(!ssa_function.blocks.is_empty());
@@ -1308,15 +1322,23 @@ mod tests {
         let entry_block_id = BlockId::from(0);
         let entry_block = ssa_function.blocks.get(&entry_block_id).unwrap();
 
-        // The entry block should have instructions
-        assert!(!entry_block.instructions.is_empty());
+        // Check the entry block (0)
+        let entry_block_id = BlockId::from(0);
+        let entry_block_view = func_view
+            .block(&entry_block_id)
+            .expect("Entry block not found");
+
+        // The entry block should have instructions (accessing via SsaBlock stored in model)
+        assert!(!model.ssa_result().unwrap().blocks[&entry_block_id]
+            .instructions
+            .is_empty());
     }
 
     // Test conversion with dominance frontiers and phi functions
     #[test]
     fn test_ssa_conversion_with_phi_functions() {
         // Program with conditional paths that need phi functions
-        let (v3_model, v2_model) = setup_analyzed_models(
+        let model = setup_analyzed_models( // Changed variable name
             r#"
             ; Offset 0: Entry Block
             R += 3
@@ -1339,52 +1361,26 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form using the v3 model
-        let ssa_result = SsaResult::from_program_model(&v3_model);
-
-        // Print block information to debug
-        for (func_id, function) in &ssa_result.functions {
-            println!("Function: {}", func_id);
-            println!(
-                "  Blocks: {}",
-                function
-                    .blocks
-                    .keys()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-
-            // Examine phi functions in each block
-            for (block_id, block) in &function.blocks {
-                println!(
-                    "  Block {}: {} phi functions",
-                    block_id,
-                    block.phi_functions.len()
-                );
-                for (i, phi) in block.phi_functions.iter().enumerate() {
-                    println!(
-                        "    Phi {}: result={:?}, inputs={:?}",
-                        i, phi.result, phi.inputs
-                    );
-                }
-            }
-        }
-
-        // Get the merge block
-        let func_id = FunctionId::from(0);
-        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
+        // Access the SSA result from the model
+        let ssa_result_data = model.ssa_result().expect("SSA result missing");
 
         // Find the block with the output instruction (the merge block)
         let mut merge_block_id = None;
-        for (block_id, block) in &ssa_function.blocks {
-            if block
-                .instructions
-                .iter()
-                .any(|instr| matches!(instr.kind, Instruction::Output(_)))
+        // Iterate through blocks in the SsaResult
+        for (block_id, block) in &ssa_result_data.blocks {
+            // Check if the block belongs to the main function (optional, but good practice)
+            if model
+                .block(block_id)
+                .map_or(false, |b| b.containing_function_id() == V3FunctionId::new(0))
             {
-                merge_block_id = Some(*block_id);
-                break;
+                if block
+                    .instructions
+                    .iter()
+                    .any(|instr| matches!(instr.kind, Instruction::Output(_)))
+                {
+                    merge_block_id = Some(*block_id);
+                    break;
+                }
             }
         }
 
@@ -1393,10 +1389,9 @@ mod tests {
             "Could not find merge block with output instruction"
         );
         let merge_block_id = merge_block_id.unwrap();
-        println!("Found merge block: {}", merge_block_id);
 
-        // Get the merge block
-        let merge_block = ssa_function.blocks.get(&merge_block_id).unwrap();
+        // Get the merge block from the SsaResult
+        let merge_block = ssa_result_data.blocks.get(&merge_block_id).unwrap();
 
         // Verify that the instruction that reads from [100] is using the correct SSA var
         let output_instr = merge_block
@@ -1440,7 +1435,7 @@ mod tests {
     #[test]
     fn test_ssa_conversion_with_function_calls() {
         // Program with a function call and return values
-        let (v3_model, v2_model) = setup_analyzed_models(
+        let model = setup_analyzed_models( // Changed variable name
             r#"
             ; Main function @ 0
             R += 3
@@ -1461,30 +1456,25 @@ mod tests {
             "#,
         );
 
-        // Convert to SSA form using the v3 model
-        let ssa_result = SsaResult::from_program_model(&v3_model);
-
-        // Print block information to debug
-        for (func_id, function) in &ssa_result.functions {
-            println!("Function: {}", func_id);
-            for block_id in function.blocks.keys() {
-                println!("  Block: {}", block_id);
-            }
-        }
-
-        // Get the return block (where function return value is used)
-        let func_id = FunctionId::from(0);
-        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
+        // Access the SSA result from the model
+        let ssa_result_data = model.ssa_result().expect("SSA result missing");
 
         // Find the return block by searching for one that contains output instruction
         let mut found_return_block = None;
-        for (block_id, block) in &ssa_function.blocks {
-            if !block.instructions.is_empty() {
-                let first_instr = &block.instructions[0];
-                if matches!(first_instr.kind, Instruction::Output(_)) {
-                    println!("Found block with output: {}", block_id);
-                    found_return_block = Some(block);
-                    break;
+        // Iterate through blocks in the SsaResult
+        for (block_id, block) in &ssa_result_data.blocks {
+            // Check if the block belongs to the main function (optional, but good practice)
+            if model
+                .block(block_id)
+                .map_or(false, |b| b.containing_function_id() == V3FunctionId::new(0))
+            {
+                if !block.instructions.is_empty() {
+                    let first_instr = &block.instructions[0];
+                    if matches!(first_instr.kind, Instruction::Output(_)) {
+                        println!("Found block with output: {}", block_id);
+                        found_return_block = Some(block);
+                        break;
+                    }
                 }
             }
         }
@@ -1533,7 +1523,7 @@ mod tests {
     #[test]
     fn test_proper_version_increments_for_writes() {
         // Test a simple program that reads and writes the same register
-        let (v3_model, v2_model) = setup_analyzed_models(
+        let model = setup_analyzed_models( // Changed variable name
             r#"
             ; Offset 0
             R += 3                  ; stack frame setup
@@ -1545,19 +1535,12 @@ mod tests {
             "#,
         );
 
-        // Print the SSA program for debugging using the v2 model
-        pretty_print_ssa(&v2_model);
-
-        // Get the function
-        let func_id = FunctionId::from(0);
-        // Convert to SSA form using the v3 model
-        let ssa_result = SsaResult::from_program_model(&v3_model);
-
-        let ssa_function = ssa_result.functions.get(&func_id).unwrap();
+        // Access the SSA result from the model
+        let ssa_result_data = model.ssa_result().expect("SSA result missing");
 
         // Get the block
         let block_id = BlockId::from(0);
-        let block = ssa_function.blocks.get(&block_id).unwrap();
+        let block = ssa_result_data.blocks.get(&block_id).unwrap();
 
         // Now find the instruction: [R-4] = [R-4] + 10
         let add_instr = block
@@ -1579,10 +1562,15 @@ mod tests {
                         if let (
                             MemoryReferenceType::RelativeMemory(target_offset),
                             Expression::Addressable(SsaMemoryReference::Versioned(lhs_var)),
-                        ) = (target_var.kind, &**lhs)
+                        ) = (target_var.kind, lhs.as_ref()) // Remove double deref
                         {
-                            return target_offset == -4
-                                && lhs_var.kind == MemoryReferenceType::RelativeMemory(-4);
+                            // Check the expression inside lhs
+                            if let Expression::Addressable(SsaMemoryReference::Versioned(lhs_var)) =
+                                lhs.as_ref()
+                            {
+                                return target_offset == -4
+                                    && lhs_var.kind == MemoryReferenceType::RelativeMemory(-4);
+                            }
                         }
                     }
                     false
@@ -1596,10 +1584,12 @@ mod tests {
             if let (SsaMemoryReference::Versioned(target_var), Expression::Binary { lhs, .. }) =
                 (target, src)
             {
-                if let Expression::Addressable(SsaMemoryReference::Versioned(src_var)) = &**lhs {
+                if let Expression::Addressable(SsaMemoryReference::Versioned(src_var)) = lhs.as_ref()
+                // Remove double deref
+                {
                     assert!(
                         src_var.version < target_var.version,
-                        "Source version {} should be less than destination version {}",
+                        "Source version {} should be less than target version {}", // Corrected message
                         src_var.version,
                         target_var.version
                     );
@@ -1624,7 +1614,7 @@ mod tests {
                 halt
             "#,
         );
-        pretty_print_ssa(&ctx.model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
@@ -1739,7 +1729,7 @@ mod tests {
               goto [R]                        ; Return
                 "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
 
         // Initial assignments before loop
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
@@ -1878,7 +1868,7 @@ exit:
             goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
@@ -1902,7 +1892,7 @@ exit:
             goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
@@ -1934,7 +1924,7 @@ exit:
 
           "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
@@ -1960,19 +1950,19 @@ exit:
             goto [R]
             "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
 
-        // Check the merge block has a phi function for [R+1] using v2_model
+        // Check the merge block has a phi function for [R+1] using the v3 model's SsaResult
         let merge_block = ctx
-            .v2_model // Use v2_model field
-            .get_ssa_result()
+            .model // Use model field from TestContext
+            .ssa_result()
             .unwrap()
-            .functions[&FunctionId::from(0)]
-            .blocks
+            .blocks // Access blocks directly from v3::SsaResult
             .iter()
+            .filter(|(id, _)| ctx.main_function().contains_block(id)) // Filter for main function blocks
             .sorted_by_key(|(k, _)| *k)
             .nth(3)
             .unwrap()
