@@ -689,12 +689,11 @@ impl<'a> SSAConversionState<'a> {
         ) -> SsaMemoryReference {
             match MemoryReferenceType::try_from(op) {
                 Ok(mem_ref) => {
-                    let next_var = current.create_next_version(&mem_ref);
-                    end.set_version(mem_ref, next_var);
                     // Assign next version in 'current' (global) and update 'end' (block specific)
-                    let next_var = current.create_next_version(&mem_ref);
-                    end.set_version(mem_ref, next_var);
-                    next_var.into() // Return the new versioned reference
+                    let next_var = current.create_next_version(&mem_ref); // Creates v_n+1 in 'current'
+                    end.set_version(mem_ref, next_var);                   // Sets v_n+1 in 'end'
+                    // Return the correctly incremented version (v_n+1)
+                    next_var.into()
                 }
                  Err(_) => {
                     // Non-versionable writes (like Deref targets) are converted using the current state
