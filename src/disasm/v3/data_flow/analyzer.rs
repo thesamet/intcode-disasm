@@ -66,7 +66,7 @@ impl DataFlowAnalyzer {
         self.run_reaching_definitions_analysis(function, &block_ids, df_result);
 
         // Pass 4: Liveness Analysis (Backward Analysis)
-        self.run_liveness_analysis(function, df_result);
+        self.run_liveness_analysis(function, &block_ids, df_result); // Added &block_ids
 
         debug!(
             "Data Flow Analysis passes complete for {}",
