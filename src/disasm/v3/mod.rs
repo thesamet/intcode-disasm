@@ -7,6 +7,7 @@ pub mod id_types;
 pub mod image_scanner;
 pub mod listeners;
 pub mod model;
+pub mod native; // Added native module
 pub mod ssa;
 
 // Re-export common types
