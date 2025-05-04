@@ -8,10 +8,11 @@ pub(crate) use crate::disasm::v2::id_types::define_id_type;
 // Define common ID types
 define_id_type!(FunctionId);
 define_id_type!(BlockId);
-define_id_type!(InstructionId);
+define_id_type!(NativeInstructionId); // Added
+define_id_type!(InstructionId); // LIR Instruction ID
 define_id_type!(PointerId);
 
-static INSTRUCTION_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static INSTRUCTION_ID_COUNTER: AtomicUsize = AtomicUsize::new(0); // For LIR InstructionId
 
 impl InstructionId {
     pub fn fresh() -> Self {
