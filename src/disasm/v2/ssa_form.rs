@@ -128,11 +128,34 @@ impl SsaMemoryReference {
     }
 }
 
+// Need InstructionNode::map_write_target or similar - This seems redundant now with map_rw changes
+// Let's remove this if map_rw handles the write target update correctly.
+// Keeping it for now in case map_rw logic needs adjustment.
+impl<A: Clone> InstructionNode<A> {
+    // Helper to specifically map the write target addressable
+    fn map_write_target<F>(&self, map_fn: F) -> Self
+    where
+        F: FnOnce(&A) -> A,
+    {
+        let mut new_node = self.clone();
+        match &mut new_node.kind {
+            Instruction::Assign { target, .. } => {
+                *target = map_fn(target);
+            }
+            // Add other instruction kinds that write if necessary
+            _ => {}
+        }
+        new_node
+    }
+}
+
+
 impl From<VersionedMemoryReference> for SsaMemoryReference {
     fn from(v: VersionedMemoryReference) -> Self {
         SsaMemoryReference::Versioned(v)
     }
 }
+
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -577,33 +600,40 @@ impl VersionRegistry {
             .insert(memory_reference_type, versioned_memory_reference);
     }
 
+    // Reverted signature to use generics, adapted body
     fn current_memory_reference<T>(&self, memory_reference: &T) -> SsaMemoryReference
     where
         T: std::fmt::Debug,
-        MemoryReference: for<'a> From<&'a T>,
+        MemoryReference: for<'a> From<&'a T>, // Keep original bound for map_rw compatibility
     {
+        // Attempt conversion to MemoryReference first to check type
         let mem_ref: MemoryReference = memory_reference.into();
-        MemoryReferenceType::try_from(&mem_ref)
-            .map(|kind| SsaMemoryReference::Versioned(self.current_version(&kind)))
-            .unwrap_or_else(|_| match mem_ref {
+
+        match MemoryReferenceType::try_from(&mem_ref) {
+            Ok(kind) => SsaMemoryReference::Versioned(self.current_version(&kind)),
+            Err(_) => match mem_ref {
                 MemoryReference::Deref(expr) => {
-                    // Clone the expression here instead of trying to use From trait
-                    let expr = expr.as_ref();
-                    SsaMemoryReference::Deref(Box::new(
-                        self.current_expression::<MemoryReference>(expr),
-                    ))
+                    // Convert the inner Expression<MemoryReference>
+                    SsaMemoryReference::Deref(Box::new(self.current_expression(&*expr)))
                 }
-                _ => unreachable!("Expected type: {:?}", memory_reference),
-            })
+                _ => unreachable!(
+                    "MemoryReference should be Global, StackRelative, Pointer, or Deref. Got: {:?}",
+                    memory_reference
+                ),
+            },
+        }
     }
 
+    // Reverted signature to use generics, adapted body
     fn current_expression<T>(&self, expr: &Expression<T>) -> Expression<SsaMemoryReference>
     where
-        MemoryReference: for<'a> From<&'a T>,
         T: std::fmt::Debug,
+        MemoryReference: for<'a> From<&'a T>, // Keep original bound for map_rw compatibility
     {
+        // Map the expression, converting each operand T to SsaMemoryReference
         expr.map(&mut |op| self.current_memory_reference(op))
     }
+
 
     pub fn iter_versions(
         &self,
@@ -986,15 +1016,56 @@ impl<'a> SSAConversionState<'a> {
                 let mut final_instr = instr.clone();
                 final_instr = final_instr.map_rw(
                     &mut registry,
-                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
-                    |reg, ssa_memory_reference| match ssa_memory_reference {
-                        SsaMemoryReference::Deref(expr) => {
-                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
+                    // Use original generic methods
+                    |reg, mem_ref| reg.current_memory_reference(mem_ref),
+                    // The map_write closure needs to determine the *next* version for the write target.
+                    |reg, write_target_ref| {
+                        // Convert the write target T to MemoryReference first
+                        let mem_ref: MemoryReference = write_target_ref.into();
+                        match MemoryReferenceType::try_from(&mem_ref) {
+                            Ok(kind) => {
+                                // It's a versionable type, create the next version
+                                let next_version = reg.create_next_version(&kind);
+                                SsaMemoryReference::Versioned(next_version)
+                            }
+                            Err(_) => {
+                                // It's likely a Deref, convert its inner expression
+                                match mem_ref {
+                                    MemoryReference::Deref(expr) => SsaMemoryReference::Deref(
+                                        Box::new(reg.current_expression(&*expr)),
+                                    ),
+                                    _ => unreachable!("Should be Deref if TryFrom failed"),
+                                }
+                            }
                         }
-                        _ => ssa_memory_reference.clone(),
                     },
                 );
-                if let Some(write) = final_instr.kind.get_write_address() {
+
+                // Update the registry based on the write *after* mapping reads/writes
+                // The map_rw call already updated the registry via create_next_version
+                // We just need to ensure the instruction holds the correct *new* versioned target
+                // which map_rw should have returned in final_instr.
+
+                // Let's verify the logic: map_rw's map_write closure *calculates* the next version
+                // and returns the SsaMemoryReference with that new version.
+                // It also updates the registry internally via create_next_version.
+                // So, no extra registry update needed here.
+
+                // We might need to handle Deref writes specifically if their *target* address changes version,
+                // but currently, we assume the pointer address itself is versioned, and the write
+                // through the pointer affects memory globally (not versioned here).
+
+                final_instructions.push(final_instr);
+            }
+
+            // Calculate final next state using the *final* registry state after processing instructions
+            let ssa_block_next = block
+                .next
+                .map(&mut |mem_ref: &MemoryReference| registry.current_memory_reference(mem_ref));
+
+
+            // Store predecessor updates needed for the next pass
+            match &ssa_block_next {
                     if let Some(write) = write.as_versioned() {
                         registry.set_version(write.kind, *write);
                     }
@@ -1002,12 +1073,11 @@ impl<'a> SSAConversionState<'a> {
                 final_instructions.push(final_instr);
             }
 
-            // Calculate final next state
-            let ssa_block_next = {
-                block
-                    .next
-                    .map(&mut |op| ssa_block_ro.end_state.current_memory_reference(op))
-            };
+            // Calculate final next state using the *final* registry state after processing instructions
+            let ssa_block_next = block
+                .next
+                .map(&mut |mem_ref: &MemoryReference| registry.current_memory_reference(mem_ref));
+
 
             // Store predecessor updates needed for the next pass
             match &ssa_block_next {
