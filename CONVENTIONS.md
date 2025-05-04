@@ -1,4 +1,4 @@
-# CLAUDE.md
+# Project conventions
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -69,6 +69,10 @@ fn good_example(&self, v: Value) -> Option<Finding> {
 
 - Basic information about the virtual machine is in src/docs/machine_arch.md and must be understood.
 ```
+
+## Model, BlockView and FunctionView
+
+- Access functions and blocks hierarchically through the model, not through model.ssa_result(), model.data_flow(). Instead model.function(&function_id).block(&block_id).ssa(). Those helper functions return a reference (with the lifetime of the model they are within) and panic if the id is not found.
 
 ## Changes and refactoring
 

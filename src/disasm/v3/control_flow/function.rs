@@ -70,7 +70,7 @@ impl<'a, S: ModelState> FunctionView<'a, S> {
         self.function.return_block
     }
 
-    pub fn block(&self, block_id: &BlockId) -> BlockView<S> {
+    pub fn block(&self, block_id: &BlockId) -> BlockView<'a, S> {
         let block = self
             .function
             .blocks
