@@ -10,7 +10,7 @@ mod tests {
 
     fn parse_and_scan(code: &str) -> super::super::ImageScannerResult {
         let binary = parser::compile(code);
-        let model = Model::<InitialState>::new().with_image(binary.clone());
+        let model = Model::<InitialState>::new();
         let result = ImageScanner::run(binary, model).expect("Image scanner failed");
         result.image_scanner_result.unwrap()
     }
@@ -23,7 +23,7 @@ mod tests {
         let image = vec![1, 2, 3, 4, 5];
 
         // Create initial model
-        let model = Model::<InitialState>::new().with_image(image.clone());
+        let model = Model::<InitialState>::new();
 
         // Run the image scanner
         let result = ImageScanner::run(image, model).expect("Image scanner failed");
@@ -55,7 +55,7 @@ mod tests {
         let image = vec![];
 
         // Create initial model
-        let model = Model::<InitialState>::new().with_image(image.clone());
+        let model = Model::<InitialState>::new();
 
         // Run the image scanner
         let result = ImageScanner::run(image, model).expect("Image scanner failed");
@@ -75,7 +75,7 @@ mod tests {
         let image = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
         // Create initial model
-        let model = Model::<InitialState>::new().with_image(image.clone());
+        let model = Model::<InitialState>::new();
 
         // Run the image scanner
         let result = ImageScanner::run(image, model).expect("Image scanner failed");

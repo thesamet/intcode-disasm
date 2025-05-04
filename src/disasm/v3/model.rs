@@ -11,11 +11,17 @@ use crate::disasm::v3::ssa::SsaResult;
 // --- State Types ---
 pub trait ModelState {}
 
+#[derive(Clone, Debug)]
 pub struct InitialState {}
+#[derive(Clone, Debug)]
 pub struct ImageScannerComplete {}
+#[derive(Clone, Debug)]
 pub struct ControlFlowGraphComplete {}
+#[derive(Clone, Debug)]
 pub struct DataFlowComplete {}
+#[derive(Clone, Debug)]
 pub struct SsaComplete {}
+#[derive(Clone, Debug)]
 pub struct FunctionCallComplete {}
 
 impl ModelState for InitialState {}
@@ -26,24 +32,6 @@ impl ModelState for SsaComplete {}
 impl ModelState for FunctionCallComplete {}
 
 // Implement capability traits for appropriate states
-impl HasImageScannerResult for ImageScannerComplete {}
-impl HasImageScannerResult for ControlFlowGraphComplete {}
-impl HasImageScannerResult for DataFlowComplete {}
-impl HasImageScannerResult for SsaComplete {}
-impl HasImageScannerResult for FunctionCallComplete {}
-
-impl HasControlFlowGraphResult for ControlFlowGraphComplete {}
-impl HasControlFlowGraphResult for DataFlowComplete {}
-impl HasControlFlowGraphResult for SsaComplete {}
-impl HasControlFlowGraphResult for FunctionCallComplete {}
-
-impl HasDataFlowResult for DataFlowComplete {}
-impl HasDataFlowResult for SsaComplete {}
-impl HasDataFlowResult for FunctionCallComplete {}
-
-impl HasSsaResult for SsaComplete {}
-impl HasSsaResult for FunctionCallComplete {}
-impl HasFunctionCallAnalysisResult for FunctionCallComplete {}
 
 macro_rules! make_model {
     ($model:ident, $state:ident, { $($field:ty),* }) => {
@@ -60,15 +48,26 @@ macro_rules! make_model {
                         marker: std::marker::PhantomData,
                     }
                 }
-                // Define with_ methods for each field using direct implementation
+
+                // Add conversion to another state
+                pub fn convert<S2: $state>(self) -> $model<S2> {
+                    $model::<S2> {
+                        $([<$field:snake:lower>]: self.[<$field:snake:lower>],)*
+                        marker: std::marker::PhantomData,
+                    }
+                }
+
+                // Define with_ methods for each field that return a new instance
                 $(
-                pub fn [<with_ $field:snake:lower>](mut self, value: $field) -> Self {
-                    self.[<$field:snake:lower>] = Some(value);
-                    self
+                pub fn [<with_ $field:snake:lower>]<S2: $state>(self, value: $field) -> $model<S2>
+                where
+                    S2: [<Has $field>]
+                {
+                    let mut new_model = self.convert::<S2>();
+                    new_model.[<$field:snake:lower>] = Some(value);
+                    new_model
                 }
                 )*
-
-                // Define with_ methods for each field
             }
             // Define Has traits for each field
             $(
@@ -87,7 +86,13 @@ macro_rules! make_model {
         }
     }
 }
-
+make_model!(Model, ModelState, {
+    ImageScannerResult,
+    ControlFlowGraphResult,
+    DataFlowResult,
+    SsaResult,
+    FunctionCallAnalysisResult
+});
 // Remove unused macro
 
 macro_rules! add_block_view_when {
@@ -122,12 +127,6 @@ macro_rules! add_block_view_when {
 pub(crate) use add_block_view_when;
 
 // Define Has traits for each field type
-pub trait HasImageScannerResult: ModelState {}
-pub trait HasControlFlowGraphResult: ModelState {}
-pub trait HasDataFlowResult: ModelState {}
-pub trait HasSsaResult: ModelState {}
-pub trait HasFunctionCallAnalysisResult: ModelState {}
-
 // Implement traits for appropriate state types
 impl HasImageScannerResult for ImageScannerComplete {}
 impl HasImageScannerResult for ControlFlowGraphComplete {}
@@ -149,101 +148,6 @@ impl HasSsaResult for FunctionCallComplete {}
 impl HasFunctionCallAnalysisResult for FunctionCallComplete {}
 
 // Define the Model struct
-#[derive(Clone, Debug)]
-pub struct Model<S: ModelState> {
-    pub image_scanner_result: Option<ImageScannerResult>,
-    pub control_flow_graph_result: Option<ControlFlowGraphResult>,
-    pub data_flow_result: Option<DataFlowResult>,
-    pub ssa_result: Option<SsaResult>,
-    pub function_call_analysis_result: Option<FunctionCallAnalysisResult>,
-    marker: std::marker::PhantomData<S>,
-}
-
-impl<S: ModelState> Model<S> {
-    pub fn new() -> Self {
-        Self {
-            image_scanner_result: None,
-            control_flow_graph_result: None,
-            data_flow_result: None,
-            ssa_result: None,
-            function_call_analysis_result: None,
-            marker: std::marker::PhantomData,
-        }
-    }
-    
-    // Define with_ methods for each field
-    pub fn with_image_scanner_result(mut self, value: ImageScannerResult) -> Self {
-        self.image_scanner_result = Some(value);
-        self
-    }
-    
-    pub fn with_control_flow_graph_result(mut self, value: ControlFlowGraphResult) -> Self {
-        self.control_flow_graph_result = Some(value);
-        self
-    }
-    
-    pub fn with_data_flow_result(mut self, value: DataFlowResult) -> Self {
-        self.data_flow_result = Some(value);
-        self
-    }
-    
-    pub fn with_ssa_result(mut self, value: SsaResult) -> Self {
-        self.ssa_result = Some(value);
-        self
-    }
-    
-    pub fn with_function_call_analysis_result(mut self, value: FunctionCallAnalysisResult) -> Self {
-        self.function_call_analysis_result = Some(value);
-        self
-    }
-}
-
-// Implement accessor methods for each field based on capability traits
-impl<S: ModelState> Model<S>
-where
-    S: HasImageScannerResult
-{
-    pub fn image_scanner_result(&self) -> &ImageScannerResult {
-        self.image_scanner_result.as_ref().unwrap()
-    }
-}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasControlFlowGraphResult
-{
-    pub fn control_flow_graph_result(&self) -> &ControlFlowGraphResult {
-        self.control_flow_graph_result.as_ref().unwrap()
-    }
-}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasDataFlowResult
-{
-    pub fn data_flow_result(&self) -> &DataFlowResult {
-        self.data_flow_result.as_ref().unwrap()
-    }
-}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasSsaResult
-{
-    pub fn ssa_result(&self) -> &SsaResult {
-        self.ssa_result.as_ref().unwrap()
-    }
-}
-
-impl<S: ModelState> Model<S>
-where
-    S: HasFunctionCallAnalysisResult
-{
-    pub fn function_call_analysis_result(&self) -> &FunctionCallAnalysisResult {
-        self.function_call_analysis_result.as_ref().unwrap()
-    }
-}
-
 #[cfg(test)]
 mod tests {
 

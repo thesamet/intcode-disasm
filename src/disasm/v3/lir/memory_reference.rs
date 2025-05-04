@@ -1,5 +1,5 @@
-use crate::disasm::v3::id_types::PointerId;
 use super::expression::Expression; // Use LIR Expression
+use crate::disasm::v3::{id_types::PointerId, native::OperandKind};
 use std::fmt::Display; // Keep Display if needed for MemoryReference
 
 /// Represents a reference to a memory location that can be read from or written to.
@@ -185,6 +185,3 @@ impl ReadAddressExtractor for MemoryReference {
         }
     }
 }
-
-// Removed ReadAddressExtractor for SsaMemoryReference - belongs in ssa module
-// Removed TryFrom<OperandKind> for MemoryReference - belongs in converter

@@ -1,12 +1,14 @@
-use crate::disasm::v3::model::{Model, InitialState, ImageScannerComplete};
-use crate::disasm::v3::id_types::FunctionId;
-use crate::disasm::v3::common::Span;
-use crate::disasm::Error;
-use super::result::{ImageScannerResult, DataSegment, DataType, RecognizedFunction, BaseFunctionCall};
+use super::result::{
+    BaseFunctionCall, DataSegment, DataType, ImageScannerResult, RecognizedFunction,
+};
 use crate::disasm::v2::native::{NativeInstruction, Opcode, Operand, OperandKind, ParseError};
-use std::collections::{HashMap, HashSet};
+use crate::disasm::v3::common::Span;
+use crate::disasm::v3::id_types::FunctionId;
+use crate::disasm::v3::model::{ImageScannerComplete, InitialState, Model};
+use crate::disasm::Error;
 use itertools::Itertools;
 use log::{debug, info, trace};
+use std::collections::{HashMap, HashSet};
 
 /// Analyzes the raw program image to identify functions and data segments
 pub struct ImageScanner {
@@ -17,20 +19,23 @@ impl ImageScanner {
     pub fn new(image: Vec<i128>) -> Self {
         Self { image }
     }
-    
-    pub fn run(image: Vec<i128>, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
+
+    pub fn run(
+        image: Vec<i128>,
+        model: Model<InitialState>,
+    ) -> Result<Model<ImageScannerComplete>, Error> {
         let scanner = Self::new(image);
         scanner.scan(model)
     }
-    
+
     fn scan(&self, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
         debug!("Starting image scanning...");
-        
+
         // Scan for functions and data segments
         let mut i = 0;
         let mut data_offsets = vec![];
         let mut recognized_function_details = vec![];
-        
+
         while i < self.image.len() {
             if let Some(stack_size) = self.recognize_function_start(i) {
                 match self.scan_from(i, stack_size) {
@@ -51,7 +56,7 @@ impl ImageScanner {
                 continue;
             }
         }
-        
+
         // Process data segments
         let data_segments = data_offsets
             .iter()
@@ -72,26 +77,29 @@ impl ImageScanner {
                 }
             })
             .collect::<Vec<_>>();
-        
+
         // Create function IDs and mappings
         let mut address_to_function = HashMap::new();
         let mut function_to_address = HashMap::new();
         let mut recognized_functions = Vec::new();
         let mut function_details = HashMap::new();
-        
+
         for f in recognized_function_details {
             let function_id = FunctionId::from(recognized_functions.len());
             let address = f.span.start;
-            
+
             address_to_function.insert(address, function_id);
             function_to_address.insert(function_id, address);
             function_details.insert(function_id, f);
             recognized_functions.push(function_id);
         }
-        
-        info!("Image scanning complete. Found {} functions and {} data segments", 
-              recognized_functions.len(), data_segments.len());
-        
+
+        info!(
+            "Image scanning complete. Found {} functions and {} data segments",
+            recognized_functions.len(),
+            data_segments.len()
+        );
+
         // Create the image scanner result
         let result = ImageScannerResult {
             recognized_functions,
@@ -101,18 +109,11 @@ impl ImageScanner {
             function_to_address,
             function_details,
         };
-        
+
         // Return a new model with the updated state
-        Ok(Model {
-            image_scanner_result: Some(result),
-            control_flow_graph_result: None,
-            data_flow_result: None,
-            ssa_result: None,
-            function_call_analysis_result: None,
-            marker: std::marker::PhantomData,
-        })
+        Ok(model.with_image_scanner_result(result))
     }
-    
+
     /// Recognizes a function start by looking for R += N instruction
     fn recognize_function_start(&self, offset: usize) -> Option<i128> {
         let Ok(instruction) = NativeInstruction::parse(&self.image, offset) else {
@@ -123,7 +124,7 @@ impl ImageScanner {
         }
         instruction.relative_base_adjustment().filter(|r| *r > 0)
     }
-    
+
     /// Recognizes a function return sequence (R -= N; goto [R])
     fn recognize_return(
         &self,
@@ -150,7 +151,7 @@ impl ImageScanner {
         }
         Ok((adj_r, goto))
     }
-    
+
     /// Recognizes a function call sequence ([R] = return_addr; goto func)
     fn recognize_function_call(
         &self,
@@ -180,13 +181,9 @@ impl ImageScanner {
         };
         Ok((set_r, goto_op, function_call))
     }
-    
+
     /// Scans a function starting from an entry point
-    fn scan_from(
-        &self,
-        start: usize,
-        stack_size: i128,
-    ) -> Result<RecognizedFunction, ParseError> {
+    fn scan_from(&self, start: usize, stack_size: i128) -> Result<RecognizedFunction, ParseError> {
         let mut queue = vec![start];
         let mut returns = vec![];
         let mut jump_targets = HashSet::new();
@@ -195,13 +192,13 @@ impl ImageScanner {
         let mut jump_instructions = vec![];
         let mut halts = vec![];
         let mut seen = HashSet::new();
-        
+
         while let Some(offset) = queue.pop() {
             if seen.contains(&offset) {
                 continue;
             }
             seen.insert(offset);
-            
+
             if let Ok((i1, i2)) = self.recognize_return(offset, stack_size) {
                 returns.push(Span::new(i1.span.start, i2.span.end));
                 instructions.push(i1);
@@ -233,11 +230,11 @@ impl ImageScanner {
                 instructions.push(instruction);
             }
         }
-        
+
         instructions.sort_by_key(|i| i.span.start);
         assert!(returns.len() <= 1);
         let span = Span::new(start, instructions.last().unwrap().span.end);
-        
+
         // Convert memory references to pointers if they point within the function
         let mut t = |_: &mut (), op: &Operand| {
             if let Some(addr) = op.kind.get_memory() {
@@ -249,7 +246,7 @@ impl ImageScanner {
             }
             *op
         };
-        
+
         for instruction in instructions.iter_mut() {
             *instruction = instruction.map_rw(&mut (), &mut t.clone(), &mut t);
         }

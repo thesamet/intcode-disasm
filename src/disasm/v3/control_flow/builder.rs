@@ -67,14 +67,7 @@ impl ControlFlowGraphBuilder {
         let result = ControlFlowGraphResult::new(self.functions.clone());
 
         // Return a new model with the updated state
-        let final_model = Model::<ControlFlowGraphComplete> {
-            image_scanner_result: model.image_scanner_result,
-            control_flow_graph_result: Some(result),
-            data_flow_result: None,
-            ssa_result: None,
-            function_call_analysis_result: None,
-            marker: std::marker::PhantomData,
-        };
+        let final_model = model.with_control_flow_graph_result(result);
         Ok(final_model)
     }
 
@@ -180,7 +173,9 @@ impl ControlFlowGraphBuilder {
                 span: Span::new(start_addr, current_block_end),
                 // native_instructions: current_block_instructions.clone(), // Removed - unresolved
                 // Assuming convert_block now returns Vec<InstructionNode<v3::lir::MemoryReference>>
-                low_instructions: InstructionNode::convert_block(current_block_instructions.clone()), // Clone to satisfy IntoIterator
+                low_instructions: InstructionNode::convert_block(
+                    current_block_instructions.clone(),
+                ), // Clone to satisfy IntoIterator
                 next: NextKind::Unknown,  // Specify type
                 predecessors: Vec::new(), // Will use v3 MemoryReference
             };

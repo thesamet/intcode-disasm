@@ -60,6 +60,12 @@ impl TryFrom<&MemoryReference> for MemoryReferenceType {
     }
 }
 
+impl From<MemoryReferenceType> for MemoryReference {
+    fn from(value: MemoryReferenceType) -> Self {
+        (&value).to_memory_reference()
+    }
+}
+
 impl std::fmt::Display for MemoryReferenceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -78,7 +84,11 @@ impl std::fmt::Display for MemoryReferenceType {
 
 impl<'a> MemoryReferenceInfo<'a> for &'a MemoryReferenceType {
     fn to_memory_reference(&self) -> MemoryReference {
-        (*self).into()
+        match self {
+            MemoryReferenceType::Memory(addr) => MemoryReference::Global(*addr),
+            MemoryReferenceType::RelativeMemory(offset) => MemoryReference::StackRelative(*offset),
+            MemoryReferenceType::Pointer(id) => MemoryReference::Pointer(*id),
+        }
     }
 
     fn as_deref(&self) -> Option<Expression<MemoryReference>> {
@@ -107,6 +117,12 @@ impl VersionedMemoryReference {
     }
 }
 
+impl AsRef<MemoryReferenceType> for VersionedMemoryReference {
+    fn as_ref(&self) -> &MemoryReferenceType {
+        &self.kind
+    }
+}
+
 impl std::fmt::Display for VersionedMemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}_{}_{}", self.kind, self.function_id, self.version)
@@ -128,27 +144,11 @@ impl SsaMemoryReference {
     }
 }
 
-// Need InstructionNode::map_write_target or similar - This seems redundant now with map_rw changes
-// Let's remove this if map_rw handles the write target update correctly.
-// Keeping it for now in case map_rw logic needs adjustment.
-impl<A: Clone> InstructionNode<A> {
-    // Helper to specifically map the write target addressable
-    fn map_write_target<F>(&self, map_fn: F) -> Self
-    where
-        F: FnOnce(&A) -> A,
-    {
-        let mut new_node = self.clone();
-        match &mut new_node.kind {
-            Instruction::Assign { target, .. } => {
-                *target = map_fn(target);
-            }
-            // Add other instruction kinds that write if necessary
-            _ => {}
-        }
-        new_node
+impl MemoryReferenceInfo<'_> for VersionedMemoryReference {
+    fn to_memory_reference(&self) -> MemoryReference {
+        self.kind.into()
     }
 }
-
 
 impl From<VersionedMemoryReference> for SsaMemoryReference {
     fn from(v: VersionedMemoryReference) -> Self {
@@ -156,6 +156,21 @@ impl From<VersionedMemoryReference> for SsaMemoryReference {
     }
 }
 
+impl From<&SsaMemoryReference> for MemoryReference {
+    fn from(value: &SsaMemoryReference) -> Self {
+        value.to_memory_reference()
+    }
+}
+
+use crate::disasm::v3::lir::ReadAddressExtractor; // Import the trait
+impl ReadAddressExtractor for SsaMemoryReference {
+    fn extract_read_addresses(&self) -> Vec<&Self> {
+        match self {
+            SsaMemoryReference::Deref(expr) => expr.collect_read_addresses(),
+            SsaMemoryReference::Versioned(_) => Vec::new(),
+        }
+    }
+}
 
 // Represents the kind of a versioned SSA variable (excluding constants)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -600,40 +615,33 @@ impl VersionRegistry {
             .insert(memory_reference_type, versioned_memory_reference);
     }
 
-    // Reverted signature to use generics, adapted body
     fn current_memory_reference<T>(&self, memory_reference: &T) -> SsaMemoryReference
     where
         T: std::fmt::Debug,
-        MemoryReference: for<'a> From<&'a T>, // Keep original bound for map_rw compatibility
+        MemoryReference: for<'a> From<&'a T>,
     {
-        // Attempt conversion to MemoryReference first to check type
         let mem_ref: MemoryReference = memory_reference.into();
-
-        match MemoryReferenceType::try_from(&mem_ref) {
-            Ok(kind) => SsaMemoryReference::Versioned(self.current_version(&kind)),
-            Err(_) => match mem_ref {
+        MemoryReferenceType::try_from(&mem_ref)
+            .map(|kind| SsaMemoryReference::Versioned(self.current_version(&kind)))
+            .unwrap_or_else(|_| match mem_ref {
                 MemoryReference::Deref(expr) => {
-                    // Convert the inner Expression<MemoryReference>
-                    SsaMemoryReference::Deref(Box::new(self.current_expression(&*expr)))
+                    // Clone the expression here instead of trying to use From trait
+                    let expr = expr.as_ref();
+                    SsaMemoryReference::Deref(Box::new(
+                        self.current_expression::<MemoryReference>(expr),
+                    ))
                 }
-                _ => unreachable!(
-                    "MemoryReference should be Global, StackRelative, Pointer, or Deref. Got: {:?}",
-                    memory_reference
-                ),
-            },
-        }
+                _ => unreachable!("Expected type: {:?}", memory_reference),
+            })
     }
 
-    // Reverted signature to use generics, adapted body
     fn current_expression<T>(&self, expr: &Expression<T>) -> Expression<SsaMemoryReference>
     where
+        MemoryReference: for<'a> From<&'a T>,
         T: std::fmt::Debug,
-        MemoryReference: for<'a> From<&'a T>, // Keep original bound for map_rw compatibility
     {
-        // Map the expression, converting each operand T to SsaMemoryReference
         expr.map(&mut |op| self.current_memory_reference(op))
     }
-
 
     pub fn iter_versions(
         &self,
@@ -901,7 +909,7 @@ impl<'a> SSAConversionState<'a> {
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
                     // new_in should store SsaVarKind -> SsaVar
                     for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
-                        if !live_in.contains_key(&mem_ref_type.into())
+                        if !live_in.contains_key(&mem_ref_type.to_memory_reference())
                             && !mem_ref_type.is_local_or_parameter()
                         {
                             // This var doesn't live from here and not a return value
@@ -975,27 +983,20 @@ impl<'a> SSAConversionState<'a> {
         function: &Function,
         ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
     ) {
-        // Temporary storage for predecessor updates to avoid borrow conflicts
-        let mut predecessor_updates: Vec<(BlockId, PredecessorKind<SsaMemoryReference>)> =
-            Vec::new();
-
-        // First pass: Calculate final instructions, phis, and next state for each block
         for block_id in &function.all_block_ids {
-            let block = self.model.get_block(*block_id); // Original block info
-            let ssa_block_ro = ssa_blocks.get(block_id).unwrap(); // Read-only access for now
-
-            // Calculate final phi functions
-            let mut final_phi_functions = vec![];
-            for phi in &ssa_block_ro.phi_functions {
-                let mut phi_inputs = HashMap::new(); // Initialize inside this loop
+            let block = self.model.get_block(*block_id);
+            let ssa_block = ssa_blocks.get(block_id).unwrap();
+            let mut phi_functions = vec![];
+            for phi in &ssa_block.phi_functions {
+                let mut phi_inputs = HashMap::new();
                 for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
-                    // Need read-only access to predecessor's end state
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
-                    // Add reference for as_stack_relative call
                     if matches!(pred, PredecessorKind::FunctionCallReturns(_))
-                        && (&phi.result).as_stack_relative().is_some_and(|x| x > 0)
+                        && phi.result.as_stack_relative().is_some_and(|x| x > 0)
                     {
+                        // For function returns, the phi result itself represents the value.
+                        // Wrap the SsaVar result in SsaOperand::Variable.
                         phi_inputs.insert(pred.clone(), phi.result.clone());
                     } else {
                         phi_inputs.insert(
@@ -1004,129 +1005,82 @@ impl<'a> SSAConversionState<'a> {
                         );
                     }
                 }
-                let mut final_phi = phi.clone();
-                final_phi.inputs = phi_inputs; // Assign the calculated inputs
-                final_phi_functions.push(final_phi);
+                let mut phi = phi.clone();
+                phi.inputs = phi_inputs;
+                phi_functions.push(phi);
             }
-
-            // Calculate final instructions
-            let mut final_instructions = vec![];
-            let mut registry = ssa_block_ro.start_state.clone();
-            for instr in &ssa_block_ro.instructions {
-                let mut final_instr = instr.clone();
-                final_instr = final_instr.map_rw(
+            let mut instructions = vec![];
+            let mut registry = ssa_block.start_state.clone();
+            for instr in &ssa_block.instructions {
+                let mut instr = instr.clone();
+                if instr.id == InstructionId::from(6) {
+                    print!("Outside map_rw: {:?}", registry);
+                }
+                instr = instr.map_rw(
                     &mut registry,
-                    // Use original generic methods
-                    |reg, mem_ref| reg.current_memory_reference(mem_ref),
-                    // The map_write closure needs to determine the *next* version for the write target.
-                    |reg, write_target_ref| {
-                        // Convert the write target T to MemoryReference first
-                        let mem_ref: MemoryReference = write_target_ref.into();
-                        match MemoryReferenceType::try_from(&mem_ref) {
-                            Ok(kind) => {
-                                // It's a versionable type, create the next version
-                                let next_version = reg.create_next_version(&kind);
-                                SsaMemoryReference::Versioned(next_version)
-                            }
-                            Err(_) => {
-                                // It's likely a Deref, convert its inner expression
-                                match mem_ref {
-                                    MemoryReference::Deref(expr) => SsaMemoryReference::Deref(
-                                        Box::new(reg.current_expression(&*expr)),
-                                    ),
-                                    _ => unreachable!("Should be Deref if TryFrom failed"),
-                                }
-                            }
+                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
+                    |reg, ssa_memory_reference| match ssa_memory_reference {
+                        SsaMemoryReference::Deref(expr) => {
+                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
                         }
+                        _ => ssa_memory_reference.clone(),
                     },
                 );
-
-                // Update the registry based on the write *after* mapping reads/writes
-                // The map_rw call already updated the registry via create_next_version
-                // We just need to ensure the instruction holds the correct *new* versioned target
-                // which map_rw should have returned in final_instr.
-
-                // Let's verify the logic: map_rw's map_write closure *calculates* the next version
-                // and returns the SsaMemoryReference with that new version.
-                // It also updates the registry internally via create_next_version.
-                // So, no extra registry update needed here.
-
-                // We might need to handle Deref writes specifically if their *target* address changes version,
-                // but currently, we assume the pointer address itself is versioned, and the write
-                // through the pointer affects memory globally (not versioned here).
-
-                final_instructions.push(final_instr);
-            }
-
-            // Calculate final next state using the *final* registry state after processing instructions
-            let ssa_block_next = block
-                .next
-                .map(&mut |mem_ref: &MemoryReference| registry.current_memory_reference(mem_ref));
-
-
-            // Store predecessor updates needed for the next pass
-            match &ssa_block_next {
+                if let Some(write) = instr.kind.get_write_address() {
                     if let Some(write) = write.as_versioned() {
                         registry.set_version(write.kind, *write);
                     }
                 }
-                final_instructions.push(final_instr);
+                instructions.push(instr);
             }
-
-            // Calculate final next state using the *final* registry state after processing instructions
-            let ssa_block_next = block
-                .next
-                .map(&mut |mem_ref: &MemoryReference| registry.current_memory_reference(mem_ref));
-
-
-            // Store predecessor updates needed for the next pass
+            let ssa_block_next = {
+                block
+                    .next
+                    .map(&mut |op| ssa_block.end_state.current_memory_reference(op))
+            };
+            let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
+            ssa_block.instructions = instructions;
+            ssa_block.phi_functions = phi_functions;
             match &ssa_block_next {
                 NextKind::Follows(target_id) => {
-                    predecessor_updates.push((*target_id, PredecessorKind::FollowsFrom(*block_id)));
+                    ssa_blocks
+                        .get_mut(&target_id)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
-                    predecessor_updates
-                        .push((*target_block_id, PredecessorKind::GotoFrom(*block_id)));
+                    ssa_blocks
+                        .get_mut(&target_block_id)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
                 }
                 NextKind::FunctionCall(call) => {
-                    predecessor_updates.push((
-                        call.return_block,
-                        PredecessorKind::FunctionCallReturns(call.clone()),
-                    ));
+                    // Add the current block as a predecessor to the function's entry block (this seems incorrect, handled elsewhere?)
+                    // Add the current block (call site) as predecessor to the return block
+                    ssa_blocks
+                        .get_mut(&call.return_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
                 }
                 NextKind::Condition(cond) => {
-                    predecessor_updates.push((
-                        cond.target_block,
-                        PredecessorKind::ConditionalJump(cond.clone()),
-                    ));
-                    predecessor_updates.push((
-                        cond.follows_block,
-                        PredecessorKind::ConditionalFollow(cond.clone()),
-                    ));
+                    // Add current block as predecessor to the target block
+                    ssa_blocks
+                        .get_mut(&cond.target_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::ConditionalJump(cond.clone()));
+                    ssa_blocks
+                        .get_mut(&cond.follows_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             }
-
-            // Update the current block's calculated fields (mutable borrow needed here)
-            let ssa_block_mut = ssa_blocks.get_mut(block_id).unwrap();
-            ssa_block_mut.instructions = final_instructions;
-            ssa_block_mut.phi_functions = final_phi_functions;
-            ssa_block_mut.next = ssa_block_next;
-        }
-
-        // Second pass: Apply predecessor updates
-        for (target_block_id, predecessor_kind) in predecessor_updates {
-            if let Some(target_block) = ssa_blocks.get_mut(&target_block_id) {
-                target_block.predecessors.push(predecessor_kind);
-            } else {
-                // Handle cases where the target block might not be in the current function's ssa_blocks
-                // This might happen with inter-functional calls or jumps, though less common in SSA directly.
-                // Depending on the desired behavior, you might log a warning or handle it differently.
-                log::warn!(
-                    "Target block {:?} for predecessor update not found in current function's SSA blocks.",
-                    target_block_id
-                );
-            }
+            ssa_blocks.get_mut(block_id).unwrap().next = ssa_block_next;
         }
     }
 }

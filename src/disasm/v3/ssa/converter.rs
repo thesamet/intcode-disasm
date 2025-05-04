@@ -1,6 +1,6 @@
-use crate::disasm::v3::model::{Model, DataFlowComplete, SsaComplete};
-use crate::disasm::Error;
 use super::result::SsaResult;
+use crate::disasm::v3::model::{DataFlowComplete, Model, SsaComplete};
+use crate::disasm::Error;
 use std::collections::HashMap;
 
 /// Converts the control flow graph to SSA form
@@ -12,26 +12,19 @@ impl SsaConverter {
     pub fn new(model: Model<DataFlowComplete>) -> Self {
         Self { model }
     }
-    
+
     pub fn run(model: Model<DataFlowComplete>) -> Result<Model<SsaComplete>, Error> {
         let converter = Self::new(model);
         converter.convert()
     }
-    
+
     fn convert(&self) -> Result<Model<SsaComplete>, Error> {
         // Create the SSA result
         let result = SsaResult {
             blocks: HashMap::new(),
         };
-        
+
         // Return a new model with the updated state
-        Ok(Model {
-            image_scanner_result: self.model.image_scanner_result.clone(),
-            control_flow_graph_result: Some(self.model.control_flow_graph_result().clone()), // Wrap in Some
-            data_flow_result: Some(self.model.data_flow_result().clone()), // Wrap in Some
-            ssa_result: Some(result),
-            function_call_analysis_result: None,
-            marker: std::marker::PhantomData,
-        })
+        Ok(self.model.clone().with_ssa_result(result))
     }
 }

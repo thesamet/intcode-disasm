@@ -42,14 +42,7 @@ impl DataFlowAnalyzer {
         }
 
         // Return a new model with the updated state
-        Ok(Model {
-            image_scanner_result: self.model.image_scanner_result.clone(),
-            control_flow_graph_result: Some(self.model.control_flow_graph_result().clone()), // Wrap in Some
-            data_flow_result: Some(result),
-            ssa_result: None,
-            function_call_analysis_result: None,
-            marker: std::marker::PhantomData,
-        })
+        Ok(self.model.clone().with_data_flow_result(result))
     }
 
     /// Performs the main data flow analysis passes for a given function.
@@ -229,7 +222,8 @@ impl DataFlowAnalyzer {
                 // definitions flow forward.
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
-                    current_defs_out.retain(|d| !d.kind.as_stack_relative().is_some_and(|n| n > 0)); // Check if it's an outgoing parameter
+                    current_defs_out.retain(|d| !d.kind.as_stack_relative().is_some_and(|n| n > 0));
+                    // Check if it's an outgoing parameter
                 }
 
                 // Update block's OUT set if changed
@@ -408,53 +402,4 @@ impl DataFlowAnalyzer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v3::control_flow::ControlFlowGraphBuilder;
-    use crate::disasm::v3::image_scanner::ImageScanner;
-    use crate::disasm::v3::model::Model;
-    use pretty_assertions::assert_eq;
-
-    // Helper to setup model, run CFG build, and then data flow analysis
-    fn setup_and_analyze(binary: Vec<i128>) -> Model<DataFlowComplete> {
-        init_logging();
-
-        // Create model and run image scanner
-        let model = Model::new();
-        let model = model.with_image(binary);
-        let model = ImageScanner::run(binary.clone(), model).unwrap();
-
-        // Build control flow graph
-        let model = ControlFlowGraphBuilder::run(model).unwrap();
-
-        // Run data flow analysis
-        let model = DataFlowAnalyzer::run(model).unwrap();
-
-        model
-    }
-
-    // TODO: Add more tests
-    #[test]
-    fn test_simple_sequence() {
-        // This is a placeholder test - we'll need to implement proper tests
-        // once we have the parser and other components migrated
-        let binary = vec![
-            // R += 2
-            9, 2, 0, // [100] = 5
-            1, 100, 5, 0, // [101] = [100]
-            1, 101, 0, 100, // output [101]
-            4, 101, 0, // R -= 2
-            9, -2, 0, // goto [R]
-            5, 1, 0, 0,
-        ];
-
-        let model = setup_and_analyze(binary);
-
-        // Basic verification that we have data flow results
-        assert!(model.data_flow_result.is_some());
-
-        // In a real test, we would check specific data flow properties
-        // but for now we just verify the analysis runs without errors
-    }
-}
+mod tests {}

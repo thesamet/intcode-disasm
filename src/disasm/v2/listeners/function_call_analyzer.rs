@@ -13,6 +13,7 @@ use crate::disasm::v2::{
         SsaResult, VersionedMemoryReference,
     },
 };
+use crate::disasm::v3::lir::ReadAddressExtractor;
 use itertools::Itertools;
 use log::{debug, trace};
 use std::{
