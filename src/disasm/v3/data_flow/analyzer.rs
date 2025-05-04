@@ -1,15 +1,15 @@
-use std::collections::{HashMap, HashSet, VecDeque};
 use itertools::Itertools;
 use log::debug;
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::disasm::v3::model::{Model, ControlFlowGraphComplete, DataFlowComplete, FunctionView, BlockView};
+use crate::disasm::v3::common::{Expression, MemoryReference};
+use crate::disasm::v3::control_flow::{Block, NextKind};
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
-use crate::disasm::v3::control_flow::{NextKind, Block};
-use crate::disasm::v3::common::{MemoryReference, Expression};
+use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, FunctionView, Model};
 use crate::disasm::Error;
 
-use super::result::DataFlowResult;
 use super::block::{DataFlowBlock, Definition, OriginationPoint};
+use super::result::DataFlowResult;
 
 /// Analyzes data flow in the control flow graph
 pub struct DataFlowAnalyzer {
@@ -20,24 +20,29 @@ impl DataFlowAnalyzer {
     pub fn new(model: Model<ControlFlowGraphComplete>) -> Self {
         Self { model }
     }
-    
+
     pub fn run(model: Model<ControlFlowGraphComplete>) -> Result<Model<DataFlowComplete>, Error> {
         let analyzer = Self::new(model);
         analyzer.analyze()
     }
-    
+
     fn analyze(&self) -> Result<Model<DataFlowComplete>, Error> {
         let mut result = DataFlowResult::new();
-        
+
         // Get all functions from the control flow graph
-        let function_ids: Vec<FunctionId> = self.model.control_flow_graph_result()
-            .functions.keys().cloned().collect();
-        
+        let function_ids: Vec<FunctionId> = self
+            .model
+            .control_flow_graph_result()
+            .functions
+            .keys()
+            .cloned()
+            .collect();
+
         // Analyze each function
         for function_id in function_ids {
             self.analyze_function(function_id, &mut result);
         }
-        
+
         // Return a new model with the updated state
         Ok(Model {
             image_scanner_result: self.model.image_scanner_result.clone(),
@@ -48,7 +53,7 @@ impl DataFlowAnalyzer {
             marker: std::marker::PhantomData,
         })
     }
-    
+
     /// Performs the main data flow analysis passes for a given function.
     fn analyze_function(&self, func_id: FunctionId, df_result: &mut DataFlowResult) {
         let function = self.model.function(&func_id);
@@ -68,7 +73,7 @@ impl DataFlowAnalyzer {
 
         debug!("Data Flow Analysis passes complete for {}", func_id);
     }
-    
+
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
     fn initialize_gen_use_func_in(
         &self,
@@ -78,7 +83,10 @@ impl DataFlowAnalyzer {
     ) {
         for &block_id in block_ids {
             let block = function.block(&block_id);
-            let block_flow = df_result.blocks.entry(block_id).or_insert_with(DataFlowBlock::new);
+            let block_flow = df_result
+                .blocks
+                .entry(block_id)
+                .or_insert_with(DataFlowBlock::new);
 
             let mut defined_in_block = HashSet::new();
             block_flow.writes_above_r = false;
@@ -122,7 +130,7 @@ impl DataFlowAnalyzer {
             );
         }
     }
-    
+
     // Pass 2: calculate function returns
     fn run_function_returns_analysis(
         &self,
@@ -178,7 +186,7 @@ impl DataFlowAnalyzer {
         }
         new_func_in
     }
-    
+
     /// Pass 3: Computes Reaching Definitions iteratively.
     fn run_reaching_definitions_analysis(
         &self,
@@ -271,7 +279,7 @@ impl DataFlowAnalyzer {
 
         new_defs_in
     }
-    
+
     /// Pass 4: Computes Liveness iteratively.
     fn run_liveness_analysis(
         &self,
@@ -301,11 +309,17 @@ impl DataFlowAnalyzer {
                 // Calculate IN set: IN = USE U ((OUT U potential_function_call_params) - DEF)
                 // potential_function_call_params are all incoming positive relative memory operands
                 // if there is a function call at this block.
-                let defined_kinds: HashSet<MemoryReference> = block_flow.gen.keys().cloned().collect();
+                let defined_kinds: HashSet<MemoryReference> =
+                    block_flow.gen.keys().cloned().collect();
                 let mut current_live_in = block_flow.live_out.clone();
-                
+
                 // add potential_function_call_params.
-                if function.block(&block_id).next().as_function_call().is_some() {
+                if function
+                    .block(&block_id)
+                    .next()
+                    .as_function_call()
+                    .is_some()
+                {
                     for d in &block_flow.defs_in {
                         if d.kind.is_outgoing_parameter() {
                             current_live_in
@@ -315,7 +329,7 @@ impl DataFlowAnalyzer {
                         }
                     }
                 }
-                
+
                 current_live_in.retain(|kind, _| !defined_kinds.contains(kind));
                 for (k, v) in &block_flow.use_before_def {
                     current_live_in
@@ -381,26 +395,26 @@ impl DataFlowAnalyzer {
 mod tests {
     use super::*;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v3::model::Model;
     use crate::disasm::v3::control_flow::ControlFlowGraphBuilder;
     use crate::disasm::v3::image_scanner::ImageScanner;
+    use crate::disasm::v3::model::Model;
     use pretty_assertions::assert_eq;
 
     // Helper to setup model, run CFG build, and then data flow analysis
     fn setup_and_analyze(binary: Vec<i128>) -> Model<DataFlowComplete> {
         init_logging();
-        
+
         // Create model and run image scanner
         let model = Model::new();
         let model = model.with_image(binary);
-        let model = ImageScanner::run(model).unwrap();
-        
+        let model = ImageScanner::run(binary, model).unwrap();
+
         // Build control flow graph
         let model = ControlFlowGraphBuilder::run(model).unwrap();
-        
+
         // Run data flow analysis
         let model = DataFlowAnalyzer::run(model).unwrap();
-        
+
         model
     }
 
@@ -411,24 +425,19 @@ mod tests {
         // once we have the parser and other components migrated
         let binary = vec![
             // R += 2
-            9, 2, 0,
-            // [100] = 5
-            1, 100, 5, 0,
-            // [101] = [100]
-            1, 101, 0, 100,
-            // output [101]
-            4, 101, 0,
-            // R -= 2
-            9, -2, 0,
-            // goto [R]
-            5, 1, 0, 0
+            9, 2, 0, // [100] = 5
+            1, 100, 5, 0, // [101] = [100]
+            1, 101, 0, 100, // output [101]
+            4, 101, 0, // R -= 2
+            9, -2, 0, // goto [R]
+            5, 1, 0, 0,
         ];
-        
+
         let model = setup_and_analyze(binary);
-        
+
         // Basic verification that we have data flow results
         assert!(model.data_flow_result.is_some());
-        
+
         // In a real test, we would check specific data flow properties
         // but for now we just verify the analysis runs without errors
     }
