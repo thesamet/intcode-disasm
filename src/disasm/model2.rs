@@ -13,9 +13,10 @@ use super::{
             function_call_analyzer::{CallSiteInfo, CalleeInfo},
             image_scanner::ImageScannerResult,
         },
-        model::{BlockId, FunctionId},
+        model::FunctionId,
         native::NativeInstruction,
         ssa_form::{PhiFunction, SsaMemoryReference, VersionRegistry},
+        BlockId,
     },
     v3::Span,
 };
@@ -23,12 +24,12 @@ use super::{
 // --- State Types ---
 
 pub trait ModelState {}
-struct InitialState {}
-struct ImageScannerComplete {}
-struct ControlFlowGraphComplete {}
-struct DataFlowComplete {}
-struct SsaComplete {}
-struct FunctionCallComplete {}
+pub struct InitialState {}
+pub struct ImageScannerComplete {}
+pub struct ControlFlowGraphComplete {}
+pub struct DataFlowComplete {}
+pub struct SsaComplete {}
+pub struct FunctionCallComplete {}
 impl ModelState for InitialState {}
 impl ModelState for ImageScannerComplete {}
 impl ModelState for ControlFlowGraphComplete {}
@@ -37,6 +38,7 @@ impl ModelState for SsaComplete {}
 impl ModelState for FunctionCallComplete {}
 
 /// A block in the control flow graph
+#[derive(Clone, Debug)]
 pub struct Block {
     pub id: BlockId,
     // To which function does this block belong?
@@ -50,6 +52,7 @@ pub struct Block {
     pub predecessors: Vec<PredecessorKind<MemoryReference>>,
 }
 
+#[derive(Clone, Debug)]
 pub struct Function {
     pub function_id: FunctionId,
     pub entry_block: BlockId,
@@ -122,6 +125,7 @@ where
 macro_rules! make_model {
     ($model:ident, $state:ident, { $($field:ty),* }) => {
         paste::paste! {
+            #[derive(Clone)]
             pub struct $model<S: $state> {
                 $([<$field:snake:lower>]: Option<$field>,)*
                 pub marker: std::marker::PhantomData<S>,
@@ -178,6 +182,7 @@ add_block_view_when!(DataFlow, data_flow);
 add_block_view_when!(Ssa, ssa);
 add_block_view_when!(FunctionCallAnalysis, call_site_info, CallSiteInfo);
 
+#[derive(Clone, Debug)]
 pub struct DataFlowResult {
     blocks: HashMap<BlockId, DataFlowBlock>,
 }
@@ -189,6 +194,7 @@ make_model!(Model, ModelState, {
     SsaResult,
     FunctionCallAnalysisResult
 });
+impl HasImageScannerResult for ImageScannerComplete {}
 impl HasImageScannerResult for ControlFlowGraphComplete {}
 impl HasImageScannerResult for DataFlowComplete {}
 impl HasImageScannerResult for SsaComplete {}
@@ -276,14 +282,17 @@ impl<'a, S: ModelState> BlockView<'a, S> {
 
 // --- Analysis Results ---
 
+#[derive(Clone, Debug)]
 pub struct ControlFlowGraphResult {
     functions: HashMap<FunctionId, Function>,
 }
 
+#[derive(Clone, Debug)]
 pub struct SsaResult {
     blocks: HashMap<BlockId, SsaBlock>,
 }
 
+#[derive(Clone, Debug)]
 pub struct FunctionCallAnalysisResult {
     functions: HashMap<FunctionId, CalleeInfo>,
     blocks: HashMap<BlockId, CallSiteInfo>,
@@ -291,7 +300,7 @@ pub struct FunctionCallAnalysisResult {
 
 // --- Specialized Blocks ---
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct DataFlowBlock {
     /// **Reaching Definitions (IN):** The set of definitions that might reach the entry point of this block.
     defs_in: HashSet<Definition>,
@@ -359,115 +368,342 @@ pub struct SsaBlock {
 
 #[cfg(test)]
 mod tests {
+    use v2::{instructions::Expression, native::NativeInstructionId};
+
     use super::*;
 
-    #[test]
-    fn test1() {
-        let model1 = Model::<ImageScannerComplete>::new();
-        let model2 = Model::<ImageScannerComplete> {
-            image_scanner_result: Some(ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            }),
+    // Helper function to create common test data
+    // Helper functions for creating test data for different model stages
+
+    fn create_test_ids() -> (FunctionId, BlockId) {
+        let function_id = FunctionId::from(0);
+        let block_id = BlockId::from(0);
+        (function_id, block_id)
+    }
+
+    fn create_image_scanner_data() -> ImageScannerResult {
+        ImageScannerResult {
+            recognized_functions: vec![],
+            data_segments: vec![],
+        }
+    }
+
+    fn create_block(function_id: FunctionId, block_id: BlockId) -> Block {
+        Block {
+            id: block_id,
+            containing_function_id: function_id,
+            span: Span { start: 0, end: 10 },
+            native_instructions: vec![],
+            low_instructions: vec![InstructionNode {
+                id: InstructionId::fresh(),
+                kind: v2::instructions::Instruction::Halt,
+            }],
+            next: NextKind::Halt,
+            predecessors: vec![],
+        }
+    }
+
+    fn create_cfg_data(function_id: FunctionId, block_id: BlockId) -> ControlFlowGraphResult {
+        let mut function_map = HashMap::new();
+        let mut blocks = HashMap::new();
+        blocks.insert(block_id, create_block(function_id, block_id));
+
+        function_map.insert(
+            function_id,
+            Function {
+                function_id,
+                entry_block: block_id,
+                stack_size: 8,
+                return_block: Some(block_id),
+                blocks,
+            },
+        );
+
+        ControlFlowGraphResult {
+            functions: function_map,
+        }
+    }
+
+    fn create_data_flow_data(block_id: BlockId) -> DataFlowResult {
+        let mut data_flow_blocks = HashMap::new();
+        let mut gen = HashMap::new();
+        gen.insert(
+            MemoryReference::Global(123),
+            (InstructionId::fresh(), MemoryReference::Global(0)),
+        );
+
+        data_flow_blocks.insert(block_id, DataFlowBlock::default());
+
+        DataFlowResult {
+            blocks: data_flow_blocks,
+        }
+    }
+
+    fn create_ssa_data(block_id: BlockId, function_id: FunctionId) -> SsaResult {
+        let mut ssa_blocks = HashMap::new();
+        ssa_blocks.insert(
+            block_id,
+            SsaBlock {
+                original_id: block_id,
+                phi_functions: vec![],
+                instructions: vec![InstructionNode {
+                    id: InstructionId::fresh(),
+                    kind: v2::instructions::Instruction::Halt,
+                }],
+                start_state: VersionRegistry::new(function_id),
+                end_state: VersionRegistry::new(function_id),
+                next: NextKind::Halt,
+                predecessors: vec![],
+                data_flow_block: DataFlowBlock {
+                    defs_in: HashSet::new(),
+                    defs_out: HashSet::new(),
+                    live_in: HashMap::new(),
+                    live_out: HashMap::new(),
+                    gen: HashMap::new(),
+                    use_before_def: HashMap::new(),
+                    writes_above_r: false,
+                    function_returns_in: HashSet::new(),
+                    function_returns_out: HashSet::new(),
+                    call_site_info: None,
+                },
+            },
+        );
+
+        SsaResult { blocks: ssa_blocks }
+    }
+
+    fn create_function_call_data(
+        function_id: FunctionId,
+        block_id: BlockId,
+    ) -> FunctionCallAnalysisResult {
+        let mut function_call_functions = HashMap::new();
+        function_call_functions.insert(function_id, CalleeInfo::default());
+
+        let mut function_call_blocks = HashMap::new();
+        function_call_blocks.insert(
+            block_id,
+            CallSiteInfo {
+                calling_block_id: block_id,
+                calling_function_id: function_id,
+                target_function_id: Some(function_id),
+                target_address_var: None,
+                argument_writes: HashMap::new(),
+                return_reads: HashMap::new(),
+                return_block_id: block_id,
+                parameter_map: HashMap::new(),
+                return_map: HashMap::new(),
+            },
+        );
+
+        FunctionCallAnalysisResult {
+            functions: function_call_functions,
+            blocks: function_call_blocks,
+        }
+    }
+
+    // Main function to create test data for all states
+    fn create_test_data() -> (
+        FunctionId,
+        BlockId,
+        ImageScannerResult,
+        ControlFlowGraphResult,
+        DataFlowResult,
+        SsaResult,
+        FunctionCallAnalysisResult,
+    ) {
+        let (function_id, block_id) = create_test_ids();
+        let image_scanner_data = create_image_scanner_data();
+        let cfg_data = create_cfg_data(function_id, block_id);
+        let data_flow_data = create_data_flow_data(block_id);
+        let ssa_data = create_ssa_data(block_id, function_id);
+        let function_call_data = create_function_call_data(function_id, block_id);
+
+        (
+            function_id,
+            block_id,
+            image_scanner_data,
+            cfg_data,
+            data_flow_data,
+            ssa_data,
+            function_call_data,
+        )
+    }
+
+    // Helper to create a model with ImageScannerComplete state
+    fn create_image_scanner_model(
+        image_scanner_data: &ImageScannerResult,
+    ) -> Model<ImageScannerComplete> {
+        Model::<ImageScannerComplete> {
+            image_scanner_result: Some(image_scanner_data.clone()),
             control_flow_graph_result: None,
             data_flow_result: None,
             ssa_result: None,
             function_call_analysis_result: None,
             marker: PhantomData,
-        };
-        let t = model2.image_scanner_result;
-        let model3 = Model::<ControlFlowGraphComplete> {
-            image_scanner_result: Some(ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            }),
-            control_flow_graph_result: Some(ControlFlowGraphResult {
-                functions: HashMap::new(),
-            }),
+        }
+    }
+
+    // Helper to create a model with ControlFlowGraphComplete state
+    fn create_cfg_model(
+        image_scanner_data: &ImageScannerResult,
+        cfg_data: &ControlFlowGraphResult,
+    ) -> Model<ControlFlowGraphComplete> {
+        Model::<ControlFlowGraphComplete> {
+            image_scanner_result: Some(image_scanner_data.clone()),
+            control_flow_graph_result: Some(cfg_data.clone()),
             data_flow_result: None,
             ssa_result: None,
             function_call_analysis_result: None,
             marker: PhantomData,
-        };
-        model3.image_scanner_result();
-        let function_view = model3.function(&FunctionId::from(0));
-        let m = function_view.block(&BlockId::from(0));
-        assert!(m.block_id() == BlockId::from(0));
+        }
+    }
 
-        let model4 = Model::<DataFlowComplete> {
-            image_scanner_result: Some(ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            }),
-            control_flow_graph_result: Some(ControlFlowGraphResult {
-                functions: HashMap::new(),
-            }),
-            data_flow_result: Some(DataFlowResult {
-                blocks: HashMap::new(),
-            }),
+    // Helper to create a model with DataFlowComplete state
+    fn create_data_flow_model(
+        image_scanner_data: &ImageScannerResult,
+        cfg_data: &ControlFlowGraphResult,
+        data_flow_data: &DataFlowResult,
+    ) -> Model<DataFlowComplete> {
+        Model::<DataFlowComplete> {
+            image_scanner_result: Some(image_scanner_data.clone()),
+            control_flow_graph_result: Some(cfg_data.clone()),
+            data_flow_result: Some(data_flow_data.clone()),
             ssa_result: None,
             function_call_analysis_result: None,
             marker: PhantomData,
-        };
+        }
+    }
 
-        model4.image_scanner_result();
-        let function_view = model4.function(&FunctionId::from(0));
-        let block_data_flow = model4.data_flow_result();
-        let m = function_view.function_id();
-        let t = function_view.block(&BlockId::from(0));
-        let live_in = &t.data_flow().live_in;
-
-        let model5 = Model::<SsaComplete> {
-            image_scanner_result: Some(ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            }),
-            control_flow_graph_result: Some(ControlFlowGraphResult {
-                functions: HashMap::new(),
-            }),
-            data_flow_result: Some(DataFlowResult {
-                blocks: HashMap::new(),
-            }),
-            ssa_result: Some(SsaResult {
-                blocks: HashMap::new(),
-            }),
+    // Helper to create a model with SsaComplete state
+    fn create_ssa_model(
+        image_scanner_data: &ImageScannerResult,
+        cfg_data: &ControlFlowGraphResult,
+        data_flow_data: &DataFlowResult,
+        ssa_data: &SsaResult,
+    ) -> Model<SsaComplete> {
+        Model::<SsaComplete> {
+            image_scanner_result: Some(image_scanner_data.clone()),
+            control_flow_graph_result: Some(cfg_data.clone()),
+            data_flow_result: Some(data_flow_data.clone()),
+            ssa_result: Some(ssa_data.clone()),
             function_call_analysis_result: None,
             marker: PhantomData,
-        };
-        let p = &model5.image_scanner_result().data_segments;
-        let q = &model5
-            .function(&FunctionId::from(0))
-            .block(&BlockId::from(0))
-            .ssa();
-        let d = &model5
-            .function(&FunctionId::from(0))
-            .block(&BlockId::from(0))
-            .data_flow();
+        }
+    }
 
-        let model6 = Model::<FunctionCallComplete> {
-            image_scanner_result: Some(ImageScannerResult {
-                recognized_functions: vec![],
-                data_segments: vec![],
-            }),
-            control_flow_graph_result: Some(ControlFlowGraphResult {
-                functions: HashMap::new(),
-            }),
-            data_flow_result: Some(DataFlowResult {
-                blocks: HashMap::new(),
-            }),
-            ssa_result: Some(SsaResult {
-                blocks: HashMap::new(),
-            }),
-            function_call_analysis_result: Some(FunctionCallAnalysisResult {
-                functions: HashMap::new(),
-                blocks: HashMap::new(),
-            }),
+    // Helper to create a model with FunctionCallComplete state
+    fn create_function_call_model(
+        image_scanner_data: &ImageScannerResult,
+        cfg_data: &ControlFlowGraphResult,
+        data_flow_data: &DataFlowResult,
+        ssa_data: &SsaResult,
+        function_call_data: &FunctionCallAnalysisResult,
+    ) -> Model<FunctionCallComplete> {
+        Model::<FunctionCallComplete> {
+            image_scanner_result: Some(image_scanner_data.clone()),
+            control_flow_graph_result: Some(cfg_data.clone()),
+            data_flow_result: Some(data_flow_data.clone()),
+            ssa_result: Some(ssa_data.clone()),
+            function_call_analysis_result: Some(function_call_data.clone()),
             marker: PhantomData,
-        };
-        let csi = &model6
-            .function(&FunctionId::from(0))
-            .block(&BlockId::from(0))
-            .call_site_info();
-        let callee_info = &model6.function(&FunctionId::from(0)).callee_info();
+        }
+    }
+
+    #[test]
+    fn test_image_scanner_complete_state() {
+        let (_, _, image_scanner_data, _, _, _, _) = create_test_data();
+        let model = create_image_scanner_model(&image_scanner_data);
+
+        let scanner_result = model.image_scanner_result();
+        assert_eq!(scanner_result.recognized_functions.len(), 0);
+        assert_eq!(scanner_result.data_segments.len(), 0);
+    }
+
+    #[test]
+    fn test_control_flow_graph_complete_state() {
+        let (function_id, block_id, image_scanner_data, cfg_data, _, _, _) = create_test_data();
+        let model = create_cfg_model(&image_scanner_data, &cfg_data);
+
+        // Test function and block access
+        let function_view = model.function(&function_id);
+        let block_view = function_view.block(&block_id);
+
+        assert_eq!(block_view.block_id(), block_id);
+        assert_eq!(function_view.function_id(), function_id);
+        assert_eq!(function_view.stack_size(), 8);
+        assert_eq!(function_view.return_block(), Some(block_id));
+
+        // Test block details
+        assert_eq!(block_view.native_instructions().len(), 0);
+        assert_eq!(block_view.low_instructions().len(), 1);
+        assert!(matches!(block_view.next(), NextKind::Halt));
+    }
+
+    #[test]
+    fn test_data_flow_complete_state() {
+        let (function_id, block_id, image_scanner_data, cfg_data, data_flow_data, _, _) =
+            create_test_data();
+        let model = create_data_flow_model(&image_scanner_data, &cfg_data, &data_flow_data);
+
+        // Test data flow access
+        let function_view = model.function(&function_id);
+        let block_view = function_view.block(&block_id);
+        let data_flow = block_view.data_flow();
+
+        assert_eq!(data_flow.live_in.len(), 0);
+        assert!(!data_flow.writes_above_r);
+    }
+
+    #[test]
+    fn test_ssa_complete_state() {
+        let (function_id, block_id, image_scanner_data, cfg_data, data_flow_data, ssa_data, _) =
+            create_test_data();
+        let model = create_ssa_model(&image_scanner_data, &cfg_data, &data_flow_data, &ssa_data);
+
+        // Test SSA access
+        let function_view = model.function(&function_id);
+        let block_view = function_view.block(&block_id);
+        let ssa_info = block_view.ssa();
+        let data_flow = block_view.data_flow();
+
+        assert_eq!(ssa_info.phi_functions.len(), 0);
+        assert_eq!(ssa_info.instructions.len(), 1);
+        assert!(matches!(ssa_info.next, NextKind::Halt));
+        assert_eq!(data_flow.defs_in.len(), 0); // Empty in the ssa block's data_flow_block
+    }
+
+    #[test]
+    fn test_function_call_complete_state() {
+        let (
+            function_id,
+            block_id,
+            image_scanner_data,
+            cfg_data,
+            data_flow_data,
+            ssa_data,
+            function_call_data,
+        ) = create_test_data();
+
+        let model = create_function_call_model(
+            &image_scanner_data,
+            &cfg_data,
+            &data_flow_data,
+            &ssa_data,
+            &function_call_data,
+        );
+
+        // Test call site info access
+        let function_view = model.function(&function_id);
+        let block_view = function_view.block(&block_id);
+        let call_site_info = block_view.call_site_info();
+
+        assert_eq!(call_site_info.calling_block_id, block_id);
+        assert_eq!(call_site_info.calling_function_id, function_id);
+        assert_eq!(call_site_info.target_function_id, Some(function_id));
+
+        // Test callee info access
+        let callee_info = function_view.callee_info();
+        assert_eq!(callee_info.parameter_entry_vars.len(), 0);
+        assert_eq!(callee_info.return_writes.len(), 0);
     }
 }

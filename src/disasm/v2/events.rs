@@ -1,5 +1,6 @@
 use super::dispatching::event_types_enum;
-use super::model::{BlockId, FunctionId, ProgramModel};
+use super::model::BlockId;
+use super::model::{FunctionId, ProgramModel};
 
 event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -45,12 +46,12 @@ event_types_enum! {Event, ProgramModel,
     pub struct TypeInferenceComplete {
         pub completed: bool,
     }
-    
+
     /// Signals that variable analysis and clustering has completed
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct VariableAnalysisComplete {
     }
-    
+
     /// Signals that control flow structure recovery has completed
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct StructureRecoveryComplete {

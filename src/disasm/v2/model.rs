@@ -1,3 +1,4 @@
+pub use crate::disasm::v3::BlockId;
 use std::collections::HashMap;
 
 use super::{
@@ -189,8 +190,6 @@ impl ProgramModel {
         self.function_call_analysis.as_ref()
     }
 }
-
-define_id_type!(BlockId);
 
 #[derive(Debug, Clone)]
 pub struct Function {

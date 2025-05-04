@@ -12,6 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Lint: `cargo clippy`
 - Format: `cargo fmt`
 
+- The current name of the project is disasm.
+
 ## Code Style Guidelines
 
 - Use snake_case for functions, variables, and module names

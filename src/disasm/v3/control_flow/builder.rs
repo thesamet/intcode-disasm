@@ -1,18 +1,18 @@
-use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
 use log::{debug, info, trace};
+use std::collections::{HashMap, HashSet};
 
-use crate::disasm::Error;
-use crate::disasm::v2::control_flow::{NextKind, PredecessorKind, Condition, FunctionCall};
+use crate::disasm::v2::control_flow::{Condition, FunctionCall, NextKind, PredecessorKind};
 use crate::disasm::v2::instructions::{Expression, Instruction, InstructionNode, MemoryReference};
+use crate::disasm::Error;
 
 use super::block::Block;
 use super::function::Function;
 use super::result::ControlFlowGraphResult;
 use crate::disasm::v3::common::Span;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
-use crate::disasm::v3::model::{Model, ImageScannerComplete, ControlFlowGraphComplete};
 use crate::disasm::v3::image_scanner::RecognizedFunction;
+use crate::disasm::v3::model::{ControlFlowGraphComplete, ImageScannerComplete, Model};
 
 /// Builds the control flow graph from the image scanner results
 pub struct ControlFlowGraphBuilder {
@@ -27,31 +27,39 @@ impl ControlFlowGraphBuilder {
             functions: HashMap::new(),
         }
     }
-    
-    pub fn run(model: Model<ImageScannerComplete>) -> Result<Model<ControlFlowGraphComplete>, Error> {
+
+    pub fn run(
+        model: Model<ImageScannerComplete>,
+    ) -> Result<Model<ControlFlowGraphComplete>, Error> {
         let mut builder = Self::new();
         builder.build(model)
     }
-    
-    fn build(&mut self, model: Model<ImageScannerComplete>) -> Result<Model<ControlFlowGraphComplete>, Error> {
+
+    fn build(
+        &mut self,
+        model: Model<ImageScannerComplete>,
+    ) -> Result<Model<ControlFlowGraphComplete>, Error> {
         debug!("Building control flow graph...");
-        
+
         // Process each function from the image scanner result
         let scanner_result = model.image_scanner_result().clone();
-        
+
         for function_id in &scanner_result.recognized_functions {
             let function_details = &scanner_result.function_details[function_id];
             self.process_function(*function_id, function_details, &scanner_result)?;
         }
-        
-        info!("Control flow graph built with {} functions and {} blocks", 
-              self.functions.len(), self.blocks.len());
-        
+
+        info!(
+            "Control flow graph built with {} functions and {} blocks",
+            self.functions.len(),
+            self.blocks.len()
+        );
+
         // Create the control flow graph result
         let result = ControlFlowGraphResult {
             functions: self.functions.clone(),
         };
-        
+
         // Return a new model with the updated state
         Ok(Model {
             image_scanner_result: model.image_scanner_result,
@@ -62,10 +70,15 @@ impl ControlFlowGraphBuilder {
             marker: std::marker::PhantomData,
         })
     }
-    
-    fn process_function(&mut self, function_id: FunctionId, function_details: &RecognizedFunction, scanner_result: &crate::disasm::v3::image_scanner::result::ImageScannerResult) -> Result<(), Error> {
+
+    fn process_function(
+        &mut self,
+        function_id: FunctionId,
+        function_details: &RecognizedFunction,
+        scanner_result: &crate::disasm::v3::image_scanner::result::ImageScannerResult,
+    ) -> Result<(), Error> {
         debug!("Processing function {}", function_id);
-        
+
         // --- Pre-calculate all block boundaries ---
         let mut block_boundaries: HashSet<usize> = function_details.jump_targets.clone();
         block_boundaries.insert(function_details.span.start); // Function entry is a boundary
@@ -78,7 +91,12 @@ impl ControlFlowGraphBuilder {
 
         block_boundaries.extend(function_details.halts.iter().map(|h| h.end));
         block_boundaries.extend(function_details.jump_targets.iter());
-        block_boundaries.extend(function_details.jump_instructions.iter().map(|j| j.span.end));
+        block_boundaries.extend(
+            function_details
+                .jump_instructions
+                .iter()
+                .map(|j| j.span.end),
+        );
         block_boundaries.extend(
             function_details
                 .function_calls
@@ -96,8 +114,9 @@ impl ControlFlowGraphBuilder {
         }
 
         // Ensure boundaries are within the function's span
-        block_boundaries
-            .retain(|addr| *addr >= function_details.span.start && *addr < function_details.span.end);
+        block_boundaries.retain(|addr| {
+            *addr >= function_details.span.start && *addr < function_details.span.end
+        });
 
         // --- Pass 1: Create Blocks based on pre-calculated boundaries ---
         let mut instructions_iter = function_details.instructions.iter().peekable();
@@ -180,8 +199,12 @@ impl ControlFlowGraphBuilder {
                 );
                 // It only had the SET R+=<Stack> command, so follower is block start+2.
                 let next_block = BlockId::from(function_details.span.start + 2);
-                assert!(self.blocks.contains_key(&next_block), "Block {} not found", next_block);
-                NextKind::Follows(BlockId::from(next_block.0))
+                assert!(
+                    self.blocks.contains_key(&next_block),
+                    "Block {} not found",
+                    next_block
+                );
+                NextKind::Follows(BlockId::from(next_block))
             } else if let Some(last_instr) = block.low_instructions.last() {
                 self.determine_next_kind(*block_id, last_instr, block.span.end)
             } else {
@@ -191,60 +214,73 @@ impl ControlFlowGraphBuilder {
             // Store predecessors temporarily, checking if target blocks exist
             match &next_kind {
                 NextKind::Follows(target_id) => {
-                    assert!(self.blocks.contains_key(target_id), "Block {} not found", target_id);
+                    assert!(
+                        self.blocks.contains_key(target_id),
+                        "Block {} not found",
+                        target_id
+                    );
                     predecessors_map
-                        .entry(BlockId::from(target_id.0))
+                        .entry(*target_id)
                         .or_default()
-                        .push(PredecessorKind::FollowsFrom(BlockId::from(block_id.0)));
+                        .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
-                    assert!(self.blocks.contains_key(target_block_id), "Block {} not found", target_block_id);
+                    assert!(
+                        self.blocks.contains_key(target_block_id),
+                        "Block {} not found",
+                        target_block_id
+                    );
                     predecessors_map
-                        .entry(BlockId::from(target_block_id.0))
+                        .entry(BlockId::from(*target_block_id))
                         .or_default()
-                        .push(PredecessorKind::GotoFrom(BlockId::from(block_id.0)));
+                        .push(PredecessorKind::GotoFrom(*block_id));
                 }
                 NextKind::FunctionCall(call) => {
                     assert!(
-                        self.blocks.contains_key(&BlockId::from(call.return_block.0)),
+                        self.blocks.contains_key(&call.return_block),
                         "Return block {:?} does not exist",
                         call.return_block
                     );
                     predecessors_map
-                        .entry(BlockId::from(call.return_block.0))
+                        .entry(call.return_block)
                         .or_default()
                         .push(PredecessorKind::FunctionCallReturns(call.clone()));
                 }
                 NextKind::Condition(condition) => {
                     let true_branch = condition.target_block;
                     let false_branch = condition.follows_block;
-                    assert!(self.blocks.contains_key(&BlockId::from(true_branch.0)), "Block {} not found", true_branch);
-                    assert!(self.blocks.contains_key(&BlockId::from(false_branch.0)), "Block {} not found", false_branch);
-                    predecessors_map
-                        .entry(BlockId::from(true_branch.0))
-                        .or_default()
-                        .push(PredecessorKind::ConditionalJump(Condition {
-                            from_block: BlockId::from(block_id.0),
+                    assert!(
+                        self.blocks.contains_key(&true_branch),
+                        "Block {} not found",
+                        true_branch
+                    );
+                    assert!(
+                        self.blocks.contains_key(&false_branch),
+                        "Block {} not found",
+                        false_branch
+                    );
+                    predecessors_map.entry(true_branch).or_default().push(
+                        PredecessorKind::ConditionalJump(Condition {
+                            from_block: *block_id,
                             condition_operand: condition.condition_operand.clone(),
                             jump_if_true: true,
                             target_block: true_branch,
                             follows_block: false_branch,
-                        }));
-                    predecessors_map
-                        .entry(BlockId::from(false_branch.0))
-                        .or_default()
-                        .push(PredecessorKind::ConditionalFollow(Condition {
-                            from_block: BlockId::from(block_id.0),
+                        }),
+                    );
+                    predecessors_map.entry(false_branch).or_default().push(
+                        PredecessorKind::ConditionalFollow(Condition {
+                            from_block: *block_id,
                             condition_operand: condition.condition_operand.clone(),
                             jump_if_true: true,
                             target_block: true_branch,
                             follows_block: false_branch,
-                        }));
+                        }),
+                    );
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
-                _ => { /* Other cases */ }
             };
-            
+
             // Update the block's next kind
             let block = self.blocks.get_mut(block_id).unwrap();
             block.next = next_kind;
@@ -261,27 +297,34 @@ impl ControlFlowGraphBuilder {
         let return_block = if let Some(return_span) = function_details.return_span {
             // Find the block containing the return sequence start
             let block_id = BlockId::from(return_span.start);
-            assert!(self.blocks.contains_key(&block_id), "Return block {} not found", block_id);
+            assert!(
+                self.blocks.contains_key(&block_id),
+                "Return block {} not found",
+                block_id
+            );
             Some(block_id)
         } else {
             None
         };
-        
+
         // Create the function
         let function = Function {
             function_id,
             entry_block: BlockId::from(function_details.span.start),
             stack_size: function_details.stack_size,
             return_block,
-            blocks: function_block_ids.iter().map(|id| (*id, self.blocks[id].clone())).collect(),
+            blocks: function_block_ids
+                .iter()
+                .map(|id| (*id, self.blocks[id].clone()))
+                .collect(),
         };
-        
+
         // Add the function to our collection
         self.functions.insert(function_id, function);
-        
+
         Ok(())
     }
-    
+
     fn determine_next_kind(
         &self,
         block_id: BlockId,
@@ -291,23 +334,23 @@ impl ControlFlowGraphBuilder {
         match &last_instr.kind {
             Instruction::Halt => NextKind::Halt,
             Instruction::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
-            Instruction::Call { addr, return_to } => {
-                NextKind::FunctionCall(FunctionCall::new(
-                    BlockId::from(block_id.0), 
-                    addr.clone(), 
-                    BlockId::from(*return_to)
-                ))
-            }
+            Instruction::Call { addr, return_to } => NextKind::FunctionCall(FunctionCall::new(
+                block_id,
+                addr.clone(),
+                BlockId::from(*return_to),
+            )),
             Instruction::Return => NextKind::Return,
-            Instruction::If { cond, then_addr, else_addr } => {
-                NextKind::Condition(Condition {
-                    from_block: BlockId::from(block_id.0),
-                    condition_operand: cond.clone(),
-                    jump_if_true: true,
-                    target_block: BlockId::from(*then_addr),
-                    follows_block: BlockId::from(*else_addr),
-                })
-            }
+            Instruction::If {
+                cond,
+                then_addr,
+                else_addr,
+            } => NextKind::Condition(Condition {
+                from_block: BlockId::from(block_id),
+                condition_operand: cond.clone(),
+                jump_if_true: true,
+                target_block: BlockId::from(*then_addr),
+                follows_block: BlockId::from(*else_addr),
+            }),
             _ => {
                 // Find the next block by address
                 let next_block_id = BlockId::from(block_end_addr);

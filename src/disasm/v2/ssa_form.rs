@@ -529,7 +529,7 @@ pub struct VersionRegistry {
 }
 
 impl VersionRegistry {
-    fn new(function_id: FunctionId) -> Self {
+    pub fn new(function_id: FunctionId) -> Self {
         Self {
             current_versions: HashMap::new(),
             function_id,

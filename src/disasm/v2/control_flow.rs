@@ -1,9 +1,9 @@
 use super::{
     data_flow::BlockDataFlow,
     instructions::{Expression, InstructionNode, MemoryReference},
-    model::{BlockId, FunctionId},
+    model::FunctionId,
     native::{NativeInstruction, Operand},
-    Span,
+    BlockId, Span,
 };
 
 // Describes how control flow leaves a block

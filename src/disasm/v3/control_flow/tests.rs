@@ -284,7 +284,7 @@ mod tests {
         let block2 = &func.blocks[&BlockId::from(2)];
         assert_eq!(block2.low_instructions.len(), 2); // [R+1] = [R+1] - 1, if [R+1] goto @loop_start
         assert_eq!(block2.span, Span::new(2, 9));
-        
+
         // Check the conditional loop structure
         if let NextKind::Condition(cond) = &block2.next {
             assert_eq!(
@@ -300,7 +300,7 @@ mod tests {
         } else {
             panic!("Expected block2.next to be a Condition");
         }
-        
+
         assert!(block2
             .predecessors
             .contains(&PredecessorKind::FollowsFrom(BlockId::from(0))));
@@ -310,7 +310,7 @@ mod tests {
         assert_eq!(block9.low_instructions.len(), 1); // Just Return instruction
         assert_eq!(block9.span, Span::new(9, 14));
         assert_eq!(block9.next, NextKind::Return);
-        
+
         // Check that Block 9 has a predecessor - should be a ConditionalFollow from Block 2
         assert_eq!(
             block9.predecessors.len(),
@@ -372,7 +372,7 @@ mod tests {
         );
 
         // Find the main and callee functions
-        let (main_id, callee_id) = result.functions.keys().collect_tuple().unwrap();
+        let (main_id, callee_id) = result.functions.keys().sorted().collect_tuple().unwrap();
         let main = &result.functions[main_id];
         let callee = &result.functions[callee_id];
 
@@ -392,7 +392,8 @@ mod tests {
             assert_eq!(call.return_block, BlockId::from(17));
             assert_eq!(call.calling_block, call_block.id);
             // For low-level, check that there's a constant expression with value 24
-            if let crate::disasm::v2::instructions::Expression::Constant(addr) = &call.function_addr {
+            if let crate::disasm::v2::instructions::Expression::Constant(addr) = &call.function_addr
+            {
                 assert_eq!(*addr, 24);
             } else {
                 panic!("Expected function address to be a constant");

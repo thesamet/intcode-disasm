@@ -53,7 +53,7 @@ pub fn run_analysis(image: Vec<i128>) {
 }
 
 pub fn run_types(image: Vec<i128>) {
-    let mut model = ProgramModel::new();
+    let model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner::new()));
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
@@ -86,7 +86,7 @@ pub fn run_types(image: Vec<i128>) {
 
 /// Run the analysis pipeline up to and including control flow structure recovery
 pub fn run_flow_recovery(image: Vec<i128>) {
-    let mut model = ProgramModel::new();
+    let model = ProgramModel::new();
     let mut publisher = EventPublisher::<Event, ProgramModel>::new();
     publisher.add_listener(Box::new(ImageScanner::new()));
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));

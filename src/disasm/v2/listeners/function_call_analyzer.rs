@@ -39,7 +39,7 @@ impl FunctionCallAnalysis {
 }
 
 /// Information about a function when it's being called (Callee's perspective).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CalleeInfo {
     /// Parameters expected by this function.
     /// Maps the parameter offset `n` (from `[R+n]`, n > 0) to the SSA variable

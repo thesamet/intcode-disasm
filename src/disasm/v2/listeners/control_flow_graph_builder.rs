@@ -179,7 +179,7 @@ impl ControlFlowGraphBuilder {
         }
 
         // --- Pass 2: Determine NextKind and Predecessors ---
-        let mut native_predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> =
+        let native_predecessors_map: HashMap<BlockId, Vec<PredecessorKind<Operand>>> =
             HashMap::new();
         let mut predecessors_map: HashMap<BlockId, Vec<PredecessorKind<MemoryReference>>> =
             HashMap::new();
