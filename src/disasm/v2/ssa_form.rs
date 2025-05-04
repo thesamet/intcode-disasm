@@ -682,29 +682,33 @@ impl<'a> SSAConversionState<'a> {
     }
 
     fn convert_function(&mut self) -> HashMap<BlockId, SsaBlock> {
-        // Step 1: Place phi functions where needed (will need adaptation)
+        // Step 1: Place phi functions where needed
         let phi_placements = self.place_phi_functions();
 
         // Step 2: Populate versions for phi results and targets of writes in top-bottom order.
-        // We no longer need the v2 Function struct here. We use self.function_view.
+        // Pass only phi_placements now.
         let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(&phi_placements);
 
-        // Step 3: Compute start and end states for all blocks (will need adaptation)
+        // Step 3: Compute start and end states for all blocks
         self.compute_start_end_states(&mut ssa_blocks);
 
-        // Step 4: Populate reads and phis (will need adaptation)
+        // Step 4: Populate reads and phis
+        // Pass only ssa_blocks now.
         self.populate_reads_and_phis(&mut ssa_blocks);
 
         ssa_blocks
     }
 
+    // Modified to remove 'function' parameter and use self.function (FunctionView)
     fn build_ssa_blocks_with_write_versioning(
         &mut self,
-        function: &Function,
         phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
     ) -> HashMap<BlockId, SsaBlock> {
         let mut ssa_blocks = HashMap::new();
+        // Get the v2 function ID for VersionRegistry
+        let v2_function_id = FunctionId::new(self.function.function_id().index());
 
+        // Helper closure to map v3 MemoryReference reads to v2 SsaMemoryReference
         fn map_read(
             (current, _): &mut (&mut VersionRegistry, &mut VersionRegistry),
             op: &MemoryReference,
@@ -725,51 +729,60 @@ impl<'a> SSAConversionState<'a> {
                 Err(_) => current.current_memory_reference(op),
             }
         }
-        let mut version_registry = VersionRegistry::new(self.function.function_id());
+        // Initialize VersionRegistry with the v2 function ID
+        let mut version_registry = VersionRegistry::new(v2_function_id);
 
-        for block_id in function.all_block_ids.iter().sorted() {
-            let mut end_state = VersionRegistry::new(self.function.function_id());
-            if *block_id == function.entry_block {
-                self.model
-                    .get_block(*block_id)
-                    .data_flow
-                    .as_ref()
-                    .unwrap()
-                    .defs_in
+        // Iterate over blocks using the FunctionView, sorted by BlockId
+        for (block_id, block_view) in self.function.blocks().sorted_by_key(|(id, _)| *id) {
+            // Initialize end_state for this block using the v2 function ID
+            let mut end_state = VersionRegistry::new(v2_function_id);
+
+            // Handle initial definitions for the entry block using v3 data flow info
+            if block_id == self.function.entry_block() {
+                block_view
+                    .data_flow() // Get v3 DataFlowBlock
+                    .defs_in // Access v3 defs_in
                     .iter()
-                    .filter(|d| d.source == OriginationPoint::FunctionInput)
-                    .filter_map(|d| MemoryReferenceType::try_from(&d.kind).ok())
-                    .for_each({
-                        |versioned_kind| {
-                            end_state.set_version(
-                                versioned_kind,
-                                VersionedMemoryReference {
-                                    kind: versioned_kind,
-                                    function_id: function.function_id,
-                                    version: 0,
-                                },
-                            );
-                        }
+                    .filter(|d| d.source == OriginationPoint::FunctionInput) // Check source
+                    .filter_map(|d| MemoryReferenceType::try_from(&d.kind).ok()) // Convert v3 MemoryReference to v2 MemoryReferenceType
+                    .for_each(|versioned_kind| {
+                        // Set version 0 for function inputs
+                        end_state.set_version(
+                            versioned_kind,
+                            VersionedMemoryReference {
+                                kind: versioned_kind,
+                                function_id: v2_function_id, // Use v2 ID
+                                version: 0,
+                            },
+                        );
                     });
             }
-            let block = self.model.get_block(*block_id);
-            let mut phi_functions = phi_placements.get(block_id).unwrap_or(&Vec::new()).clone();
+
+            // Get phi functions placed for this block
+            let mut phi_functions = phi_placements.get(&block_id).cloned().unwrap_or_default();
+
+            // Assign versions to phi results and update the end_state
             for phi in phi_functions.iter_mut() {
+                // Use the main version_registry to get the next version
                 phi.result = version_registry.create_next_version(&phi.result.kind);
+                // Update the block's end_state with the new phi result version
                 end_state.set_version(phi.result.kind, phi.result);
             }
-            // At this point end_state has the phi functions for this block, so this is the start state
-            // we have without variables flowing from predecessors.
+
+            // The state after phi assignments is the initial start state for this block's instructions
             let start_state = end_state.clone();
+
+            // Convert v3 LIR instructions to v2 SSA instructions, updating versions
             let mut instructions = Vec::new();
-            for instr in &block.low_instructions {
-                let mut state: (&mut VersionRegistry, &mut VersionRegistry) = (
-                    &mut version_registry as &mut VersionRegistry,
-                    &mut end_state as &mut VersionRegistry,
-                );
-                instructions.push(instr.map_rw(&mut state, map_read, map_write));
+            for instr_node in block_view.low_instructions() { // Use v3 low_instructions
+                // Prepare state tuple for map_rw
+                let mut state: (&mut VersionRegistry, &mut VersionRegistry) =
+                    (&mut version_registry, &mut end_state);
+                // Map the v3 instruction node using the read/write mappers
+                instructions.push(instr_node.map_rw(&mut state, map_read, map_write));
             }
 
+            // Create the v2 SsaBlock structure
             let ssa_block = SsaBlock {
                 original_id: *block_id,
                 phi_functions,
@@ -788,10 +801,11 @@ impl<'a> SSAConversionState<'a> {
         ssa_blocks
     }
 
-    // Modified to use v3 data structures from self.function_view and self.model
+    // Modified to use v3 data structures from self.function and self.model
     fn place_phi_functions(&mut self) -> HashMap<BlockId, Vec<PhiFunction>> {
         let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
-        let function_id = self.function_id; // Use the stored v2 FunctionId
+        // Use self.function.function_id() to get the v3 ID, then convert to v2 ID
+        let function_id = FunctionId::new(self.function.function_id().index());
 
         // Initialize empty phi function vectors for all blocks in the current function view
         for (block_id, _) in self.function.blocks() {
@@ -1006,16 +1020,21 @@ impl<'a> SSAConversionState<'a> {
         }
     }
 
+    // Modified to remove 'function' parameter and use self.function (FunctionView)
     fn populate_reads_and_phis(
         &self,
-        function: &Function,
         ssa_blocks: &mut HashMap<BlockId, SsaBlock>,
     ) {
-        for block_id in &function.all_block_ids {
-            let block = self.model.get_block(*block_id);
-            let ssa_block = ssa_blocks.get(block_id).unwrap();
-            let mut phi_functions = vec![];
-            for phi in &ssa_block.phi_functions {
+        // Iterate over blocks using the FunctionView
+        for (block_id, block_view) in self.function.blocks() {
+            // Get the mutable SSA block we are populating
+            let ssa_block = ssa_blocks.get_mut(&block_id).unwrap(); // Need mutable borrow later
+
+            // Clone the initial phi functions (results only) placed earlier
+            let initial_phis = ssa_block.phi_functions.clone();
+            let mut populated_phis = Vec::with_capacity(initial_phis.len());
+
+            for phi in &initial_phis {
                 let mut phi_inputs = HashMap::new();
                 for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
