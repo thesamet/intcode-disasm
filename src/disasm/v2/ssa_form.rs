@@ -569,9 +569,7 @@ impl SsaResult {
 // Modified to hold v3 model and function view
 struct SSAConversionState<'a> {
     model: &'a Model<DataFlowComplete>,
-    function_view: FunctionView<'a, DataFlowComplete>,
-    // Store the v2 function ID for convenience in creating v2 SSA types
-    v2_function_id: FunctionId,
+    function: FunctionView<'a, DataFlowComplete>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,20 +675,13 @@ impl<'a> SSAConversionState<'a> {
     // Modified constructor
     fn new(
         model: &'a Model<DataFlowComplete>,
-        function_view: FunctionView<'a, DataFlowComplete>,
+        function: FunctionView<'a, DataFlowComplete>,
     ) -> Self {
         // Convert v3 FunctionId to v2 FunctionId
-        let v2_function_id = FunctionId::new(function_view.function_id().index());
-        Self {
-            model,
-            function_view,
-            v2_function_id,
-        }
+        Self { model, function }
     }
 
     fn convert_function(&mut self) -> HashMap<BlockId, SsaBlock> {
-        let v2_function_id = self.v2_function_id; // Use stored v2 ID
-
         // Step 1: Place phi functions where needed (will need adaptation)
         let phi_placements = self.place_phi_functions();
 
@@ -734,10 +725,10 @@ impl<'a> SSAConversionState<'a> {
                 Err(_) => current.current_memory_reference(op),
             }
         }
-        let mut version_registry = VersionRegistry::new(self.function_id);
+        let mut version_registry = VersionRegistry::new(self.function.function_id());
 
         for block_id in function.all_block_ids.iter().sorted() {
-            let mut end_state = VersionRegistry::new(self.function_id);
+            let mut end_state = VersionRegistry::new(self.function.function_id());
             if *block_id == function.entry_block {
                 self.model
                     .get_block(*block_id)
@@ -797,104 +788,119 @@ impl<'a> SSAConversionState<'a> {
         ssa_blocks
     }
 
-    fn place_phi_functions(
-        &mut self,
-        function_id: FunctionId,
-    ) -> HashMap<BlockId, Vec<PhiFunction>> {
+    // Modified to use v3 data structures from self.function_view and self.model
+    fn place_phi_functions(&mut self) -> HashMap<BlockId, Vec<PhiFunction>> {
         let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
-        let function = self.model.get_function(function_id);
+        let function_id = self.function_id; // Use the stored v2 FunctionId
 
-        // Initialize empty phi function vectors for all blocks
-        for &block_id in &function.all_block_ids {
+        // Initialize empty phi function vectors for all blocks in the current function view
+        for (block_id, _) in self.function.blocks() {
             phi_placements.insert(block_id, Vec::new());
         }
 
-        for &block_id in &function.all_block_ids {
-            let block = self.model.get_block(block_id);
+        for (block_id, block_view) in self.function.blocks() {
+            let predecessors = block_view.predecessors(); // v3 PredecessorKind<MemoryReference>
 
             // Only blocks with multiple predecessors or blocks that are function returns need phi functions.
-            if block.predecessors.len() <= 1
-                && !block
-                    .predecessors
-                    .iter()
-                    .any(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
+            if predecessors.len() <= 1
+                && !predecessors.iter().any(|pred| {
+                    matches!(
+                        pred,
+                        crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_)
+                    )
+                })
+            // Use v3 type
             {
                 continue;
             }
 
-            // Get the data flow result for this block
-            let block_flow = self.model.get_block(block_id).data_flow.as_ref().unwrap();
+            // Get the v3 data flow result for this block
+            let block_flow = block_view.data_flow(); // Directly access v3 DataFlowBlock
+
             // Find all variable definitions reaching this block from any predecessor
+            // Note: v3 defs_in is HashSet<Definition>, where Definition contains kind and source
             let all_incoming_defs: HashMap<MemoryReference, HashSet<OriginationPoint>> =
-                if block.predecessors.len() > 1 {
+                if predecessors.len() > 1 {
                     block_flow
-                        .defs_in
+                        .defs_in // Use v3 defs_in
                         .iter()
-                        .map(|d| (d.kind.clone(), d.source))
+                        .map(|d| (d.kind.clone(), d.source)) // d.kind is MemoryReference
                         .into_grouping_map()
                         .collect()
                 } else {
                     HashMap::new()
                 };
 
-            let return_values_accessed = if let Some(PredecessorKind::FunctionCallReturns(fc)) =
-                block
-                    .predecessors
-                    .iter()
-                    .find(|pred| matches!(pred, PredecessorKind::FunctionCallReturns(_)))
-            {
+            // Find return values accessed if this block is a return site
+            let return_values_accessed: Vec<MemoryReference> = if let Some(
+                crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(fc), // Use v3 type
+            ) =
+                predecessors.iter().find(|pred| {
+                    matches!(
+                        pred,
+                        crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_)
+                    )
+                }) {
+                // Get the calling block's view and its data flow info
                 self.model
-                    .get_block(fc.calling_block)
-                    .data_flow
-                    .as_ref()
-                    .unwrap()
+                    .function(&self.function.function_id()) // Need function context for block view
+                    .block(&fc.calling_block) // Get BlockView for the caller
+                    .data_flow()
                     .call_site_info
-                    .as_ref()
+                    .as_ref() // Access CallSiteInfo from v3 DataFlowBloc
                     .map(|call_info| {
-                        // If we have CallSiteInfo...
                         call_info
-                            .return_values_accessed
-                            .keys() // Get iterator of keys (&i128)
-                            .cloned() // Get iterator of values (i128)
-                            .map(MemoryReference::StackRelative) // Convert to Addressable
-                            .collect_vec() // Collect into Vec<OperandKind>
+                            .return_values_accessed // This is HashMap<i128, InstructionId>
+                            .keys()
+                            .map(|offset| MemoryReference::StackRelative(*offset)) // Convert offset to MemoryReference
+                            .collect_vec()
                     })
-                    .unwrap()
+                    .unwrap_or_default() // Use empty vec if no info found
             } else {
                 vec![]
             };
 
-            let vars = all_incoming_defs
+            // Determine variables needing phi functions:
+            // - Defined differently by multiple predecessors AND live-in
+            // - OR are accessed return values from a function call
+            let vars_needing_phi = all_incoming_defs
                 .iter()
-                .filter(|(var_kind, defs)| {
-                    defs.len() > 1 && block_flow.live_in.contains_key(*var_kind)
+                .filter(|(mem_ref, def_sources)| {
+                    def_sources.len() > 1 && block_flow.live_in.contains_key(*mem_ref)
+                    // Use v3 live_in (HashMap<MemoryReference, _>)
                 })
-                .map(|(var_kind, _)| var_kind)
-                .chain(return_values_accessed.iter())
-                .unique();
-            // For each variable with multiple different definitions reaching this block,
-            // add a phi function
-            for var_kind in vars {
-                // Skip constants and derefs
-                let Ok(phi_kind) = MemoryReferenceType::try_from(var_kind) else {
+                .map(|(mem_ref, _)| mem_ref) // Get the MemoryReference
+                .chain(return_values_accessed.iter()) // Add accessed return values
+                .unique(); // Ensure each variable is considered only once
+
+            // For each variable needing a phi function...
+            for mem_ref in vars_needing_phi {
+                // Try converting the v3 MemoryReference to the v2 MemoryReferenceType used for versioning
+                let Ok(phi_kind) = MemoryReferenceType::try_from(mem_ref) else {
+                    // Skip if it's not a type we version (e.g., Deref)
+                    trace!(
+                        "{}: Skipping phi for non-versionable type {:?}",
+                        block_id,
+                        mem_ref
+                    );
                     continue;
                 };
 
+                // Create the phi result variable (using the stored v2 function ID)
                 let phi_result = VersionedMemoryReference {
                     kind: phi_kind,
-                    function_id,
-                    version: 0, // Placeholder
+                    function_id, // Use the v2 function ID stored in self
+                    version: 0,  // Placeholder version, will be assigned later
                 };
-                trace!("{block_id}: Created {} = ?", phi_result);
+                trace!("{}: Placing phi for {} = ?", block_id, phi_result);
 
-                // We fill this function later.
+                // Create the v2 PhiFunction struct (inputs map remains empty for now)
                 let phi = PhiFunction {
                     result: phi_result,
-                    // remove native_result later. Junk value.
-                    inputs: HashMap::new(), // Will be filled later
+                    inputs: HashMap::new(), // Will be filled in populate_reads_and_phis
                 };
 
-                // Add the phi function to this block
+                // Add the phi function to this block's placement list
                 phi_placements.get_mut(&block_id).unwrap().push(phi);
             }
         }
@@ -922,16 +928,10 @@ impl<'a> SSAConversionState<'a> {
             for block_id in &block_ids {
                 let mut new_in = initial_start_states[block_id].clone();
                 let mut new_out = initial_end_states[block_id].clone();
-                let control_block = self.model.get_block(*block_id);
-                let live_in = &self
-                    .model
-                    .get_block(*block_id)
-                    .data_flow
-                    .as_ref()
-                    .unwrap()
-                    .live_in;
+                let block = self.function.block(block_id);
+                let live_in = &block.data_flow().live_in;
 
-                for pred in &control_block.predecessors {
+                for pred in block.predecessors() {
                     let pred_id = pred.source_block_id();
                     // Use the collected end_states map here
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
