@@ -444,13 +444,15 @@ pub struct PhiFunction {
     /// The resulting SSA variable (must be a Variable)
     pub result: VersionedMemoryReference,
     /// Map describing the sources for this Phi function's value.
-    /// The key is the PredecessorKind corresponding to the incoming edge.
-    /// The value is the SsaOperand representing the value coming from that source.
-    /// For FunctionReturn predecessors, the SsaOperand is typically the phi.result itself wrapped in SsaOperand::Variable.
-    pub inputs: HashMap<PredecessorKind<MemoryReference>, VersionedMemoryReference>,
+    /// The key is the v3 PredecessorKind corresponding to the incoming edge, but with SsaMemoryReference.
+    /// The value is the VersionedMemoryReference representing the value coming from that source.
+    pub inputs: HashMap<
+        crate::disasm::v3::control_flow::PredecessorKind<SsaMemoryReference>,
+        VersionedMemoryReference,
+    >,
 }
 
-pub type SsaInstruction = GenericNativeInstruction<SsaOperand>;
+pub type SsaInstruction = GenericNativeInstruction<SsaOperand>; // Keep using v2 native instruction type for now
 
 /// Represents a basic block in SSA form
 #[derive(Debug, Clone)]
@@ -471,9 +473,9 @@ pub struct SsaBlock {
     pub native_end_state: HashMap<SsaVarKind, SsaVar>, // Track only versioned variables
     /// End state: the state of all versioned variables at the end of this block
     pub end_state: VersionRegistry, // Track only versioned variables
-    /// Control flow information using SSA operands
-    pub next: NextKind<SsaMemoryReference>,
-    pub predecessors: Vec<PredecessorKind<SsaMemoryReference>>,
+    /// Control flow information using SSA operands (using v3 types)
+    pub next: crate::disasm::v3::control_flow::NextKind<SsaMemoryReference>,
+    pub predecessors: Vec<crate::disasm::v3::control_flow::PredecessorKind<SsaMemoryReference>>,
 }
 
 /// Represents a function in SSA form
@@ -1047,21 +1049,25 @@ impl<'a> SSAConversionState<'a> {
                         )
                     });
 
-                    // Convert v3 PredecessorKind to v2 PredecessorKind for the map key
-                    // TODO: Implement a proper conversion function or adapt PhiFunction.inputs key type
-                    let v2_pred = map_v3_predecessor_to_v2(pred, &pred_ssa_block.end_state); // Placeholder
+                    // Map the v3 PredecessorKind<MemoryReference> to v3 PredecessorKind<SsaMemoryReference>
+                    // using the predecessor's end state.
+                    let ssa_pred = pred.map(&mut |mem_ref| {
+                        pred_ssa_block.end_state.current_memory_reference(mem_ref)
+                    });
 
                     if matches!(pred, crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_))
                         && phi.result.kind.as_stack_relative().is_some_and(|x| x > 0)
                     {
                         // For function returns, the phi result itself represents the value.
-                        phi_inputs.insert(v2_pred, phi.result); // Use the phi result directly
+                        // Use the mapped ssa_pred as the key.
+                        phi_inputs.insert(ssa_pred, phi.result);
                     } else {
                         // Get the version from the predecessor's end state
                         let input_version = pred_ssa_block
                             .end_state
                             .current_version(&phi.result.kind);
-                        phi_inputs.insert(v2_pred, input_version);
+                        // Use the mapped ssa_pred as the key.
+                        phi_inputs.insert(ssa_pred, input_version);
                     }
                 }
                 // Create the final PhiFunction with populated inputs
@@ -1106,56 +1112,49 @@ impl<'a> SSAConversionState<'a> {
             ssa_block.instructions = populated_instructions;
             ssa_block.phi_functions = populated_phis;
 
-            // Update predecessors of successor blocks based on the mapped NextKind
-            // TODO: Convert v3 NextKind<SsaMemoryReference> to v2 NextKind<SsaMemoryReference>
-            let v2_next_kind = map_v3_next_to_v2(&ssa_block_next); // Placeholder
-
-            match &v2_next_kind {
-                NextKind::Follows(target_id) => {
-                    // Need mutable access to successor
+            // Update predecessors of successor blocks using the v3 NextKind (ssa_block_next)
+            match &ssa_block_next {
+                crate::disasm::v3::control_flow::NextKind::Follows(target_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_id) {
-                        // TODO: Convert v3 PredecessorKind to v2
                         successor_block
                             .predecessors
-                            .push(PredecessorKind::FollowsFrom(*block_id));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::FollowsFrom(*block_id));
                     }
                 }
-                NextKind::Goto(target_block_id) => {
+                crate::disasm::v3::control_flow::NextKind::Goto(target_block_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_block_id) {
-                        // TODO: Convert v3 PredecessorKind to v2
                         successor_block
                             .predecessors
-                            .push(PredecessorKind::GotoFrom(*block_id));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::GotoFrom(*block_id));
                     }
                 }
-                NextKind::FunctionCall(call) => {
+                crate::disasm::v3::control_flow::NextKind::FunctionCall(call) => {
+                    // 'call' is already v3::FunctionCall<SsaMemoryReference>
                     if let Some(successor_block) = ssa_blocks.get_mut(&call.return_block) {
-                        // TODO: Convert v3 PredecessorKind to v2
-                        // Need to map the FunctionCall<SsaMemoryReference> from v3 to v2
-                        let v2_call = map_v3_call_to_v2(call); // Placeholder
                         successor_block
                             .predecessors
-                            .push(PredecessorKind::FunctionCallReturns(v2_call));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(call.clone()));
                     }
                 }
-                NextKind::Condition(cond) => {
-                    // TODO: Convert v3 Condition to v2
-                    let v2_cond = map_v3_condition_to_v2(cond); // Placeholder
+                crate::disasm::v3::control_flow::NextKind::Condition(cond) => {
+                    // 'cond' is already v3::Condition<SsaMemoryReference>
                     if let Some(target_block) = ssa_blocks.get_mut(&cond.target_block) {
                         target_block
                             .predecessors
-                            .push(PredecessorKind::ConditionalJump(v2_cond.clone()));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::ConditionalJump(cond.clone()));
                     }
                     if let Some(follows_block) = ssa_blocks.get_mut(&cond.follows_block) {
                         follows_block
                             .predecessors
-                            .push(PredecessorKind::ConditionalFollow(v2_cond));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::ConditionalFollow(cond.clone()));
                     }
                 }
-                NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
+                crate::disasm::v3::control_flow::NextKind::Return
+                | crate::disasm::v3::control_flow::NextKind::Halt
+                | crate::disasm::v3::control_flow::NextKind::Unknown => { /* No successors */ }
             }
-            // Store the final v2 NextKind in the block
-            ssa_block.next = v2_next_kind;
+            // Store the final v3 NextKind in the block
+            ssa_block.next = ssa_block_next;
         }
     }
 }
