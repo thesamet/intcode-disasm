@@ -72,6 +72,6 @@ fn good_example(&self, v: Value) -> Option<Finding> {
 
 ## Changes and refactoring
 
-- When refactoring, do not leave comments about what was there before the refactoring. For example, do not add command such as "// field moved to struct XYZ", or "// We previously constrained X to be Y, but this is not correct".
+- When refactoring, do not leave comments about what was there before the refactoring, or what you just added. For example, do not add command such as "// added XYZ field.", or "// We previously constrained X to be Y, but this is not correct".
 - If you encounter a private function that can be used in the change, suggest making it public. There is a high chance that this change will be welcome.
 - When working in a conversational mode as an assistance in a text editor, when asked to modify a function or a part of a file, provide only the diffs, not the whole file.
