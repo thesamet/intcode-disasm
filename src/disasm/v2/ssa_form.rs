@@ -898,9 +898,12 @@ impl<'a> SSAConversionState<'a> {
                     // new_in should store SsaVarKind -> SsaVar
                     for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
                         let mem_ref: MemoryReference = mem_ref_type.into(); // Convert once
-                        if !live_in.contains_key(&mem_ref) && !(&mem_ref).is_local_or_parameter()
-                        // Call trait method on reference
-                        {
+                        if !live_in.contains_key(&mem_ref) {
+                            if let Some(offset) = (&mem_ref).as_stack_relative() {
+                                if offset <= 0 {
+                                    continue;
+                                }
+                            }
                             // This var doesn't live from here and not a return value
                             trace!("Skipping var {} from predecessor {} because it doesn't live in this block {block_id}", mem_ref_type, pred_id);
                             continue;
