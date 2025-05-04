@@ -225,13 +225,13 @@ impl<'a> PrettyPrinter<'a> {
             if self.show_vars {
                 match &instr.kind {
                     Instruction::Assign {
-                        target,
-                        src,
-                        target_debug_marker,
+                        target: _, // Renamed from target_operand
+                        src: _,    // Renamed from source_operand
+                        target_debug_marker: _,
                     } => {
-                        panic!("Migration uncomment")
+                        // panic!("Migration uncomment") // Commented out as per migration guidelines
                         // skip a == b where a and b are the same variable
-                        /*
+                        /* Migration: Requires VariableMergerResult and SsaMemoryReference details
                         if let (Some(target), Some(src)) = (target.as_variable(), .as_variable()) {
                             let var_to_cluster = &self
                                 .model
@@ -268,8 +268,8 @@ impl<'a> PrettyPrinter<'a> {
             .model
             .get_type_inference_result()
             // .and_then(|m| m.get_function_signature(&function.original_id));
-            .and_then(|m| panic!("Migration uncomment"));
-        /*
+            .and_then(|_m| panic!("Migration uncomment")); // Use _m to avoid unused variable warning
+        /* Migration: Commented out unreachable code block
         let sig = if let Some((args, rets)) = args_rets {
             let mut args = args.iter().map(|(_, v, _)| {
                 self.format_addressable(&SsaOperand {
