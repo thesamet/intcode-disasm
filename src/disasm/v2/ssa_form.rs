@@ -1260,7 +1260,8 @@ mod tests {
     #[test]
     fn test_basic_ssa_conversion() {
         // Simple program with variable definitions and uses
-        let model = setup_analyzed_models( // Changed variable name
+        let model = setup_analyzed_models(
+            // Changed variable name
             r#"
             ; Offset 0
             R += 3          ; stack frame setup
@@ -1275,9 +1276,7 @@ mod tests {
 
         // SSA conversion is done within setup_analyzed_models now
         // Access the main function view from the resulting model
-        let func_view = model
-            .function(&V3FunctionId::new(0))
-            .unwrap(); // Use unwrap for Option<FunctionView>
+        let func_view = model.function(&V3FunctionId::new(0)).unwrap(); // Use unwrap for Option<FunctionView>
 
         // Expect the function to have blocks
         assert!(!func_view.blocks().is_empty());
@@ -1296,7 +1295,8 @@ mod tests {
     #[test]
     fn test_ssa_conversion_with_phi_functions() {
         // Program with conditional paths that need phi functions
-        let model = setup_analyzed_models( // Changed variable name
+        let model = setup_analyzed_models(
+            // Changed variable name
             r#"
             ; Offset 0: Entry Block
             R += 3
@@ -1328,12 +1328,11 @@ mod tests {
             let ssa_block = block_view.ssa();
             if ssa_block
                 .instructions
-                    .iter()
-                    .any(|instr| matches!(instr.kind, Instruction::Output(_)))
-                {
-                    merge_block_id = Some(*block_id);
-                    break;
-                }
+                .iter()
+                .any(|instr| matches!(instr.kind, Instruction::Output(_)))
+            {
+                merge_block_id = Some(*block_id);
+                break;
             }
         }
 
@@ -1389,7 +1388,8 @@ mod tests {
     #[test]
     fn test_ssa_conversion_with_function_calls() {
         // Program with a function call and return values
-        let model = setup_analyzed_models( // Changed variable name
+        let model = setup_analyzed_models(
+            // Changed variable name
             r#"
             ; Main function @ 0
             R += 3
@@ -1471,7 +1471,8 @@ mod tests {
     #[test]
     fn test_proper_version_increments_for_writes() {
         // Test a simple program that reads and writes the same register
-        let model = setup_analyzed_models( // Changed variable name
+        let model = setup_analyzed_models(
+            // Changed variable name
             r#"
             ; Offset 0
             R += 3                  ; stack frame setup
@@ -1512,7 +1513,8 @@ mod tests {
                         if let (
                             MemoryReferenceType::RelativeMemory(target_offset),
                             Expression::Addressable(SsaMemoryReference::Versioned(lhs_var)),
-                        ) = (target_var.kind, lhs.as_ref()) // Remove double deref
+                        ) = (target_var.kind, lhs.as_ref())
+                        // Remove double deref
                         {
                             // Check the expression inside lhs
                             if let Expression::Addressable(SsaMemoryReference::Versioned(lhs_var)) =
@@ -1534,7 +1536,8 @@ mod tests {
             if let (SsaMemoryReference::Versioned(target_var), Expression::Binary { lhs, .. }) =
                 (target, src)
             {
-                if let Expression::Addressable(SsaMemoryReference::Versioned(src_var)) = lhs.as_ref()
+                if let Expression::Addressable(SsaMemoryReference::Versioned(src_var)) =
+                    lhs.as_ref()
                 // Remove double deref
                 {
                     assert!(
