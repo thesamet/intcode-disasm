@@ -223,8 +223,8 @@ impl DataFlowAnalyzer {
                 // definitions flow forward.
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
-                    current_defs_out.retain(|d| !d.kind.as_stack_relative().is_some_and(|n| n > 0));
-                    // Check if it's an outgoing parameter
+                    current_defs_out.retain(|d| !d.kind.is_outgoing_parameter());
+                    // This matches v2 behavior
                 }
 
                 // Update block's OUT set if changed
@@ -255,28 +255,8 @@ impl DataFlowAnalyzer {
             new_defs_in.extend(pred_flow.defs_out.iter().cloned());
         }
 
-        if function.entry_block() == block.block_id() {
-            // Use entry_block()
-            // Create synthetic definitions for any potential input parameters
-            // to this function. We take the union of all the use_before_def sets
-            // for all blocks in the function, since it is a superset (which is still
-            // smaller than all the reads).
-            for (other_block_id, _) in function.blocks() {
-                // Iterate view blocks
-                let other_flow = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
-                new_defs_in.extend(
-                    other_flow
-                        .use_before_def
-                        .keys()
-                        .filter(|k| k.as_stack_relative().is_some_and(|n| n <= 0)) // Check if it's a local or parameter
-                        .map(|k| Definition {
-                            source: OriginationPoint::FunctionInput,
-                            kind: k.clone(),
-                            block_id: block.block_id(), // Use view method
-                        }),
-                )
-            }
-        }
+        // Only add function input definitions for the entry block
+        // This matches v2 behavior where function inputs are only added to the entry block
 
         new_defs_in
     }
@@ -318,8 +298,9 @@ impl DataFlowAnalyzer {
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
                     for d in &block_flow.defs_in {
-                        if d.kind.is_outgoing_parameter() {
-                            // Use MemoryReferenceInfo trait directly on MemoryReference
+                        if d.kind.as_stack_relative().is_some_and(|n| n > 0) {
+                            // Check for positive stack relative references (outgoing parameters)
+                            // This matches v2 behavior
                             current_live_in
                                 .entry(d.kind.clone())
                                 .or_insert_with(HashSet::new)
@@ -387,8 +368,9 @@ impl DataFlowAnalyzer {
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
                 let dfr = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
-                for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) {
-                    // Use MemoryReferenceInfo trait directly on MemoryReference
+                for gen in dfr.gen.keys() {
+                    // Include ALL memory references, not just locals/parameters
+                    // This matches v2 behavior where all memory references are considered
                     new_live_out
                         .entry(gen.clone())
                         .or_insert_with(HashSet::new)
