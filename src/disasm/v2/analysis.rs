@@ -4,7 +4,6 @@ use super::{
     listeners::{
         control_flow_graph_builder::ControlFlowGraphBuilder,
         data_flow_analyzer::DataFlowAnalyzer,
-        function_call_analyzer::FunctionCallAnalyzer,
         image_scanner::{ImageScanner, ImageScannerResult},
         ssa_converter::SsaConverter,
     },
@@ -21,7 +20,7 @@ pub fn run_analysis(image: Vec<i128>) {
     publisher.add_listener(Box::new(x));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
-    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    // publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
     /*
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     publisher.add_listener(Box::new(VariableAnalyzer::new()));
@@ -59,7 +58,7 @@ pub fn run_types(image: Vec<i128>) {
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
-    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    //   publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
     assert!(false);
     // publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
     /* commented for migration
@@ -92,7 +91,7 @@ pub fn run_flow_recovery(image: Vec<i128>) {
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
-    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    // publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
     assert!(false);
     /*
     publisher.add_listener(Box::new(TypeInferenceAnalyzer::new()));
@@ -143,7 +142,7 @@ pub fn run_analysis_ssa(image: Vec<i128>) {
     publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
     publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
     publisher.add_listener(Box::new(SsaConverter::new()));
-    publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
+    // publisher.add_listener(Box::new(FunctionCallAnalyzer::new()));
 
     // Process the image
     model.load_image(&image, &mut publisher);
@@ -157,7 +156,7 @@ pub fn run_analysis_ssa(image: Vec<i128>) {
     }
 
     // Pretty-print the SSA form
-    pretty_print_ssa(&model);
+    // pretty_print_ssa(&model);
 }
 
 #[cfg(test)]

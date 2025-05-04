@@ -14,9 +14,10 @@ use crate::disasm::{
         data_flow::OriginationPoint,
         id_types::FunctionId as V3FunctionId,
         lir::{Expression, Instruction, InstructionNode, MemoryReference, MemoryReferenceInfo},
-        model::{DataFlowComplete, Model}, // Use v3 Model states
+        model::{DataFlowComplete, Model},
     },
 };
+
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -485,6 +486,8 @@ impl SsaFunction {
     // Helper to find an SSA variable with a specific debug marker
     #[cfg(test)]
     pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult> {
+        panic!("For now!")
+        /*
         use super::instructions::Instruction;
 
         for block in self.blocks.values() {
@@ -510,6 +513,7 @@ impl SsaFunction {
             }
         }
         None
+        */
     }
 }
 
@@ -1096,13 +1100,14 @@ impl<'a> SSAConversionState<'a> {
 
             // Now, process instructions using the computed start state to resolve reads.
             // The write targets already have their final versions from the previous step.
-            let start_state = &ssa_block.start_state; // Use immutable borrow of the final start state
+            let mut start_state = &ssa_block.start_state; // Use immutable borrow of the final start state
             let mut populated_instructions = Vec::with_capacity(ssa_block.instructions.len());
 
-            for instr_node in &ssa_block.instructions { // Iterate over instructions with finalized writes
+            for instr_node in &ssa_block.instructions {
+                // Iterate over instructions with finalized writes
                 // Map reads using start_state, map writes by cloning (version is already final)
                 let read_mapped_instr = instr_node.map_rw(
-                    start_state, // Pass start_state as context
+                    &mut start_state, // Pass start_state as context
                     |reg, ssa_mem_ref: &SsaMemoryReference| {
                         // map_read closure: Resolve reads using the start_state (reg)
                         match ssa_mem_ref {
@@ -1199,13 +1204,13 @@ mod tests {
     use crate::disasm::v2::model::ProgramModel;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
+    use crate::disasm::v2::{dispatching::EventPublisher, events::Event}; // Keep v2 dispatching
     use crate::disasm::v3::{
         control_flow::ControlFlowGraphBuilder as V3ControlFlowGraphBuilder, // Alias v3 CFG Builder
         data_flow::DataFlowAnalyzer as V3DataFlowAnalyzer, // Alias v3 Data Flow Analyzer
         image_scanner::ImageScanner as V3ImageScanner,     // Alias v3 Image Scanner
-        model::{DataFlowComplete, InitialState, Model},   // Import v3 Model types
+        model::{DataFlowComplete, InitialState, Model},    // Import v3 Model types
     };
-    use crate::disasm::v2::{dispatching::EventPublisher, events::Event}; // Keep v2 dispatching
     use pretty_assertions::{assert_eq, assert_matches};
 
     // Define SSA macros for creating expected SsaOperand values with Variable kinds
@@ -1296,28 +1301,9 @@ mod tests {
     }
 
     // Modify setup to return both the v3 model needed for SSA and the v2 model for other checks
-    fn setup_analyzed_models(assembly: &str) -> (Model<DataFlowComplete>, ProgramModel) {
+    fn setup_analyzed_models(assembly: &str) -> SsaResult {
         init_logging(); // Ensure logging is initialized
         let binary = parser::compile(assembly);
-        let mut v2_model = ProgramModel::new();
-        let mut publisher = EventPublisher::<Event, ProgramModel>::new();
-
-        // Register v2 listeners for the pipeline using their full paths
-        publisher.add_listener(Box::new(
-            crate::disasm::v2::listeners::image_scanner::ImageScanner::new(),
-        ));
-        publisher.add_listener(Box::new(
-            crate::disasm::v2::listeners::control_flow_graph_builder::ControlFlowGraphBuilder::new(
-            ),
-        ));
-        publisher.add_listener(Box::new(
-            crate::disasm::v2::listeners::data_flow_analyzer::DataFlowAnalyzer::new(),
-        ));
-        publisher.add_listener(Box::new(SsaConverter::new())); // This listener now runs v3 analysis internally
-
-        // Run the v2 pipeline (which triggers the modified SsaConverter)
-        v2_model.load_image(&binary, &mut publisher);
-        publisher.process_events(&mut v2_model).unwrap();
 
         // Re-run the v3 analysis pipeline explicitly to get the DataFlowComplete model
         // This duplicates work done by the listener but ensures tests have the correct input type
@@ -1326,8 +1312,9 @@ mod tests {
         let v3_model_scanned = V3ImageScanner::run(binary, v3_model_initial).unwrap();
         let v3_model_cfg = V3ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
         let v3_model_data_flow = V3DataFlowAnalyzer::run(v3_model_cfg).unwrap();
+        let v3_model_ssa = SsaResult::from_program_model(&v3_model_data_flow);
 
-        (v3_model_data_flow, v2_model)
+        v3_model_ssa
     }
 
     // Test simple SSA conversion for basic blocks
@@ -1841,7 +1828,7 @@ mod tests {
             .return_block
             .unwrap();
         pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
-        // Access SSA result from v2_model
+                                         // Access SSA result from v2_model
         let f0 = ctx
             .v2_model
             .get_ssa_result()
@@ -1891,7 +1878,7 @@ exit:
     "#,
         );
         pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
-        // Access function info from v2_model
+                                         // Access function info from v2_model
         let return_block_id = ctx
             .v2_model
             .get_function(FunctionId::from(0))
@@ -2021,7 +2008,8 @@ exit:
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
 
         // Check the merge block has a phi function for [R+1] using v2_model
-        let merge_block = ctx.v2_model // Use v2_model field
+        let merge_block = ctx
+            .v2_model // Use v2_model field
             .get_ssa_result()
             .unwrap()
             .functions[&FunctionId::from(0)]

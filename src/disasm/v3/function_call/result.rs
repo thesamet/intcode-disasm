@@ -1,14 +1,16 @@
-use crate::disasm::v3::common::function_call::CallSiteInfo; // Use v3 CallSiteInfo
 use crate::disasm::v3::control_flow::FunctionView;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
-use crate::disasm::v3::lir::MemoryReference; // Use LIR MemoryReference
+use crate::disasm::v3::lir::MemoryReference;
+use crate::disasm::v3::listeners::function_call_analyzer::CallSiteInfo;
+// Use LIR MemoryReference
 use crate::disasm::v3::model::{add_block_view_when, HasFunctionCallAnalysisResult, ModelState};
 use std::collections::HashMap;
 
 /// Information about a function when it's being called (Callee's perspective).
 /// Based on v2 CalleeInfo.
 #[derive(Debug, Clone, Default, PartialEq, Eq)] // Added derives
-pub struct CalleeInfo { // Made public
+pub struct CalleeInfo {
+    // Made public
     /// Parameters expected by this function.
     /// Maps the parameter offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *first read* of that parameter,
@@ -23,11 +25,10 @@ pub struct CalleeInfo { // Made public
     pub return_writes: HashMap<i128, MemoryReference>, // Placeholder type
 }
 
-
 #[derive(Debug, Clone)]
 pub struct FunctionCallAnalysisResult {
     pub functions: HashMap<FunctionId, CalleeInfo>, // Use v3 CalleeInfo
-    pub blocks: HashMap<BlockId, CallSiteInfo>, // Use v3 CallSiteInfo
+    pub blocks: HashMap<BlockId, CallSiteInfo>,     // Use v3 CallSiteInfo
 }
 
 impl FunctionCallAnalysisResult {
@@ -38,7 +39,6 @@ impl FunctionCallAnalysisResult {
         }
     }
 }
-
 
 add_block_view_when!(FunctionCallAnalysis, call_site_info, CallSiteInfo);
 // Add add_function_view_when for CalleeInfo
@@ -66,6 +66,6 @@ macro_rules! add_function_view_when {
          }
      };
  }
- pub(crate) use add_function_view_when;
+pub(crate) use add_function_view_when;
 
 add_function_view_when!(FunctionCallAnalysis, callee_info, CalleeInfo);

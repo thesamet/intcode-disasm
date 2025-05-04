@@ -8,7 +8,7 @@ use crate::disasm::{
         ssa_form::SsaResult,
     },
     v3::{
-        analysis::{run_analysis_ssa}, // We'll use this for now, knowing it does one extra step (SSA)
+        analysis::run_analysis_ssa, // We'll use this for now, knowing it does one extra step (SSA)
         control_flow::ControlFlowGraphBuilder,
         data_flow::DataFlowAnalyzer,
         image_scanner::ImageScanner,

@@ -1,23 +1,32 @@
 use colored::*;
 use itertools::Itertools;
 
+use crate::disasm::v3::{
+    control_flow::{BlockView, FunctionView},
+    model::{
+        FunctionCallComplete, HasControlFlowGraphResult, HasFunctionCallAnalysisResult,
+        HasSsaResult, Model, ModelState, SsaComplete,
+    },
+    Block,
+};
+
 use super::{
     control_flow::PredecessorKind,
     instructions::{Expression, Instruction, InstructionNode},
-    model::ProgramModel,
+    model::{Function, ProgramModel},
     ssa_form::{
-        PhiFunction, SsaMemoryReference, SsaBlock, SsaFunction, SsaOperandKind, SsaVarKind,
+        PhiFunction, SsaBlock, SsaFunction, SsaMemoryReference, SsaOperandKind, SsaVarKind,
         VersionedMemoryReference,
     },
 };
 
-struct PrettyPrinter<'a> {
-    model: &'a ProgramModel,
+struct PrettyPrinter<'a, S: ModelState> {
+    model: &'a Model<S>,
     show_types: bool,
     show_vars: bool,
 }
 
-impl<'a> PrettyPrinter<'a> {
+impl<'a, S: ModelState> PrettyPrinter<'a, S> {
     fn format_expression(&self, expr: &Expression<SsaMemoryReference>) -> String {
         match expr {
             Expression::Constant(value) => format!("{}", value).green().to_string(),
@@ -204,24 +213,27 @@ impl<'a> PrettyPrinter<'a> {
         }
     }
 
-    fn format_block(&self, block: &SsaBlock) -> String {
+    fn format_block(&self, block: &BlockView<S>) -> String
+    where
+        S: HasSsaResult,
+    {
         let mut lines = Vec::new();
 
         // Block header with line number in gray
         lines.push(format!(
             "{}:",
-            format!("{}", block.original_id.index()).blue()
+            format!("{}", block.block_id().index()).blue()
         ));
 
         // Phi functions
         if !self.show_vars {
-            for phi in &block.phi_functions {
+            for phi in &block.ssa().phi_functions {
                 lines.push(format!("{:<8}{}", "", self.format_phi_function(phi)));
             }
         }
 
         // Instructions
-        for instr in &block.instructions {
+        for instr in &block.ssa().instructions {
             if self.show_vars {
                 match &instr.kind {
                     Instruction::Assign {
@@ -255,21 +267,24 @@ impl<'a> PrettyPrinter<'a> {
         lines.join("\n")
     }
 
-    fn format_function(&self, function: &SsaFunction) -> String {
-        let mut blocks: Vec<_> = function.blocks.values().collect();
-        blocks.sort_by_key(|b| b.original_id);
+    fn format_function(&self, function: &FunctionView<S>) -> String
+    where
+        S: HasSsaResult,
+    {
+        let mut blocks: Vec<_> = function.blocks().map(|b| b.1).collect();
+        blocks.sort_by_key(|b| b.block_id());
 
         blocks.iter().map(|b| self.format_block(b)).join("\n\n")
     }
 
-    pub fn format_call_info(&self, function: &SsaFunction) -> String {
+    pub fn format_call_info(&self, function: &FunctionView<S>) -> String {
         // return "".to_string(); // Removed unreachable return
         let args_rets: Option<String> = self
             .model
             .get_type_inference_result()
             // .and_then(|m| m.get_function_signature(&function.original_id));
             .and_then(|_m| panic!("Migration uncomment")); // Use _m to avoid unused variable warning
-        
+
         // Return empty string during migration
         "".to_string()
         /* Migration: Commented out unreachable code block
@@ -304,17 +319,17 @@ impl<'a> PrettyPrinter<'a> {
         */
     }
 
-    pub fn format_callers_comment(&self, function: &SsaFunction) -> String {
+    pub fn format_callers_comment(&self, function: &FunctionView<S>) -> String
+    where
+        S: HasFunctionCallAnalysisResult + HasControlFlowGraphResult + HasSsaResult,
+    {
         let callers = self
             .model
-            .get_function_call_analysis()
-            .map(|m| {
-                m.call_site_info
-                    .iter()
-                    .filter(|(_, cs)| cs.target_function_id == Some(function.original_id))
-                    .collect_vec()
-            })
-            .unwrap_or_default();
+            .function_call_analysis_result()
+            .blocks
+            .iter()
+            .filter(|(_, cs)| cs.target_function_id == Some(function.function_id()))
+            .collect_vec();
 
         let mut out = vec![];
         for (block_id, csi) in &callers {
@@ -329,14 +344,12 @@ impl<'a> PrettyPrinter<'a> {
         out.join("")
     }
 
-    fn print_ssa(&self) {
-        let ssa = self
-            .model
-            .get_ssa_result()
-            .expect("No SSA result available");
-
-        let mut functions: Vec<_> = ssa.functions.values().collect();
-        functions.sort_by_key(|f| f.original_id);
+    fn print_ssa(&self)
+    where
+        S: HasSsaResult + HasControlFlowGraphResult + HasFunctionCallAnalysisResult,
+    {
+        let mut functions: Vec<_> = self.model.functions().map(|(_, f)| f).collect();
+        functions.sort_by_key(|f| f.function_id());
 
         let s = functions
             .iter()
@@ -344,7 +357,7 @@ impl<'a> PrettyPrinter<'a> {
                 format!(
                     "{}fn {}{} {{\n{}\n}}",
                     self.format_callers_comment(f),
-                    f.original_id,
+                    f.function_id(),
                     self.format_call_info(f),
                     self.format_function(f)
                         .lines()
@@ -356,7 +369,10 @@ impl<'a> PrettyPrinter<'a> {
         println!("{}", s);
     }
 }
-pub fn pretty_print_ssa(model: &ProgramModel) {
+pub fn pretty_print_ssa<S: ModelState>(model: &Model<S>)
+where
+    S: HasSsaResult + HasControlFlowGraphResult + HasFunctionCallAnalysisResult,
+{
     let printer = PrettyPrinter {
         model,
         show_types: false,
@@ -365,7 +381,10 @@ pub fn pretty_print_ssa(model: &ProgramModel) {
     printer.print_ssa();
 }
 
-pub fn pretty_print_with_types(model: &ProgramModel) {
+pub fn pretty_print_with_types<S: ModelState>(model: &Model<S>)
+where
+    S: HasSsaResult + HasControlFlowGraphResult + HasFunctionCallAnalysisResult,
+{
     let printer = PrettyPrinter {
         model,
         show_types: true,

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
+use crate::disasm::v2::listeners::variable_analyzer::VariableMergerResult;
+use crate::disasm::v2::type_inference::result::TypeInferenceResult;
 use crate::disasm::v3::control_flow::{ControlFlowGraphResult, Function};
 use crate::disasm::v3::data_flow::DataFlowResult;
 use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
@@ -95,6 +97,19 @@ make_model!(Model, ModelState, {
 });
 // Remove unused macro
 
+impl<S: ModelState> Model<S> {
+    pub fn get_function_call_analysis(&self) -> Option<&FunctionCallAnalysisResult> {
+        None
+    }
+    pub fn get_type_inference_result(&self) -> Option<&TypeInferenceResult> {
+        None
+    }
+
+    pub fn get_variable_merger_result(&self) -> Option<&VariableMergerResult> {
+        None
+    }
+}
+
 macro_rules! add_block_view_when {
     ($result_type:ident, $result_var:ident) => {
         paste::paste! {
@@ -169,6 +184,7 @@ impl HasDataFlowResult for FunctionCallComplete {}
 
 impl HasSsaResult for SsaComplete {}
 impl HasSsaResult for FunctionCallComplete {}
+
 impl HasFunctionCallAnalysisResult for FunctionCallComplete {}
 
 // Define the Model struct

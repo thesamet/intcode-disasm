@@ -7,10 +7,7 @@ use super::{
     dispatching::{EventCollector, EventPublisher},
     events::{Event, ImageAdded, ImageScannerComplete},
     id_types::define_id_type,
-    listeners::{
-        function_call_analyzer::FunctionCallAnalysis, image_scanner::ImageScannerResult,
-        variable_analyzer::VariableMergerResult,
-    },
+    listeners::{image_scanner::ImageScannerResult, variable_analyzer::VariableMergerResult},
     ssa_form::SsaResult,
     type_inference::result::TypeInferenceResult,
 };
@@ -29,7 +26,6 @@ pub struct ProgramModel {
 
     ssa_result: Option<SsaResult>,
 
-    function_call_analysis: Option<FunctionCallAnalysis>,
     type_inference_result: Option<TypeInferenceResult>,
     variable_merger_result: Option<VariableMergerResult>,
     /*
@@ -54,7 +50,6 @@ impl ProgramModel {
             data_flow_result: None,
             ssa_result: None,
             type_inference_result: None,
-            function_call_analysis: None,
             variable_merger_result: None,
             /*
             hlr_program: None,
@@ -181,14 +176,6 @@ impl ProgramModel {
         self.optimized_hlr_program = Some(program);
     }
     */
-
-    pub fn set_function_call_analysis(&mut self, analysis_result: FunctionCallAnalysis) {
-        self.function_call_analysis = Some(analysis_result);
-    }
-
-    pub fn get_function_call_analysis(&self) -> Option<&FunctionCallAnalysis> {
-        self.function_call_analysis.as_ref()
-    }
 }
 
 #[derive(Debug, Clone)]

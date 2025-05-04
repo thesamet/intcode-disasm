@@ -17,7 +17,6 @@ use crate::disasm::v2::instructions::MemoryReference;
 use crate::disasm::v2::instructions::MemoryReferenceInfo;
 use crate::disasm::v2::model::Function;
 use crate::disasm::v2::native::{Operand, OperandKind};
-use crate::disasm::v2::ssa_form::MemoryReferenceType;
 use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::DataFlowResult,

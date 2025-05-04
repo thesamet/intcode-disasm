@@ -13,7 +13,9 @@ use crate::disasm::v2::{
         SsaResult, VersionedMemoryReference,
     },
 };
+use crate::disasm::v3::control_flow::FunctionView;
 use crate::disasm::v3::lir::ReadAddressExtractor;
+use crate::disasm::v3::model::SsaComplete;
 use itertools::Itertools;
 use log::{debug, trace};
 use std::{
@@ -123,7 +125,7 @@ impl FunctionCallAnalysis {
 }
 
 fn find_lowest_version_of(
-    function: &SsaFunction,
+    function: &FunctionView<SsaComplete>,
     kind: &MemoryReferenceType,
 ) -> Option<VersionedMemoryReference> {
     let mut min_var: Option<VersionedMemoryReference> = None;
@@ -132,9 +134,9 @@ fn find_lowest_version_of(
         min_var.as_ref().map(|var| var.version).unwrap_or(0)
     };
 
-    for block in function.blocks.values() {
+    for (_, block) in function.blocks() {
         // Check Phi results
-        for phi in &block.phi_functions {
+        for phi in &block.ssa().phi_functions {
             if &phi.result.kind == kind
                 && (min_var.is_none() || phi.result.version < min_var_version(min_var))
             {
@@ -150,7 +152,7 @@ fn find_lowest_version_of(
             }
         }
         // Check instruction operands (manual extraction for v2::Instruction)
-        for instr_node in &block.instructions {
+        for instr_node in &block.ssa().instructions {
             let mut reads_in_instr: Vec<&SsaMemoryReference> = Vec::new();
 
             // Extract reads from write target (for Deref)
@@ -189,13 +191,15 @@ impl FunctionCallAnalyzer {
     }
 
     fn analyze(&self, model: &ProgramModel, ssa_result: &SsaResult) -> FunctionCallAnalysis {
+        panic!("not ready!");
+        /*
         let mut analysis = FunctionCallAnalysis::new();
 
         // --- Phase 1: Analyze Callees (Revised) ---
-        for (&function_id, function) in &ssa_result.functions {
-            let entry_block_id = model.get_function(function.original_id).entry_block;
-            let return_block_id = model.get_function(function.original_id).return_block;
-            let stack_size = model.get_function(function.original_id).stack_size as i128;
+        for (&function_id, function) in model.functions() {
+            let entry_block_id = model.get_function(function.function_id).entry_block;
+            let return_block_id = model.get_function(function.function_id).return_block;
+            let stack_size = model.get_function(function.function_id).stack_size as i128;
 
             let mut parameter_entry_vars: HashMap<i128, VersionedMemoryReference> = HashMap::new();
 
@@ -373,6 +377,7 @@ impl FunctionCallAnalyzer {
         }
 
         analysis
+        */
     }
 }
 

@@ -1,4 +1,5 @@
 use super::result::SsaResult;
+use crate::disasm::v2::ssa_form;
 use crate::disasm::v3::model::{DataFlowComplete, Model, SsaComplete};
 use crate::disasm::Error;
 use std::collections::HashMap;
@@ -20,9 +21,7 @@ impl SsaConverter {
 
     fn convert(&self) -> Result<Model<SsaComplete>, Error> {
         // Create the SSA result
-        let result = SsaResult {
-            blocks: HashMap::new(),
-        };
+        let result = ssa_form::SsaResult::from_program_model(&self.model);
 
         // Return a new model with the updated state
         Ok(self.model.clone().with_ssa_result(result))
