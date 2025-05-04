@@ -1,7 +1,7 @@
+use crate::disasm::v3::common::CallSiteInfo;
 use crate::disasm::v3::control_flow::FunctionView;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
 use crate::disasm::v3::lir::MemoryReference;
-use crate::disasm::v3::listeners::function_call_analyzer::CallSiteInfo;
 // Use LIR MemoryReference
 use crate::disasm::v3::model::{add_block_view_when, HasFunctionCallAnalysisResult, ModelState};
 use std::collections::HashMap;

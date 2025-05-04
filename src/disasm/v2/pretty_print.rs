@@ -321,8 +321,10 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
 
     pub fn format_callers_comment(&self, function: &FunctionView<S>) -> String
     where
-        S: HasFunctionCallAnalysisResult + HasControlFlowGraphResult + HasSsaResult,
+        S: HasControlFlowGraphResult + HasSsaResult,
     {
+        return "NO CALLERS FOR NOW MIGRATION".to_string();
+        /*
         let callers = self
             .model
             .function_call_analysis_result()
@@ -342,11 +344,12 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
         }
 
         out.join("")
+        */
     }
 
     fn print_ssa(&self)
     where
-        S: HasSsaResult + HasControlFlowGraphResult + HasFunctionCallAnalysisResult,
+        S: HasSsaResult + HasControlFlowGraphResult,
     {
         let mut functions: Vec<_> = self.model.functions().map(|(_, f)| f).collect();
         functions.sort_by_key(|f| f.function_id());
@@ -371,7 +374,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
 }
 pub fn pretty_print_ssa<S: ModelState>(model: &Model<S>)
 where
-    S: HasSsaResult + HasControlFlowGraphResult + HasFunctionCallAnalysisResult,
+    S: HasSsaResult + HasControlFlowGraphResult,
 {
     let printer = PrettyPrinter {
         model,
@@ -383,7 +386,7 @@ where
 
 pub fn pretty_print_with_types<S: ModelState>(model: &Model<S>)
 where
-    S: HasSsaResult + HasControlFlowGraphResult + HasFunctionCallAnalysisResult,
+    S: HasSsaResult + HasControlFlowGraphResult,
 {
     let printer = PrettyPrinter {
         model,

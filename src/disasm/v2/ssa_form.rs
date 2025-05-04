@@ -1624,7 +1624,7 @@ mod tests {
                 halt
             "#,
         );
-        pretty_print_ssa(&ctx.v2_model); // Use v2_model for pretty printing
+        pretty_print_ssa(&ctx.model); // Use v2_model for pretty printing
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
