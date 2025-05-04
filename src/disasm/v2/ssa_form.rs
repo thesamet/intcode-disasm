@@ -569,33 +569,59 @@ impl VersionRegistry {
             .insert(memory_reference_type, versioned_memory_reference);
     }
 
-    fn current_memory_reference<T>(&self, memory_reference: &T) -> SsaMemoryReference
+    /// Converts a MemoryReference (or similar) into an SsaMemoryReference using the *current* state.
+    /// Used during the initial pass (build_ssa_blocks...).
+    fn convert_to_ssa_memory_reference<T>(&self, memory_reference: &T) -> SsaMemoryReference
     where
         T: std::fmt::Debug,
-        MemoryReference: for<'a> From<&'a T>,
+        MemoryReference: for<'a> From<&'a T>, // T can be converted to MemoryReference
     {
         let mem_ref: MemoryReference = memory_reference.into();
         MemoryReferenceType::try_from(&mem_ref)
             .map(|kind| SsaMemoryReference::Versioned(self.current_version(&kind)))
             .unwrap_or_else(|_| match mem_ref {
                 MemoryReference::Deref(expr) => {
-                    // Clone the expression here instead of trying to use From trait
-                    let expr = expr.as_ref();
+                    // Recursively convert the inner expression
                     SsaMemoryReference::Deref(Box::new(
-                        self.current_expression::<MemoryReference>(expr),
+                        self.convert_to_ssa_expression::<MemoryReference>(expr.as_ref()),
                     ))
                 }
-                _ => unreachable!("Expected type: {:?}", memory_reference),
+                 _ => unreachable!("Expected Deref or versionable type, got: {:?}", memory_reference),
             })
     }
 
-    fn current_expression<T>(&self, expr: &Expression<T>) -> Expression<SsaMemoryReference>
+    /// Converts an Expression containing MemoryReferences (or similar) into an
+    /// Expression containing SsaMemoryReferences based on the current versions.
+    /// Used during the initial pass (build_ssa_blocks...).
+    fn convert_to_ssa_expression<T>(&self, expr: &Expression<T>) -> Expression<SsaMemoryReference>
     where
-        MemoryReference: for<'a> From<&'a T>,
+        MemoryReference: for<'a> From<&'a T>, // T can be converted to MemoryReference
         T: std::fmt::Debug,
     {
-        expr.map(&mut |op| self.current_memory_reference(op))
+        // Map using the conversion helper
+        expr.map(&mut |op| self.convert_to_ssa_memory_reference(op))
     }
+
+    /// Resolves an existing SSA expression (Expression<SsaMemoryReference>)
+    /// to use the final versions stored in this registry.
+    /// Used during the second pass (populate_reads...).
+    fn resolve_ssa_expression(&self, expr: &Expression<SsaMemoryReference>) -> Expression<SsaMemoryReference> {
+        expr.map(&mut |op: &SsaMemoryReference| { // Input is already SsaMemoryReference
+            match op {
+                SsaMemoryReference::Versioned(v_partial) => {
+                    // Look up the final version in this registry
+                    self.current_version(&v_partial.kind).into()
+                }
+                SsaMemoryReference::Deref(inner_ssa_expr) => {
+                    // Recursively resolve the inner SSA expression using *this* same registry
+                    // This avoids calling the conversion functions again.
+                    let resolved_inner = self.resolve_ssa_expression(inner_ssa_expr.as_ref());
+                    SsaMemoryReference::Deref(Box::new(resolved_inner))
+                }
+            }
+        })
+    }
+
 
     pub fn iter_versions(
         &self,
@@ -649,12 +675,14 @@ impl<'a> SSAConversionState<'a> {
 
         // Helper closure to map v3 MemoryReference reads to v2 SsaMemoryReference
         fn map_read(
-            (current, _): &mut (&mut VersionRegistry, &mut VersionRegistry),
+            (current, _): &mut (&mut VersionRegistry, &mut VersionRegistry), // 'current' is the global registry
             op: &MemoryReference,
         ) -> SsaMemoryReference {
-            current.current_memory_reference(op)
+            // Use the conversion function based on the global registry's state
+            current.convert_to_ssa_memory_reference(op)
         }
 
+        // Helper closure to map v3 MemoryReference writes to SsaMemoryReference
         fn map_write(
             (current, end): &mut (&mut VersionRegistry, &mut VersionRegistry),
             op: &MemoryReference,
@@ -663,12 +691,19 @@ impl<'a> SSAConversionState<'a> {
                 Ok(mem_ref) => {
                     let next_var = current.create_next_version(&mem_ref);
                     end.set_version(mem_ref, next_var);
-                    next_var.into()
+                    // Assign next version in 'current' (global) and update 'end' (block specific)
+                    let next_var = current.create_next_version(&mem_ref);
+                    end.set_version(mem_ref, next_var);
+                    next_var.into() // Return the new versioned reference
                 }
-                Err(_) => current.current_memory_reference(op),
+                 Err(_) => {
+                    // Non-versionable writes (like Deref targets) are converted using the current state
+                    // This resolves the *pointer* expression but doesn't create a new version for it.
+                     current.convert_to_ssa_memory_reference(op)
+                 }
             }
         }
-        // Initialize VersionRegistry with the v2 function ID
+        // Initialize global VersionRegistry with the v2 function ID
         let mut version_registry = VersionRegistry::new(v2_function_id);
 
         // Iterate over blocks using the FunctionView, sorted by BlockId
@@ -1006,11 +1041,13 @@ impl<'a> SSAConversionState<'a> {
                         )
                     });
 
-                    // Define the mapping closure once
+                    // Define the mapping closure to *convert* predecessor MemoryReferences based on its end_state
                     let mut map_mem_ref = |mem_ref: &MemoryReference| {
-                        pred_ssa_block.end_state.current_memory_reference(mem_ref)
+                        pred_ssa_block.end_state.convert_to_ssa_memory_reference(mem_ref)
                     };
 
+
+                    // Special handling for return values from function calls
                     if matches!(
                         pred,
                         crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_)
@@ -1052,11 +1089,12 @@ impl<'a> SSAConversionState<'a> {
                         match ssa_mem_ref {
                             SsaMemoryReference::Versioned(v) => {
                                 // Find the current version of this variable kind in the start state
+                                // Look up the final version in the start_state (reg)
                                 reg.current_version(&v.kind).into()
                             }
-                            SsaMemoryReference::Deref(expr) => {
-                                // Recursively resolve the inner expression using the start state
-                                let resolved_inner_expr = reg.current_expression(expr);
+                            SsaMemoryReference::Deref(expr) => { // expr is Box<Expression<SsaMemoryReference>>
+                                // Recursively resolve the inner *SSA* expression using the start state registry
+                                let resolved_inner_expr = reg.resolve_ssa_expression(expr.as_ref());
                                 SsaMemoryReference::Deref(Box::new(resolved_inner_expr))
                             }
                         }
@@ -1067,13 +1105,11 @@ impl<'a> SSAConversionState<'a> {
             }
 
             // Map the NextKind using the final end_state of the block
-            let ssa_block_next = {
-                // Use v3 next kind from block_view
-                block_view.next().map(&mut |op| {
-                    // Use the computed end_state for the block
-                    ssa_block.end_state.current_memory_reference(op)
-                })
-            };
+            // Map the NextKind using the final end_state of the block to *convert* MemoryReferences
+            let ssa_block_next = block_view.next().map(&mut |op: &MemoryReference| {
+                // Use the computed end_state for the block to convert MemoryReferences
+                ssa_block.end_state.convert_to_ssa_memory_reference(op)
+            });
 
             // Update the mutable ssa_block with populated phis and instructions
 
