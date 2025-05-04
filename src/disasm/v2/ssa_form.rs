@@ -1094,36 +1094,17 @@ impl<'a> SSAConversionState<'a> {
                 });
             }
 
-            // Now, process instructions using the computed start state
-            let mut start_state = ssa_block.start_state.clone(); // Clone start state for this block
-            let mut current_registry = start_state.clone(); // Registry to track versions within the block
+            // Now, process instructions using the computed start state to resolve reads.
+            // The write targets already have their final versions from the previous step.
+            let start_state = &ssa_block.start_state; // Use immutable borrow of the final start state
             let mut populated_instructions = Vec::with_capacity(ssa_block.instructions.len());
 
-            for instr_node in &ssa_block.instructions {
-                // Iterate over the already versioned instructions (writes are final)
-                // Map reads within the instruction node using the current_registry state
-                let read_mapped_instr = instr_node.map_rw(
-                    &mut start_state,
-                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
-                    |reg, ssa_memory_reference| match ssa_memory_reference {
-                        SsaMemoryReference::Deref(expr) => {
-                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
-                        }
-                        _ => ssa_memory_reference.clone(),
-                    },
-                );
-                // Update the current_registry state *after* this instruction executes,
-                // based on the versioned variable it writes (if any).
-                // The write target itself should already have the correct version assigned
-                // during the build_ssa_blocks_with_write_versioning phase.
-                // The write target itself should already have the correct version from the previous phase.
-                // We just need to update the registry state *after* this instruction executes.
-                if let Some(write_target) = read_mapped_instr.kind.get_write_address() {
-                    if let Some(versioned_write) = write_target.as_versioned() {
-                        // Update the registry with the version produced by this instruction
-                        current_registry.set_version(versioned_write.kind, *versioned_write);
-                    }
-                }
+            for instr_node in &ssa_block.instructions { // Iterate over instructions with finalized writes
+                // Map reads within the instruction node using the block's start_state
+                let read_mapped_instr = instr_node.map(&mut |ssa_mem_ref: &SsaMemoryReference| {
+                    // Use the start_state registry to find the correct version for reads
+                    start_state.current_memory_reference(ssa_mem_ref)
+                });
                 populated_instructions.push(read_mapped_instr);
             }
 
