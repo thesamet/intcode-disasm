@@ -1184,14 +1184,14 @@ mod tests {
     use crate::disasm::v2::listeners::ssa_converter::SsaConverter;
     use crate::disasm::v2::model::ProgramModel;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
-    use crate::disasm::v2::{
-        dispatching::EventPublisher,
-        events::Event,
-        listeners::{
-            control_flow_graph_builder::ControlFlowGraphBuilder,
-            data_flow_analyzer::DataFlowAnalyzer, image_scanner::ImageScanner,
-        },
+    // Import v3 analyzers and model states for test setup
+    use crate::disasm::v3::{
+        control_flow::ControlFlowGraphBuilder, // Use v3 CFG Builder
+        data_flow::DataFlowAnalyzer,           // Use v3 Data Flow Analyzer
+        image_scanner::ImageScanner,           // Use v3 Image Scanner
+        model::InitialState,                   // Import InitialState
     };
+    use crate::disasm::v2::{dispatching::EventPublisher, events::Event}; // Keep v2 dispatching
     use pretty_assertions::{assert_eq, assert_matches};
 
     // Define SSA macros for creating expected SsaOperand values with Variable kinds
@@ -1301,9 +1301,16 @@ mod tests {
         // Re-run the v3 analysis pipeline explicitly to get the DataFlowComplete model
         // This duplicates work done by the listener but ensures tests have the correct input type
         let v3_model_initial = Model::<InitialState>::new();
-        let v3_model_scanned = ImageScanner::run(binary, v3_model_initial).unwrap();
-        let v3_model_cfg = ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
-        let v3_model_data_flow = DataFlowAnalyzer::run(v3_model_cfg).unwrap();
+        // Use the imported v3::ImageScanner::run
+        let v3_model_scanned =
+            crate::disasm::v3::image_scanner::ImageScanner::run(binary, v3_model_initial).unwrap();
+        // Use the imported v3::ControlFlowGraphBuilder::run
+        let v3_model_cfg =
+            crate::disasm::v3::control_flow::ControlFlowGraphBuilder::run(v3_model_scanned)
+                .unwrap();
+        // Use the imported v3::DataFlowAnalyzer::run
+        let v3_model_data_flow =
+            crate::disasm::v3::data_flow::DataFlowAnalyzer::run(v3_model_cfg).unwrap();
 
         (v3_model_data_flow, v2_model)
     }
@@ -1998,8 +2005,8 @@ exit:
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
 
-        // Check the merge block has a phi function for [R+1]
-        let merge_block = ctx.model.get_ssa_result().unwrap().functions[&FunctionId::from(0)]
+        // Check the merge block has a phi function for [R+1] using v2_model
+        let merge_block = ctx.v2_model.get_ssa_result().unwrap().functions[&FunctionId::from(0)]
             .blocks
             .iter()
             .sorted_by_key(|(k, _)| *k)
