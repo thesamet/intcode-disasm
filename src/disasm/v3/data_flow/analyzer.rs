@@ -256,7 +256,27 @@ impl DataFlowAnalyzer {
         }
 
         // Only add function input definitions for the entry block
-        // This matches v2 behavior where function inputs are only added to the entry block
+        if function.entry_block() == block.block_id() {
+            // Create synthetic definitions for any potential input parameters
+            // to this function. We take the union of all the use_before_def sets
+            // for all blocks in the function, since it is a superset (which is still
+            // smaller than all the reads).
+            for (other_block_id, _) in function.blocks() {
+                // Iterate view blocks
+                let other_flow = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
+                new_defs_in.extend(
+                    other_flow
+                        .use_before_def
+                        .keys()
+                        .filter(|k| k.as_stack_relative().is_some_and(|n| n <= 0)) // Check if it's a local or parameter
+                        .map(|k| Definition {
+                            source: OriginationPoint::FunctionInput,
+                            kind: k.clone(),
+                            block_id: block.block_id(), // Use view method
+                        }),
+                )
+            }
+        }
 
         new_defs_in
     }
@@ -298,9 +318,8 @@ impl DataFlowAnalyzer {
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
                     for d in &block_flow.defs_in {
-                        if d.kind.as_stack_relative().is_some_and(|n| n > 0) {
-                            // Check for positive stack relative references (outgoing parameters)
-                            // This matches v2 behavior
+                        if d.kind.is_outgoing_parameter() {
+                            // Use is_outgoing_parameter() to match v2 behavior
                             current_live_in
                                 .entry(d.kind.clone())
                                 .or_insert_with(HashSet::new)
@@ -360,7 +379,7 @@ impl DataFlowAnalyzer {
 
         if function.return_block() == Some(*block_id) {
             // Use return_block()
-            // If this is a function return, we need to add all potential return arguments
+            // If this is a function return, add all potential return arguments
             // to live out So we will have phi's automatically created for them at the right junctions.
             // We mark the live out as "FunctionOutput" to indicate that it is a return value.
             // This prevents from potential return values to appear as function inputs by propogating
@@ -368,9 +387,9 @@ impl DataFlowAnalyzer {
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
                 let dfr = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
-                for gen in dfr.gen.keys() {
-                    // Include ALL memory references, not just locals/parameters
-                    // This matches v2 behavior where all memory references are considered
+                for gen in dfr.gen.keys().filter(|k| k.as_stack_relative().is_some_and(|n| n < 0)) {
+                    // Only include negative stack relative references (return values)
+                    // This matches v2 behavior where only negative stack relative references are considered
                     new_live_out
                         .entry(gen.clone())
                         .or_insert_with(HashSet::new)
@@ -406,45 +425,23 @@ impl DataFlowAnalyzer {
             if !return_usages_in_block.is_empty() {
                 // We expect these return values to come from exactly one preceding function call.
                 // The `function_returns_in` set for this block should contain that single call origin.
-                if block_flow.function_returns_in.len() != 1 {
-                    // If this assertion fails, it means our function_returns_in propagation might be flawed,
-                    // or the code structure is unexpected (e.g., merging paths after different function calls
-                    // without clobbering return values).
-                    panic!(
-                        "Block {:?} uses return values but has {} function return sources: {:?}",
-                        block_id,
-                        block_flow.function_returns_in.len(),
-                        block_flow.function_returns_in
-                    );
-                }
+                assert_eq!(block_flow.function_returns_in.len(), 1);
                 let func_call_origin = block_flow.function_returns_in.iter().next().unwrap();
                 let calling_block_id = func_call_origin.calling_block;
 
                 // Now, get the DataFlowBlock for the *calling* block and update its CallSiteInfo.
-                if let Some(calling_block_flow) = df_result.blocks.get_mut(&calling_block_id) {
-                    if let Some(call_site_info) = calling_block_flow.call_site_info.as_mut() {
-                        // Add the identified return value usages to the `return_values_accessed` map.
-                        call_site_info
-                            .return_values_accessed
-                            .extend(return_usages_in_block.clone()); // Clone the vec to extend
-                        debug!(
-                            "Updated call site info for block {:?}: added return usages {:?}",
-                            calling_block_id, return_usages_in_block
-                        );
-                    } else {
-                        // This should not happen if initialization was correct.
-                        panic!(
-                            "Block {:?} identified as caller for {:?}, but has no CallSiteInfo",
-                            calling_block_id, block_id
-                        );
-                    }
-                } else {
-                    // This indicates an inconsistency, maybe the calling block is not in the current function?
-                    panic!(
-                        "Calling block {:?} for return usages in {:?} not found in df_result",
-                        calling_block_id, block_id
-                    );
-                }
+                let calling_block_flow = df_result.blocks.get_mut(&calling_block_id).unwrap();
+                let calling_block_call_site_info = calling_block_flow.call_site_info.as_mut().unwrap();
+                
+                // Add the identified return value usages to the `return_values_accessed` map.
+                calling_block_call_site_info
+                    .return_values_accessed
+                    .extend(return_usages_in_block.clone()); // Clone the vec to extend
+                
+                debug!(
+                    "Updated call site info for block {:?}: added return usages {:?}",
+                    calling_block_id, return_usages_in_block
+                );
             }
         }
     }
