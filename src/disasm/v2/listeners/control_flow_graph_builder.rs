@@ -2,16 +2,19 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 
-use crate::disasm::v2::{
-    control_flow::{Block, Condition, FunctionCall, NextKind, PredecessorKind},
-    events::{
-        self, ControlFlowAnalysisPhaseComplete, FunctionCfgBuilt, ImageScannerComplete,
-        ModelEventListener,
+use crate::disasm::{
+    v2::{
+        control_flow::{Block, NextKind, PredecessorKind},
+        events::{
+            self, ControlFlowAnalysisPhaseComplete, FunctionCfgBuilt, ImageScannerComplete,
+            ModelEventListener,
+        },
+        instructions::{Expression, Instruction, InstructionNode, MemoryReference},
+        model::{BlockId, ProgramModel},
+        native::{NativeInstruction, Operand},
+        Span,
     },
-    instructions::{Expression, Instruction, InstructionNode, MemoryReference},
-    model::{BlockId, FunctionId, ProgramModel},
-    native::{NativeInstruction, Operand},
-    Span,
+    v3::{FunctionCall, FunctionId},
 };
 
 use super::image_scanner::RecognizedFunction;
@@ -318,20 +321,16 @@ fn determine_next_kind(
         Instruction::Halt => NextKind::Halt,
         Instruction::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
         Instruction::Call { addr, return_to } => {
-            NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), return_to.clone()))
+            panic!("THIS IS NOT SUPPORTED");
         }
         Instruction::Return => NextKind::Return,
         Instruction::If {
             cond,
             then_addr,
             else_addr,
-        } => NextKind::Condition(Condition {
-            from_block: block_id,
-            condition_operand: cond.clone(),
-            jump_if_true: true,
-            target_block: *then_addr,
-            follows_block: *else_addr,
-        }),
+        } => {
+            panic!("THIS IS NOT SUPPORTED");
+        }
         _ => NextKind::Follows(BlockId::from(block_end_addr)),
     }
 }
@@ -639,16 +638,6 @@ mod tests {
         let block2 = model.get_block(BlockId::from(2));
         assert_eq!(block2.low_instructions.len(), 2); // [R+1] = [R+1] - 1, if [R+1] goto @loop_start
         assert_eq!(block2.span, Span::new(2, 9));
-        let NextKind::Condition(Condition {
-            target_block,
-            follows_block,
-            ..
-        }) = block2.next
-        else {
-            panic!("Expected condition");
-        };
-        assert_eq!(target_block, BlockId::from(2));
-        assert_eq!(follows_block, BlockId::from(9));
         assert!(block2
             .predecessors
             .contains(&PredecessorKind::FollowsFrom(BlockId::from(0))));

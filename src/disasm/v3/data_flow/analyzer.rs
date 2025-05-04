@@ -2,14 +2,16 @@ use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::disasm::v3::common::{Expression, MemoryReference, FunctionCall};
-use crate::disasm::v3::control_flow::{Block, NextKind};
+use crate::disasm::v3::common::{Expression, FunctionCall, MemoryReference};
+use crate::disasm::v3::control_flow::{Block, FunctionView, NextKind};
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
 
 use super::block::{DataFlowBlock, Definition, OriginationPoint};
 use super::result::DataFlowResult;
+
+type Function<'a> = FunctionView<'a, ControlFlowGraphComplete>;
 
 /// Analyzes data flow in the control flow graph
 pub struct DataFlowAnalyzer {
@@ -30,17 +32,12 @@ impl DataFlowAnalyzer {
         let mut result = DataFlowResult::new();
 
         // Get all functions from the control flow graph
-        let function_ids: Vec<FunctionId> = self
-            .model
-            .control_flow_graph_result()
-            .functions
-            .keys()
-            .cloned()
-            .collect();
+        let function_ids: Vec<FunctionId> =
+            self.model.functions().map(|(id, _)| id).cloned().collect();
 
         // Analyze each function
-        for function_id in function_ids {
-            self.analyze_function(function_id, &mut result);
+        for (_, f) in self.model.functions() {
+            self.analyze_function(f, &mut result);
         }
 
         // Return a new model with the updated state
@@ -55,43 +52,34 @@ impl DataFlowAnalyzer {
     }
 
     /// Performs the main data flow analysis passes for a given function.
-    fn analyze_function(&self, func_id: FunctionId, df_result: &mut DataFlowResult) {
-        let function = &self.model.control_flow_graph_result().functions[&func_id];
-        let block_ids: Vec<BlockId> = function.blocks.keys().cloned().collect();
-
+    fn analyze_function(&self, function: Function, df_result: &mut DataFlowResult) {
         // Pass 1: Initialize gen, use_before_def and function_returns_in for each block
-        self.initialize_gen_use_func_in(&function, &block_ids, df_result);
+        self.initialize_gen_use_func_in(function, df_result);
 
         // Pass 2: compute function_returns_out and function_returns_in for all blocks (forward analysis)
-        self.run_function_returns_analysis(&function, &block_ids, df_result);
+        self.run_function_returns_analysis(function, df_result);
 
         // Pass 3: Reaching Definitions (Forward Analysis)
-        self.run_reaching_definitions_analysis(&function, df_result);
+        self.run_reaching_definitions_analysis(function, df_result);
 
         // Pass 4: Liveness Analysis (Backward Analysis)
-        self.run_liveness_analysis(&function, &block_ids, df_result);
+        self.run_liveness_analysis(function, df_result);
 
         debug!("Data Flow Analysis passes complete for {}", func_id);
     }
 
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
-    fn initialize_gen_use_func_in(
-        &self,
-        function: &crate::disasm::v3::model::Function,
-        block_ids: &[BlockId],
-        df_result: &mut DataFlowResult,
-    ) {
-        for &block_id in block_ids {
-            let block = &self.model.control_flow_graph_result().blocks[&block_id];
+    fn initialize_gen_use_func_in(&self, function: Function, df_result: &mut DataFlowResult) {
+        for (block_id, block) in function.blocks() {
             let block_flow = df_result
                 .blocks
-                .entry(block_id)
+                .entry(*block_id)
                 .or_insert_with(DataFlowBlock::new);
 
             let mut defined_in_block = HashSet::new();
             block_flow.writes_above_r = false;
 
-            for instr in block.instructions() {
+            for instr in block.low_instructions() {
                 // Calculate USE for this instruction
                 for r in instr.collect_read_addresses().into_iter() {
                     if !defined_in_block.contains(r) {
@@ -134,7 +122,7 @@ impl DataFlowAnalyzer {
     // Pass 2: calculate function returns
     fn run_function_returns_analysis(
         &self,
-        function: &crate::disasm::v3::model::Function,
+        function: Function,
         block_ids: &[BlockId],
         df_result: &mut DataFlowResult,
     ) {
@@ -162,8 +150,8 @@ impl DataFlowAnalyzer {
 
     fn calculate_function_returns_in(
         &self,
-        function: &crate::disasm::v3::model::Function,
-        block_id: BlockId,
+        function: Function,
+        block_id: &BlockId,
         df_result: &DataFlowResult,
     ) -> HashSet<FunctionCall<MemoryReference>> {
         let block = function.block(&block_id);
@@ -190,13 +178,13 @@ impl DataFlowAnalyzer {
     /// Pass 3: Computes Reaching Definitions iteratively.
     fn run_reaching_definitions_analysis(
         &self,
-        function: &crate::disasm::v3::model::Function,
+        function: Function,
         df_result: &mut DataFlowResult,
     ) {
         let mut changed = true;
         while changed {
             changed = false;
-            for block_id in function.blocks.keys() {
+            for block_id in function.blocks() {
                 let block = &self.model.control_flow_graph_result().blocks[block_id];
                 // Definitions
                 let new_defs_in = self.calculate_defs_in(function, &block, df_result);
@@ -315,8 +303,7 @@ impl DataFlowAnalyzer {
 
                 // add potential_function_call_params.
                 let block = &self.model.control_flow_graph_result().blocks[&block_id];
-                if matches!(block.next, NextKind::FunctionCall(_))
-                {
+                if matches!(block.next, NextKind::FunctionCall(_)) {
                     for d in &block_flow.defs_in {
                         if d.kind.is_outgoing_parameter() {
                             current_live_in

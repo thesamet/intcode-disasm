@@ -5,7 +5,6 @@ use itertools::Itertools;
 use log::debug;
 
 use crate::disasm::v2::control_flow::Block;
-use crate::disasm::v2::control_flow::FunctionCall;
 use crate::disasm::v2::data_flow::{
     BlockDataFlow, BlockNativeDataFlow, CallSiteInfo, Definition, NativeCallSiteInfo,
     NativeDefinition, NativeOriginationPoint, OriginationPoint,
@@ -23,8 +22,10 @@ use crate::disasm::v2::{
     control_flow::NextKind,
     data_flow::DataFlowResult,
     events::{self, FunctionCfgBuilt, ModelEventListener},
-    model::{BlockId, FunctionId, ProgramModel},
+    model::{BlockId, ProgramModel},
 };
+use crate::disasm::v3::common::FunctionCall;
+use crate::disasm::v3::FunctionId;
 
 pub struct DataFlowAnalyzer {}
 

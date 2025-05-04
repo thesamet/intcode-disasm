@@ -3,6 +3,7 @@ use crate::disasm::v2::instructions::InstructionNode;
 use crate::disasm::v2::ssa_form::{PhiFunction, SsaMemoryReference, VersionRegistry};
 use crate::disasm::v3::data_flow::DataFlowBlock;
 use crate::disasm::v3::id_types::BlockId;
+use crate::disasm::v3::model::add_block_view_when;
 
 /// Represents a basic block in SSA form
 #[derive(Debug, Clone)]
@@ -21,3 +22,4 @@ pub struct SsaBlock {
     pub next: NextKind<SsaMemoryReference>,
     pub predecessors: Vec<PredecessorKind<SsaMemoryReference>>,
 }
+add_block_view_when!(Ssa, ssa);

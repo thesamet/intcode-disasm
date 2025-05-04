@@ -1,6 +1,8 @@
+use crate::disasm::v3::FunctionId;
+
 use super::dispatching::event_types_enum;
 use super::model::BlockId;
-use super::model::{FunctionId, ProgramModel};
+use super::model::ProgramModel;
 
 event_types_enum! {Event, ProgramModel,
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

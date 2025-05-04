@@ -2,8 +2,10 @@ use itertools::Itertools;
 use log::{debug, info, trace};
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::v2::control_flow::{Condition, FunctionCall, NextKind, PredecessorKind};
+use crate::disasm::v2::control_flow::{NextKind, PredecessorKind};
 use crate::disasm::v2::instructions::{Expression, Instruction, InstructionNode, MemoryReference};
+use crate::disasm::v3::control_flow::block::Condition;
+use crate::disasm::v3::FunctionCall;
 use crate::disasm::Error;
 
 use super::block::Block;
@@ -15,6 +17,7 @@ use crate::disasm::v3::image_scanner::RecognizedFunction;
 use crate::disasm::v3::model::{ControlFlowGraphComplete, ImageScannerComplete, Model};
 
 /// Builds the control flow graph from the image scanner results
+#[derive(Debug, Clone)]
 pub struct ControlFlowGraphBuilder {
     blocks: HashMap<BlockId, Block>,
     functions: HashMap<FunctionId, Function>,
@@ -56,19 +59,15 @@ impl ControlFlowGraphBuilder {
         );
 
         // Create the control flow graph result
-        let result = ControlFlowGraphResult {
-            functions: self.functions.clone(),
-        };
+        let result = self.clone();
 
         // Return a new model with the updated state
-        Ok(Model {
-            image_scanner_result: model.image_scanner_result,
-            control_flow_graph_result: Some(result),
-            data_flow_result: None,
-            ssa_result: None,
-            function_call_analysis_result: None,
-            marker: std::marker::PhantomData,
-        })
+        Ok(
+            model.with_control_flow_graph_result(ControlFlowGraphResult::new(
+                self.blocks.clone(),
+                self.functions.clone(),
+            )),
+        )
     }
 
     fn process_function(
@@ -308,16 +307,16 @@ impl ControlFlowGraphBuilder {
         };
 
         // Create the function
-        let function = Function {
+        let function = Function::new(
             function_id,
-            entry_block: BlockId::from(function_details.span.start),
-            stack_size: function_details.stack_size,
+            BlockId::from(function_details.span.start),
+            function_details.stack_size,
             return_block,
-            blocks: function_block_ids
+            function_block_ids
                 .iter()
                 .map(|id| (*id, self.blocks[id].clone()))
                 .collect(),
-        };
+        );
 
         // Add the function to our collection
         self.functions.insert(function_id, function);

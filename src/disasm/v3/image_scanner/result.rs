@@ -1,21 +1,21 @@
+use crate::disasm::v2::native::{NativeInstruction, Operand};
 use crate::disasm::v3::common::Span;
 use crate::disasm::v3::id_types::FunctionId;
-use crate::disasm::v2::native::{NativeInstruction, Operand};
 use std::collections::{HashMap, HashSet};
 
 /// Result of the image scanning phase
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ImageScannerResult {
     pub recognized_functions: Vec<FunctionId>,
     pub data_segments: Vec<DataSegment>,
     pub image: Vec<i128>,
-    
+
     // Maps addresses to function IDs
     pub address_to_function: HashMap<usize, FunctionId>,
-    
+
     // Maps function IDs to their entry point addresses
     pub function_to_address: HashMap<FunctionId, usize>,
-    
+
     // Detailed function information
     pub function_details: HashMap<FunctionId, RecognizedFunction>,
 }

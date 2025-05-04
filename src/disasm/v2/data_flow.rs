@@ -7,9 +7,9 @@ use crate::disasm::v2::{
     model::BlockId,
     native::{NativeInstructionId, OperandKind},
 };
+use crate::disasm::v3::FunctionCall;
 
-use super::control_flow::FunctionCall;
-use super::instructions::{Expression, InstructionId, MemoryReference, MemoryReferenceInfo};
+use super::instructions::{InstructionId, MemoryReference, MemoryReferenceInfo};
 use super::native::Operand;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

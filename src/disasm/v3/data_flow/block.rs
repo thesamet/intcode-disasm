@@ -1,6 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use crate::disasm::v3::common::{CallSiteInfo, FunctionCall, MemoryReference};
 use crate::disasm::v3::id_types::InstructionId;
-use crate::disasm::v3::common::{MemoryReference, FunctionCall, CallSiteInfo};
+use crate::disasm::v3::model::add_block_view_when;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, Default)]
 pub struct DataFlowBlock {
@@ -46,6 +47,7 @@ pub struct DataFlowBlock {
     // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
     pub call_site_info: Option<CallSiteInfo>,
 }
+add_block_view_when!(DataFlow, data_flow);
 
 impl DataFlowBlock {
     /// Creates a new, empty `DataFlowBlock` record.

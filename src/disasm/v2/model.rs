@@ -14,8 +14,8 @@ use super::{
     ssa_form::SsaResult,
     type_inference::result::TypeInferenceResult,
 };
-
-define_id_type!(FunctionId);
+pub use crate::disasm::v3::common::{FunctionCall, Span};
+pub use crate::disasm::v3::id_types::*;
 
 #[derive(Debug)]
 pub struct ProgramModel {

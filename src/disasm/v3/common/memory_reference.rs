@@ -1,6 +1,7 @@
-use std::fmt::Display;
 use crate::disasm::v3::id_types::PointerId;
+
 use super::Expression;
+use std::fmt::Display;
 
 /// Represents a reference to a memory location that can be read from or written to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

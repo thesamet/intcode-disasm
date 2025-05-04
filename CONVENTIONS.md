@@ -31,6 +31,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Leverage external crates if they provide functionality we need.
 - Prefer early exits from functions when a requirement is not meant rather than creating nesting levels. For example, instead of
 
+Early returns:
+
 ```rust
 fn bad_example(&self, v: Value) -> Option<Finding> {
   if self.is_valid(v) {
@@ -57,6 +59,9 @@ fn good_example(&self, v: Value) -> Option<Finding> {
 }
 
 ```
+
+- APIs should prefer taking references whenever possible to prevent the caller from calling.
+- All id types (BlockId, FunctionId, and so on) are passed by reference.
 
 ```rust
 

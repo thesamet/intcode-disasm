@@ -3,14 +3,11 @@ use itertools::Itertools;
 use log::trace;
 use std::convert::From;
 
-use crate::disasm::{
-    model2::DataFlowBlock,
-    v2::{
-        control_flow::{NextKind, PredecessorKind},
-        data_flow::OriginationPoint,
-        model::{BlockId, FunctionId, ProgramModel},
-        native::{Operand, OperandKind},
-    },
+use crate::disasm::v2::{
+    control_flow::{NextKind, PredecessorKind},
+    data_flow::OriginationPoint,
+    model::{BlockId, FunctionId, ProgramModel},
+    native::{Operand, OperandKind},
 };
 use std::collections::{HashMap, HashSet};
 use std::fmt;

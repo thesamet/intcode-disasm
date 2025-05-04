@@ -1,5 +1,5 @@
-use std::fmt::Display;
 use super::MemoryReference;
+use std::fmt::Display;
 
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -30,6 +30,21 @@ pub enum Expression<A> {
 
 impl<A> Expression<A> {
     /// Collects all memory references that this expression reads from.
+    ///
+    /// This method recursively traverses the expression tree to find all memory
+    /// references that are read during evaluation. It's a key component of data flow
+    /// analysis, as it identifies all dependencies of an expression.
+    ///
+    /// # Returns
+    /// A vector of references to all addressable locations accessed during
+    /// evaluation of this expression.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // For an expression like: mem[5] + mem[3]
+    /// // This would return references to memory locations 5 and 3
+    /// ```
     pub fn collect_read_addresses<'a>(&'a self) -> Vec<&'a A> {
         let mut out = vec![];
         let mut queue = vec![self];
@@ -50,6 +65,18 @@ impl<A> Expression<A> {
     }
 
     /// Maps all addressable references in this expression using the provided function.
+    ///
+    /// This traverses the expression tree and applies a mapping function to each
+    /// addressable reference, producing a new expression with transformed references.
+    /// This is useful for address translation, renaming, or other transformations.
+    ///
+    /// # Parameters
+    ///
+    /// * `map`: A mutable function that transforms references of type `A` to type `B`
+    ///
+    /// # Returns
+    ///
+    /// A new expression with all addressable references transformed from type `A` to type `B`
     pub fn map<F, B>(&self, map: &mut F) -> Expression<B>
     where
         F: FnMut(&A) -> B,
@@ -70,6 +97,33 @@ impl<A> Expression<A> {
             Expression::DebugMarker(marker, expr) => {
                 Expression::DebugMarker(*marker, Box::new(expr.map(map)))
             }
+        }
+    }
+
+    /// Locates a subexpression marked with a specific debug marker.
+    ///
+    /// Searches the expression tree for a debug marker with the specified character
+    /// and returns a reference to the expression contained within that marker.
+    /// This is useful for finding specific points of interest in complex expressions
+    /// that have been annotated during construction or analysis.
+    ///
+    /// # Parameters
+    ///
+    /// * `marker`: The character identifier of the debug marker to find
+    ///
+    /// # Returns
+    ///
+    /// A reference to the expression contained within the debug marker if found,
+    /// or None if no matching marker exists in the expression tree
+    pub fn find_debug_marker(self: &Expression<A>, marker: char) -> Option<&Expression<A>> {
+        match self {
+            Expression::DebugMarker(c, e) if *c == marker => Some(e),
+            Expression::DebugMarker(_, e) => e.find_debug_marker(marker),
+            Expression::Binary { lhs, rhs, .. } => lhs
+                .find_debug_marker(marker)
+                .or_else(|| rhs.find_debug_marker(marker)),
+            Expression::Unary { arg, .. } => arg.find_debug_marker(marker),
+            _ => None,
         }
     }
 }
