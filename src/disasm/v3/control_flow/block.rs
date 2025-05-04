@@ -1,15 +1,11 @@
 // Use v3 types
-use crate::disasm::v3::common::{
-    // instruction::InstructionNode, // Removed - unresolved
-    memory_reference::MemoryReference,
-    Expression,
-    Span,
-};
+use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types here
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId}; // Added InstructionId
+use crate::disasm::v3::lir::{
+    Expression, Instruction, InstructionNode, MemoryReference, // Use LIR types
+};
 use crate::disasm::v3::model::{Model, ModelState};
 // use crate::disasm::v3::native::NativeInstruction; // Removed - unresolved
-use crate::disasm::v3::common::instruction::{Instruction, InstructionNode};
-use crate::disasm::v3::FunctionCall; // Assuming this is the correct path
 
 /// A block in the control flow graph
 #[derive(Debug, Clone)]

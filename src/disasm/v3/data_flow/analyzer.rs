@@ -1,13 +1,12 @@
 use itertools::Itertools;
+use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-// use crate::disasm::v3::common::instruction::InstructionNode; // Removed - unresolved
-use crate::disasm::v3::common::memory_reference::MemoryReferenceInfo;
-use crate::disasm::v3::common::{Expression, FunctionCall, MemoryReference};
+use crate::disasm::v3::common::FunctionCall; // Keep FunctionCall from common
 use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind};
-// use crate::disasm::v3::common::instruction::InstructionNode; // Commented out - unresolved
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId};
+use crate::disasm::v3::lir::{Expression, MemoryReference, MemoryReferenceInfo}; // Use LIR types
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
 
@@ -90,7 +89,7 @@ impl DataFlowAnalyzer {
             for instr in block.low_instructions() {
                 // Calculate USE for this instruction
                 for r in instr.kind.collect_read_addresses().into_iter() {
-                    if !defined_in_block.contains(r) { // Removed type annotation
+                    if !defined_in_block.contains::<&MemoryReference>(r) { // Specify type for contains
                         block_flow.use_before_def.insert(r.clone(), instr.id); // Use instr.id, r.clone() is correct
                     }
                 }
@@ -225,7 +224,7 @@ impl DataFlowAnalyzer {
                 // If we call a function at the end of the block, this block doesn't let [R+n]
                 // definitions flow forward.
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) { // Use block_view
-                    current_defs_out.retain(|d| !d.kind.is_outgoing_parameter()); // Use MemoryReferenceInfo trait
+                    current_defs_out.retain(|d| !d.is_outgoing_parameter()); // Use MemoryReferenceInfo trait directly on MemoryReference
                 }
 
                 // Update block's OUT set if changed
@@ -266,7 +265,7 @@ impl DataFlowAnalyzer {
                     other_flow
                         .use_before_def
                         .keys()
-                        .filter(|k| k.is_local_or_parameter()) // Use MemoryReferenceInfo trait
+                        .filter(|k| k.is_local_or_parameter()) // Use MemoryReferenceInfo trait directly on MemoryReference
                         .map(|k| Definition {
                             source: OriginationPoint::FunctionInput,
                             kind: k.clone(),
@@ -316,7 +315,7 @@ impl DataFlowAnalyzer {
                 let block_view = function.block(&block_id); // Get BlockView
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) { // Use block_view
                     for d in &block_flow.defs_in {
-                        if d.kind.is_outgoing_parameter() { // Use MemoryReferenceInfo trait
+                        if d.kind.is_outgoing_parameter() { // Use MemoryReferenceInfo trait directly on MemoryReference
                             current_live_in
                                 .entry(d.kind.clone())
                                 .or_insert_with(HashSet::new)
@@ -380,7 +379,7 @@ impl DataFlowAnalyzer {
             // to the entry point's live in.
             for (other_block_id, _) in function.blocks() { // Iterate view blocks
                 let dfr = df_result.blocks.get(other_block_id).unwrap(); // TODO: Handle panic
-                for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) { // Use MemoryReferenceInfo trait
+                for gen in dfr.gen.keys().filter(|k| k.is_local_or_parameter()) { // Use MemoryReferenceInfo trait directly on MemoryReference
                     new_live_out
                         .entry(gen.clone())
                         .or_insert_with(HashSet::new)

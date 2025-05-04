@@ -3,14 +3,12 @@ use log::{debug, info, trace};
 use std::collections::{HashMap, HashSet};
 
 // Use v3 types consistently
-use crate::disasm::v3::common::{
-    // instruction::{Instruction, InstructionNode}, // Removed - unresolved
-    memory_reference::MemoryReference,           // v3 MemoryReference
-    Expression, FunctionCall, Span,
-};
+use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types
 use crate::disasm::v3::control_flow::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
+use crate::disasm::v3::lir::{
+    Expression, Instruction, InstructionNode, MemoryReference, // Use LIR types
+};
 use crate::disasm::Error;
-// use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Commented out - unresolved
 
 use super::block::Block;
 use super::function::Function;
@@ -66,8 +64,15 @@ impl ControlFlowGraphBuilder {
         let result = ControlFlowGraphResult::new(self.functions.clone());
 
         // Return a new model with the updated state
-        // Explicitly type the Ok value
-        Ok::<_, Error>(model.with_control_flow_graph_result(result))
+        let final_model = Model::<ControlFlowGraphComplete> {
+            image_scanner_result: model.image_scanner_result,
+            control_flow_graph_result: Some(result),
+            data_flow_result: None,
+            ssa_result: None,
+            function_call_analysis_result: None,
+            marker: std::marker::PhantomData,
+        };
+        Ok(final_model)
     }
 
     fn process_function(
@@ -171,10 +176,10 @@ impl ControlFlowGraphBuilder {
                 containing_function_id: function_id,
                 span: Span::new(start_addr, current_block_end),
                 // native_instructions: current_block_instructions.clone(), // Removed - unresolved
-                // Assuming convert_block now returns Vec<InstructionNode<v3::common::MemoryReference>>
+                // Assuming convert_block now returns Vec<InstructionNode<v3::lir::MemoryReference>>
                 low_instructions: InstructionNode::convert_block(&current_block_instructions), // Pass reference
-                next: NextKind::Unknown, // Will use v3 MemoryReference
-                predecessors: Vec::new(), // Will use v3 MemoryReference
+                next: NextKind::<MemoryReference>::Unknown, // Specify type
+                predecessors: Vec::new(),                   // Will use v3 MemoryReference
             };
             self.blocks.insert(block_id, block);
 
@@ -215,23 +220,23 @@ impl ControlFlowGraphBuilder {
             match &next_kind {
                 NextKind::Follows(target_id) => {
                     assert!(
-                        self.blocks.contains_key(target_id), // Pass BlockId directly
+                        self.blocks.contains_key(target_id), // Pass &BlockId
                         "Block {} not found",
                         target_id
                     );
                     predecessors_map
-                        .entry(*target_id) // Pass BlockId directly
+                        .entry(*target_id) // Keep as value for entry
                         .or_default()
                         .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
                     assert!(
-                        self.blocks.contains_key(target_block_id), // Pass BlockId directly
+                        self.blocks.contains_key(target_block_id), // Pass &BlockId
                         "Block {} not found",
                         target_block_id
                     );
                     predecessors_map
-                        .entry(*target_block_id) // Pass BlockId directly
+                        .entry(*target_block_id) // Keep as value for entry
                         .or_default()
                         .push(PredecessorKind::GotoFrom(*block_id));
                 }
@@ -250,16 +255,16 @@ impl ControlFlowGraphBuilder {
                     let true_branch = condition.target_block;
                     let false_branch = condition.follows_block;
                     assert!(
-                        self.blocks.contains_key(&true_branch),
+                        self.blocks.contains_key(&true_branch), // Pass &BlockId
                         "Block {} not found",
                         true_branch
                     );
                     assert!(
-                        self.blocks.contains_key(&false_branch),
+                        self.blocks.contains_key(&false_branch), // Pass &BlockId
                         "Block {} not found",
                         false_branch
                     );
-                    predecessors_map.entry(true_branch).or_default().push(
+                    predecessors_map.entry(true_branch).or_default().push( // Keep as value for entry
                         PredecessorKind::ConditionalJump(Condition {
                             from_block: *block_id,
                             condition_operand: condition.condition_operand.clone(),
@@ -268,7 +273,7 @@ impl ControlFlowGraphBuilder {
                             follows_block: false_branch,
                         }),
                     );
-                    predecessors_map.entry(false_branch).or_default().push(
+                    predecessors_map.entry(false_branch).or_default().push( // Keep as value for entry
                         PredecessorKind::ConditionalFollow(Condition {
                             from_block: *block_id,
                             condition_operand: condition.condition_operand.clone(),
