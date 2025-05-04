@@ -4,17 +4,18 @@ use std::collections::{HashMap, HashSet};
 
 // Use v3 types consistently
 use crate::disasm::v3::common::{
-    instruction::{Instruction, InstructionNode}, // Assuming v3 Instruction, InstructionNode
+    // instruction::{Instruction, InstructionNode}, // Removed - unresolved
     memory_reference::MemoryReference,           // v3 MemoryReference
     Expression, FunctionCall, Span,
 };
 use crate::disasm::v3::control_flow::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
 use crate::disasm::Error;
+use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Assuming this is the correct path
 
 use super::block::Block;
 use super::function::Function;
 use super::result::ControlFlowGraphResult;
-use crate::disasm::v3::common::Span;
+// Removed duplicate: use crate::disasm::v3::common::Span;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
 use crate::disasm::v3::image_scanner::RecognizedFunction;
 use crate::disasm::v3::model::{ControlFlowGraphComplete, ImageScannerComplete, Model};
@@ -62,12 +63,11 @@ impl ControlFlowGraphBuilder {
         );
 
         // Create the control flow graph result
-        let result = self.clone();
+        let result = ControlFlowGraphResult::new(self.functions.clone());
 
         // Return a new model with the updated state
         // Corrected call to new (already fixed in previous step, ensuring it stays)
-        Ok(model
-            .with_control_flow_graph_result(ControlFlowGraphResult::new(self.functions.clone())))
+        Ok(model.with_control_flow_graph_result(result))
     }
 
     fn process_function(
@@ -170,9 +170,9 @@ impl ControlFlowGraphBuilder {
                 id: block_id,
                 containing_function_id: function_id,
                 span: Span::new(start_addr, current_block_end),
-                native_instructions: current_block_instructions.clone(),
+                // native_instructions: current_block_instructions.clone(), // Removed - unresolved
                 // Assuming convert_block now returns Vec<InstructionNode<v3::common::MemoryReference>>
-                low_instructions: InstructionNode::convert_block(current_block_instructions),
+                low_instructions: InstructionNode::convert_block(&current_block_instructions), // Pass reference
                 next: NextKind::Unknown, // Will use v3 MemoryReference
                 predecessors: Vec::new(), // Will use v3 MemoryReference
             };
@@ -215,23 +215,23 @@ impl ControlFlowGraphBuilder {
             match &next_kind {
                 NextKind::Follows(target_id) => {
                     assert!(
-                        self.blocks.contains_key(target_id),
+                        self.blocks.contains_key(target_id), // Pass reference
                         "Block {} not found",
                         target_id
                     );
                     predecessors_map
-                        .entry(*target_id)
+                        .entry(*target_id) // Keep deref here for entry key
                         .or_default()
                         .push(PredecessorKind::FollowsFrom(*block_id));
                 }
                 NextKind::Goto(target_block_id) => {
                     assert!(
-                        self.blocks.contains_key(target_block_id),
+                        self.blocks.contains_key(target_block_id), // Pass reference
                         "Block {} not found",
                         target_block_id
                     );
                     predecessors_map
-                        .entry(BlockId::from(*target_block_id))
+                        .entry(*target_block_id) // Keep deref here for entry key
                         .or_default()
                         .push(PredecessorKind::GotoFrom(*block_id));
                 }

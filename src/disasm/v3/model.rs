@@ -48,7 +48,7 @@ impl HasFunctionCallAnalysisResult for FunctionCallComplete {}
 macro_rules! make_model {
     ($model:ident, $state:ident, { $($field:ty),* }) => {
         paste::paste! {
-            #[derive(Clone)]
+            #[derive(Clone, Debug)] // Added Debug
             pub struct $model<S: $state> {
                 pub $([<$field:snake:lower>]: Option<$field>,)*
                 marker: std::marker::PhantomData<S>,

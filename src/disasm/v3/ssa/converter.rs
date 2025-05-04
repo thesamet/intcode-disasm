@@ -27,8 +27,8 @@ impl SsaConverter {
         // Return a new model with the updated state
         Ok(Model {
             image_scanner_result: self.model.image_scanner_result.clone(),
-            control_flow_graph_result: self.model.control_flow_graph_result.clone(),
-            data_flow_result: self.model.data_flow_result.clone(),
+            control_flow_graph_result: self.model.control_flow_graph_result().clone(), // Use accessor
+            data_flow_result: self.model.data_flow_result().clone(), // Use accessor
             ssa_result: Some(result),
             function_call_analysis_result: None,
             marker: std::marker::PhantomData,

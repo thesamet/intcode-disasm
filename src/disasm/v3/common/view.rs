@@ -2,7 +2,7 @@
 use crate::disasm::v3::{
     common::{
         function_call::CallSiteInfo, // CalleeInfo is in function_call::result
-        instruction::InstructionNode, // Assuming this is the correct path for v3 InstructionNode
+        // instruction::InstructionNode, // Removed - unresolved
         memory_reference::MemoryReference,
         span::Span,
     },
@@ -11,7 +11,7 @@ use crate::disasm::v3::{
     function_call::result::CalleeInfo, // Correct path for CalleeInfo
     id_types::{BlockId, FunctionId},
     model::{DataFlowComplete, FunctionCallComplete, Model, ModelState, SsaComplete}, // Correct path for DataFlowComplete
-    native::NativeInstruction, // Assuming this is the correct path for v3 NativeInstruction
+    // native::NativeInstruction, // Removed - unresolved
     ssa::block::SsaBlock,      // Use pub use from ssa::mod
 };
 use std::fmt::Debug;

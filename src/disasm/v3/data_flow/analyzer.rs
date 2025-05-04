@@ -2,10 +2,11 @@ use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::disasm::v3::common::instruction::InstructionNode; // Corrected path
+// use crate::disasm::v3::common::instruction::InstructionNode; // Removed - unresolved
 use crate::disasm::v3::common::memory_reference::MemoryReferenceInfo;
 use crate::disasm::v3::common::{Expression, FunctionCall, MemoryReference};
 use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind};
+use crate::disasm::v3::common::instruction::InstructionNode; // Assuming this is the correct path
 use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId};
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
@@ -39,13 +40,13 @@ impl DataFlowAnalyzer {
 
         // Analyze each function
         for (_, f) in self.model.functions() {
-            self.analyze_function(f, &mut result);
+            self.analyze_function(&f, &mut result); // Pass reference &f
         }
 
         // Return a new model with the updated state
         Ok(Model {
             image_scanner_result: self.model.image_scanner_result.clone(),
-            control_flow_graph_result: self.model.control_flow_graph_result.clone(),
+            control_flow_graph_result: self.model.control_flow_graph_result().clone(), // Use accessor
             data_flow_result: Some(result),
             ssa_result: None,
             function_call_analysis_result: None,
@@ -90,7 +91,7 @@ impl DataFlowAnalyzer {
                 // Calculate USE for this instruction
                 for r in instr.kind.collect_read_addresses().into_iter() {
                     if !defined_in_block.contains::<&MemoryReference>(r) { // Added type annotation
-                        block_flow.use_before_def.insert(r.clone(), instr.id); // Use instr.id
+                        block_flow.use_before_def.insert(r.clone(), instr.id); // Use instr.id, r.clone() is correct
                     }
                 }
 

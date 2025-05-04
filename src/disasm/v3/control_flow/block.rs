@@ -1,11 +1,13 @@
 // Use v3 types
 use crate::disasm::v3::common::{
-    instruction::InstructionNode, memory_reference::MemoryReference, Expression, Span,
+    // instruction::InstructionNode, // Removed - unresolved
+    memory_reference::MemoryReference, Expression, Span,
 };
-use crate::disasm::v3::id_types::{BlockId, FunctionId};
+use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId}; // Added InstructionId
 use crate::disasm::v3::model::{Model, ModelState};
-use crate::disasm::v3::native::NativeInstruction; // Assuming v3 native instruction type
+// use crate::disasm::v3::native::NativeInstruction; // Removed - unresolved
 use crate::disasm::v3::FunctionCall;
+use crate::disasm::v3::common::instruction::{Instruction, InstructionNode}; // Assuming this is the correct path
 
 /// A block in the control flow graph
 #[derive(Debug, Clone)]
@@ -14,7 +16,7 @@ pub struct Block {
     /// To which function does this block belong?
     pub containing_function_id: FunctionId,
     pub span: Span,
-    pub native_instructions: Vec<NativeInstruction>, // v3 native
+    // pub native_instructions: Vec<NativeInstruction>, // Removed - unresolved
     pub low_instructions: Vec<InstructionNode<MemoryReference>>, // v3 common MemoryReference
 
     /// Control flow information
@@ -46,9 +48,9 @@ impl<'a, S: ModelState> BlockView<'a, S> {
         &self.block.span
     }
 
-    pub fn native_instructions(&self) -> &[NativeInstruction] {
-        &self.block.native_instructions
-    }
+    // pub fn native_instructions(&self) -> &[NativeInstruction] { // Removed - unresolved
+    //     &self.block.native_instructions
+    // }
 
     pub fn low_instructions(&self) -> &[InstructionNode<MemoryReference>] {
         &self.block.low_instructions
