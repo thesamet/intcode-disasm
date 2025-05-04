@@ -924,10 +924,11 @@ impl<'a> SSAConversionState<'a> {
         phi_placements
     }
 
+    // Modified to use v3 data structures from self.function
     fn compute_start_end_states(&self, ssa_blocks: &mut HashMap<BlockId, SsaBlock>) {
         let block_ids = ssa_blocks.keys().copied().collect_vec();
 
-        // These are the variables that are updated by the block. No predecessor
+        // These are the variables that are updated by the block (written to or phi result). No predecessor
         // can affect the end state of these variable.
         let initial_end_states: HashMap<BlockId, VersionRegistry> = ssa_blocks
             .keys()
@@ -942,28 +943,50 @@ impl<'a> SSAConversionState<'a> {
         loop {
             let mut changed = false;
             for block_id in &block_ids {
+                // Get the v3 BlockView for the current block
+                let block_view = self.function.block(block_id);
+                let live_in = &block_view.data_flow().live_in; // v3 live_in: HashMap<MemoryReference, _>
+
+                // Clone the initial states calculated in build_ssa_blocks_with_write_versioning
                 let mut new_in = initial_start_states[block_id].clone();
                 let mut new_out = initial_end_states[block_id].clone();
-                let block = self.function.block(block_id);
-                let live_in = &block.data_flow().live_in;
 
-                for pred in block.predecessors() {
+                // Iterate over v3 predecessors
+                for pred in block_view.predecessors() {
                     let pred_id = pred.source_block_id();
-                    // Use the collected end_states map here
+                    // Get the end state from the *current* iteration's ssa_blocks map
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
-                    // new_in should store SsaVarKind -> SsaVar
+
+                    // Iterate through versions defined in the predecessor's end state
                     for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
-                        if !live_in.contains_key(&mem_ref_type.to_memory_reference())
-                            && !mem_ref_type.is_local_or_parameter()
-                        {
-                            // This var doesn't live from here and not a return value
-                            trace!("Skipping var {} from predecessor {} because it doesn't live in this block {block_id}", mem_ref_type, pred_id);
+                        // Convert MemoryReferenceType to MemoryReference for live_in check
+                        let mem_ref = mem_ref_type.to_memory_reference();
+
+                        // Check if the variable is live at the entry of the current block
+                        // AND is not already defined by a phi function in this block (checked via initial_start_states)
+                        if !live_in.contains_key(&mem_ref) {
+                            // This var isn't live coming into this block from this path
+                            trace!("Skipping var {} from predecessor {} because it is not live-in for block {}", mem_ref_type, pred_id, block_id);
                             continue;
                         }
+
                         if initial_start_states[block_id].has_version_for(mem_ref_type) {
-                            // This block's phis write to the key, so both start_state and end_state can't affect from a predecessor
-                            trace!("Skipping var {} from predecessor {} because it is already in start_state", mem_ref_type, pred_id);
+                            // This block defines this variable via a phi function,
+                            // so the predecessor's version doesn't propagate directly.
+                            trace!("Skipping var {} from predecessor {} because block {} defines it with a phi", mem_ref_type, pred_id, block_id);
                             continue;
+                        }
+
+                        // Propagate the version from the predecessor to the current block's start state (new_in)
+                        // Note: If multiple predecessors provide a version for the *same* non-phi variable,
+                        // this implies an issue earlier (data flow or phi placement).
+                        // We might overwrite here, but the last write wins. Assertions below check consistency.
+                        new_in.set_version(*mem_ref_type, *versioned_mem_ref);
+
+                        // If the current block *doesn't* write to this variable (checked via initial_end_states),
+                        // then the version also propagates to the end state (new_out).
+                        if !initial_end_states[block_id].has_version_for(mem_ref_type) {
+                            new_out.set_version(*mem_ref_type, *versioned_mem_ref);
                         }
 
                         // If we get multiple live value through the predecessor, some phi function
