@@ -1320,7 +1320,7 @@ mod tests {
         );
 
         // Find the block with the output instruction (the merge block)
-        let main_func_view = model.function(&V3FunctionId::new(0)).unwrap();
+        let main_func_view = model.function(&V3FunctionId::new(0)).expect("Main function not found");
         let mut merge_block_id = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1343,7 +1343,7 @@ mod tests {
         let merge_block_id = merge_block_id.unwrap();
 
         // Get the merge block view and its SSA data
-        let merge_block_view = main_func_view.block(&merge_block_id).unwrap();
+        let merge_block_view = main_func_view.block(&merge_block_id).expect("Merge block not found");
         let merge_ssa_block = merge_block_view.ssa();
 
         // Verify that the instruction that reads from [100] is using the correct SSA var
@@ -1411,7 +1411,7 @@ mod tests {
         );
 
         // Find the return block by searching for one that contains output instruction
-        let main_func_view = model.function(&V3FunctionId::new(0)).unwrap();
+        let main_func_view = model.function(&V3FunctionId::new(0)).expect("Main function not found");
         let mut found_return_block = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1488,9 +1488,9 @@ mod tests {
         let block_id = BlockId::from(0);
         let block_view = model
             .function(&V3FunctionId::new(0))
-            .unwrap()
+            .expect("Main function not found")
             .block(&block_id)
-            .unwrap();
+            .expect("Block 0 not found");
         let block = block_view.ssa(); // Get the SsaBlock
 
         // Now find the instruction: [R-4] = [R-4] + 10
@@ -1729,7 +1729,7 @@ mod tests {
         assert_eq!(
             func_view
                 .block(&return_block_id)
-                .unwrap()
+                .expect("Return block view not found")
                 .ssa() // Get SsaBlock via view
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
@@ -1740,7 +1740,7 @@ mod tests {
         assert_eq!(
             func_view
                 .block(&BlockId::from(13))
-                .unwrap()
+                .expect("Block 13 view not found")
                 .ssa() // Get SsaBlock via view
                 .end_state
                 .current_version(&MemoryReferenceType::RelativeMemory(-1))
@@ -1775,7 +1775,7 @@ exit:
         let func_view = ctx.main_function();
         let return_block_id = func_view.return_block().expect("Return block not found");
         // Access SSA block data via the view
-        let return_block = func_view.block(&return_block_id).unwrap().ssa();
+        let return_block = func_view.block(&return_block_id).expect("Return block view not found").ssa();
         assert_eq!(
             return_block
                 .end_state // Access end_state from SsaBlock
@@ -1896,9 +1896,8 @@ exit:
             .blocks() // Iterate through blocks in the view
             .map(|(_, block_view)| block_view.ssa()) // Get SsaBlock for each
             .sorted_by_key(|ssa_block| ssa_block.original_id) // Sort by original ID
-            .nth(3)
-            .unwrap()
-            .1;
+            .nth(3) // Get the 4th block (index 3)
+            .expect("Merge block (index 3) not found"); // Unwrap the Option<SsaBlock>
 
         assert_eq!(merge_block.phi_functions.len(), 1);
         assert_eq!(
