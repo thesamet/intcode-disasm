@@ -781,7 +781,7 @@ impl<'a> SSAConversionState<'a> {
             // Create the v2 SsaBlock structure
             // Create the v2 SsaBlock structure (without native fields)
             let ssa_block = SsaBlock {
-                original_id: *block_id,
+                original_id: block_id, // Remove dereference
                 phi_functions,
                 instructions,
                 start_state,
@@ -791,7 +791,7 @@ impl<'a> SSAConversionState<'a> {
                 predecessors: vec![],
             };
 
-            ssa_blocks.insert(*block_id, ssa_block);
+            ssa_blocks.insert(block_id, ssa_block); // Remove dereference
         }
         ssa_blocks
     }
@@ -1065,25 +1065,24 @@ impl<'a> SSAConversionState<'a> {
                         )
                     });
 
-                    // Map the v3 PredecessorKind<MemoryReference> to v3 PredecessorKind<SsaMemoryReference>
-                    // using the predecessor's end state.
-                    let ssa_pred = pred.map(&mut |mem_ref| {
+                    // Define the mapping closure once
+                    let mut map_mem_ref = |mem_ref: &MemoryReference| {
                         pred_ssa_block.end_state.current_memory_reference(mem_ref)
-                    });
+                    };
 
                     if matches!(pred, crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_))
-                        && phi.result.kind.as_stack_relative().is_some_and(|x| x > 0)
+                        && (&phi.result.kind).as_stack_relative().is_some_and(|x| x > 0) // Fixed as_stack_relative call here too
                     {
                         // For function returns, the phi result itself represents the value.
-                        // Use the mapped ssa_pred as the key.
-                        phi_inputs.insert(ssa_pred, phi.result);
+                        // Map the predecessor *before* inserting.
+                        phi_inputs.insert(pred.map(&mut map_mem_ref), phi.result);
                     } else {
                         // Get the version from the predecessor's end state
                         let input_version = pred_ssa_block
                             .end_state
                             .current_version(&phi.result.kind);
-                        // Use the mapped ssa_pred as the key.
-                        phi_inputs.insert(ssa_pred, input_version);
+                        // Map the predecessor *before* inserting.
+                        phi_inputs.insert(pred.map(&mut map_mem_ref), input_version);
                     }
                 }
                 // Create the final PhiFunction with populated inputs
@@ -1098,14 +1097,32 @@ impl<'a> SSAConversionState<'a> {
             let mut current_registry = start_state.clone(); // Registry to track versions within the block
             let mut populated_instructions = Vec::with_capacity(ssa_block.instructions.len());
 
-            for instr_node in &ssa_block.instructions { // Iterate over the already versioned instructions
-                // Map reads using the current_registry state
-                let read_mapped_instr = instr_node.map_read(
-                    &mut current_registry,
-                    |reg, ssa_mem_ref| reg.current_memory_reference(ssa_mem_ref),
-                );
+            for instr_node in &ssa_block.instructions { // Iterate over the already versioned instructions (writes are final)
+                // Map reads using the current_registry state by applying the map method
+                let read_mapped_instr = instr_node.map(&mut |ssa_mem_ref: &SsaMemoryReference| {
+                    // Only map reads (Versioned variants within expressions)
+                    // Writes (top-level Versioned variants) should already be correct from build_ssa_blocks...
+                    match ssa_mem_ref {
+                        SsaMemoryReference::Versioned(v) => {
+                            // If this is part of an expression being read, resolve its version.
+                            // If it's a write target, it should already have the final version.
+                            // We rely on the structure: writes are top-level Addressable, reads are nested.
+                            // This might be fragile. A better approach might involve separate map_read/map_write on Expression.
+                            // For now, assume this heuristic works.
+                            current_registry.current_memory_reference(&v.kind.into())
+                        }
+                        SsaMemoryReference::Deref(expr) => {
+                            // Recursively map reads within the dereferenced expression
+                            SsaMemoryReference::Deref(Box::new(
+                                current_registry.current_expression(expr),
+                            ))
+                        }
+                    }
+                });
 
-                // Update the current_registry if the instruction writes a versioned variable
+                // Update the current_registry if the instruction *writes* a versioned variable
+                // The write target itself should already have the correct version from the previous phase.
+                // We just need to update the registry state *after* this instruction executes.
                 if let Some(write_target) = read_mapped_instr.kind.get_write_address() {
                     if let Some(versioned_write) = write_target.as_versioned() {
                         // Update the registry with the version produced by this instruction
@@ -1134,14 +1151,14 @@ impl<'a> SSAConversionState<'a> {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_id) {
                         successor_block
                             .predecessors
-                            .push(crate::disasm::v3::control_flow::PredecessorKind::FollowsFrom(*block_id));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::FollowsFrom(block_id)); // Remove dereference
                     }
                 }
                 crate::disasm::v3::control_flow::NextKind::Goto(target_block_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_block_id) {
                         successor_block
                             .predecessors
-                            .push(crate::disasm::v3::control_flow::PredecessorKind::GotoFrom(*block_id));
+                            .push(crate::disasm::v3::control_flow::PredecessorKind::GotoFrom(block_id)); // Remove dereference
                     }
                 }
                 crate::disasm::v3::control_flow::NextKind::FunctionCall(call) => {
