@@ -1189,17 +1189,87 @@ mod tests {
         };
     }
 
-    // Stub implementation for find_marker on FunctionView<SsaComplete>
-    impl<'a> FunctionView<'a, SsaComplete> {
-        pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult<'a>> {
-            // TODO: Implement proper marker search within SSA blocks/instructions
-            panic!(
-                "Marker search not yet implemented for FunctionView<SsaComplete>. Marker: '{}'",
-                marker
-            );
-            // None
+    // Helper to find an Addressable marked with a specific char within an Expression<SsaMemoryReference>
+    fn find_addressable_under_marker<'a>(expr: &'a Expression<SsaMemoryReference>, marker: char) -> Option<&'a SsaMemoryReference> {
+        match expr {
+            Expression::DebugMarker(m, inner_expr) if *m == marker => {
+                // Found the marker, now find the addressable inside
+                find_first_addressable_in_expr(inner_expr)
+            }
+            Expression::DebugMarker(_, inner_expr) => {
+                // Wrong marker, search inside
+                find_addressable_under_marker(inner_expr, marker)
+            }
+            Expression::Binary { lhs, rhs, .. } => {
+                find_addressable_under_marker(lhs, marker)
+                    .or_else(|| find_addressable_under_marker(rhs, marker))
+            }
+            Expression::Unary { arg, .. } => {
+                find_addressable_under_marker(arg, marker)
+            }
+            _ => None, // Constant or Addressable without marker
         }
     }
+
+
+    // Helper to find the first Addressable node in an expression tree
+    fn find_first_addressable_in_expr<'a>(expr: &'a Expression<SsaMemoryReference>) -> Option<&'a SsaMemoryReference> {
+         match expr {
+             Expression::Addressable(addr) => Some(addr),
+             Expression::Binary { lhs, rhs, .. } => {
+                 find_first_addressable_in_expr(lhs)
+                     .or_else(|| find_first_addressable_in_expr(rhs))
+             }
+             Expression::Unary { arg, .. } => find_first_addressable_in_expr(arg),
+             Expression::DebugMarker(_, inner_expr) => find_first_addressable_in_expr(inner_expr),
+             Expression::Constant(_) => None,
+         }
+    }
+
+    // Helper to find marker within SsaMemoryReference (specifically for Deref)
+    fn find_addressable_marker_in_ssa_ref<'a>(ssa_ref: &'a SsaMemoryReference, marker: char) -> Option<&'a SsaMemoryReference> {
+        match ssa_ref {
+            SsaMemoryReference::Versioned(_) => None, // Markers aren't directly on Versioned
+            SsaMemoryReference::Deref(inner_expr) => {
+                // Search within the expression being dereferenced
+                find_addressable_under_marker(inner_expr, marker)
+            }
+        }
+    }
+
+
+    // Implementation for find_marker on FunctionView<SsaComplete>
+    impl<'a> FunctionView<'a, SsaComplete> {
+        pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult<'a>> {
+            for (_, block_view) in self.blocks() { // Iterate blocks via FunctionView
+                let ssa_block = block_view.ssa(); // Get SsaBlock via BlockView
+                for instr_node in &ssa_block.instructions {
+                    // Check Assign target marker
+                    if let Instruction::Assign { target, target_debug_marker: Some(m), .. } = &instr_node.kind {
+                        if *m == marker {
+                            // Found marker on the target addressable
+                            return Some(MarkerSearchResult::SsaAddressable(target));
+                        }
+                    }
+
+                    // Check expressions within the instruction
+                    for expr in instr_node.kind.collect_source_expressions() {
+                         if let Some(addr) = find_addressable_under_marker(expr, marker) {
+                            return Some(MarkerSearchResult::SsaAddressable(addr));
+                         }
+                    }
+                     // Check write target addressable for implicit reads (like *ptr in *ptr = ...)
+                     if let Some(write_addr) = instr_node.kind.get_write_address() {
+                         if let Some(found_addr) = find_addressable_marker_in_ssa_ref(write_addr, marker) {
+                             return Some(MarkerSearchResult::SsaAddressable(found_addr));
+                         }
+                     }
+                }
+            }
+            None // Marker not found
+        }
+    }
+
 
     macro_rules! assert_marker_at_main {
         ($ctx:expr, $marker:expr, $expected_operand:expr) => {{
@@ -1209,13 +1279,15 @@ mod tests {
                 .find_marker($marker) // Call the stubbed method
                 .unwrap_or_else(|| panic!("Marker '{}' not found in main function", $marker));
 
+            // The find_marker implementation now only returns SsaAddressable variant
             let res = match found_operand {
                 MarkerSearchResult::SsaAddressable(a) => a,
-                MarkerSearchResult::Expr(Expression::Addressable(a)) => a,
-                _ => panic!("Expected SsaAddressable or Expr::Addressable"),
+                // MarkerSearchResult::Expr case is no longer expected here,
+                // as find_marker drills down to the SsaAddressable.
+                _ => panic!("Expected MarkerSearchResult::SsaAddressable, found {:?}", found_operand),
             };
             pretty_assertions::assert_eq!(
-                &$expected_operand,
+                &$expected_operand, // expected_operand should be SsaMemoryReference
                 res,
                 "For marker '{} expected: {:?}, actual: {:?}",
                 $marker,
