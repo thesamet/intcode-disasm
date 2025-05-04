@@ -60,13 +60,13 @@ macro_rules! make_model {
                         marker: std::marker::PhantomData,
                     }
                 }
+                // Define with_ methods for each field using direct implementation
                 $(
-                let $field = update_fields_helper!(
-                                    $model,
-                                    $field,           // Pass the type of the outer field
-                                    { $($field),* }   // Pass the full list of all field types
-                                );
-                )*;
+                pub fn [<with_ $field:snake:lower>](mut self, value: $field) -> Self {
+                    self.[<$field:snake:lower>] = Some(value);
+                    self
+                }
+                )*
 
                 // Define with_ methods for each field
             }
