@@ -962,7 +962,8 @@ impl<'a> SSAConversionState<'a> {
                         // Propagate the version from the predecessor to the current block's start state (new_in)
                         // Note: If multiple predecessors provide a version for the *same* non-phi variable,
                         // this implies an issue earlier (data flow or phi placement).
-                        // We might overwrite here, but the last write wins. Assertions below check consistency.
+                        // Propagate the version from the predecessor to the current block's start state (new_in)
+                        // This handles the case where the variable is live-in and not defined by a phi here.
                         new_in.set_version(*mem_ref_type, *versioned_mem_ref);
 
                         // If the current block *doesn't* write to this variable (checked via initial_end_states),
@@ -970,7 +971,7 @@ impl<'a> SSAConversionState<'a> {
                         if !initial_end_states[block_id].has_version_for(mem_ref_type) {
                             new_out.set_version(*mem_ref_type, *versioned_mem_ref);
                         }
-
+                        // --- REMOVED DUPLICATE CALLS BELOW ---
                         // If we get multiple live value through the predecessor, some phi function
                         // should have concsolidated them and then we wouldn't get here (since the
                         // var would be in initial_start_states).
@@ -987,10 +988,10 @@ impl<'a> SSAConversionState<'a> {
                             ssa_blocks[block_id].start_state.get(var_kind).unwrap()
                         );
                         */
+                        // --- REMOVED DUPLICATE CALL to new_in.set_version ---
 
-                        new_in.set_version(*mem_ref_type, *versioned_mem_ref);
-
-                        // means we write to the key, so this can't affect the end_state
+                        // If the current block writes to this variable (checked via initial_end_states),
+                        // the propagated version doesn't affect the end_state (new_out).
                         if initial_end_states[block_id].has_version_for(mem_ref_type) {
                             continue;
                         }
@@ -1007,7 +1008,7 @@ impl<'a> SSAConversionState<'a> {
                             pred.source_block_id()
                         );
                         */
-                        new_out.set_version(*mem_ref_type, *versioned_mem_ref);
+                         // --- REMOVED DUPLICATE CALL to new_out.set_version ---
                     }
                 }
 
