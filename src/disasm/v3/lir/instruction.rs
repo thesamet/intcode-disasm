@@ -112,47 +112,11 @@ impl<A: ReadAddressExtractor> Instruction<A> {
 }
 
 impl<A> InstructionNode<A> {
-    /// Maps all addressable references (`A`) within the instruction to a new type (`T`)
-    /// using the provided closure.
-    pub fn map<F, T>(&self, map_fn: &mut F) -> InstructionNode<T>
-    where
-        F: FnMut(&A) -> T,
-    {
-        let map_kind = |kind: &Instruction<A>| match kind {
-            Instruction::Assign {
-                target,
-                src,
-                target_debug_marker,
-            } => Instruction::Assign {
-                target: map_fn(target),
-                src: src.map(map_fn),
-                target_debug_marker: *target_debug_marker,
-            },
-            Instruction::If {
-                cond,
-                then_addr,
-                else_addr,
-            } => Instruction::If {
-                cond: cond.map(map_fn),
-                then_addr: *then_addr,
-                else_addr: *else_addr,
-            },
-            Instruction::Goto(addr) => Instruction::Goto(*addr),
-            Instruction::Call { addr, return_to } => Instruction::Call {
-                addr: addr.map(map_fn),
-                return_to: *return_to,
-            },
-            Instruction::Output(expr) => Instruction::Output(expr.map(map_fn)),
-            Instruction::Return => Instruction::Return,
-            Instruction::Halt => Instruction::Halt,
-        };
+    // Removed the recently added 'map' method.
 
-        InstructionNode {
-            id: self.id,
-            kind: map_kind(&self.kind),
-        }
-    }
-
+    /// Maps addressable references within the instruction, distinguishing between reads and writes.
+    /// - `map_read` is applied to all references within expressions (RHS of Assign, If cond, Call addr, Output expr).
+    /// - `map_write` is applied *only* to the target reference of an Assign instruction.
     pub fn map_rw<C, R, W, T>(
         &self,
         context: &mut C,

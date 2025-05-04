@@ -1100,12 +1100,12 @@ impl<'a> SSAConversionState<'a> {
             let mut populated_instructions = Vec::with_capacity(ssa_block.instructions.len());
 
             for instr_node in &ssa_block.instructions { // Iterate over instructions with finalized writes
-                // Map reads within the instruction node using the block's start_state
-                // Use the newly added map method
-                let read_mapped_instr = instr_node.map(&mut |ssa_mem_ref: &SsaMemoryReference| {
-                    // Use the start_state registry to find the correct version for reads
-                    start_state.current_memory_reference(ssa_mem_ref)
-                });
+                // Map reads using start_state, map writes by cloning (version is already final)
+                let read_mapped_instr = instr_node.map_rw(
+                    &mut (), // No context needed for these simple closures
+                    |_, ssa_mem_ref| start_state.current_memory_reference(ssa_mem_ref), // map_read
+                    |_, ssa_mem_ref| ssa_mem_ref.clone(), // map_write (just clone)
+                );
                 populated_instructions.push(read_mapped_instr);
             }
 
@@ -1289,10 +1289,17 @@ mod tests {
         let mut v2_model = ProgramModel::new();
         let mut publisher = EventPublisher::<Event, ProgramModel>::new();
 
-        // Register listeners for the pipeline
-        publisher.add_listener(Box::new(ImageScanner::new()));
-        publisher.add_listener(Box::new(ControlFlowGraphBuilder::new()));
-        publisher.add_listener(Box::new(DataFlowAnalyzer::new()));
+        // Register v2 listeners for the pipeline using their full paths
+        publisher.add_listener(Box::new(
+            crate::disasm::v2::listeners::image_scanner::ImageScanner::new(),
+        ));
+        publisher.add_listener(Box::new(
+            crate::disasm::v2::listeners::control_flow_graph_builder::ControlFlowGraphBuilder::new(
+            ),
+        ));
+        publisher.add_listener(Box::new(
+            crate::disasm::v2::listeners::data_flow_analyzer::DataFlowAnalyzer::new(),
+        ));
         publisher.add_listener(Box::new(SsaConverter::new())); // This listener now runs v3 analysis internally
 
         // Run the v2 pipeline (which triggers the modified SsaConverter)
