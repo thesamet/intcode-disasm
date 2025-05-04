@@ -76,14 +76,17 @@ impl std::fmt::Display for MemoryReferenceType {
     }
 }
 
-// Implement From<&MemoryReferenceType> for MemoryReference
-impl From<&MemoryReferenceType> for MemoryReference {
-    fn from(value: &MemoryReferenceType) -> Self {
-        match value {
-            MemoryReferenceType::Memory(addr) => MemoryReference::Global(*addr),
-            MemoryReferenceType::RelativeMemory(offset) => MemoryReference::StackRelative(*offset),
-            MemoryReferenceType::Pointer(id) => MemoryReference::Pointer(*id),
-        }
+impl<'a> MemoryReferenceInfo<'a> for &'a MemoryReferenceType {
+    fn to_memory_reference(&self) -> MemoryReference {
+        (*self).into()
+    }
+
+    fn as_deref(&self) -> Option<Expression<MemoryReference>> {
+        panic!("Programming error: MemoryReferenceType can't be a deref")
+    }
+
+    fn is_deref(&self) -> bool {
+        panic!("Programming error: MemoryReferenceType can't be a deref")
     }
 }
 
@@ -101,13 +104,6 @@ impl VersionedMemoryReference {
             function_id,
             version,
         }
-    }
-}
-
-// Implement From<&VersionedMemoryReference> for MemoryReference
-impl From<&VersionedMemoryReference> for MemoryReference {
-    fn from(value: &VersionedMemoryReference) -> Self {
-        (&value.kind).into() // Convert the inner kind
     }
 }
 
@@ -135,28 +131,6 @@ impl SsaMemoryReference {
 impl From<VersionedMemoryReference> for SsaMemoryReference {
     fn from(v: VersionedMemoryReference) -> Self {
         SsaMemoryReference::Versioned(v)
-    }
-}
-
-impl<'a> MemoryReferenceInfo<'a> for SsaMemoryReference {
-    fn to_memory_reference(&self) -> MemoryReference {
-        match self {
-            SsaMemoryReference::Versioned(v) => v.to_memory_reference(),
-            SsaMemoryReference::Deref(expr) => {
-                MemoryReference::Deref(Box::new(expr.map(&mut |v| v.to_memory_reference())))
-            }
-        }
-    }
-}
-
-// Implement ReadAddressExtractor for SsaMemoryReference
-use crate::disasm::v3::lir::ReadAddressExtractor; // Import the trait
-impl ReadAddressExtractor for SsaMemoryReference {
-    fn extract_read_addresses(&self) -> Vec<&Self> {
-        match self {
-            SsaMemoryReference::Deref(expr) => expr.collect_read_addresses(),
-            SsaMemoryReference::Versioned(_) => Vec::new(),
-        }
     }
 }
 
@@ -552,7 +526,7 @@ pub struct VersionRegistry {
 }
 
 impl VersionRegistry {
-    pub fn new(function_id: FunctionId) -> Self {
+    fn new(function_id: FunctionId) -> Self {
         Self {
             current_versions: HashMap::new(),
             function_id,
@@ -897,13 +871,9 @@ impl<'a> SSAConversionState<'a> {
                     let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
                     // new_in should store SsaVarKind -> SsaVar
                     for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
-                        let mem_ref: MemoryReference = mem_ref_type.into(); // Convert once
-                        if !live_in.contains_key(&mem_ref) {
-                            if let Some(offset) = (&mem_ref).as_stack_relative() {
-                                if offset <= 0 {
-                                    continue;
-                                }
-                            }
+                        if !live_in.contains_key(&mem_ref_type.into())
+                            && !mem_ref_type.is_local_or_parameter()
+                        {
                             // This var doesn't live from here and not a return value
                             trace!("Skipping var {} from predecessor {} because it doesn't live in this block {block_id}", mem_ref_type, pred_id);
                             continue;
@@ -984,102 +954,95 @@ impl<'a> SSAConversionState<'a> {
                 for pred in &block.predecessors {
                     let pred_id = pred.source_block_id();
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap();
-                    if matches!(pred, PredecessorKind::FunctionCallReturns(_)) {
-                        let mem_ref: MemoryReference = (&phi.result.kind).into();
-                        if (&mem_ref).as_stack_relative().is_some_and(|x| x > 0) {
-                            // Call trait method on reference
-                            // For function returns, the phi result itself represents the value.
-                            // Wrap the SsaVar result in SsaOperand::Variable.
-                            phi_inputs.insert(pred.clone(), phi.result.clone());
-                        } else {
-                            phi_inputs.insert(
-                                pred.clone(),
-                                pred_ssa_block.end_state.current_version(&phi.result.kind),
-                            );
-                        }
+                    if matches!(pred, PredecessorKind::FunctionCallReturns(_))
+                        && phi.result.as_stack_relative().is_some_and(|x| x > 0)
+                    {
+                        // For function returns, the phi result itself represents the value.
+                        // Wrap the SsaVar result in SsaOperand::Variable.
+                        phi_inputs.insert(pred.clone(), phi.result.clone());
+                    } else {
+                        phi_inputs.insert(
+                            pred.clone(),
+                            pred_ssa_block.end_state.current_version(&phi.result.kind),
+                        );
                     }
-                    let mut phi = phi.clone();
-                    phi.inputs = phi_inputs;
-                    phi_functions.push(phi);
                 }
-                let mut instructions = vec![];
-                let mut registry = ssa_block.start_state.clone();
-                for instr in &ssa_block.instructions {
-                    let mut instr = instr.clone();
-                    if instr.id == InstructionId::from(6) {
-                        print!("Outside map_rw: {:?}", registry);
-                    }
-                    instr = instr.map_rw(
-                        &mut registry,
-                        |reg, ssa_mem_ref| {
-                            reg.current_memory_reference(&ssa_mem_ref.to_memory_reference())
-                        }, // Specify type T
-                        |reg, ssa_mem_ref| match ssa_mem_ref {
-                            SsaMemoryReference::Deref(expr) => {
-                                // Pass &Expression<SsaMemoryReference> to current_expression
-                                SsaMemoryReference::Deref(Box::new(reg.current_expression(
-                                    &expr.as_ref().map(&mut |v| v.to_memory_reference()),
-                                ))) // Specify type T
-                            }
-                            _ => ssa_mem_ref.clone(), // Clone the SsaMemoryReference
-                        },
-                    );
-                    if let Some(write) = instr.kind.get_write_address() {
-                        if let Some(write) = write.as_versioned() {
-                            registry.set_version(write.kind, *write);
-                        }
-                    }
-                    instructions.push(instr);
-                }
-                let ssa_block_next = {
-                    block
-                        .next
-                        .map(&mut |op| ssa_block.end_state.current_memory_reference(op))
-                };
-                let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
-                ssa_block.instructions = instructions;
-                ssa_block.phi_functions = phi_functions;
-                match &ssa_block_next {
-                    NextKind::Follows(target_id) => {
-                        ssa_blocks
-                            .get_mut(&target_id)
-                            .unwrap()
-                            .predecessors
-                            .push(PredecessorKind::FollowsFrom(*block_id));
-                    }
-                    NextKind::Goto(target_block_id) => {
-                        ssa_blocks
-                            .get_mut(&target_block_id)
-                            .unwrap()
-                            .predecessors
-                            .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
-                    }
-                    NextKind::FunctionCall(call) => {
-                        // Add the current block as a predecessor to the function's entry block (this seems incorrect, handled elsewhere?)
-                        // Add the current block (call site) as predecessor to the return block
-                        ssa_blocks
-                            .get_mut(&call.return_block)
-                            .unwrap()
-                            .predecessors
-                            .push(PredecessorKind::FunctionCallReturns(call.clone()));
-                    }
-                    NextKind::Condition(cond) => {
-                        // Add current block as predecessor to the target block
-                        ssa_blocks
-                            .get_mut(&cond.target_block)
-                            .unwrap()
-                            .predecessors
-                            .push(PredecessorKind::ConditionalJump(cond.clone()));
-                        ssa_blocks
-                            .get_mut(&cond.follows_block)
-                            .unwrap()
-                            .predecessors
-                            .push(PredecessorKind::ConditionalFollow(cond.clone()));
-                    }
-                    NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
-                }
-                ssa_blocks.get_mut(block_id).unwrap().next = ssa_block_next;
+                let mut phi = phi.clone();
+                phi.inputs = phi_inputs;
+                phi_functions.push(phi);
             }
+            let mut instructions = vec![];
+            let mut registry = ssa_block.start_state.clone();
+            for instr in &ssa_block.instructions {
+                let mut instr = instr.clone();
+                if instr.id == InstructionId::from(6) {
+                    print!("Outside map_rw: {:?}", registry);
+                }
+                instr = instr.map_rw(
+                    &mut registry,
+                    |reg, ssa_memory_reference| reg.current_memory_reference(ssa_memory_reference),
+                    |reg, ssa_memory_reference| match ssa_memory_reference {
+                        SsaMemoryReference::Deref(expr) => {
+                            SsaMemoryReference::Deref(Box::new(reg.current_expression(&expr)))
+                        }
+                        _ => ssa_memory_reference.clone(),
+                    },
+                );
+                if let Some(write) = instr.kind.get_write_address() {
+                    if let Some(write) = write.as_versioned() {
+                        registry.set_version(write.kind, *write);
+                    }
+                }
+                instructions.push(instr);
+            }
+            let ssa_block_next = {
+                block
+                    .next
+                    .map(&mut |op| ssa_block.end_state.current_memory_reference(op))
+            };
+            let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
+            ssa_block.instructions = instructions;
+            ssa_block.phi_functions = phi_functions;
+            match &ssa_block_next {
+                NextKind::Follows(target_id) => {
+                    ssa_blocks
+                        .get_mut(&target_id)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::FollowsFrom(*block_id));
+                }
+                NextKind::Goto(target_block_id) => {
+                    ssa_blocks
+                        .get_mut(&target_block_id)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::GotoFrom(*block_id)); // Push the source block ID
+                }
+                NextKind::FunctionCall(call) => {
+                    // Add the current block as a predecessor to the function's entry block (this seems incorrect, handled elsewhere?)
+                    // Add the current block (call site) as predecessor to the return block
+                    ssa_blocks
+                        .get_mut(&call.return_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::FunctionCallReturns(call.clone()));
+                }
+                NextKind::Condition(cond) => {
+                    // Add current block as predecessor to the target block
+                    ssa_blocks
+                        .get_mut(&cond.target_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::ConditionalJump(cond.clone()));
+                    ssa_blocks
+                        .get_mut(&cond.follows_block)
+                        .unwrap()
+                        .predecessors
+                        .push(PredecessorKind::ConditionalFollow(cond.clone()));
+                }
+                NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
+            }
+            ssa_blocks.get_mut(block_id).unwrap().next = ssa_block_next;
         }
     }
 }
