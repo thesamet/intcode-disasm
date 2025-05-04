@@ -61,6 +61,9 @@ impl DataFlowAnalyzer {
             "Data Flow Analysis passes complete for {}",
             function.function_id()
         );
+
+        // Pass 5: Update Call Site Info based on return value usage
+        self.update_call_site_info(function, df_result);
     }
 
     /// Pass 1: Initializes gen, use_before_def and function_returns_in sets for all blocks in the function.
@@ -74,6 +77,11 @@ impl DataFlowAnalyzer {
 
             let mut defined_in_block = HashSet::new();
             block_flow.writes_above_r = false;
+
+            // Initialize call_site_info if this block ends with a function call
+            if matches!(block.next(), NextKind::FunctionCall(_)) {
+                block_flow.call_site_info = Some(CallSiteInfo::new());
+            }
 
             for instr in block.low_instructions() {
                 // Calculate USE for this instruction
@@ -390,5 +398,69 @@ impl DataFlowAnalyzer {
         }
 
         new_live_out
+    }
+
+    /// Pass 5: Updates CallSiteInfo based on actual usage of return values.
+    /// Iterates through blocks, finds where return values ([R+n], n>0) are used before definition,
+    /// identifies the unique function call that provided these values, and updates the
+    /// `return_values_accessed` field in the `CallSiteInfo` of the calling block.
+    fn update_call_site_info(&self, function: &Function, df_result: &mut DataFlowResult) {
+        for (block_id, block_flow) in df_result.blocks.iter_mut() {
+            // Find usages of positive stack offsets ([R+n]) that occur *before* any definition within this block.
+            // These represent potential reads of function return values.
+            let return_usages_in_block = block_flow
+                .use_before_def
+                .iter()
+                .filter_map(|(mem_ref, instr_id)| {
+                    mem_ref.as_stack_relative().map(|offset| (offset, *instr_id))
+                })
+                .filter(|&(offset, _)| offset > 0) // Only positive offsets are return values
+                .collect_vec(); // Collect as Vec<(i128, InstructionId)>
+
+            // If we found any such usages...
+            if !return_usages_in_block.is_empty() {
+                // We expect these return values to come from exactly one preceding function call.
+                // The `function_returns_in` set for this block should contain that single call origin.
+                if block_flow.function_returns_in.len() != 1 {
+                    // If this assertion fails, it means our function_returns_in propagation might be flawed,
+                    // or the code structure is unexpected (e.g., merging paths after different function calls
+                    // without clobbering return values).
+                    panic!(
+                        "Block {:?} uses return values but has {} function return sources: {:?}",
+                        block_id,
+                        block_flow.function_returns_in.len(),
+                        block_flow.function_returns_in
+                    );
+                }
+                let func_call_origin = block_flow.function_returns_in.iter().next().unwrap();
+                let calling_block_id = func_call_origin.calling_block;
+
+                // Now, get the DataFlowBlock for the *calling* block and update its CallSiteInfo.
+                if let Some(calling_block_flow) = df_result.blocks.get_mut(&calling_block_id) {
+                    if let Some(call_site_info) = calling_block_flow.call_site_info.as_mut() {
+                        // Add the identified return value usages to the `return_values_accessed` map.
+                        call_site_info
+                            .return_values_accessed
+                            .extend(return_usages_in_block.clone()); // Clone the vec to extend
+                        debug!(
+                            "Updated call site info for block {:?}: added return usages {:?}",
+                            calling_block_id, return_usages_in_block
+                        );
+                    } else {
+                        // This should not happen if initialization was correct.
+                        panic!(
+                            "Block {:?} identified as caller for {:?}, but has no CallSiteInfo",
+                            calling_block_id, block_id
+                        );
+                    }
+                } else {
+                    // This indicates an inconsistency, maybe the calling block is not in the current function?
+                    panic!(
+                        "Calling block {:?} for return usages in {:?} not found in df_result",
+                        calling_block_id, block_id
+                    );
+                }
+            }
+        }
     }
 }
