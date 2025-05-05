@@ -1,0 +1,7 @@
+[package]
+name = "model_macros"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+model_macros_impl = { path = "macro" }

@@ -3,8 +3,12 @@ name = "disasm"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["model_macros"]
+
 [dependencies]
 ambassador = "0.4.1"
+model_macros = { path = "model_macros" }
 clap = { version = "4.5.32", features = ["derive"] }
 colored = "2.1.0"
 derive_more = { version = "2.0.1", features = [
