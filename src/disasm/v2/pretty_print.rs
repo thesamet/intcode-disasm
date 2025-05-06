@@ -1,19 +1,21 @@
+use castaway::cast;
 use colored::*;
 use itertools::Itertools;
 
 use crate::disasm::v3::{
     control_flow::{BlockView, FunctionView},
+    function_call::FunctionCallAnalysisResult,
     model::{
-        HasControlFlowGraphResult,
-        HasSsaResult, Model, ModelState,
-    }, PredecessorKind,
+        FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
+    },
+    PredecessorKind,
 };
 
 use super::{
     instructions::{Expression, Instruction, InstructionNode},
+    model::FunctionId,
     ssa_form::{
-        PhiFunction, SsaMemoryReference, SsaOperandKind, SsaVarKind,
-        VersionedMemoryReference,
+        PhiFunction, SsaMemoryReference, SsaOperandKind, SsaVarKind, VersionedMemoryReference,
     },
 };
 
@@ -23,7 +25,7 @@ struct PrettyPrinter<'a, S: ModelState> {
     show_vars: bool,
 }
 
-impl<'a, S: ModelState> PrettyPrinter<'a, S> {
+impl<'a, S: ModelState + 'static> PrettyPrinter<'a, S> {
     fn format_expression(&self, expr: &Expression<SsaMemoryReference>) -> String {
         match expr {
             Expression::Constant(value) => format!("{value}").green().to_string(),
@@ -129,9 +131,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                     let name = &clusters
                         .clusters
                         .get(cluster_id)
-                        .unwrap_or_else(|| {
-                            panic!("Missing cluster id {cluster_id} for key {var}")
-                        })
+                        .unwrap_or_else(|| panic!("Missing cluster id {cluster_id} for key {var}"))
                         .cluster_name;
                     format!("{name}{typ_str}")
                 }
@@ -316,34 +316,6 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
         */
     }
 
-    pub fn format_callers_comment(&self, function: &FunctionView<S>) -> String
-    where
-        S: HasControlFlowGraphResult + HasSsaResult,
-    {
-        "NO CALLERS FOR NOW MIGRATION".to_string()
-        /*
-        let callers = self
-            .model
-            .function_call_analysis_result()
-            .blocks
-            .iter()
-            .filter(|(_, cs)| cs.target_function_id == Some(function.function_id()))
-            .collect_vec();
-
-        let mut out = vec![];
-        for (block_id, csi) in &callers {
-            out.push(format!(
-                "// at {}: {} -> {}\n",
-                block_id,
-                csi.argument_writes.values().sorted().join(", "),
-                csi.return_reads.values().sorted().join(", ")
-            ));
-        }
-
-        out.join("")
-        */
-    }
-
     fn print_ssa(&self)
     where
         S: HasSsaResult + HasControlFlowGraphResult,
@@ -356,7 +328,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
             .map(|f| -> String {
                 format!(
                     "{}fn {}{} {{\n{}\n}}",
-                    self.format_callers_comment(f),
+                    format_callers_comment(self.model, f.function_id()),
                     f.function_id(),
                     self.format_call_info(f),
                     self.format_function(f)
@@ -369,7 +341,8 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
         println!("{s}");
     }
 }
-pub fn pretty_print_ssa<S: ModelState>(model: &Model<S>)
+
+pub fn pretty_print_ssa<S: ModelState + 'static>(model: &Model<S>)
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
@@ -381,7 +354,7 @@ where
     printer.print_ssa();
 }
 
-pub fn pretty_print_with_types<S: ModelState>(model: &Model<S>)
+pub fn pretty_print_with_types<S: ModelState + 'static>(model: &Model<S>)
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
@@ -391,4 +364,38 @@ where
         show_vars: false,
     };
     printer.print_ssa();
+}
+
+fn format_callers_comment_special(
+    results: &FunctionCallAnalysisResult,
+    callee_function_id: &FunctionId,
+) -> String {
+    let callers = results
+        .blocks
+        .iter()
+        .filter(|(_, cs)| cs.target_function_id == Some(*callee_function_id))
+        .collect_vec();
+
+    let mut out = vec![];
+    for (block_id, csi) in &callers {
+        out.push(format!(
+            "// at {}: {} -> {}\n",
+            block_id,
+            csi.argument_writes.values().sorted().join(", "),
+            csi.return_reads.values().sorted().join(", ")
+        ));
+    }
+
+    out.join("")
+}
+
+fn format_callers_comment<S: ModelState>(model: &Model<S>, function_id: FunctionId) -> String
+where
+    S: 'static,
+{
+    if let Ok(m) = cast!(model, &Model<FunctionCallAnalysisComplete>) {
+        let fca = m.function_call_analysis_result();
+        return format_callers_comment_special(fca, &function_id);
+    }
+    "".to_string()
 }

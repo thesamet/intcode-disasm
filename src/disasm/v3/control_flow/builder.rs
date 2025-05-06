@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 
@@ -59,7 +58,7 @@ impl ControlFlowGraphBuilder {
 
         for function_id in &scanner_result.function_ids() {
             let function_details = &scanner_result.recognized_functions[function_id];
-            self.process_function(*function_id, function_details, &scanner_result)?;
+            self.process_function(*function_id, function_details)?;
         }
 
         info!(
@@ -80,7 +79,6 @@ impl ControlFlowGraphBuilder {
         &mut self,
         function_id: FunctionId,
         function_details: &RecognizedFunction,
-        scanner_result: &crate::disasm::v3::image_scanner::result::ImageScannerResult,
     ) -> Result<(), Error> {
         debug!("Processing function {}", function_id);
 
@@ -337,12 +335,10 @@ impl ControlFlowGraphBuilder {
     ) -> NextKind<MemoryReference> {
         match &last_instr.kind {
             Instruction::Halt => NextKind::Halt,
-            Instruction::Goto(target_addr) => NextKind::Goto((*target_addr)),
-            Instruction::Call { addr, return_to } => NextKind::FunctionCall(FunctionCall::new(
-                block_id,
-                addr.clone(),
-                (*return_to),
-            )),
+            Instruction::Goto(target_addr) => NextKind::Goto(*target_addr),
+            Instruction::Call { addr, return_to } => {
+                NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), *return_to))
+            }
             Instruction::Return => NextKind::Return,
             Instruction::If {
                 cond,

@@ -2,12 +2,14 @@ use itertools::Itertools;
 use log::trace;
 use std::convert::From;
 
+use crate::disasm;
+use crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns;
+use crate::disasm::v3::data_flow::OriginationPoint;
 use crate::disasm::{
     v2::model::{BlockId, FunctionId},
     v3::{
         self,
         control_flow::FunctionView,
-        data_flow::OriginationPoint,
         lir::{Expression, MemoryReference, MemoryReferenceInfo},
         model::{DataFlowComplete, Model, SsaComplete},
         native::{GenericNativeInstruction, Operand, OperandKind}, // Keep v2 Operand for tests/conversion?
@@ -439,7 +441,7 @@ pub struct PhiFunction {
     /// The key is the v3 PredecessorKind corresponding to the incoming edge, but with SsaMemoryReference.
     /// The value is the VersionedMemoryReference representing the value coming from that source.
     pub inputs: HashMap<
-        crate::disasm::v3::control_flow::PredecessorKind<SsaMemoryReference>,
+        disasm::v3::control_flow::PredecessorKind<SsaMemoryReference>,
         VersionedMemoryReference,
     >,
 }
@@ -487,11 +489,10 @@ impl SsaResult {
 
         let mut blocks = HashMap::new();
         // Process each function using the v3 model's function iterator
-        for (v3_function_id, function_view) in model.functions() {
+        for (_, function_view) in model.functions() {
             // Convert v3 FunctionId to v2 FunctionId for SsaResult key and internal use
             // Assuming a simple usize conversion is okay for now.
             // TODO: Revisit ID conversions if they become more complex.
-            let v2_function_id = FunctionId::new(v3_function_id.index());
 
             // Pass the v3 model and the specific function view to the converter
             let mut converter = SSAConversionState::new(&model, function_view);
@@ -517,16 +518,6 @@ impl VersionRegistry {
     pub fn new(function_id: FunctionId) -> Self {
         Self {
             current_versions: HashMap::new(),
-            function_id,
-        }
-    }
-
-    fn new_with_versions(
-        function_id: FunctionId,
-        current_versions: HashMap<MemoryReferenceType, VersionedMemoryReference>,
-    ) -> Self {
-        Self {
-            current_versions,
             function_id,
         }
     }
@@ -779,7 +770,7 @@ impl<'a> SSAConversionState<'a> {
                 start_state,
                 end_state,
                 // Initialize next/predecessors, will be populated in populate_reads_and_phis
-                next: crate::disasm::v3::control_flow::NextKind::Unknown,
+                next: disasm::v3::control_flow::NextKind::Unknown,
                 predecessors: vec![],
             };
 
@@ -833,26 +824,16 @@ impl<'a> SSAConversionState<'a> {
                 };
 
             // Find return values accessed if this block is a return site
-            let return_values_accessed: Vec<MemoryReference> = if let Some(
-                crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(fc), // Use v3 type
-            ) =
-                predecessors.iter().find(|pred| {
-                    matches!(
-                        pred,
-                        crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_)
-                    )
-                }) {
+            let return_values_accessed: Vec<MemoryReference> = if predecessors
+                .iter()
+                .any(|pred| matches!(pred, FunctionCallReturns(_)))
+            {
                 // Get the calling block's view and its data flow info
-                self.model
-                    .function(&self.function.function_id()) // Need function context for block view
-                    .block(&fc.calling_block) // Get BlockView for the caller
-                    .data_flow()
-                    .call_site_info
-                    .as_ref() // Access CallSiteInfo from v3 DataFlowBloc
-                    .map(|call_info| {
-                        call_info
-                            .return_values_accessed // This is HashMap<i128, InstructionId>
-                            .keys()
+                block_flow
+                    .return_values_accessed
+                    .as_ref()
+                    .map(|rva| {
+                        rva.keys()
                             .map(|offset| MemoryReference::StackRelative(*offset)) // Convert offset to MemoryReference
                             .collect_vec()
                     })
@@ -974,25 +955,6 @@ impl<'a> SSAConversionState<'a> {
                         if !initial_end_states[block_id].has_version_for(mem_ref_type) {
                             new_out.set_version(*mem_ref_type, *versioned_mem_ref);
                         }
-                        // --- REMOVED DUPLICATE CALLS BELOW ---
-                        // If we get multiple live value through the predecessor, some phi function
-                        // should have concsolidated them and then we wouldn't get here (since the
-                        // var would be in initial_start_states).
-                        /*
-                        // We may get multiple definitions, however they are never read.
-                        assert!(
-                            ssa_blocks[block_id]
-                                .start_state
-                                .get(var_kind)
-                                .is_none_or(|x| x == var),
-                            "Predecessor {} provided {var} however start_state of {} already had {}",
-                            pred.source_block_id(),
-                            block_id,
-                            ssa_blocks[block_id].start_state.get(var_kind).unwrap()
-                        );
-                        */
-                        // --- REMOVED DUPLICATE CALL to new_in.set_version ---
-
                         // If the current block writes to this variable (checked via initial_end_states),
                         // the propagated version doesn't affect the end_state (new_out).
                         if initial_end_states[block_id].has_version_for(mem_ref_type) {
@@ -1049,9 +1011,7 @@ impl<'a> SSAConversionState<'a> {
                     let pred_id = pred.source_block_id();
                     // Get the end state of the predecessor block from the ssa_blocks map
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap_or_else(|| {
-                        panic!(
-                            "Predecessor block {pred_id} not found for block {block_id}"
-                        )
+                        panic!("Predecessor block {pred_id} not found for block {block_id}")
                     });
 
                     // Define the mapping closure to *convert* predecessor MemoryReferences based on its end_state
@@ -1139,50 +1099,48 @@ impl<'a> SSAConversionState<'a> {
 
             // Update predecessors of successor blocks using the v3 NextKind (ssa_block_next)
             match &ssa_block_next {
-                crate::disasm::v3::control_flow::NextKind::Follows(target_id) => {
+                disasm::v3::control_flow::NextKind::Follows(target_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_id) {
                         successor_block.predecessors.push(
-                            crate::disasm::v3::control_flow::PredecessorKind::FollowsFrom(block_id),
+                            disasm::v3::control_flow::PredecessorKind::FollowsFrom(block_id),
                         ); // Use block_id directly
                     }
                 }
-                crate::disasm::v3::control_flow::NextKind::Goto(target_block_id) => {
+                disasm::v3::control_flow::NextKind::Goto(target_block_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_block_id) {
                         successor_block.predecessors.push(
-                            crate::disasm::v3::control_flow::PredecessorKind::GotoFrom(block_id),
+                            disasm::v3::control_flow::PredecessorKind::GotoFrom(block_id),
                         ); // Use block_id directly
                     }
                 }
-                crate::disasm::v3::control_flow::NextKind::FunctionCall(call) => {
+                disasm::v3::control_flow::NextKind::FunctionCall(call) => {
                     // 'call' is already v3::FunctionCall<SsaMemoryReference>
                     if let Some(successor_block) = ssa_blocks.get_mut(&call.return_block) {
-                        successor_block.predecessors.push(
-                            crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(
-                                call.clone(),
-                            ),
-                        );
+                        successor_block
+                            .predecessors
+                            .push(FunctionCallReturns(call.clone()));
                     }
                 }
-                crate::disasm::v3::control_flow::NextKind::Condition(cond) => {
+                disasm::v3::control_flow::NextKind::Condition(cond) => {
                     // 'cond' is already v3::Condition<SsaMemoryReference>
                     if let Some(target_block) = ssa_blocks.get_mut(&cond.target_block) {
                         target_block.predecessors.push(
-                            crate::disasm::v3::control_flow::PredecessorKind::ConditionalJump(
+                            disasm::v3::control_flow::PredecessorKind::ConditionalJump(
                                 cond.clone(),
                             ),
                         );
                     }
                     if let Some(follows_block) = ssa_blocks.get_mut(&cond.follows_block) {
                         follows_block.predecessors.push(
-                            crate::disasm::v3::control_flow::PredecessorKind::ConditionalFollow(
+                            disasm::v3::control_flow::PredecessorKind::ConditionalFollow(
                                 cond.clone(),
                             ),
                         );
                     }
                 }
-                crate::disasm::v3::control_flow::NextKind::Return
-                | crate::disasm::v3::control_flow::NextKind::Halt
-                | crate::disasm::v3::control_flow::NextKind::Unknown => { /* No successors */ }
+                disasm::v3::control_flow::NextKind::Return
+                | disasm::v3::control_flow::NextKind::Halt
+                | disasm::v3::control_flow::NextKind::Unknown => { /* No successors */ }
             }
             // Store the final v3 NextKind in the block
             let ssa_block = ssa_blocks.get_mut(&block_id).unwrap(); // Need mutable borrow later
@@ -1199,7 +1157,6 @@ mod tests {
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
-    use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
     use crate::disasm::v3::model::SsaComplete;
     // Keep v2 dispatching
@@ -1207,9 +1164,9 @@ mod tests {
         control_flow::ControlFlowGraphBuilder as V3ControlFlowGraphBuilder, // Alias v3 CFG Builder
         data_flow::DataFlowAnalyzer as V3DataFlowAnalyzer, // Alias v3 Data Flow Analyzer
         image_scanner::ImageScanner as V3ImageScanner,     // Alias v3 Image Scanner
-        model::{DataFlowComplete, InitialState, Model},    // Import v3 Model types
+        model::Model,                                      // Import v3 Model types
     };
-    use pretty_assertions::{assert_eq, assert_matches};
+    use pretty_assertions::assert_eq;
     use v3::model::InputBinary;
 
     // Define SSA macros for creating expected SsaOperand values with Variable kinds
@@ -1415,7 +1372,7 @@ mod tests {
 
         // SSA conversion is done within setup_analyzed_models now
         // Access the main function view from the resulting model
-        let func_view = model.function(&V3FunctionId::new(0));
+        let func_view = model.function(&FunctionId::new(0));
 
         // Expect the function to have blocks
         assert!(!func_view.blocks().count() > 0);
@@ -1457,7 +1414,7 @@ mod tests {
         );
 
         // Find the block with the output instruction (the merge block)
-        let main_func_view = model.function(&V3FunctionId::new(0)); // Returns FunctionView directly
+        let main_func_view = model.function(&FunctionId::new(0)); // Returns FunctionView directly
         let mut merge_block_id = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1548,7 +1505,7 @@ mod tests {
         );
 
         // Find the return block by searching for one that contains output instruction
-        let main_func_view = model.function(&V3FunctionId::new(0)); // Returns FunctionView directly
+        let main_func_view = model.function(&FunctionId::new(0)); // Returns FunctionView directly
         let mut found_return_block = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1624,7 +1581,7 @@ mod tests {
         // Get the block view and its SSA data
         let block_id = BlockId::from(0);
         let block_view = model
-            .function(&V3FunctionId::new(0)) // Returns FunctionView directly
+            .function(&FunctionId::new(0)) // Returns FunctionView directly
             .block(&block_id); // Returns BlockView directly
         let block = block_view.ssa(); // Get the SsaBlock
 
@@ -1647,7 +1604,7 @@ mod tests {
                         // Check if target is [R-4] and lhs is also [R-4]
                         if let (
                             MemoryReferenceType::RelativeMemory(target_offset),
-                            Expression::Addressable(SsaMemoryReference::Versioned(lhs_var)),
+                            Expression::Addressable(SsaMemoryReference::Versioned(_)),
                         ) = (target_var.kind, lhs.as_ref())
                         // Remove double deref
                         {
@@ -1706,17 +1663,6 @@ mod tests {
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
-    }
-
-    // Helper function to find debug markers in expressions
-    fn find_first_debug_marker_in_expr<A>(expr: &Expression<A>) -> Option<&Expression<A>> {
-        match expr {
-            Expression::DebugMarker(_, _) => Some(expr),
-            Expression::Binary { lhs, rhs, .. } => find_first_debug_marker_in_expr(lhs)
-                .or_else(|| find_first_debug_marker_in_expr(rhs)),
-            Expression::Unary { arg, .. } => find_first_debug_marker_in_expr(arg),
-            _ => None,
-        }
     }
 
     #[test]

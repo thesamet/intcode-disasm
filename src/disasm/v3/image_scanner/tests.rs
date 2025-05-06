@@ -1,12 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use super::super::{DataSegment, DataType, ImageScanner};
+    use super::super::ImageScanner;
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v3::id_types::FunctionId;
     use crate::disasm::v3::image_scanner::ImageScannerResult;
-    use crate::disasm::v3::model::{InitialState, Model};
-    use std::collections::HashMap;
+    use crate::disasm::v3::model::Model;
 
     fn parse_and_scan(code: &str) -> ImageScannerResult {
         let binary = parser::compile(code);

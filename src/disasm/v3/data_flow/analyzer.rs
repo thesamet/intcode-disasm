@@ -2,14 +2,14 @@ use itertools::Itertools;
 use log::debug;
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::v3::common::{CallSiteInfo, FunctionCall}; // Keep FunctionCall from common
+use crate::disasm::v3::common::FunctionCall; // Keep FunctionCall from common
 use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind};
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo}; // Use LIR types
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
 
-use super::block::{DataFlowBlock, Definition, OriginationPoint};
+use super::block::{Definition, OriginationPoint};
 use super::result::DataFlowResult;
 
 type Function<'a> = FunctionView<'a, ControlFlowGraphComplete>;
@@ -70,17 +70,14 @@ impl DataFlowAnalyzer {
     fn initialize_gen_use_func_in(&self, function: &Function, df_result: &mut DataFlowResult) {
         // Take &Function
         for (block_id, block) in function.blocks() {
-            let block_flow = df_result
-                .blocks
-                .entry(block_id)
-                .or_default();
+            let block_flow = df_result.blocks.entry(block_id).or_default();
 
             let mut defined_in_block = HashSet::new();
             block_flow.writes_above_r = false;
 
-            // Initialize call_site_info if this block ends with a function call
+            // Initialize returns_value_accessed if it's a function call.
             if matches!(block.next(), NextKind::FunctionCall(_)) {
-                block_flow.call_site_info = Some(CallSiteInfo::new());
+                block_flow.return_values_accessed = Some(HashMap::new())
             }
 
             for instr in block.low_instructions() {
@@ -435,18 +432,16 @@ impl DataFlowAnalyzer {
 
                 // Now, get the DataFlowBlock for the *calling* block and update its CallSiteInfo.
                 let calling_block_flow = df_result.blocks.get_mut(&calling_block_id).unwrap();
-                let calling_block_call_site_info =
-                    calling_block_flow.call_site_info.as_mut().unwrap();
 
                 // Add the identified return value usages to the `return_values_accessed` map.
-                calling_block_call_site_info
-                    .return_values_accessed
-                    .extend(return_usages_in_block.clone()); // Clone the vec to extend
-
                 debug!(
-                    "Updated call site info for block {:?}: added return usages {:?}",
+                    "Update call site info for block {:?}: added return usages {:?}",
                     calling_block_id, return_usages_in_block
                 );
+                let return_values_accessed = calling_block_flow
+                    .return_values_accessed
+                    .get_or_insert_default();
+                return_values_accessed.extend(return_usages_in_block);
             }
         }
     }

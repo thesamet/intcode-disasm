@@ -6,16 +6,11 @@ mod tests {
         test_utils::init_logging,
         v3::{
             control_flow::ControlFlowGraphBuilder, // v3 CFG Builder
-            data_flow::{
-                analyzer::DataFlowAnalyzer,
-                block::Definition, // v3 DataFlow types
-                block::OriginationPoint,
-                DataFlowBlock,
-            },
-            id_types::{BlockId, InstructionId, PointerId}, // v3 IDs
-            image_scanner::ImageScanner,                   // v3 Image Scanner
-            lir::{Expression, Instruction, MemoryReference}, // v3 LIR types
-            model::{DataFlowComplete, Model},              // v3 Model states
+            data_flow::{analyzer::DataFlowAnalyzer, block::OriginationPoint, DataFlowBlock},
+            id_types::{BlockId, PointerId},     // v3 IDs
+            image_scanner::ImageScanner,        // v3 Image Scanner
+            lir::{Expression, MemoryReference}, // v3 LIR types
+            model::{DataFlowComplete, Model},   // v3 Model states
         },
     };
     use itertools::Itertools;
@@ -45,24 +40,6 @@ mod tests {
             .find_block(&block_id)
             .map(|b| b.data_flow())
             .unwrap_or_else(|| panic!("Could not find function ID for block {:?}", block_id))
-    }
-
-    // Helper to create a Definition for assertions (using v3 types)
-    fn def(instr_id: InstructionId, location: MemoryReference, block_id: BlockId) -> Definition {
-        Definition {
-            source: OriginationPoint::Instruction(instr_id),
-            kind: location,
-            block_id,
-        }
-    }
-
-    // Helper to create a Definition from FunctionInput
-    fn func_input_def(location: MemoryReference, block_id: BlockId) -> Definition {
-        Definition {
-            source: OriginationPoint::FunctionInput,
-            kind: location,
-            block_id,
-        }
     }
 
     #[test]
@@ -176,7 +153,7 @@ mod tests {
         let block20_id = BlockId::from(20); // Merge block
         let block22_id = BlockId::from(22); // Return block
 
-        let flow0 = get_flow(&model, block0_id);
+        let _flow0 = get_flow(&model, block0_id);
         let flow9 = get_flow(&model, block9_id);
         let flow16 = get_flow(&model, block16_id);
         let flow20 = get_flow(&model, block20_id);
@@ -507,18 +484,18 @@ mod tests {
 
         // --- Check Call Site Info (Block 0) ---
         assert!(
-            flow0.call_site_info.is_some(),
+            flow0.return_values_accessed.is_some(),
             "Call site info should be present in block 0"
         );
-        let call_site_info = flow0.call_site_info.as_ref().unwrap();
+        let return_values_accessed = flow0.return_values_accessed.as_ref().unwrap();
 
         // Should have return values accessed for [R+1] and [R+2]
         assert!(
-            call_site_info.return_values_accessed.contains_key(&1),
+            return_values_accessed.contains_key(&1),
             "Call site should record [R+1] as accessed"
         );
         assert!(
-            call_site_info.return_values_accessed.contains_key(&2),
+            return_values_accessed.contains_key(&2),
             "Call site should record [R+2] as accessed"
         );
 
@@ -827,15 +804,14 @@ mod tests {
         // Block 30 calls func3, return is read in block 53 ([R+1])
         let flow30 = get_flow(&model, BlockId::from(30));
         assert!(
-            flow30.call_site_info.is_some(),
+            flow30.return_values_accessed.is_some(),
             "Block 30 should have call site info"
         );
         assert!(
             flow30
-                .call_site_info
+                .return_values_accessed
                 .as_ref()
                 .unwrap()
-                .return_values_accessed
                 .contains_key(&1),
             "Call site info for block 30 should record access to [R+1]"
         );
@@ -844,17 +820,9 @@ mod tests {
 
         // Block 81 calls func2, no return read in block 92
         let flow81 = get_flow(&model, BlockId::from(81));
-        assert!(
-            flow81.call_site_info.is_some(),
-            "Block 81 should have call site info"
-        );
-        assert!(
-            flow81
-                .call_site_info
-                .as_ref()
-                .unwrap()
-                .return_values_accessed
-                .is_empty(),
+        assert_eq!(
+            flow81.return_values_accessed,
+            Some(HashMap::new()),
             "Call site info for block 81 should record no return access"
         );
     }
@@ -885,7 +853,7 @@ mod tests {
 
         // Find the actual PointerIds created by the analysis for ptr1 and ptr2
         // They depend on the InstructionIds assigned during CFG building.
-        let block0_instrs = model.find_block(&block0_id).unwrap().low_instructions();
+        let _block0_instrs = model.find_block(&block0_id).unwrap().low_instructions();
         // ptr1 = 2 is the first instruction ([100]=2), ptr2 = 4 is the second ([101]=4)
         // Assuming the LIR converter creates PointerIds based on the instruction ID writing to the pointer variable's memory location.
         // Let's find the instruction IDs for the assignments `[100]=2` and `[101]=4` which represent ptr1 and ptr2 definitions.

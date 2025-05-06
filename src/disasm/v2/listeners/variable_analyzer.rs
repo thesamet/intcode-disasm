@@ -1,14 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use itertools::Itertools;
-
 use crate::disasm::v2::model::FunctionId;
 use crate::disasm::v3::define_id_type;
-use crate::disasm::{
-    v2::ssa_form::SsaVar,
-    v2::type_inference::types::Type,
-};
+use crate::disasm::{v2::ssa_form::SsaVar, v2::type_inference::types::Type};
 
 mod disjoint_set;
 

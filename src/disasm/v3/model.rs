@@ -74,6 +74,7 @@ macro_rules! add_block_view_when {
                         .[<$result_type:snake:lower _result>]()
                         .blocks
                         .get(&self.block_id())
+                        .as_ref()
                         .unwrap_or_else(|| {
                             panic!(
                                 "Could not find {} information for block {}",
@@ -102,9 +103,7 @@ where
     }
 
     pub fn all_blocks<'a>(&'a self) -> impl Iterator<Item = (BlockId, BlockView<'a, S>)> {
-        self.functions().flat_map(move |(_, function)| {
-            function
-                .blocks()
-        })
+        self.functions()
+            .flat_map(move |(_, function)| function.blocks())
     }
 }

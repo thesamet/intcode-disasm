@@ -1,4 +1,5 @@
-use crate::disasm::v3::common::{CallSiteInfo, FunctionCall}; // Keep FunctionCall from common
+use crate::disasm::v3::common::FunctionCall;
+
 use crate::disasm::v3::id_types::InstructionId; // Added BlockId import
 use crate::disasm::v3::lir::MemoryReference; // Use LIR MemoryReference
 use crate::disasm::v3::model::add_block_view_when;
@@ -46,8 +47,9 @@ pub struct DataFlowBlock {
     pub function_returns_out: HashSet<FunctionCall<MemoryReference>>,
 
     // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
-    pub call_site_info: Option<CallSiteInfo>,
+    pub return_values_accessed: Option<HashMap<i128, InstructionId>>, // Use imported InstructionId
 }
+
 add_block_view_when!(DataFlow, data_flow);
 
 impl DataFlowBlock {

@@ -1,6 +1,5 @@
-use crate::disasm::v3::common::CallSiteInfo;
+use crate::disasm::v2::ssa_form::VersionedMemoryReference;
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
-use crate::disasm::v3::lir::MemoryReference;
 // Use LIR MemoryReference
 use crate::disasm::v3::model::add_block_view_when;
 use std::collections::HashMap;
@@ -15,13 +14,13 @@ pub struct CalleeInfo {
     /// within *this function* that represents the *first read* of that parameter,
     /// typically near the function entry.
     // TODO: Replace VersionedMemoryReference with the appropriate v3 SSA type when available
-    pub parameter_entry_vars: HashMap<i128, MemoryReference>, // Placeholder type
+    pub parameter_entry_vars: HashMap<i128, VersionedMemoryReference>, // Placeholder type
 
     /// Return values defined by this function.
     /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *last write* to that location before returning.
     // TODO: Replace VersionedMemoryReference with the appropriate v3 SSA type when available
-    pub return_writes: HashMap<i128, MemoryReference>, // Placeholder type
+    pub return_writes: HashMap<i128, VersionedMemoryReference>, // Placeholder type
 }
 
 #[derive(Debug, Clone)]
@@ -54,23 +53,20 @@ macro_rules! add_function_view_when {
              where
                  S: crate::disasm::v3::model::[<Has $result_type Result>],
              {
-                 pub fn $result_var(&self) -> &$info_type {
+                 pub fn $result_var(&self) -> &'a $info_type {
                      self.model
                          .[<$result_type:snake:lower _result>]()
                          .functions
                          .get(&self.function_id())
-                         .unwrap_or_else(|| {
-                             panic!(
-                                 "Could not find {} information for function {}",
-                                 stringify!($result_var),
-                                 self.function_id()
-                             )
-                         })
+                         .as_ref()
+                         .unwrap()
                  }
              }
          }
      };
  }
 pub(crate) use add_function_view_when;
+
+use super::analyzer::CallSiteInfo;
 
 add_function_view_when!(FunctionCallAnalysis, callee_info, CalleeInfo);
