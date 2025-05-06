@@ -8,10 +8,9 @@ use crate::disasm::{
     v3::{
         control_flow::FunctionView,
         data_flow::OriginationPoint,
-        function_call::result::CalleeInfo,
+        function_call::result::{CallSiteInfo, CalleeInfo},
         lir::{memory_reference::MemoryReferenceInfo, Expression, ReadAddressExtractor},
-        model::{FunctionCallAnalysisComplete, Model, SsaComplete},
-        BlockId, FunctionId, InstructionId, NextKind,
+        model::{FunctionCallAnalysisComplete, Model, SsaComplete}, FunctionId, InstructionId, NextKind,
     },
     Error,
 };
@@ -68,7 +67,7 @@ impl FunctionCallAnalyzer {
                 if let Some(entry_var) = find_lowest_version_of(&function, &live_kind) {
                     parameter_entry_vars.insert(offset + stack_size, entry_var);
                 } else {
-                    panic!("Function {}: OperandKind {:?} is live_in at entry, but no corresponding VersionedAddressable found.", function_id, live_kind);
+                    panic!("Function {function_id}: OperandKind {live_kind:?} is live_in at entry, but no corresponding VersionedAddressable found.");
                 }
             }
 
@@ -121,7 +120,8 @@ impl FunctionCallAnalyzer {
                     // Determine Target Function
                     match call.function_addr {
                         Expression::Constant(addr) => {
-                            target_function_id = Some(FunctionId::from(addr as usize))
+                            target_function_id = self.model.function_id_by_address(addr as usize);
+                            assert!(target_function_id.is_some());
                         }
                         _ => {
                             // Indirect call
@@ -167,6 +167,8 @@ impl FunctionCallAnalyzer {
                             .unwrap();
                         return_reads.entry(*offset).or_insert(read_var);
                     }
+                    println!("Target function ID: {target_function_id:?}");
+                    println!("analysis.functions: {:?}", analysis.functions);
                     let (parameter_map, return_map) =
                         if let Some(target_function_id) = target_function_id {
                             build_call_site_maps(
@@ -199,46 +201,6 @@ impl FunctionCallAnalyzer {
 
         // Return a new model with the updated state
         Ok(self.model.with_function_call_analysis_result(analysis))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CallSiteInfo {
-    pub calling_block_id: BlockId, // Block containing the call instruction.
-    pub calling_function_id: FunctionId, // Function containing the call.
-
-    /// The target function being called, if directly known (e.g., `goto @label`).
-    /// This would be the FunctionId of the callee. None for indirect calls.
-    pub target_function_id: Option<FunctionId>,
-
-    /// The SSA variable representing the target address for indirect calls (`goto [addr]`).
-    pub target_address_var: Option<Expression<SsaMemoryReference>>,
-
-    /// Arguments provided *by the caller* before the call.
-    /// Maps the argument offset `n` (from `[R+n]`, n > 0) to the SSA variable
-    /// within the *caller function* that holds the value written to that location.
-    pub argument_writes: HashMap<i128, VersionedMemoryReference>,
-
-    /// Return values accessed *by the caller* after the call returns.
-    /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
-    /// within the *caller function* that reads the value from that location.
-    pub return_reads: HashMap<i128, VersionedMemoryReference>,
-
-    /// BlockId where execution resumes in the caller after the function returns.
-    pub return_block_id: BlockId,
-
-    /// Maps caller's argument write VersionedAddressable to callee's parameter entry VersionedAddressable.
-    /// Only populated for direct calls.
-    pub parameter_map: HashMap<VersionedMemoryReference, VersionedMemoryReference>,
-
-    /// Maps caller's return read VersionedAddressable to callee's parameter entry VersionedAddressable.
-    /// Only populated for direct calls.
-    pub return_map: HashMap<VersionedMemoryReference, VersionedMemoryReference>,
-}
-
-impl AsRef<CallSiteInfo> for CallSiteInfo {
-    fn as_ref(&self) -> &CallSiteInfo {
-        self
     }
 }
 
@@ -370,6 +332,7 @@ mod tests {
     use crate::disasm::{
         parser,
         test_utils::init_logging,
+        v2::pretty_print::pretty_print_ssa,
         v3::{
             analysis,
             model::{FunctionCallAnalysisComplete, Model},
@@ -424,7 +387,7 @@ mod tests {
             "#;
         let ctx = TestContext::new(assembly);
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
-        //pretty_print_ssa(&ctx.model);
+        pretty_print_ssa(&ctx.model);
         assert_eq!(call_info.parameter_entry_vars.len(), 0);
     }
 

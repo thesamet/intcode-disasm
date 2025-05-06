@@ -27,19 +27,18 @@ mod tests {
         // Pass binary by value (ownership)
         let image_scanned = ImageScanner::run(initial_model).expect("Image scanning failed");
         let cfg_built = ControlFlowGraphBuilder::run(image_scanned).expect("CFG building failed");
-        let data_flow_analyzed =
-            DataFlowAnalyzer::run(cfg_built).expect("Data flow analysis failed");
+        
 
-        data_flow_analyzed // Return model with DataFlow results
+        DataFlowAnalyzer::run(cfg_built).expect("Data flow analysis failed") // Return model with DataFlow results
     }
 
     // Helper to get DataFlowBlock for assertions
-    fn get_flow<'a>(model: &'a Model<DataFlowComplete>, block_id: BlockId) -> &'a DataFlowBlock {
+    fn get_flow(model: &Model<DataFlowComplete>, block_id: BlockId) -> &DataFlowBlock {
         // Access CFG result to find the function ID for the block
         model
             .find_block(&block_id)
             .map(|b| b.data_flow())
-            .unwrap_or_else(|| panic!("Could not find function ID for block {:?}", block_id))
+            .unwrap_or_else(|| panic!("Could not find function ID for block {block_id:?}"))
     }
 
     #[test]
@@ -415,7 +414,7 @@ mod tests {
         let block30_id = BlockId::from(30); // callee entry
         let block40_id = BlockId::from(40); // callee return
 
-        for (_, func) in &model.image_scanner_result().recognized_functions {
+        for func in model.image_scanner_result().recognized_functions.values() {
             println!("function {}", func.span.start);
             for inst in &func.instructions {
                 println!("{:8}  {}", inst.span.start, inst);
@@ -539,14 +538,14 @@ mod tests {
             flow40
                 .live_out
                 .get(&MemoryReference::StackRelative(-3))
-                .map_or(false, |s| s.contains(&OriginationPoint::FunctionOutput)),
+                .is_some_and(|s| s.contains(&OriginationPoint::FunctionOutput)),
             "LiveOut @ B40 should contain [R-3] marked as FunctionOutput"
         );
         assert!(
             flow40
                 .live_out
                 .get(&MemoryReference::StackRelative(-4))
-                .map_or(false, |s| s.contains(&OriginationPoint::FunctionOutput)),
+                .is_some_and(|s| s.contains(&OriginationPoint::FunctionOutput)),
             "LiveOut @ B40 should contain [R-4] marked as FunctionOutput"
         );
         assert_eq!(flow40.live_out.len(), 2, "LiveOut @ B40 length");
@@ -584,7 +583,7 @@ mod tests {
             .find_block(&block0_id)
             .unwrap()
             .low_instructions()
-            .into_iter()
+            .iter()
             .collect_vec();
         let expected_gen_instr_id = block0_instrs[1].id; // ID of '[100] = 10'
         assert_eq!(

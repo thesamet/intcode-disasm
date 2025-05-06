@@ -90,7 +90,7 @@ macro_rules! add_block_view_when {
 pub(crate) use add_block_view_when;
 use model_macros::{model, states};
 
-use super::control_flow::BlockView;
+use super::{control_flow::BlockView, FunctionId};
 
 impl<S: ModelState> Model<S>
 where
@@ -105,5 +105,17 @@ where
     pub fn all_blocks<'a>(&'a self) -> impl Iterator<Item = (BlockId, BlockView<'a, S>)> {
         self.functions()
             .flat_map(move |(_, function)| function.blocks())
+    }
+}
+
+impl<S: ModelState> Model<S>
+where
+    S: HasImageScannerResult,
+{
+    pub(crate) fn function_id_by_address(&self, address: usize) -> Option<FunctionId> {
+        self.image_scanner_result()
+            .address_to_function
+            .get(&address)
+            .copied()
     }
 }

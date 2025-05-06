@@ -14,8 +14,8 @@ mod tests {
         let binary = parser::compile(code);
         let model = Model::from_binary(binary);
         let model = ImageScanner::run(model).expect("Image scanner failed");
-        let model = ControlFlowGraphBuilder::run(model).expect("CFG builder failed");
-        model
+        
+        ControlFlowGraphBuilder::run(model).expect("CFG builder failed")
     }
     #[test]
     fn test_simple_return_function() {

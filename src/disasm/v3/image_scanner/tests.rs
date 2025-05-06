@@ -173,7 +173,7 @@ mod tests {
         );
 
         assert_eq!(result.function_ids().len(), 1);
-        assert!(result.data_segments.len() >= 1);
+        assert!(!result.data_segments.is_empty());
     }
 
     #[test]

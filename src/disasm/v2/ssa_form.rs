@@ -824,23 +824,24 @@ impl<'a> SSAConversionState<'a> {
                 };
 
             // Find return values accessed if this block is a return site
-            let return_values_accessed: Vec<MemoryReference> = if predecessors
+            let return_values_accessed: Vec<MemoryReference> = predecessors
                 .iter()
-                .any(|pred| matches!(pred, FunctionCallReturns(_)))
-            {
-                // Get the calling block's view and its data flow info
-                block_flow
-                    .return_values_accessed
-                    .as_ref()
-                    .map(|rva| {
-                        rva.keys()
-                            .map(|offset| MemoryReference::StackRelative(*offset)) // Convert offset to MemoryReference
-                            .collect_vec()
-                    })
-                    .unwrap_or_default() // Use empty vec if no info found
-            } else {
-                vec![]
-            };
+                .find_map(|pred| pred.get_function_call_returns())
+                .map(|fc| fc.calling_block)
+                .map(|block| {
+                    self.function
+                        .block(&block)
+                        .data_flow()
+                        .return_values_accessed
+                        .as_ref()
+                        .unwrap()
+                })
+                .map(|rva| {
+                    rva.keys()
+                        .map(|offset| MemoryReference::StackRelative(*offset))
+                        .collect_vec()
+                })
+                .unwrap_or_default();
 
             // Determine variables needing phi functions:
             // - Defined differently by multiple predecessors AND live-in
@@ -1157,6 +1158,7 @@ mod tests {
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
+    use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
     use crate::disasm::v3::model::SsaComplete;
     // Keep v2 dispatching
@@ -1205,10 +1207,10 @@ mod tests {
     }
 
     // Helper to find an Addressable marked with a specific char within an Expression<SsaMemoryReference>
-    fn find_addressable_under_marker<'a>(
-        expr: &'a Expression<SsaMemoryReference>,
+    fn find_addressable_under_marker(
+        expr: &Expression<SsaMemoryReference>,
         marker: char,
-    ) -> Option<&'a SsaMemoryReference> {
+    ) -> Option<&SsaMemoryReference> {
         match expr {
             Expression::DebugMarker(m, inner_expr) if *m == marker => {
                 // Found the marker, now find the addressable inside
@@ -1226,9 +1228,9 @@ mod tests {
     }
 
     // Helper to find the first Addressable node in an expression tree
-    fn find_first_addressable_in_expr<'a>(
-        expr: &'a Expression<SsaMemoryReference>,
-    ) -> Option<&'a SsaMemoryReference> {
+    fn find_first_addressable_in_expr(
+        expr: &Expression<SsaMemoryReference>,
+    ) -> Option<&SsaMemoryReference> {
         match expr {
             Expression::Addressable(addr) => Some(addr),
             Expression::Binary { lhs, rhs, .. } => {
@@ -1242,10 +1244,10 @@ mod tests {
     }
 
     // Helper to find marker within SsaMemoryReference (specifically for Deref)
-    fn find_addressable_marker_in_ssa_ref<'a>(
-        ssa_ref: &'a SsaMemoryReference,
+    fn find_addressable_marker_in_ssa_ref(
+        ssa_ref: &SsaMemoryReference,
         marker: char,
-    ) -> Option<&'a SsaMemoryReference> {
+    ) -> Option<&SsaMemoryReference> {
         match ssa_ref {
             SsaMemoryReference::Versioned(_) => None, // Markers aren't directly on Versioned
             SsaMemoryReference::Deref(inner_expr) => {
@@ -1466,12 +1468,10 @@ mod tests {
                     "Output variable should have a non-zero version, got: {}",
                     versioned.version
                 );
-                println!("Output operand version: {}", versioned.version);
             }
             _ => {
                 panic!(
-                    "Output operand should be a Versioned Addressable, but found {:?}",
-                    output_expr
+                    "Output operand should be a Versioned Addressable, but found {output_expr:?}"
                 );
             }
         }
@@ -1514,7 +1514,6 @@ mod tests {
             if !ssa_block.instructions.is_empty() {
                 let first_instr = &ssa_block.instructions[0];
                 if matches!(first_instr.kind, Instruction::Output(_)) {
-                    println!("Found block with output: {}", block_id);
                     found_return_block = Some(ssa_block); // Store the SsaBlock
                     break;
                 }
@@ -1526,14 +1525,7 @@ mod tests {
 
         // Find the output instruction that uses the return value
         let output_instr = return_block.instructions.first().unwrap();
-        // println!("Output instruction: {:?}", output_instr);
 
-        // NOTE: With the removal of DefinitionKind::FunctionReturn, we now rely on
-        // the BlockDataFlow.function_returns_in set to track function returns, rather than
-        // setting SsaVarSource::FunctionReturn for every variable reading from function return.
-
-        // Simply check that the conversion runs without errors. In the future, we may want to
-        // enhance this test to verify other aspects of the conversion.
         if let Instruction::Output(expr) = &output_instr.kind {
             match expr {
                 Expression::Addressable(SsaMemoryReference::Versioned(versioned)) => {
@@ -1763,7 +1755,7 @@ mod tests {
               goto [R]                        ; Return
                 "#,
         );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        pretty_print_ssa(&ctx.model); // Removed pretty print
 
         // Initial assignments before loop
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));

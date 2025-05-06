@@ -424,8 +424,7 @@ mod tests {
                 found_set2 = true;
             } else {
                 panic!(
-                    "Unexpected set ID found during iteration: {:?}. Expected {:?} or {:?}",
-                    id, id13, id2
+                    "Unexpected set ID found during iteration: {id:?}. Expected {id13:?} or {id2:?}"
                 );
             }
         }
