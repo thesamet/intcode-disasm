@@ -1,10 +1,10 @@
 use super::result::{
     BaseFunctionCall, DataSegment, DataType, ImageScannerResult, RecognizedFunction,
 };
-use crate::disasm::v2::native::{NativeInstruction, Opcode, Operand, OperandKind, ParseError};
 use crate::disasm::v3::common::Span;
 use crate::disasm::v3::id_types::FunctionId;
 use crate::disasm::v3::model::{ImageScannerComplete, InitialState, Model};
+use crate::disasm::v3::native::{NativeInstruction, Opcode, Operand, OperandKind, ParseError};
 use crate::disasm::Error;
 use itertools::Itertools;
 use log::{debug, info, trace};
@@ -103,11 +103,10 @@ impl ImageScanner {
 
         // Create the image scanner result
         let result = ImageScannerResult {
-            recognized_functions,
             data_segments,
             address_to_function,
             function_to_address,
-            function_details,
+            recognized_functions: function_details,
         };
 
         // Return a new model with the updated state

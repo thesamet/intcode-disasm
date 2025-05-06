@@ -52,8 +52,8 @@ impl ControlFlowGraphBuilder {
         // Process each function from the image scanner result
         let scanner_result = model.image_scanner_result().clone();
 
-        for function_id in &scanner_result.recognized_functions {
-            let function_details = &scanner_result.function_details[function_id];
+        for function_id in &scanner_result.function_ids() {
+            let function_details = &scanner_result.recognized_functions[function_id];
             self.process_function(*function_id, function_details, &scanner_result)?;
         }
 

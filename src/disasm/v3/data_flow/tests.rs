@@ -438,7 +438,7 @@ mod tests {
         let block30_id = BlockId::from(30); // callee entry
         let block40_id = BlockId::from(40); // callee return
 
-        for (_, func) in &model.image_scanner_result().function_details {
+        for (_, func) in &model.image_scanner_result().recognized_functions {
             println!("function {}", func.span.start);
             for inst in &func.instructions {
                 println!("{:8}  {}", inst.span.start, inst);

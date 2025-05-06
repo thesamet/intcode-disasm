@@ -1,5 +1,5 @@
 use super::result::FunctionCallAnalysisResult;
-use crate::disasm::v3::model::{FunctionCallComplete, Model, SsaComplete};
+use crate::disasm::v3::model::{FunctionCallAnalysisComplete, Model, SsaComplete};
 use crate::disasm::Error;
 use std::collections::HashMap;
 
@@ -13,12 +13,12 @@ impl FunctionCallAnalyzer {
         Self { model }
     }
 
-    pub fn run(model: Model<SsaComplete>) -> Result<Model<FunctionCallComplete>, Error> {
+    pub fn run(model: Model<SsaComplete>) -> Result<Model<FunctionCallAnalysisComplete>, Error> {
         let analyzer = Self::new(model);
         analyzer.analyze()
     }
 
-    fn analyze(self) -> Result<Model<FunctionCallComplete>, Error> {
+    fn analyze(self) -> Result<Model<FunctionCallAnalysisComplete>, Error> {
         // Create the function call analysis result
         let result = FunctionCallAnalysisResult {
             functions: HashMap::new(),

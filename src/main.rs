@@ -1,8 +1,7 @@
 use clap::{Parser, Subcommand};
-use disasm::disasm::v3::analysis::{
-    self,
-    run_analysis,
-    run_analysis_ssa, // run_flow_recovery, run_types,
+use disasm::disasm::{
+    v2::pretty_print::pretty_print_ssa,
+    v3::analysis::{self},
 };
 use itertools::Itertools;
 
@@ -35,8 +34,9 @@ fn main() {
         Command::Disassemble { input } => disassemble(input),
         Command::Pipeline { input } => pipeline(input),
         Command::Ssa { input } => ssa(input),
-        Command::Types { input } => types(input),
-        Command::FlowRecovery { input } => flow_recovery(input),
+        _ => panic!("No command specified"),
+        // Command::Types { input } => types(input),
+        // Command::FlowRecovery { input } => flow_recovery(input),
     }
 }
 
@@ -46,17 +46,20 @@ fn compile(source: String) {
     println!("{}", out.iter().join(","))
 }
 
-fn disassemble(input: String) {
-    let prog = std::fs::read_to_string(input)
-        .unwrap()
+fn parse_program(input: String) -> Vec<i128> {
+    input
         .trim()
         .split(',')
         .map(|x| x.parse().unwrap())
-        .collect::<Vec<i128>>();
-    let scanner_result = analysis::disassemble(prog);
-    for func in scanner_result.recognized_functions {
+        .collect::<Vec<i128>>()
+}
+
+fn disassemble(input: String) {
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    let model = analysis::binary_to_scanned_image(prog).unwrap();
+    for func in model.image_scanner_result().recognized_functions.values() {
         println!("function {}", func.span.start);
-        for inst in func.instructions {
+        for inst in &func.instructions {
             println!("{:8}  {}", inst.span.start, inst);
         }
         println!();
@@ -64,25 +67,16 @@ fn disassemble(input: String) {
 }
 
 fn pipeline(input: String) {
-    let prog = std::fs::read_to_string(input)
-        .unwrap()
-        .trim()
-        .split(',')
-        .map(|x| x.parse().unwrap())
-        .collect::<Vec<i128>>();
-    run_analysis(prog)
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    analysis::binary_to_function_calls(prog).unwrap();
 }
 
 fn ssa(input: String) {
-    let prog = std::fs::read_to_string(input)
-        .unwrap()
-        .trim()
-        .split(',')
-        .map(|x| x.parse().unwrap())
-        .collect::<Vec<i128>>();
-    run_analysis_ssa(prog);
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    let model = analysis::binary_to_ssa(prog).unwrap();
+    pretty_print_ssa(&model);
 }
-
+/*
 fn types(input: String) {
     let prog = std::fs::read_to_string(input)
         .unwrap()
@@ -102,3 +96,4 @@ fn flow_recovery(input: String) {
         .collect::<Vec<i128>>();
     run_flow_recovery(prog);
 }
+*/

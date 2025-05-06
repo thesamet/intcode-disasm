@@ -4,24 +4,21 @@ use log::trace;
 use std::convert::From;
 
 use crate::disasm::{
-    v2::{
-        model::{BlockId, FunctionId},   // Keep v2 IDs
-        native::{Operand, OperandKind}, // Keep v2 Operand for tests/conversion?
-    },
+    v2::model::{BlockId, FunctionId},
     v3::{
         self,
         control_flow::FunctionView,
         data_flow::OriginationPoint,
         id_types::FunctionId as V3FunctionId,
-        lir::{Expression, Instruction, InstructionNode, MemoryReference, MemoryReferenceInfo},
+        lir::{Expression, Instruction, MemoryReference, MemoryReferenceInfo},
         model::{DataFlowComplete, Model, SsaComplete},
+        native::{GenericNativeInstruction, Operand, OperandKind}, // Keep v2 Operand for tests/conversion?
     },
 };
 
 use super::{
     instructions::{InstructionId, PointerId}, // Keep v2 InstructionId, PointerId for now
     model::Function,                          // Keep v2 Function struct for SsaFunction output
-    native::GenericNativeInstruction,         // Keep v2 native instruction for SsaBlock output
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -1202,10 +1199,8 @@ mod tests {
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
-    use crate::disasm::v2::model::ProgramModel;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
-    use crate::disasm::v2::{dispatching::EventPublisher, events::Event};
     use crate::disasm::v3::model::SsaComplete;
     // Keep v2 dispatching
     use crate::disasm::v3::{

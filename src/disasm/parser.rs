@@ -10,12 +10,11 @@ use nom::{
 };
 use std::collections::HashMap;
 
-use super::v2::native::{
-    GenericNativeInstruction, NativeInstruction, NativeInstructionId, NativeInstructionKind,
-    Operand, OperandKind,
-};
 use super::v3::native::instruction::simplify_instruction; // Import from v3 native
-use super::v2::Span;
+use super::v3::native::{
+    GenericNativeInstruction, NativeInstruction, NativeInstructionKind, Operand, OperandKind,
+};
+use super::{v2::Span, v3::NativeInstructionId};
 
 type DebugMarker = Option<char>;
 
@@ -658,7 +657,7 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::disasm::v2::native::{NativeInstructionKind, OperandKind};
+    use crate::disasm::v3::native::{NativeInstructionKind, OperandKind};
     use pretty_assertions::assert_eq;
 
     // Helper function to parse a single instruction kind for testing

@@ -4,19 +4,14 @@ use std::hash::Hash;
 use disjoint_set::{DisjointSet, SetId};
 use itertools::Itertools;
 
-use crate::disasm::v2::events::VariableAnalysisComplete;
 use crate::disasm::v2::model::FunctionId;
 use crate::disasm::v2::pretty_print::pretty_print_ssa;
 use crate::disasm::v2::ssa_form::SsaFunction;
 use crate::disasm::v3::define_id_type;
 use crate::disasm::{
-    v2::{
-        dispatching::{EventCollector, EventListener},
-        model::{BlockId, ProgramModel},
-        native::{GenericNativeInstruction, NativeInstructionKind},
-        ssa_form::{SsaBlock, SsaOperand, SsaVar, SsaVarKind},
-        type_inference::types::Type,
-    },
+    v2::ssa_form::{SsaBlock, SsaOperand, SsaVar, SsaVarKind},
+    v2::type_inference::types::Type,
+    v3::native::{GenericNativeInstruction, NativeInstructionKind},
     Error,
 };
 
@@ -48,8 +43,9 @@ pub struct VariableMergerResult {
 }
 
 /// Analyzes SSA form to create variable clusters that merge different versions of the same variable
-pub struct VariableMerger<'a> {
-    model: &'a ProgramModel,
+pub struct VariableMerger {
+    // <'a> {
+    // model: &'a ProgramModel,
     /// Maps SSA variable to the cluster it belongs to
     variable_to_cluster: HashMap<SsaVar, ClusterId>,
     /// Collection of all clusters

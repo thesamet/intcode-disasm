@@ -28,7 +28,7 @@ enum ModelState {
     ControlFlowGraphComplete(ControlFlowGraphResult),
     DataFlowComplete(DataFlowResult),
     SsaComplete(SsaResult),
-    FunctionCallComplete(FunctionCallAnalysisResult),
+    FunctionCallAnalysisComplete(FunctionCallAnalysisResult),
 }
 
 #[model]

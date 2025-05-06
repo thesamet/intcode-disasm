@@ -1,12 +1,13 @@
-use crate::disasm::v2::native::{NativeInstruction, Operand};
-use crate::disasm::v3::common::Span;
+use itertools::Itertools;
+
 use crate::disasm::v3::id_types::FunctionId;
+use crate::disasm::v3::native::Operand;
+use crate::disasm::v3::{common::Span, native::NativeInstruction};
 use std::collections::{HashMap, HashSet};
 
 /// Result of the image scanning phase
 #[derive(Debug, Clone, Default)]
 pub struct ImageScannerResult {
-    pub recognized_functions: Vec<FunctionId>,
     pub data_segments: Vec<DataSegment>,
 
     // Maps addresses to function IDs
@@ -16,7 +17,13 @@ pub struct ImageScannerResult {
     pub function_to_address: HashMap<FunctionId, usize>,
 
     // Detailed function information
-    pub function_details: HashMap<FunctionId, RecognizedFunction>,
+    pub recognized_functions: HashMap<FunctionId, RecognizedFunction>,
+}
+
+impl ImageScannerResult {
+    pub fn function_ids(&self) -> Vec<FunctionId> {
+        self.recognized_functions.keys().sorted().cloned().collect()
+    }
 }
 
 #[derive(Debug, Clone)]

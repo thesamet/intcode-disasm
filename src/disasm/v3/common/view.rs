@@ -5,11 +5,11 @@ use crate::disasm::v3::{
         span::Span,
     },
     control_flow::{Block, Function, NextKind, PredecessorKind}, // Use pub use from control_flow::mod
-    data_flow::block::DataFlowBlock, // Use pub use from data_flow::mod
-    function_call::result::CalleeInfo, // Use v3 CalleeInfo (now public)
+    data_flow::block::DataFlowBlock,                            // Use pub use from data_flow::mod
+    function_call::result::CalleeInfo,                          // Use v3 CalleeInfo (now public)
     id_types::{BlockId, FunctionId},
     lir::{InstructionNode, MemoryReference}, // Use LIR types
-    model::{DataFlowComplete, FunctionCallComplete, Model, ModelState, SsaComplete}, // Correct path for DataFlowComplete
+    model::{DataFlowComplete, FunctionCallAnalysisComplete, Model, ModelState, SsaComplete}, // Correct path for DataFlowComplete
     native::NativeInstruction, // Use Native types
     ssa::block::SsaBlock,      // Use pub use from ssa::mod
 };

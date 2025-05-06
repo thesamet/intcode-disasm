@@ -3,7 +3,6 @@ mod tests {
     use super::super::{DataSegment, DataType, ImageScanner};
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v3::analysis::disassemble;
     use crate::disasm::v3::id_types::FunctionId;
     use crate::disasm::v3::image_scanner::ImageScannerResult;
     use crate::disasm::v3::model::{InitialState, Model};
@@ -48,7 +47,7 @@ mod tests {
 
         // Verify the result
         let scanner_result = result.image_scanner_result();
-        assert_eq!(scanner_result.recognized_functions.len(), 0);
+        assert_eq!(scanner_result.function_ids().len(), 0);
         assert_eq!(scanner_result.data_segments.len(), 0);
     }
 
@@ -69,8 +68,8 @@ mod tests {
         let scanner_result = result.image_scanner_result();
 
         // Check that function ID 0 maps to address 0
-        if !scanner_result.recognized_functions.is_empty() {
-            let function_id = scanner_result.recognized_functions[0];
+        if !scanner_result.function_ids().is_empty() {
+            let function_id = scanner_result.function_ids()[0];
             assert_eq!(
                 scanner_result.function_to_address.get(&function_id),
                 Some(&0)
@@ -93,9 +92,9 @@ mod tests {
             goto [R]
             "#,
         );
-        assert_eq!(result.recognized_functions.len(), 1);
-        let function_id = result.recognized_functions[0];
-        let function = &result.function_details[&function_id];
+        assert_eq!(result.function_ids().len(), 1);
+        let function_id = result.function_ids()[0];
+        let function = &result.recognized_functions[&function_id];
         assert_eq!(function.stack_size, 5);
         assert!(function.return_span.is_some());
         assert_eq!(function.instructions.len(), 5);
@@ -119,15 +118,15 @@ mod tests {
             goto [R]
             "#,
         );
-        assert_eq!(result.recognized_functions.len(), 2);
+        assert_eq!(result.function_ids().len(), 2);
 
         // Get the main function (first one)
-        let main_id = result.recognized_functions[0];
-        let main = &result.function_details[&main_id];
+        let main_id = result.function_ids()[0];
+        let main = &result.recognized_functions[&main_id];
 
         // Get the other function (second one)
-        let other_id = result.recognized_functions[1];
-        let other = &result.function_details[&other_id];
+        let other_id = result.function_ids()[1];
+        let other = &result.recognized_functions[&other_id];
 
         assert_eq!(main.stack_size, 5);
         assert_eq!(other.stack_size, 3);
@@ -151,9 +150,9 @@ mod tests {
             goto [R]                 ; 18
             "#,
         );
-        assert_eq!(result.recognized_functions.len(), 1);
-        let function_id = result.recognized_functions[0];
-        let function = &result.function_details[&function_id];
+        assert_eq!(result.function_ids().len(), 1);
+        let function_id = result.function_ids()[0];
+        let function = &result.recognized_functions[&function_id];
 
         assert_eq!(function.jump_targets.len(), 2);
         assert!(function.jump_targets.contains(&12)); // branch
@@ -175,7 +174,7 @@ mod tests {
             "#,
         );
 
-        assert_eq!(result.recognized_functions.len(), 1);
+        assert_eq!(result.function_ids().len(), 1);
         assert!(result.data_segments.len() >= 1);
     }
 
@@ -219,15 +218,15 @@ mod tests {
             goto [R]
             "#,
         );
-        assert_eq!(result.recognized_functions.len(), 2);
+        assert_eq!(result.function_ids().len(), 2);
 
         // Get the main function (first one)
-        let main_id = result.recognized_functions[0];
-        let main = &result.function_details[&main_id];
+        let main_id = result.function_ids()[0];
+        let main = &result.recognized_functions[&main_id];
 
         // Get the callee function (second one)
-        let callee_id = result.recognized_functions[1];
-        let callee = &result.function_details[&callee_id];
+        let callee_id = result.function_ids()[1];
+        let callee = &result.recognized_functions[&callee_id];
 
         assert_eq!(main.stack_size, 5);
         assert_eq!(callee.stack_size, 4);

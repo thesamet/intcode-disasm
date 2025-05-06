@@ -1,8 +1,8 @@
 use std::fmt;
 
-use crate::disasm::v2::{
-    model::{BlockId, FunctionId},
-    native::NativeInstructionId,
+use crate::disasm::{
+    v2::model::{BlockId, FunctionId},
+    v3::NativeInstructionId,
 };
 
 use super::{types::Type, visuals::TraceColors};
