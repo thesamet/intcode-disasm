@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
-use disasm::disasm::v2::analysis::{
-    self, run_analysis, run_analysis_ssa, run_flow_recovery, run_types,
+use disasm::disasm::v3::analysis::{
+    self,
+    run_analysis,
+    run_analysis_ssa, // run_flow_recovery, run_types,
 };
 use itertools::Itertools;
 

@@ -2,9 +2,9 @@
 mod tests {
     use super::super::{ControlFlowGraphBuilder, Function};
     use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v2::control_flow::{NextKind, PredecessorKind};
     use crate::disasm::v3::common::Span;
     use crate::disasm::v3::control_flow::ControlFlowGraphResult;
+    use crate::disasm::v3::control_flow::{NextKind, PredecessorKind};
     use crate::disasm::v3::id_types::{BlockId, FunctionId};
     use crate::disasm::v3::image_scanner::ImageScanner;
     use crate::disasm::v3::model::{ControlFlowGraphComplete, InitialState, Model};

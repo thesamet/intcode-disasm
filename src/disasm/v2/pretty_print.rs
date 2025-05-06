@@ -7,11 +7,10 @@ use crate::disasm::v3::{
         FunctionCallComplete, HasControlFlowGraphResult, HasFunctionCallAnalysisResult,
         HasSsaResult, Model, ModelState, SsaComplete,
     },
-    Block,
+    Block, PredecessorKind,
 };
 
 use super::{
-    control_flow::PredecessorKind,
     instructions::{Expression, Instruction, InstructionNode},
     model::{Function, ProgramModel},
     ssa_form::{

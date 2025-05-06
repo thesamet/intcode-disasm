@@ -1,7 +1,5 @@
 // pub mod control_flow_analyzer;
 // pub mod control_flow_analyzer_tests;
-pub mod control_flow_graph_builder;
-pub mod data_flow_analyzer;
 // pub mod function_call_analyzer;
 // pub mod hlr_optimization;
 // pub mod hlr_optimizer;

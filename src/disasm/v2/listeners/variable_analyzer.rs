@@ -8,11 +8,10 @@ use crate::disasm::v2::events::VariableAnalysisComplete;
 use crate::disasm::v2::model::FunctionId;
 use crate::disasm::v2::pretty_print::pretty_print_ssa;
 use crate::disasm::v2::ssa_form::SsaFunction;
+use crate::disasm::v3::define_id_type;
 use crate::disasm::{
     v2::{
         dispatching::{EventCollector, EventListener},
-        events::Event,
-        id_types::define_id_type,
         model::{BlockId, ProgramModel},
         native::{GenericNativeInstruction, NativeInstructionKind},
         ssa_form::{SsaBlock, SsaOperand, SsaVar, SsaVarKind},

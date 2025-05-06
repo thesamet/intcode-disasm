@@ -5,9 +5,8 @@ use std::convert::From;
 
 use crate::disasm::{
     v2::{
-        control_flow::{NextKind, PredecessorKind}, // Keep v2 CFG types for Phi inputs for now
-        model::{BlockId, FunctionId},              // Keep v2 IDs
-        native::{Operand, OperandKind},            // Keep v2 Operand for tests/conversion?
+        model::{BlockId, FunctionId},   // Keep v2 IDs
+        native::{Operand, OperandKind}, // Keep v2 Operand for tests/conversion?
     },
     v3::{
         self,
@@ -1203,7 +1202,6 @@ mod tests {
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
-    use crate::disasm::v2::listeners::ssa_converter::SsaConverter;
     use crate::disasm::v2::model::ProgramModel;
     use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup

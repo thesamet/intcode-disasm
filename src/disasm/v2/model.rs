@@ -1,8 +1,8 @@
+use crate::disasm::v3::Block;
 pub use crate::disasm::v3::BlockId;
 use std::collections::HashMap;
 
 use super::{
-    control_flow::Block,
     data_flow::DataFlowResult,
     dispatching::{EventCollector, EventPublisher},
     events::{Event, ImageAdded, ImageScannerComplete},
