@@ -57,10 +57,16 @@ fn parse_program(input: String) -> Vec<i128> {
 fn disassemble(input: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
     let model = analysis::binary_to_scanned_image(prog).unwrap();
-    for func in model.image_scanner_result().recognized_functions.values() {
+    for func in model
+        .image_scanner_result()
+        .recognized_functions
+        .iter()
+        .sorted_by_key(|f| f.0)
+        .map(|f| f.1)
+    {
         println!("function {}", func.span.start);
         for inst in &func.instructions {
-            println!("{:8}  {}", inst.span.start, inst);
+            println!("{:5} {:8}  {}", inst.id, inst.span.start, inst);
         }
         println!();
     }
@@ -73,7 +79,7 @@ fn pipeline(input: String) {
 
 fn ssa(input: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let model = analysis::binary_to_ssa(prog).unwrap();
+    let model = analysis::binary_to_function_calls(prog).unwrap();
     pretty_print_ssa(&model);
 }
 /*

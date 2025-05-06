@@ -10,7 +10,8 @@ use crate::disasm::{
         data_flow::OriginationPoint,
         function_call::result::{CallSiteInfo, CalleeInfo},
         lir::{memory_reference::MemoryReferenceInfo, Expression, ReadAddressExtractor},
-        model::{FunctionCallAnalysisComplete, Model, SsaComplete}, FunctionId, InstructionId, NextKind,
+        model::{FunctionCallAnalysisComplete, Model, SsaComplete},
+        FunctionId, InstructionId, NextKind,
     },
     Error,
 };
@@ -139,11 +140,14 @@ impl FunctionCallAnalyzer {
 
                     for (offset, instr_id) in return_values_accessed {
                         let instr = function
-                            .block(&call.calling_block)
-                            .ssa()
-                            .instructions
-                            .iter()
-                            .find(|i| i.id == *instr_id)
+                            .blocks()
+                            .find_map(|(_, b)| {
+                                b.ssa()
+                                    .instructions
+                                    .iter()
+                                    .find(|i| i.id == *instr_id)
+                                    .map(|i| i)
+                            })
                             .unwrap();
                         // Manually extract reads like in find_lowest_version_of
                         let mut reads_in_instr: Vec<&SsaMemoryReference> = Vec::new();
@@ -161,10 +165,9 @@ impl FunctionCallAnalyzer {
                         let read_var = *reads_in_instr
                             .iter()
                             // Dereference r once here
-                            .find(|r| (*r).as_stack_relative() == Some(*offset))
-                            .expect("Could not find read variable for return value")
-                            .as_versioned()
-                            .unwrap();
+                            .filter_map(|r| (*r).as_versioned())
+                            .find(|r| r.as_stack_relative() == Some(*offset))
+                            .expect("Could not find read variable for return value");
                         return_reads.entry(*offset).or_insert(read_var);
                     }
                     println!("Target function ID: {target_function_id:?}");

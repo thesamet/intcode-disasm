@@ -225,7 +225,10 @@ impl<'a, S: ModelState + 'static> PrettyPrinter<'a, S> {
         // Phi functions
         if !self.show_vars {
             for phi in &block.ssa().phi_functions {
-                lines.push(format!("{:<8}{}", "", self.format_phi_function(phi)));
+                lines.push(format!("{:<14}{}", "", self.format_phi_function(phi)));
+            }
+            if !block.ssa().phi_functions.is_empty() {
+                lines.push(format!("{:<14}{}", "", ""));
             }
         }
 
@@ -258,7 +261,12 @@ impl<'a, S: ModelState + 'static> PrettyPrinter<'a, S> {
                     _ => {}
                 }
             }
-            lines.push(format!("{:<8}{}", "", self.format_instruction(instr)));
+            lines.push(format!(
+                "{:<5} {:<8}{}",
+                instr.id,
+                "",
+                self.format_instruction(instr)
+            ));
         }
 
         lines.join("\n")

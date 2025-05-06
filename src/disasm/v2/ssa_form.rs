@@ -159,12 +159,6 @@ impl From<VersionedMemoryReference> for SsaMemoryReference {
     }
 }
 
-impl From<&SsaMemoryReference> for MemoryReference {
-    fn from(value: &SsaMemoryReference) -> Self {
-        value.to_memory_reference()
-    }
-}
-
 use crate::disasm::v3::lir::ReadAddressExtractor; // Import the trait
 impl ReadAddressExtractor for SsaMemoryReference {
     fn extract_read_addresses(&self) -> Vec<&Self> {
