@@ -7,7 +7,7 @@ use crate::disasm::v3::model::{ImageScannerComplete, InitialState, Model};
 use crate::disasm::v3::native::{NativeInstruction, Opcode, Operand, OperandKind, ParseError};
 use crate::disasm::Error;
 use itertools::Itertools;
-use log::{debug, info, trace};
+use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 
 /// Analyzes the raw program image to identify functions and data segments

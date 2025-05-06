@@ -1,4 +1,3 @@
-use derive_more::AsRef;
 use itertools::Itertools;
 use log::trace;
 use std::convert::From;
@@ -9,17 +8,13 @@ use crate::disasm::{
         self,
         control_flow::FunctionView,
         data_flow::OriginationPoint,
-        id_types::FunctionId as V3FunctionId,
-        lir::{Expression, Instruction, MemoryReference, MemoryReferenceInfo},
+        lir::{Expression, MemoryReference, MemoryReferenceInfo},
         model::{DataFlowComplete, Model, SsaComplete},
         native::{GenericNativeInstruction, Operand, OperandKind}, // Keep v2 Operand for tests/conversion?
     },
 };
 
-use super::{
-    instructions::{InstructionId, PointerId}, // Keep v2 InstructionId, PointerId for now
-    model::Function,                          // Keep v2 Function struct for SsaFunction output
-};
+use super::instructions::PointerId;
 use std::{
     collections::{HashMap, HashSet},
     fmt,

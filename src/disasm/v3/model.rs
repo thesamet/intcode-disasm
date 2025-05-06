@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use crate::disasm::v2::listeners::variable_analyzer::VariableMergerResult;
 use crate::disasm::v2::type_inference::result::TypeInferenceResult;
-use crate::disasm::v3::control_flow::{ControlFlowGraphResult, Function};
+use crate::disasm::v3::control_flow::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
 use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
-use crate::disasm::v3::id_types::{BlockId, FunctionId};
+use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::image_scanner::ImageScannerResult;
 use crate::disasm::v3::ssa::SsaResult;
 
@@ -88,7 +87,6 @@ macro_rules! add_block_view_when {
     };
 }
 pub(crate) use add_block_view_when;
-use itertools::Itertools;
 use model_macros::{model, states};
 
 use super::control_flow::BlockView;

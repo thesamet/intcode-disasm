@@ -1,6 +1,6 @@
 use super::{
-    expression::{Expression, UnaryOperator},
-    memory_reference::{MemoryReference, ReadAddressExtractor},
+    expression::Expression,
+    memory_reference::ReadAddressExtractor,
 };
 use crate::disasm::v3::id_types::{BlockId, InstructionId};
 

@@ -6,14 +6,12 @@ use super::{
     function_call::FunctionCallAnalyzer,
     image_scanner::ImageScanner,
     model::{
-        ControlFlowGraphComplete, DataFlowComplete, FunctionCallAnalysisComplete,
-        HasDataFlowResult, HasSsaResult, ImageScannerComplete, InitialState, Model, ModelState,
+        ControlFlowGraphComplete, DataFlowComplete, FunctionCallAnalysisComplete, ImageScannerComplete, Model,
         SsaComplete,
     },
     ssa::SsaConverter,
 };
 
-use log::info;
 
 pub fn binary_to_scanned_image(binary: Vec<i128>) -> Result<Model<ImageScannerComplete>, Error> {
     let model = Model::from_binary(binary);

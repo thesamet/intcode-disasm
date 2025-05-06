@@ -1,11 +1,11 @@
 use itertools::Itertools;
 use log::debug;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use crate::disasm::v3::common::{CallSiteInfo, FunctionCall}; // Keep FunctionCall from common
-use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind, PredecessorKind};
-use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId};
-use crate::disasm::v3::lir::{Expression, MemoryReference, MemoryReferenceInfo}; // Use LIR types
+use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind};
+use crate::disasm::v3::id_types::BlockId;
+use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo}; // Use LIR types
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
 use crate::disasm::Error;
 

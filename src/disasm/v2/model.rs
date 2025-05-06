@@ -1,10 +1,6 @@
 use crate::disasm::v3::Block;
 use std::collections::HashMap;
 
-use super::{
-    listeners::variable_analyzer::VariableMergerResult, ssa_form::SsaResult,
-    type_inference::result::TypeInferenceResult,
-};
 pub use crate::disasm::v3::common::{FunctionCall, Span};
 pub use crate::disasm::v3::id_types::*;
 

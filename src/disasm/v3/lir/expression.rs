@@ -1,4 +1,4 @@
-use super::memory_reference::MemoryReference; // Use LIR MemoryReference
+ // Use LIR MemoryReference
 use std::fmt::Display;
 
 /// Represents a low-level expression that can be evaluated.

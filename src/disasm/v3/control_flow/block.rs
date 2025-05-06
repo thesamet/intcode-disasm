@@ -1,9 +1,8 @@
 // Use v3 types
 use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types here
-use crate::disasm::v3::id_types::{BlockId, FunctionId, InstructionId}; // Added InstructionId
+use crate::disasm::v3::id_types::{BlockId, FunctionId}; // Added InstructionId
 use crate::disasm::v3::lir::{
     Expression,
-    Instruction,
     InstructionNode,
     MemoryReference, // Use LIR types
 };

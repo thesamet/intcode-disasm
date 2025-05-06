@@ -1,18 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use disjoint_set::{DisjointSet, SetId};
 use itertools::Itertools;
 
 use crate::disasm::v2::model::FunctionId;
-use crate::disasm::v2::pretty_print::pretty_print_ssa;
-use crate::disasm::v2::ssa_form::SsaFunction;
 use crate::disasm::v3::define_id_type;
 use crate::disasm::{
-    v2::ssa_form::{SsaBlock, SsaOperand, SsaVar, SsaVarKind},
+    v2::ssa_form::SsaVar,
     v2::type_inference::types::Type,
-    v3::native::{GenericNativeInstruction, NativeInstructionKind},
-    Error,
 };
 
 mod disjoint_set;

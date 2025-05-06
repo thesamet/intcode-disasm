@@ -1,6 +1,6 @@
 use super::expression::Expression; // Use LIR Expression
-use crate::disasm::v3::{id_types::PointerId, native::OperandKind};
-use std::fmt::Display; // Keep Display if needed for MemoryReference
+use crate::disasm::v3::id_types::PointerId;
+ // Keep Display if needed for MemoryReference
 
 /// Represents a reference to a memory location that can be read from or written to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -1,8 +1,6 @@
-use super::result::SsaResult;
 use crate::disasm::v2::ssa_form;
 use crate::disasm::v3::model::{DataFlowComplete, Model, SsaComplete};
 use crate::disasm::Error;
-use std::collections::HashMap;
 
 /// Converts the control flow graph to SSA form
 pub struct SsaConverter {

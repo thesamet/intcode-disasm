@@ -4,16 +4,15 @@ use itertools::Itertools;
 use crate::disasm::v3::{
     control_flow::{BlockView, FunctionView},
     model::{
-        FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasFunctionCallAnalysisResult,
-        HasSsaResult, Model, ModelState, SsaComplete,
-    },
-    Block, PredecessorKind,
+        HasControlFlowGraphResult,
+        HasSsaResult, Model, ModelState,
+    }, PredecessorKind,
 };
 
 use super::{
     instructions::{Expression, Instruction, InstructionNode},
     ssa_form::{
-        PhiFunction, SsaBlock, SsaFunction, SsaMemoryReference, SsaOperandKind, SsaVarKind,
+        PhiFunction, SsaMemoryReference, SsaOperandKind, SsaVarKind,
         VersionedMemoryReference,
     },
 };
