@@ -103,7 +103,7 @@ impl TypeInferenceResult {
     pub fn format_traces_for_var(&self, typ: VariableKind) -> String {
         let traces = self.get_recursive_traces_for_var(typ);
         if traces.is_empty() {
-            return format!("No traces found for {}", typ);
+            return format!("No traces found for {typ}");
         }
 
         let mut result = String::new();

@@ -85,7 +85,7 @@ impl Display for ChangeReason {
 
                 let constraint_str = TraceColors::format_constraint(constraint).to_string();
 
-                write!(f, "  {} with {}", constraint_str, other_str)
+                write!(f, "  {constraint_str} with {other_str}")
             }
             ChangeReason::IncreaseLowerBoundFromConstraint { constraint, other } => {
                 let other_str = if let Type::Variable(var) = other {
@@ -94,7 +94,7 @@ impl Display for ChangeReason {
                     TraceColors::format_type(other)
                 };
                 let constraint_str = TraceColors::format_constraint(constraint).to_string();
-                write!(f, "  {} with {}", constraint_str, other_str)
+                write!(f, "  {constraint_str} with {other_str}")
             }
             ChangeReason::ConcreteRefinement => {
                 write!(

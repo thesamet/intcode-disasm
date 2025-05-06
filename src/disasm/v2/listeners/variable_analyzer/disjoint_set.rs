@@ -73,7 +73,7 @@ impl<T: Hash + Eq + Clone> DisjointSet<T> {
             Some(id) => id,
             None => {
                 let Some(s) = self.sets.get_mut(set_id) else {
-                    panic!("set_id {:?} not found", set_id);
+                    panic!("set_id {set_id:?} not found");
                 };
                 self.element_to_set.insert(elem.clone(), *set_id);
                 s.insert(elem);

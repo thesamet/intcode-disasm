@@ -26,7 +26,7 @@ struct PrettyPrinter<'a, S: ModelState> {
 impl<'a, S: ModelState> PrettyPrinter<'a, S> {
     fn format_expression(&self, expr: &Expression<SsaMemoryReference>) -> String {
         match expr {
-            Expression::Constant(value) => format!("{}", value).green().to_string(),
+            Expression::Constant(value) => format!("{value}").green().to_string(),
             Expression::Addressable(addr) => self.format_addressable(addr),
             Expression::Binary { op, lhs, rhs } => format!(
                 "({} {} {})",
@@ -61,7 +61,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
 
     fn format_ssa_addressable_kind(&self, op_kind: &SsaOperandKind) -> String {
         match op_kind {
-            SsaOperandKind::Constant(val) => format!("{}", val).green().to_string(),
+            SsaOperandKind::Constant(val) => format!("{val}").green().to_string(),
             SsaOperandKind::Deref(ptr) => format!(
                 "*{}",
                 self.format_ssa_addressable_kind(&SsaOperandKind::Variable(*ptr))
@@ -79,7 +79,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                 };
 
                 let typ_str = match typ {
-                    Some(typ) => format!(": {}", typ),
+                    Some(typ) => format!(": {typ}"),
                     None => "".to_string(),
                 };
 
@@ -87,7 +87,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                     .origin_info
                     .debug_marker
                     .as_ref()
-                    .map(|m| format!("'{} ", m).yellow())
+                    .map(|m| format!("'{m} ").yellow())
                     .unwrap_or_default();
 
                 if !self.show_vars {
@@ -125,15 +125,15 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                     let cluster_id = clusters
                         .variable_to_cluster
                         .get(var)
-                        .unwrap_or_else(|| panic!("No entry found for key {}", var));
+                        .unwrap_or_else(|| panic!("No entry found for key {var}"));
                     let name = &clusters
                         .clusters
                         .get(cluster_id)
                         .unwrap_or_else(|| {
-                            panic!("Missing cluster id {} for key {}", cluster_id, var)
+                            panic!("Missing cluster id {cluster_id} for key {var}")
                         })
                         .cluster_name;
-                    format!("{}{}", name, typ_str)
+                    format!("{name}{typ_str}")
                 }
             }
         }
@@ -193,7 +193,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                 )
             }
             Instruction::Goto(addr) => {
-                format!("goto {}", addr)
+                format!("goto {addr}")
             }
             Instruction::Call { addr, return_to } => {
                 format!(
@@ -280,7 +280,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
             .model
             .type_inference_result()
             // .and_then(|m| m.get_function_signature(&function.original_id));
-            .and_then(|_m| panic!("Migration uncomment")); // Use _m to avoid unused variable warning
+            .map(|_m| panic!("Migration uncomment")); // Use _m to avoid unused variable warning
 
         // Return empty string during migration
         "".to_string()
@@ -320,7 +320,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
     where
         S: HasControlFlowGraphResult + HasSsaResult,
     {
-        return "NO CALLERS FOR NOW MIGRATION".to_string();
+        "NO CALLERS FOR NOW MIGRATION".to_string()
         /*
         let callers = self
             .model
@@ -361,12 +361,12 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                     self.format_call_info(f),
                     self.format_function(f)
                         .lines()
-                        .map(|l| format!("    {}", l))
+                        .map(|l| format!("    {l}"))
                         .join("\n")
                 )
             })
             .join("\n\n");
-        println!("{}", s);
+        println!("{s}");
     }
 }
 pub fn pretty_print_ssa<S: ModelState>(model: &Model<S>)

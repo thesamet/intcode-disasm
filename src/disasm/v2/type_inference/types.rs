@@ -60,10 +60,10 @@ impl VariableKind {
 impl Display for VariableKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VariableKind::SsaVar(var) => write!(f, "{}", var),
-            VariableKind::Deref(var) => write!(f, "*{}", var),
-            VariableKind::TypeVar(id) => write!(f, "T{}", id),
-            VariableKind::Const { value, .. } => write!(f, "{}", value),
+            VariableKind::SsaVar(var) => write!(f, "{var}"),
+            VariableKind::Deref(var) => write!(f, "*{var}"),
+            VariableKind::TypeVar(id) => write!(f, "T{id}"),
+            VariableKind::Const { value, .. } => write!(f, "{value}"),
         }
     }
 }
@@ -273,18 +273,18 @@ impl fmt::Display for Type {
             Type::Int => write!(f, "int"),
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
-            Type::Pointer(t) => write!(f, "Pointer({})", t),
-            Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{}", t)).join(", ")),
-            Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{}", id),
-            Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{}", var),
-            Type::Variable(VariableKind::Deref(var)) => write!(f, "*{}", var),
-            Type::Variable(VariableKind::Const { value, .. }) => write!(f, "{}", value),
+            Type::Pointer(t) => write!(f, "Pointer({t})"),
+            Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{t}")).join(", ")),
+            Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{id}"),
+            Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{var}"),
+            Type::Variable(VariableKind::Deref(var)) => write!(f, "*{var}"),
+            Type::Variable(VariableKind::Const { value, .. }) => write!(f, "{value}"),
             Type::Truthy => write!(f, "Truthy"),
             Type::Function { args, returns } => {
                 write!(f, "fn(")?;
-                write!(f, "{}", args)?;
+                write!(f, "{args}")?;
                 write!(f, ") -> ")?;
-                write!(f, "{}", returns)?;
+                write!(f, "{returns}")?;
                 Ok(())
             }
         }

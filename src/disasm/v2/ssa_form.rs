@@ -70,14 +70,14 @@ impl From<MemoryReferenceType> for MemoryReference {
 impl std::fmt::Display for MemoryReferenceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MemoryReferenceType::Memory(addr) => write!(f, "[{}]", addr),
+            MemoryReferenceType::Memory(addr) => write!(f, "[{addr}]"),
             MemoryReferenceType::RelativeMemory(offset) if *offset == 0 => {
                 write!(f, "[R]")
             }
             MemoryReferenceType::RelativeMemory(offset) if *offset > 0 => {
-                write!(f, "[R+{}]", offset)
+                write!(f, "[R+{offset}]")
             }
-            MemoryReferenceType::RelativeMemory(offset) => write!(f, "[R{}]", offset),
+            MemoryReferenceType::RelativeMemory(offset) => write!(f, "[R{offset}]"),
             MemoryReferenceType::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
         }
     }
@@ -405,11 +405,11 @@ impl SsaOperand {
 impl fmt::Display for SsaVarKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SsaVarKind::Memory(addr) => write!(f, "[{}]", addr),
+            SsaVarKind::Memory(addr) => write!(f, "[{addr}]"),
             SsaVarKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
-            SsaVarKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{}]", offset),
-            SsaVarKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
-            SsaVarKind::Pointer(addr) => write!(f, "p{}", addr),
+            SsaVarKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{offset}]"),
+            SsaVarKind::RelativeMemory(offset) => write!(f, "[R{offset}]"),
+            SsaVarKind::Pointer(addr) => write!(f, "p{addr}"),
         }
     }
 }
@@ -423,9 +423,9 @@ impl fmt::Display for SsaVar {
 impl fmt::Display for SsaOperand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
-            SsaOperandKind::Constant(val) => write!(f, "{}", val),
-            SsaOperandKind::Variable(ref var) => write!(f, "{}", var), // Uses SsaVar Display
-            SsaOperandKind::Deref(var) => write!(f, "*{}", var),
+            SsaOperandKind::Constant(val) => write!(f, "{val}"),
+            SsaOperandKind::Variable(ref var) => write!(f, "{var}"), // Uses SsaVar Display
+            SsaOperandKind::Deref(var) => write!(f, "*{var}"),
         }
     }
 }
@@ -466,6 +466,12 @@ pub enum MarkerSearchResult<'a> {
 #[derive(Debug, Clone)]
 pub struct SsaResult {
     pub functions: HashMap<FunctionId, SsaFunction>,
+}
+
+impl Default for SsaResult {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SsaResult {
@@ -1044,8 +1050,7 @@ impl<'a> SSAConversionState<'a> {
                     // Get the end state of the predecessor block from the ssa_blocks map
                     let pred_ssa_block = ssa_blocks.get(&pred_id).unwrap_or_else(|| {
                         panic!(
-                            "Predecessor block {} not found for block {}",
-                            pred_id, block_id
+                            "Predecessor block {pred_id} not found for block {block_id}"
                         )
                     });
 

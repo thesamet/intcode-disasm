@@ -64,13 +64,13 @@ impl OperandKind {
 impl fmt::Display for OperandKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OperandKind::Memory(addr) => write!(f, "[{}]", addr),
-            OperandKind::Immediate(val) => write!(f, "{}", val),
+            OperandKind::Memory(addr) => write!(f, "[{addr}]"),
+            OperandKind::Immediate(val) => write!(f, "{val}"),
             OperandKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
-            OperandKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{}]", offset),
-            OperandKind::RelativeMemory(offset) => write!(f, "[R{}]", offset),
-            OperandKind::Pointer(offset) => write!(f, "p{}", offset),
-            OperandKind::Deref(offset) => write!(f, "*p{}", offset),
+            OperandKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{offset}]"),
+            OperandKind::RelativeMemory(offset) => write!(f, "[R{offset}]"),
+            OperandKind::Pointer(offset) => write!(f, "p{offset}"),
+            OperandKind::Deref(offset) => write!(f, "*p{offset}"),
         }
     }
 }

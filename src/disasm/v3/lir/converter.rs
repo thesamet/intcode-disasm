@@ -138,7 +138,7 @@ impl InstructionNode<MemoryReference> {
             target: target
                 .kind
                 .try_into()
-                .unwrap_or_else(|e| panic!("Failed to convert target to MemoryReference: {}", e)),
+                .unwrap_or_else(|e| panic!("Failed to convert target to MemoryReference: {e}")),
             src: Expression::Binary {
                 op,
                 lhs: Box::new(lhs.into()),
@@ -209,13 +209,13 @@ impl InstructionNode<MemoryReference> {
                                 }),
                             ..
                         }) => {
-                            return Some((
+                            Some((
                                 2,
                                 Some(InstructionNode {
                                     id: InstructionId::fresh(),
                                     kind: Instruction::Return,
                                 }),
-                            ));
+                            ))
                         }
                         _ => panic!("Expected GOTO [R] after R adjustment for function return"),
                     }
@@ -254,7 +254,7 @@ impl InstructionNode<MemoryReference> {
                                     2,
                                     Some(InstructionNode {
                                         kind: Instruction::Call {
-                                            addr: func_addr.clone().into(),
+                                            addr: (*func_addr).into(),
                                             return_to: BlockId::from(return_to),
                                         },
                                         id: InstructionId::fresh(),

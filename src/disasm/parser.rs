@@ -423,7 +423,7 @@ fn resolve_argument(
                     debug_marker: *debug_marker,
                 })
             } else {
-                Err(format!("Undefined label: {}", name))
+                Err(format!("Undefined label: {name}"))
             }
         }
         UnresolvedArgument::PointerDeref { debug_marker, .. } => {
@@ -445,7 +445,7 @@ fn resolve_argument(
                     debug_marker: *debug_marker,
                 })
             } else {
-                Err(format!("Undefined pointer: {}", name))
+                Err(format!("Undefined pointer: {name}"))
             }
         }
         UnresolvedArgument::Resolved { op } => {

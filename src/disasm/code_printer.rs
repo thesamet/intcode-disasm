@@ -62,7 +62,7 @@ pub struct IndentedWriter<'a> {
 
 impl<'a> CodeWriter for IndentedWriter<'a> {
     fn line(&mut self, s: &str) {
-        self.parent.line(&format!("    {}", s));
+        self.parent.line(&format!("    {s}"));
     }
 }
 

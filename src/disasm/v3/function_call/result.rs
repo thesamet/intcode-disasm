@@ -30,6 +30,12 @@ pub struct FunctionCallAnalysisResult {
     pub blocks: HashMap<BlockId, CallSiteInfo>,     // Use v3 CallSiteInfo
 }
 
+impl Default for FunctionCallAnalysisResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FunctionCallAnalysisResult {
     pub fn new() -> Self {
         Self {

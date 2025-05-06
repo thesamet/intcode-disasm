@@ -105,7 +105,6 @@ where
         self.functions().flat_map(move |(_, function)| {
             function
                 .blocks()
-                .map(move |(block_id, block)| (block_id, block))
         })
     }
 }

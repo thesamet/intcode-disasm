@@ -27,6 +27,12 @@ pub struct ControlFlowGraphBuilder {
     functions: HashMap<FunctionId, Function>,
 }
 
+impl Default for ControlFlowGraphBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ControlFlowGraphBuilder {
     pub fn new() -> Self {
         Self {
@@ -203,10 +209,9 @@ impl ControlFlowGraphBuilder {
                 let next_block = BlockId::from(function_details.span.start + 2);
                 assert!(
                     self.blocks.contains_key(&next_block),
-                    "Block {} not found",
-                    next_block
+                    "Block {next_block} not found"
                 );
-                NextKind::Follows(BlockId::from(next_block))
+                NextKind::Follows(next_block)
             } else if let Some(last_instr) = block.low_instructions.last() {
                 self.determine_next_kind(*block_id, last_instr, block.span.end)
             } else {
@@ -218,8 +223,7 @@ impl ControlFlowGraphBuilder {
                 NextKind::Follows(target_id) => {
                     assert!(
                         self.blocks.contains_key(target_id), // Pass &BlockId
-                        "Block {} not found",
-                        target_id
+                        "Block {target_id} not found"
                     );
                     predecessors_map
                         .entry(*target_id) // Keep as value for entry
@@ -229,8 +233,7 @@ impl ControlFlowGraphBuilder {
                 NextKind::Goto(target_block_id) => {
                     assert!(
                         self.blocks.contains_key(target_block_id), // Pass &BlockId
-                        "Block {} not found",
-                        target_block_id
+                        "Block {target_block_id} not found"
                     );
                     predecessors_map
                         .entry(*target_block_id) // Keep as value for entry
@@ -253,13 +256,11 @@ impl ControlFlowGraphBuilder {
                     let false_branch = condition.follows_block;
                     assert!(
                         self.blocks.contains_key(&true_branch), // Pass &BlockId
-                        "Block {} not found",
-                        true_branch
+                        "Block {true_branch} not found"
                     );
                     assert!(
                         self.blocks.contains_key(&false_branch), // Pass &BlockId
-                        "Block {} not found",
-                        false_branch
+                        "Block {false_branch} not found"
                     );
                     predecessors_map.entry(true_branch).or_default().push(
                         // Keep as value for entry
@@ -303,8 +304,7 @@ impl ControlFlowGraphBuilder {
             let block_id = BlockId::from(return_span.start);
             assert!(
                 self.blocks.contains_key(&block_id),
-                "Return block {} not found",
-                block_id
+                "Return block {block_id} not found"
             );
             Some(block_id)
         } else {
@@ -337,11 +337,11 @@ impl ControlFlowGraphBuilder {
     ) -> NextKind<MemoryReference> {
         match &last_instr.kind {
             Instruction::Halt => NextKind::Halt,
-            Instruction::Goto(target_addr) => NextKind::Goto(BlockId::from(*target_addr)),
+            Instruction::Goto(target_addr) => NextKind::Goto((*target_addr)),
             Instruction::Call { addr, return_to } => NextKind::FunctionCall(FunctionCall::new(
                 block_id,
                 addr.clone(),
-                BlockId::from(*return_to),
+                (*return_to),
             )),
             Instruction::Return => NextKind::Return,
             Instruction::If {
@@ -349,11 +349,11 @@ impl ControlFlowGraphBuilder {
                 then_addr,
                 else_addr,
             } => NextKind::Condition(Condition {
-                from_block: BlockId::from(block_id),
+                from_block: block_id,
                 condition_operand: cond.clone(),
                 jump_if_true: true,
-                target_block: BlockId::from(*then_addr),
-                follows_block: BlockId::from(*else_addr),
+                target_block: (*then_addr),
+                follows_block: (*else_addr),
             }),
             _ => {
                 // Find the next block by address

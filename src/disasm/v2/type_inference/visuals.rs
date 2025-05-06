@@ -39,15 +39,15 @@ impl TraceColors {
         };
         match var {
             VariableKind::SsaVar(var) => {
-                format!("{}{}", function_id, var).color(Self::var()).bold()
+                format!("{function_id}{var}").color(Self::var()).bold()
             }
             VariableKind::Deref(var) => {
-                format!("{}*{}", function_id, var).color(Self::var()).bold()
+                format!("{function_id}*{var}").color(Self::var()).bold()
             }
-            VariableKind::Const { value, .. } => format!("{}{}", function_id, value)
+            VariableKind::Const { value, .. } => format!("{function_id}{value}")
                 .color(Self::var())
                 .bold(),
-            VariableKind::TypeVar(_) => format!("{}", var).color(Self::type_var()).bold(),
+            VariableKind::TypeVar(_) => format!("{var}").color(Self::type_var()).bold(),
         }
     }
 
@@ -63,7 +63,7 @@ impl TraceColors {
                 s.push(')');
                 s.color(Self::type_name()).bold()
             }
-            _ => format!("{}", typ).color(Self::type_name()).bold(),
+            _ => format!("{typ}").color(Self::type_name()).bold(),
         }
     }
 
@@ -97,15 +97,15 @@ impl TraceColors {
     }
 
     pub fn format_location<T: fmt::Display>(location: T) -> ColoredString {
-        format!("{}", location).color(Self::location())
+        format!("{location}").color(Self::location())
     }
 
     pub fn format_bound<T: fmt::Display>(bound: T) -> ColoredString {
-        format!("{}", bound).color(Self::bound()).bold()
+        format!("{bound}").color(Self::bound()).bold()
     }
 
     pub fn format_header<T: fmt::Display>(header: T) -> ColoredString {
-        format!("{}", header).color(Self::header()).bold()
+        format!("{header}").color(Self::header()).bold()
     }
 
     pub fn format_relation(text: &str) -> ColoredString {

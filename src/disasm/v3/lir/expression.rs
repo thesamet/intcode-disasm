@@ -45,7 +45,7 @@ impl<A> Expression<A> {
     /// // For an expression like: mem[5] + mem[3]
     /// // This would return references to memory locations 5 and 3
     /// ```
-    pub fn collect_read_addresses<'a>(&'a self) -> Vec<&'a A> {
+    pub fn collect_read_addresses(&self) -> Vec<&A> {
         let mut out = vec![];
         let mut queue = vec![self];
         while let Some(expr) = queue.pop() {

@@ -220,7 +220,7 @@ impl ImageScanner {
                         jump_targets.insert(addr);
                     }
                 } else if instruction.is_halt() {
-                    halts.push(instruction.span.clone());
+                    halts.push(instruction.span);
                 }
 
                 if !instruction.is_halt() && !instruction.is_goto() {

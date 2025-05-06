@@ -66,7 +66,7 @@ pub enum ConstraintReason {
 impl fmt::Display for ConstraintReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Delegate to the Debug implementation
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 

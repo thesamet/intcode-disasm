@@ -542,19 +542,19 @@ pub fn simplify_instruction<T: Into<Operand> + Clone>(
 impl<T: fmt::Display> fmt::Display for GenericNativeInstruction<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
-            NativeInstructionKind::Add(a, b, c) => write!(f, "{} = {} + {}", c, a, b),
-            NativeInstructionKind::Mul(a, b, c) => write!(f, "{} = {} * {}", c, a, b),
-            NativeInstructionKind::Input(a) => write!(f, "{} = input()", a),
-            NativeInstructionKind::Output(a) => write!(f, "output({})", a),
-            NativeInstructionKind::JumpIfTrue(a, b) => write!(f, "if {} goto {}", a, b),
-            NativeInstructionKind::JumpIfFalse(a, b) => write!(f, "if !{} goto {}", a, b),
-            NativeInstructionKind::LessThan(a, b, c) => write!(f, "{} = {} < {}", c, a, b),
-            NativeInstructionKind::Equals(a, b, c) => write!(f, "{} = {} == {}", c, a, b),
-            NativeInstructionKind::AdjustRelativeBase(a) => write!(f, "R += {}", a),
+            NativeInstructionKind::Add(a, b, c) => write!(f, "{c} = {a} + {b}"),
+            NativeInstructionKind::Mul(a, b, c) => write!(f, "{c} = {a} * {b}"),
+            NativeInstructionKind::Input(a) => write!(f, "{a} = input()"),
+            NativeInstructionKind::Output(a) => write!(f, "output({a})"),
+            NativeInstructionKind::JumpIfTrue(a, b) => write!(f, "if {a} goto {b}"),
+            NativeInstructionKind::JumpIfFalse(a, b) => write!(f, "if !{a} goto {b}"),
+            NativeInstructionKind::LessThan(a, b, c) => write!(f, "{c} = {a} < {b}"),
+            NativeInstructionKind::Equals(a, b, c) => write!(f, "{c} = {a} == {b}"),
+            NativeInstructionKind::AdjustRelativeBase(a) => write!(f, "R += {a}"),
             NativeInstructionKind::Halt => write!(f, "halt"),
             NativeInstructionKind::Data(values) => write!(f, "DATA {}", values.iter().format(", ")),
-            NativeInstructionKind::Goto(a) => write!(f, "goto {}", a),
-            NativeInstructionKind::Assign(a, b) => write!(f, "{} = {}", a, b),
+            NativeInstructionKind::Goto(a) => write!(f, "goto {a}"),
+            NativeInstructionKind::Assign(a, b) => write!(f, "{a} = {b}"),
         }
     }
 }

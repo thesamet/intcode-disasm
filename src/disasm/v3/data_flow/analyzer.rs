@@ -73,7 +73,7 @@ impl DataFlowAnalyzer {
             let block_flow = df_result
                 .blocks
                 .entry(block_id)
-                .or_insert_with(DataFlowBlock::new);
+                .or_default();
 
             let mut defined_in_block = HashSet::new();
             block_flow.writes_above_r = false;
@@ -161,8 +161,8 @@ impl DataFlowAnalyzer {
         block_id: &BlockId,
         df_result: &DataFlowResult,
     ) -> HashSet<FunctionCall<MemoryReference>> {
-        let block = function.block(&block_id);
-        let flow = df_result.blocks.get(&block_id).unwrap();
+        let block = function.block(block_id);
+        let flow = df_result.blocks.get(block_id).unwrap();
         let mut new_func_in = flow.function_returns_in.clone();
 
         // If this block is a return from a function call, we do not change new_func_in
@@ -293,10 +293,10 @@ impl DataFlowAnalyzer {
             // Iterate backwards - often converges faster for backward analyses like liveness
             for &block_id in function.all_block_ids().collect_vec().iter().rev() {
                 // Liveness
-                let new_live_out = self.calculate_live_out(function, &block_id, df_result); // Pass &block_id
+                let new_live_out = self.calculate_live_out(function, block_id, df_result); // Pass &block_id
 
                 // Update block's OUT set if changed
-                let block_flow = df_result.blocks.get_mut(&block_id).unwrap();
+                let block_flow = df_result.blocks.get_mut(block_id).unwrap();
                 if new_live_out != block_flow.live_out {
                     debug!(
                         "Block {:?}: LiveOut changed to {:?}",
@@ -314,7 +314,7 @@ impl DataFlowAnalyzer {
                 let mut current_live_in = block_flow.live_out.clone();
 
                 // add potential_function_call_params.
-                let block_view = function.block(&block_id); // Get BlockView
+                let block_view = function.block(block_id); // Get BlockView
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
                     for d in &block_flow.defs_in {
@@ -322,7 +322,7 @@ impl DataFlowAnalyzer {
                             // Use is_outgoing_parameter() to match v2 behavior
                             current_live_in
                                 .entry(d.kind.clone())
-                                .or_insert_with(HashSet::new)
+                                .or_default()
                                 .insert(d.source);
                         }
                     }
@@ -332,7 +332,7 @@ impl DataFlowAnalyzer {
                 for (k, v) in &block_flow.use_before_def {
                     current_live_in
                         .entry(k.clone())
-                        .or_insert_with(HashSet::new)
+                        .or_default()
                         .insert(OriginationPoint::Instruction(*v)); // Use InstructionId directly
                 }
 
@@ -413,7 +413,7 @@ impl DataFlowAnalyzer {
         for block_id in function.all_block_ids() {
             // Find usages of positive stack offsets ([R+n]) that occur *before* any definition within this block.
             // These represent potential reads of function return values.
-            let block_flow = df_result.blocks.get(&block_id).unwrap();
+            let block_flow = df_result.blocks.get(block_id).unwrap();
             let return_usages_in_block = df_result.blocks[block_id]
                 .use_before_def
                 .iter()

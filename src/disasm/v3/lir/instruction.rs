@@ -138,7 +138,7 @@ impl<A> InstructionNode<A> {
                 InstructionNode {
                     id: self.id,
                     kind: Instruction::Assign {
-                        target: map_write(context, &target),
+                        target: map_write(context, target),
                         src: src.map(&mut |v| map_read(context, v)),
                         target_debug_marker: *target_debug_marker,
                     },
