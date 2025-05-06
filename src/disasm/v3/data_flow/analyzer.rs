@@ -29,7 +29,7 @@ impl DataFlowAnalyzer {
         analyzer.analyze()
     }
 
-    fn analyze(&self) -> Result<Model<DataFlowComplete>, Error> {
+    fn analyze(self) -> Result<Model<DataFlowComplete>, Error> {
         let mut result = DataFlowResult::new();
 
         // Get all functions from the control flow graph
@@ -40,7 +40,7 @@ impl DataFlowAnalyzer {
         }
 
         // Return a new model with the updated state
-        Ok(self.model.clone().with_data_flow_result(result))
+        Ok(self.model.with_data_flow_result(result))
     }
 
     /// Performs the main data flow analysis passes for a given function.

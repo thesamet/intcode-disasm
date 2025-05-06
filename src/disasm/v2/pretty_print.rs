@@ -71,7 +71,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
             ),
             SsaOperandKind::Variable(ref var) => {
                 // Formatting logic for SsaVar
-                let typ = if let Some(type_info) = self.model.get_type_inference_result() {
+                let typ = if let Some(type_info) = self.model.type_inference_result() {
                     if self.show_types {
                         type_info.get_type_for_ssavar(var) // Type info is per-variable
                     } else {
@@ -124,7 +124,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
                 } else if var.kind.get_relative_memory() == Some(0) {
                     "R".to_string().cyan().to_string()
                 } else {
-                    let clusters = &self.model.get_variable_merger_result().unwrap();
+                    let clusters = &self.model.variable_merger_result().unwrap();
                     let cluster_id = clusters
                         .variable_to_cluster
                         .get(var)
@@ -281,7 +281,7 @@ impl<'a, S: ModelState> PrettyPrinter<'a, S> {
         // return "".to_string(); // Removed unreachable return
         let args_rets: Option<String> = self
             .model
-            .get_type_inference_result()
+            .type_inference_result()
             // .and_then(|m| m.get_function_signature(&function.original_id));
             .and_then(|_m| panic!("Migration uncomment")); // Use _m to avoid unused variable warning
 

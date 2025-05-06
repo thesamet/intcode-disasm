@@ -5,14 +5,15 @@ mod tests {
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v3::analysis::disassemble;
     use crate::disasm::v3::id_types::FunctionId;
+    use crate::disasm::v3::image_scanner::ImageScannerResult;
     use crate::disasm::v3::model::{InitialState, Model};
     use std::collections::HashMap;
 
-    fn parse_and_scan(code: &str) -> super::super::ImageScannerResult {
+    fn parse_and_scan(code: &str) -> ImageScannerResult {
         let binary = parser::compile(code);
-        let model = Model::<InitialState>::new();
-        let result = ImageScanner::run(binary, model).expect("Image scanner failed");
-        result.image_scanner_result.unwrap()
+        let model = Model::from_binary(binary);
+        let result = ImageScanner::run(model).expect("Image scanner failed");
+        result.image_scanner_result().clone()
     }
 
     #[test]
@@ -23,28 +24,13 @@ mod tests {
         let image = vec![1, 2, 3, 4, 5];
 
         // Create initial model
-        let model = Model::<InitialState>::new();
+        let model = Model::from_binary(image);
 
         // Run the image scanner
-        let result = ImageScanner::run(image, model).expect("Image scanner failed");
+        let result = ImageScanner::run(model).expect("Image scanner failed");
 
         // Verify the result
-        let scanner_result = result.image_scanner_result.unwrap();
-        assert_eq!(scanner_result.image, vec![1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn test_disassemble() {
-        init_logging();
-
-        // Create a simple test image
-        let image = vec![1, 2, 3, 4, 5];
-
-        // Run the disassemble function
-        let result = disassemble(image.clone()).expect("Disassembly failed");
-
-        // Verify the result
-        assert_eq!(result.image, image);
+        assert_eq!(*result.image(), vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
@@ -55,14 +41,13 @@ mod tests {
         let image = vec![];
 
         // Create initial model
-        let model = Model::<InitialState>::new();
+        let model = Model::from_binary(image);
 
         // Run the image scanner
-        let result = ImageScanner::run(image, model).expect("Image scanner failed");
+        let result = ImageScanner::run(model).expect("Image scanner failed");
 
         // Verify the result
-        let scanner_result = result.image_scanner_result.unwrap();
-        assert_eq!(scanner_result.image, vec![]);
+        let scanner_result = result.image_scanner_result();
         assert_eq!(scanner_result.recognized_functions.len(), 0);
         assert_eq!(scanner_result.data_segments.len(), 0);
     }
@@ -75,13 +60,13 @@ mod tests {
         let image = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
         // Create initial model
-        let model = Model::<InitialState>::new();
+        let model = Model::from_binary(image);
 
         // Run the image scanner
-        let result = ImageScanner::run(image, model).expect("Image scanner failed");
+        let result = ImageScanner::run(model).expect("Image scanner failed");
 
         // Verify the result
-        let scanner_result = result.image_scanner_result.unwrap();
+        let scanner_result = result.image_scanner_result();
 
         // Check that function ID 0 maps to address 0
         if !scanner_result.recognized_functions.is_empty() {

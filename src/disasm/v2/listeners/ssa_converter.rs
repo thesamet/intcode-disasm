@@ -12,7 +12,7 @@ use crate::disasm::{
         control_flow::ControlFlowGraphBuilder,
         data_flow::DataFlowAnalyzer,
         image_scanner::ImageScanner,
-        model::{DataFlowComplete, InitialState, Model},
+        model::{DataFlowComplete, InitialState, InputBinary, Model},
     },
     Error,
 };
@@ -41,15 +41,15 @@ impl ModelEventListener for SsaConverter {
 
         // 2. Run v3 analysis pipeline
         // Create initial v3 model
-        let v3_model_initial = Model::<InitialState>::new();
+        let v3_model_initial = Model::<InitialState>::new(InputBinary::new(image));
         // Run analysis phases
-        let v3_model_scanned = ImageScanner::run(image, v3_model_initial)?;
+        let v3_model_scanned = ImageScanner::run(v3_model_initial)?;
         let v3_model_cfg = ControlFlowGraphBuilder::run(v3_model_scanned)?;
         let v3_model_data_flow = DataFlowAnalyzer::run(v3_model_cfg)?;
 
         // 3. Call the (soon-to-be-modified) SSA conversion using the v3 model
         // Note: We are changing the function signature SsaResult::from_program_model expects
-        let ssa_result = SsaResult::from_program_model(&v3_model_data_flow); // Pass v3 model
+        let ssa_result = SsaResult::from_program_model(v3_model_data_flow); // Pass v3 model
 
         // 4. Store the v2 SsaResult back into the v2 ProgramModel
         // model.set_ssa_result(ssa_result);

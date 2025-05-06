@@ -19,12 +19,8 @@ impl SsaConverter {
         converter.convert()
     }
 
-    fn convert(&self) -> Result<Model<SsaComplete>, Error> {
+    fn convert(self) -> Result<Model<SsaComplete>, Error> {
         // Create the SSA result
-        let result = ssa_form::SsaResult::from_program_model(&self.model);
-
-        // Return a new model with the updated state
-        panic!()
-        // Ok(self.model.clone().with_ssa_result(result))
+        Ok(ssa_form::SsaResult::from_program_model(self.model))
     }
 }

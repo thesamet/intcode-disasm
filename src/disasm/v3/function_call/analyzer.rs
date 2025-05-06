@@ -18,7 +18,7 @@ impl FunctionCallAnalyzer {
         analyzer.analyze()
     }
 
-    fn analyze(&self) -> Result<Model<FunctionCallComplete>, Error> {
+    fn analyze(self) -> Result<Model<FunctionCallComplete>, Error> {
         // Create the function call analysis result
         let result = FunctionCallAnalysisResult {
             functions: HashMap::new(),
@@ -26,9 +26,6 @@ impl FunctionCallAnalyzer {
         };
 
         // Return a new model with the updated state
-        Ok(self
-            .model
-            .clone()
-            .with_function_call_analysis_result(result))
+        Ok(self.model.with_function_call_analysis_result(result))
     }
 }

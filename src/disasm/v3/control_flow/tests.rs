@@ -13,8 +13,8 @@ mod tests {
 
     fn parse_and_build_cfg(code: &str) -> v3::model::Model<ControlFlowGraphComplete> {
         let binary = parser::compile(code);
-        let model = Model::<InitialState>::new();
-        let model = ImageScanner::run(binary, model).expect("Image scanner failed");
+        let model = Model::from_binary(binary);
+        let model = ImageScanner::run(model).expect("Image scanner failed");
         let model = ControlFlowGraphBuilder::run(model).expect("CFG builder failed");
         model
     }

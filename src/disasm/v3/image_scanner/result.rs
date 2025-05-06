@@ -8,7 +8,6 @@ use std::collections::{HashMap, HashSet};
 pub struct ImageScannerResult {
     pub recognized_functions: Vec<FunctionId>,
     pub data_segments: Vec<DataSegment>,
-    pub image: Vec<i128>,
 
     // Maps addresses to function IDs
     pub address_to_function: HashMap<usize, FunctionId>,

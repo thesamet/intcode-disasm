@@ -12,31 +12,32 @@ use std::collections::{HashMap, HashSet};
 
 /// Analyzes the raw program image to identify functions and data segments
 pub struct ImageScanner {
-    image: Vec<i128>,
+    model: Model<InitialState>,
 }
 
 impl ImageScanner {
-    pub fn new(image: Vec<i128>) -> Self {
-        Self { image }
+    pub fn new(model: Model<InitialState>) -> Self {
+        Self { model }
     }
 
-    pub fn run(
-        image: Vec<i128>,
-        model: Model<InitialState>,
-    ) -> Result<Model<ImageScannerComplete>, Error> {
-        let scanner = Self::new(image);
-        scanner.scan(model)
+    fn image(&self) -> &Vec<i128> {
+        self.model.image()
     }
 
-    fn scan(&self, model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
+    pub fn run(model: Model<InitialState>) -> Result<Model<ImageScannerComplete>, Error> {
+        Self::new(model).scan()
+    }
+
+    fn scan(self) -> Result<Model<ImageScannerComplete>, Error> {
         debug!("Starting image scanning...");
+        let image = self.image();
 
         // Scan for functions and data segments
         let mut i = 0;
         let mut data_offsets = vec![];
         let mut recognized_function_details = vec![];
 
-        while i < self.image.len() {
+        while i < image.len() {
             if let Some(stack_size) = self.recognize_function_start(i) {
                 match self.scan_from(i, stack_size) {
                     Ok(f) => {
@@ -104,19 +105,18 @@ impl ImageScanner {
         let result = ImageScannerResult {
             recognized_functions,
             data_segments,
-            image: self.image.clone(),
             address_to_function,
             function_to_address,
             function_details,
         };
 
         // Return a new model with the updated state
-        Ok(model.with_image_scanner_result(result))
+        Ok(self.model.with_image_scanner_result(result))
     }
 
     /// Recognizes a function start by looking for R += N instruction
     fn recognize_function_start(&self, offset: usize) -> Option<i128> {
-        let Ok(instruction) = NativeInstruction::parse(&self.image, offset) else {
+        let Ok(instruction) = NativeInstruction::parse(self.image(), offset) else {
             return None;
         };
         if instruction.opcode() != Opcode::AdjustRelativeBase {
@@ -131,7 +131,7 @@ impl ImageScanner {
         offset: usize,
         stack_size: i128,
     ) -> Result<(NativeInstruction, NativeInstruction), ParseError> {
-        let adj_r = NativeInstruction::parse(&self.image, offset)?;
+        let adj_r = NativeInstruction::parse(self.image(), offset)?;
         if adj_r.opcode() != Opcode::AdjustRelativeBase {
             return Err(ParseError::NoMatch);
         }
@@ -142,7 +142,7 @@ impl ImageScanner {
             return Err(ParseError::InvalidStackAdjustment(offset));
         }
         let offset = offset + 2;
-        let goto = NativeInstruction::parse(&self.image, offset)?;
+        let goto = NativeInstruction::parse(self.image(), offset)?;
         let Some(goto_address) = goto.goto_address() else {
             return Err(ParseError::UnexpectedOpAfterAdjustment);
         };
@@ -157,7 +157,7 @@ impl ImageScanner {
         &self,
         offset: usize,
     ) -> Result<(NativeInstruction, NativeInstruction, BaseFunctionCall), ParseError> {
-        let set_r = NativeInstruction::parse(&self.image, offset)?;
+        let set_r = NativeInstruction::parse(self.image(), offset)?;
         let assignment = set_r.as_assignment().ok_or(ParseError::NoMatch)?;
         if assignment.target.kind.get_relative_memory() != Some(0) {
             return Err(ParseError::NoMatch);
@@ -167,7 +167,7 @@ impl ImageScanner {
             .kind
             .get_immediate()
             .ok_or(ParseError::NoMatch)? as usize;
-        let goto_op = NativeInstruction::parse(&self.image, set_r.span.end)?;
+        let goto_op = NativeInstruction::parse(self.image(), set_r.span.end)?;
         if !goto_op.is_goto() {
             return Err(ParseError::NoMatch);
         }
@@ -210,7 +210,7 @@ impl ImageScanner {
                 instructions.push(i2);
                 function_calls.push(fc);
             } else {
-                let instruction = NativeInstruction::parse(&self.image, offset)?;
+                let instruction = NativeInstruction::parse(self.image(), offset)?;
                 if instruction.is_jump() {
                     let address = instruction
                         .immediate_goto()

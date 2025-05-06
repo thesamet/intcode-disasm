@@ -485,7 +485,7 @@ impl SsaResult {
     }
 
     // Modified to accept v3 Model<DataFlowComplete>
-    pub fn from_program_model(model: &Model<DataFlowComplete>) -> Model<SsaComplete> {
+    pub fn from_program_model(model: Model<DataFlowComplete>) -> Model<SsaComplete> {
         // let mut ssa_result = Self::new(); // Removed as SsaResult is built implicitly
 
         let mut blocks = HashMap::new();
@@ -497,11 +497,10 @@ impl SsaResult {
             let v2_function_id = FunctionId::new(v3_function_id.index());
 
             // Pass the v3 model and the specific function view to the converter
-            let mut converter = SSAConversionState::new(model, function_view);
+            let mut converter = SSAConversionState::new(&model, function_view);
             blocks.extend(converter.convert_function());
         }
-        let c = model.clone();
-        c.with_ssa_result(v3::ssa::SsaResult { blocks })
+        model.with_ssa_result(v3::ssa::SsaResult { blocks })
     }
 }
 
@@ -586,7 +585,10 @@ impl VersionRegistry {
                         self.convert_to_ssa_expression::<MemoryReference>(expr.as_ref()),
                     ))
                 }
-                 _ => unreachable!("Expected Deref or versionable type, got: {:?}", memory_reference),
+                _ => unreachable!(
+                    "Expected Deref or versionable type, got: {:?}",
+                    memory_reference
+                ),
             })
     }
 
@@ -605,8 +607,12 @@ impl VersionRegistry {
     /// Resolves an existing SSA expression (Expression<SsaMemoryReference>)
     /// to use the final versions stored in this registry.
     /// Used during the second pass (populate_reads...).
-    fn resolve_ssa_expression(&self, expr: &Expression<SsaMemoryReference>) -> Expression<SsaMemoryReference> {
-        expr.map(&mut |op: &SsaMemoryReference| { // Input is already SsaMemoryReference
+    fn resolve_ssa_expression(
+        &self,
+        expr: &Expression<SsaMemoryReference>,
+    ) -> Expression<SsaMemoryReference> {
+        expr.map(&mut |op: &SsaMemoryReference| {
+            // Input is already SsaMemoryReference
             match op {
                 SsaMemoryReference::Versioned(v_partial) => {
                     // Check if this registry (self, the start_state) has a definition for this kind
@@ -628,7 +634,6 @@ impl VersionRegistry {
             }
         })
     }
-
 
     pub fn iter_versions(
         &self,
@@ -698,8 +703,8 @@ impl<'a> SSAConversionState<'a> {
                 Ok(mem_ref) => {
                     // Assign next version in 'current' (global) registry and update 'end' (block-local) state
                     let next_var = current.create_next_version(&mem_ref); // Increments global counter, gets v_n+1
-                    end.set_version(mem_ref, next_var);                   // Store v_n+1 in block's end state
-                    // Return the correctly incremented version
+                    end.set_version(mem_ref, next_var); // Store v_n+1 in block's end state
+                                                        // Return the correctly incremented version
                     next_var.into()
                 }
                 Err(_) => {
@@ -755,7 +760,8 @@ impl<'a> SSAConversionState<'a> {
 
             // Convert v3 LIR instructions to v2 SSA instructions, updating versions
             let mut instructions = Vec::new();
-            for instr_node in block_view.low_instructions() { // Use v3 low_instructions
+            for instr_node in block_view.low_instructions() {
+                // Use v3 low_instructions
                 // Capture the read-state *before* this instruction potentially writes
                 let pre_instr_state = version_registry.clone();
 
@@ -1008,7 +1014,7 @@ impl<'a> SSAConversionState<'a> {
                             pred.source_block_id()
                         );
                         */
-                         // --- REMOVED DUPLICATE CALL to new_out.set_version ---
+                        // --- REMOVED DUPLICATE CALL to new_out.set_version ---
                     }
                 }
 
@@ -1054,9 +1060,10 @@ impl<'a> SSAConversionState<'a> {
 
                     // Define the mapping closure to *convert* predecessor MemoryReferences based on its end_state
                     let mut map_mem_ref = |mem_ref: &MemoryReference| {
-                        pred_ssa_block.end_state.convert_to_ssa_memory_reference(mem_ref)
+                        pred_ssa_block
+                            .end_state
+                            .convert_to_ssa_memory_reference(mem_ref)
                     };
-
 
                     // Special handling for return values from function calls
                     if matches!(
@@ -1095,7 +1102,8 @@ impl<'a> SSAConversionState<'a> {
                 // Map reads using start_state, map writes by cloning (version is already final)
                 let read_mapped_instr = instr_node.map_rw(
                     &mut start_state, // Pass start_state as context
-                    |reg, ssa_mem_ref: &SsaMemoryReference| { // reg is the start_state
+                    |reg, ssa_mem_ref: &SsaMemoryReference| {
+                        // reg is the start_state
                         // map_read closure: Resolve reads using the start_state (reg) or the existing version
                         match ssa_mem_ref {
                             SsaMemoryReference::Versioned(v_local) => {
@@ -1109,10 +1117,12 @@ impl<'a> SSAConversionState<'a> {
                                     SsaMemoryReference::Versioned(*v_local) // Clone the existing versioned ref
                                 }
                             }
-                            SsaMemoryReference::Deref(expr_local) => { // expr_local is Box<Expression<SsaMemoryReference>>
+                            SsaMemoryReference::Deref(expr_local) => {
+                                // expr_local is Box<Expression<SsaMemoryReference>>
                                 // Resolve the inner expression using the start state registry (reg)
                                 // This recursive call uses resolve_ssa_expression, which now has the correct logic.
-                                let resolved_inner_expr = reg.resolve_ssa_expression(expr_local.as_ref());
+                                let resolved_inner_expr =
+                                    reg.resolve_ssa_expression(expr_local.as_ref());
                                 SsaMemoryReference::Deref(Box::new(resolved_inner_expr))
                             }
                         }
@@ -1207,6 +1217,7 @@ mod tests {
         model::{DataFlowComplete, InitialState, Model},    // Import v3 Model types
     };
     use pretty_assertions::{assert_eq, assert_matches};
+    use v3::model::InputBinary;
 
     // Define SSA macros for creating expected SsaOperand values with Variable kinds
     macro_rules! ssa_var_rel {
@@ -1244,7 +1255,10 @@ mod tests {
     }
 
     // Helper to find an Addressable marked with a specific char within an Expression<SsaMemoryReference>
-    fn find_addressable_under_marker<'a>(expr: &'a Expression<SsaMemoryReference>, marker: char) -> Option<&'a SsaMemoryReference> {
+    fn find_addressable_under_marker<'a>(
+        expr: &'a Expression<SsaMemoryReference>,
+        marker: char,
+    ) -> Option<&'a SsaMemoryReference> {
         match expr {
             Expression::DebugMarker(m, inner_expr) if *m == marker => {
                 // Found the marker, now find the addressable inside
@@ -1254,35 +1268,34 @@ mod tests {
                 // Wrong marker, search inside
                 find_addressable_under_marker(inner_expr, marker)
             }
-            Expression::Binary { lhs, rhs, .. } => {
-                find_addressable_under_marker(lhs, marker)
-                    .or_else(|| find_addressable_under_marker(rhs, marker))
-            }
-            Expression::Unary { arg, .. } => {
-                find_addressable_under_marker(arg, marker)
-            }
+            Expression::Binary { lhs, rhs, .. } => find_addressable_under_marker(lhs, marker)
+                .or_else(|| find_addressable_under_marker(rhs, marker)),
+            Expression::Unary { arg, .. } => find_addressable_under_marker(arg, marker),
             _ => None, // Constant or Addressable without marker
         }
     }
 
-
     // Helper to find the first Addressable node in an expression tree
-    fn find_first_addressable_in_expr<'a>(expr: &'a Expression<SsaMemoryReference>) -> Option<&'a SsaMemoryReference> {
-         match expr {
-             Expression::Addressable(addr) => Some(addr),
-             Expression::Binary { lhs, rhs, .. } => {
-                 find_first_addressable_in_expr(lhs)
-                     .or_else(|| find_first_addressable_in_expr(rhs))
-             }
-             Expression::Unary { arg, .. } => find_first_addressable_in_expr(arg),
-             Expression::DebugMarker(_, inner_expr) => find_first_addressable_in_expr(inner_expr),
-             Expression::Constant(_) => None,
-             Expression::Input() => None, // Handle the Input variant
-         }
+    fn find_first_addressable_in_expr<'a>(
+        expr: &'a Expression<SsaMemoryReference>,
+    ) -> Option<&'a SsaMemoryReference> {
+        match expr {
+            Expression::Addressable(addr) => Some(addr),
+            Expression::Binary { lhs, rhs, .. } => {
+                find_first_addressable_in_expr(lhs).or_else(|| find_first_addressable_in_expr(rhs))
+            }
+            Expression::Unary { arg, .. } => find_first_addressable_in_expr(arg),
+            Expression::DebugMarker(_, inner_expr) => find_first_addressable_in_expr(inner_expr),
+            Expression::Constant(_) => None,
+            Expression::Input() => None, // Handle the Input variant
+        }
     }
 
     // Helper to find marker within SsaMemoryReference (specifically for Deref)
-    fn find_addressable_marker_in_ssa_ref<'a>(ssa_ref: &'a SsaMemoryReference, marker: char) -> Option<&'a SsaMemoryReference> {
+    fn find_addressable_marker_in_ssa_ref<'a>(
+        ssa_ref: &'a SsaMemoryReference,
+        marker: char,
+    ) -> Option<&'a SsaMemoryReference> {
         match ssa_ref {
             SsaMemoryReference::Versioned(_) => None, // Markers aren't directly on Versioned
             SsaMemoryReference::Deref(inner_expr) => {
@@ -1292,15 +1305,20 @@ mod tests {
         }
     }
 
-
     // Implementation for find_marker on FunctionView<SsaComplete>
     impl<'a> FunctionView<'a, SsaComplete> {
         pub fn find_marker(&self, marker: char) -> Option<MarkerSearchResult<'a>> {
-            for (_, block_view) in self.blocks() { // Iterate blocks via FunctionView
+            for (_, block_view) in self.blocks() {
+                // Iterate blocks via FunctionView
                 let ssa_block = block_view.ssa(); // Get SsaBlock via BlockView
                 for instr_node in &ssa_block.instructions {
                     // Check Assign target marker
-                    if let Instruction::Assign { target, target_debug_marker: Some(m), .. } = &instr_node.kind {
+                    if let Instruction::Assign {
+                        target,
+                        target_debug_marker: Some(m),
+                        ..
+                    } = &instr_node.kind
+                    {
                         if *m == marker {
                             // Found marker on the target addressable
                             return Some(MarkerSearchResult::SsaAddressable(target));
@@ -1309,22 +1327,23 @@ mod tests {
 
                     // Check expressions within the instruction
                     for expr in instr_node.kind.collect_source_expressions() {
-                         if let Some(addr) = find_addressable_under_marker(expr, marker) {
+                        if let Some(addr) = find_addressable_under_marker(expr, marker) {
                             return Some(MarkerSearchResult::SsaAddressable(addr));
-                         }
+                        }
                     }
-                     // Check write target addressable for implicit reads (like *ptr in *ptr = ...)
-                     if let Some(write_addr) = instr_node.kind.get_write_address() {
-                         if let Some(found_addr) = find_addressable_marker_in_ssa_ref(write_addr, marker) {
-                             return Some(MarkerSearchResult::SsaAddressable(found_addr));
-                         }
-                     }
+                    // Check write target addressable for implicit reads (like *ptr in *ptr = ...)
+                    if let Some(write_addr) = instr_node.kind.get_write_address() {
+                        if let Some(found_addr) =
+                            find_addressable_marker_in_ssa_ref(write_addr, marker)
+                        {
+                            return Some(MarkerSearchResult::SsaAddressable(found_addr));
+                        }
+                    }
                 }
             }
             None // Marker not found
         }
     }
-
 
     macro_rules! assert_marker_at_main {
         ($ctx:expr, $marker:expr, $expected_operand:expr) => {{
@@ -1375,12 +1394,12 @@ mod tests {
 
         // Re-run the v3 analysis pipeline explicitly to get the DataFlowComplete model
         // This duplicates work done by the listener but ensures tests have the correct input type
-        let v3_model_initial = Model::<InitialState>::new();
+        let v3_model_initial = Model::new(InputBinary::new(binary));
         // Use the aliased v3 analyzers
-        let v3_model_scanned = V3ImageScanner::run(binary, v3_model_initial).unwrap();
+        let v3_model_scanned = V3ImageScanner::run(v3_model_initial).unwrap();
         let v3_model_cfg = V3ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
         let v3_model_data_flow = V3DataFlowAnalyzer::run(v3_model_cfg).unwrap();
-        SsaResult::from_program_model(&v3_model_data_flow)
+        SsaResult::from_program_model(v3_model_data_flow)
     }
 
     // Test simple SSA conversion for basic blocks

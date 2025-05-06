@@ -26,12 +26,11 @@ mod tests {
     fn setup_and_analyze(assembly_code: &str) -> Model<DataFlowComplete> {
         init_logging();
         let binary = parser::compile(assembly_code);
-        let initial_model = Model::new();
+        let initial_model = Model::from_binary(binary);
 
         // v3 Pipeline
         // Pass binary by value (ownership)
-        let image_scanned =
-            ImageScanner::run(binary, initial_model).expect("Image scanning failed");
+        let image_scanned = ImageScanner::run(initial_model).expect("Image scanning failed");
         let cfg_built = ControlFlowGraphBuilder::run(image_scanned).expect("CFG building failed");
         let data_flow_analyzed =
             DataFlowAnalyzer::run(cfg_built).expect("Data flow analysis failed");
