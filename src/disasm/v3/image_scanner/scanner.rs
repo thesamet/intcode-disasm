@@ -86,7 +86,7 @@ impl ImageScanner {
         let mut function_details = HashMap::new();
 
         for f in recognized_function_details {
-            let function_id = FunctionId::from(recognized_functions.len());
+            let function_id = FunctionId::new(f.span.start);
             let address = f.span.start;
 
             address_to_function.insert(address, function_id);
