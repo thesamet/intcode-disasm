@@ -1,6 +1,7 @@
 // pub mod expression; // Moved to lir
 pub mod function_call;
 // pub mod memory_reference; // Moved to lir
+pub mod formatting;
 pub mod span;
 pub mod view;
 

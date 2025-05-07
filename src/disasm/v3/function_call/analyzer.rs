@@ -170,8 +170,6 @@ impl FunctionCallAnalyzer {
                             .expect("Could not find read variable for return value");
                         return_reads.entry(*offset).or_insert(read_var);
                     }
-                    println!("Target function ID: {target_function_id:?}");
-                    println!("analysis.functions: {:?}", analysis.functions);
                     let (parameter_map, return_map) =
                         if let Some(target_function_id) = target_function_id {
                             build_call_site_maps(

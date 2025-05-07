@@ -9,6 +9,7 @@ pub mod lir; // Added LIR module
 pub mod listeners;
 pub mod model;
 pub mod native;
+pub mod pretty_print;
 pub mod ssa;
 
 // Re-export common types (Removed LIR types)
