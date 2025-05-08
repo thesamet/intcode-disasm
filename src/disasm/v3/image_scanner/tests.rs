@@ -69,10 +69,6 @@ mod tests {
         if !scanner_result.function_ids().is_empty() {
             let function_id = scanner_result.function_ids()[0];
             assert_eq!(
-                scanner_result.function_to_address.get(&function_id),
-                Some(&0)
-            );
-            assert_eq!(
                 scanner_result.address_to_function.get(&0),
                 Some(&function_id)
             );

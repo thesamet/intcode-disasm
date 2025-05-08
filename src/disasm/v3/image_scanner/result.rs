@@ -13,9 +13,6 @@ pub struct ImageScannerResult {
     // Maps addresses to function IDs
     pub(crate) address_to_function: HashMap<usize, FunctionId>,
 
-    // Maps function IDs to their entry point addresses
-    pub(crate) function_to_address: HashMap<FunctionId, usize>,
-
     // Detailed function information
     pub recognized_functions: HashMap<FunctionId, RecognizedFunction>,
 }

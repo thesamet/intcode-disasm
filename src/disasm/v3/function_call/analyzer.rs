@@ -330,7 +330,7 @@ mod tests {
     use crate::disasm::{v3::pretty_print::pretty_print_ssa, v3::FunctionId};
 
     // Use the unified TestContext from test_utils
-    use crate::disasm::test_utils::{TestContext, TestContextBuilder};
+    use crate::disasm::test_utils::TestContextBuilder;
 
     #[test]
     fn test_negative_write_not_adding_arg() {

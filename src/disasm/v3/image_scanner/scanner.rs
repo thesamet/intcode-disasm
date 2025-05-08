@@ -105,7 +105,6 @@ impl ImageScanner {
         let result = ImageScannerResult {
             data_segments,
             address_to_function,
-            function_to_address,
             recognized_functions: function_details,
         };
 

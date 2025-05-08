@@ -7,8 +7,7 @@ use super::{
         control_flow::FunctionView,
         model::{
             ControlFlowGraphComplete, DataFlowComplete, FunctionCallAnalysisComplete,
-            HasControlFlowGraphResult, HasInputBinary, ImageScannerComplete, InitialState, Model,
-            ModelState, SsaComplete,
+            HasControlFlowGraphResult, ImageScannerComplete, Model, ModelState, SsaComplete,
         },
         FunctionId,
     },
@@ -37,14 +36,6 @@ impl<S: ModelState> TestContext<S> {
         S: HasControlFlowGraphResult,
     {
         self.model.function(&FunctionId::new(0))
-    }
-
-    /// Get a reference to the model's raw binary image
-    pub fn image(&self) -> &Vec<i128>
-    where
-        S: HasInputBinary,
-    {
-        self.model.image()
     }
 }
 
@@ -89,34 +80,5 @@ impl TestContextBuilder<FunctionCallAnalysisComplete> for FunctionCallAnalysisCo
         let binary = parser::compile(asm);
         let model = analysis::binary_to_function_calls(binary)?;
         Ok(TestContext { model })
-    }
-}
-
-pub mod assertions {
-    use super::*;
-
-    /// Assert that a model has a function with the given ID
-    pub fn assert_has_function<S: ModelState + HasControlFlowGraphResult>(
-        ctx: &TestContext<S>,
-        function_id: FunctionId,
-    ) {
-        assert!(
-            ctx.model.has_function(&function_id),
-            "Model should have function with ID {}",
-            function_id
-        );
-    }
-
-    /// Assert that a model has a specific number of functions
-    pub fn assert_function_count<S: ModelState + HasControlFlowGraphResult>(
-        ctx: &TestContext<S>,
-        expected_count: usize,
-    ) {
-        let actual_count = ctx.model.functions().count();
-        assert_eq!(
-            actual_count, expected_count,
-            "Expected {} functions, got {}",
-            expected_count, actual_count
-        );
     }
 }

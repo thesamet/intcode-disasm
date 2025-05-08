@@ -114,7 +114,7 @@ impl SsaResult {
             // TODO: Revisit ID conversions if they become more complex.
 
             // Pass the v3 model and the specific function view to the converter
-            let mut converter = SSAConversionState::new(&model, function_view);
+            let mut converter = SSAConversionState::new(function_view);
             blocks.extend(converter.convert_function());
         }
         model.with_ssa_result(v3::ssa::SsaResult { blocks })
@@ -123,7 +123,6 @@ impl SsaResult {
 
 // Modified to hold v3 model and function view
 struct SSAConversionState<'a> {
-    model: &'a Model<DataFlowComplete>,
     function: FunctionView<'a, DataFlowComplete>,
 }
 
@@ -257,12 +256,9 @@ impl VersionRegistry {
 
 impl<'a> SSAConversionState<'a> {
     // Modified constructor
-    fn new(
-        model: &'a Model<DataFlowComplete>,
-        function: FunctionView<'a, DataFlowComplete>,
-    ) -> Self {
+    fn new(function: FunctionView<'a, DataFlowComplete>) -> Self {
         // Convert v3 FunctionId to v2 FunctionId
-        Self { model, function }
+        Self { function }
     }
 
     fn convert_function(&mut self) -> HashMap<BlockId, SsaBlock> {
