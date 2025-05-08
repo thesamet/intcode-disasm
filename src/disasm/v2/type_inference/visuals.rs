@@ -32,23 +32,25 @@ impl TraceColors {
     }
 
     // Apply colors to different elements
+    //
     pub fn format_var(var: &VariableKind) -> ColoredString {
+        todo!("Format var")
+        /*
         let function_id = match var.origin_info() {
             Some(oi) => format!("{}:", oi.function_id),
             None => "".to_string(),
         };
         match var {
-            VariableKind::SsaVar(var) => {
-                format!("{function_id}{var}").color(Self::var()).bold()
-            }
-            VariableKind::Deref(var) => {
-                format!("{function_id}*{var}").color(Self::var()).bold()
-            }
-            VariableKind::Const { value, .. } => format!("{function_id}{value}")
+            VariableKind::SsaMemoryReference(var) => Self::format!("{function_id}{var}")
                 .color(Self::var())
                 .bold(),
+            VariableKind::Deref(var) => format!("{function_id}*{var}").color(Self::var()).bold(),
+            VariableKind::Const { value, .. } => {
+                format!("{function_id}{value}").color(Self::var()).bold()
+            }
             VariableKind::TypeVar(_) => format!("{var}").color(Self::type_var()).bold(),
         }
+        */
     }
 
     pub fn format_type(typ: &Type) -> ColoredString {

@@ -1,9 +1,8 @@
 pub mod instructions;
 pub mod listeners;
 pub mod model;
-pub mod pretty_print;
 pub mod ssa_form;
-pub mod type_inference;
+// pub mod type_inference;
 // #[cfg(test)]
 // mod integration_tests;
 

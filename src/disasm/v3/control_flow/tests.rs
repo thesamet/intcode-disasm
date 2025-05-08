@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use super::super::ControlFlowGraphBuilder;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v3::common::Span;
-    use crate::disasm::v3::control_flow::{NextKind, PredecessorKind};
+    use crate::disasm::v3::control_flow::{ControlFlowGraphBuilder, NextKind, PredecessorKind};
     use crate::disasm::v3::id_types::BlockId;
     use crate::disasm::v3::image_scanner::ImageScanner;
     use crate::disasm::v3::model::{ControlFlowGraphComplete, Model};
@@ -14,7 +13,7 @@ mod tests {
         let binary = parser::compile(code);
         let model = Model::from_binary(binary);
         let model = ImageScanner::run(model).expect("Image scanner failed");
-        
+
         ControlFlowGraphBuilder::run(model).expect("CFG builder failed")
     }
     #[test]

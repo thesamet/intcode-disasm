@@ -1,36 +1,41 @@
 #[deny(unused_imports)]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::collections::HashSet;
+
+use colored::Colorize;
 
 use crate::disasm::v2::{
     model::FunctionId,
-    ssa_form::{SsaOperand, SsaVar},
+    ssa_form::{SsaMemoryReference, VersionedMemoryReference},
 };
 
 use super::{
     types::{Type, VariableKind},
-    AnalysisTrace,
+    visuals::TraceColors,
+    AnalysisTrace, ChangeReason,
 };
-use super::{visuals::TraceColors, ChangeReason};
-use colored::Colorize;
 
-pub type FunctionSignature = (Vec<(i128, SsaVar, Type)>, Vec<(i128, SsaVar, Type)>);
+pub type FunctionSignature = (
+    Vec<(i128, VersionedMemoryReference, Type)>,
+    Vec<(i128, VersionedMemoryReference, Type)>,
+);
 
 #[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub inferred_types: HashMap<VariableKind, Type>,
-    pub debug_markers: HashMap<char, SsaOperand>,
+    pub debug_markers: HashMap<char, SsaMemoryReference>,
     pub traces: Vec<AnalysisTrace>,
     /// Inferred function signatures, including those discovered through indirect calls
     pub function_signatures: HashMap<FunctionId, FunctionSignature>,
 }
 
 impl TypeInferenceResult {
-    pub fn get_type_for_ssavar(&self, var: &SsaVar) -> Option<&Type> {
-        self.inferred_types.get(&VariableKind::SsaVar(*var))
+    pub fn get_type_for_ssavar(&self, var: &VersionedMemoryReference) -> Option<&Type> {
+        todo!("Migration uncomment");
     }
 
-    pub fn get_type_for_ssaoperand(&self, op: &SsaOperand) -> Option<&Type> {
-        self.inferred_types.get(&VariableKind::from_ssaoperand(op))
+    pub fn get_type_for_ssa_memory_reference(&self, op: &SsaMemoryReference) -> Option<&Type> {
+        todo!("Migration uncomment");
     }
 
     pub fn get_function_signature(&self, function_id: &FunctionId) -> Option<&FunctionSignature> {
@@ -39,15 +44,15 @@ impl TypeInferenceResult {
 
     /// Get the variable associated with a debug marker
     #[cfg(test)]
-    pub fn get_marked_var(&self, marker: char) -> Option<&SsaOperand> {
+    pub fn get_marked_var(&self, marker: char) -> Option<&SsaMemoryReference> {
         self.debug_markers.get(&marker)
     }
 
     /// Get the final type for a debug marker after unification
     #[cfg(test)]
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {
-        let ssa_op = self.get_marked_var(marker)?;
-        self.get_type_for_ssaoperand(ssa_op).cloned()
+        let mem_ref = self.get_marked_var(marker)?;
+        self.get_type_for_ssa_memory_reference(mem_ref).cloned()
     }
 
     /// Get traces for a variable plus any related traces through constraints

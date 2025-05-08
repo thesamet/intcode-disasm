@@ -3,7 +3,10 @@ use colored::Colorize;
 use itertools::Itertools;
 
 use crate::disasm::v3::{
-    common::formatting::{colors::Colors, pretty_print::{FormattingContext, PrettyPrintConfig}},
+    common::formatting::{
+        colors::Colors,
+        pretty_print::{FormattingContext, PrettyPrintConfig},
+    },
     control_flow::{BlockView, FunctionView},
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
@@ -12,13 +15,12 @@ use crate::disasm::v3::{
 };
 
 // Import from V2/V3
+use crate::disasm::v2::ssa_form::{
+    MemoryReferenceType, PhiFunction, SsaMemoryReference, VersionedMemoryReference,
+};
 use crate::disasm::v2::{
     instructions::{BinaryOperator, Expression, Instruction, InstructionNode, UnaryOperator},
     model::FunctionId,
-    ssa_form::{
-        MemoryReferenceType, PhiFunction, SsaMemoryReference, SsaVar, SsaVarKind,
-        VersionedMemoryReference,
-    },
 };
 
 // --- Model Wrapper ---
@@ -30,12 +32,12 @@ pub struct ModelPrinter<'a, S: ModelState + 'static> {
 
 impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
     pub fn new(model: &'a Model<S>) -> Self {
-        Self { 
+        Self {
             model,
             config: PrettyPrintConfig::default(),
         }
     }
-    
+
     pub fn with_config(model: &'a Model<S>, config: PrettyPrintConfig) -> Self {
         Self { model, config }
     }
@@ -46,8 +48,10 @@ fn binary_op_precedence(op: &BinaryOperator) -> u8 {
     match op {
         BinaryOperator::Mul => 5,
         BinaryOperator::Add | BinaryOperator::Sub => 4,
-        BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual |
-        BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual => 2,
+        BinaryOperator::LessThan
+        | BinaryOperator::LessThanOrEqual
+        | BinaryOperator::GreaterThan
+        | BinaryOperator::GreaterThanOrEqual => 2,
         BinaryOperator::Equals | BinaryOperator::NotEquals => 1,
     }
 }
@@ -58,11 +62,16 @@ fn unary_op_precedence(_op: &UnaryOperator) -> u8 {
 
 // --- Expression Formatting ---
 impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
-    fn format_expression(&self, expr: &Expression<SsaMemoryReference>, ctx: &FormattingContext) -> String {
+    fn format_expression(
+        &self,
+        expr: &Expression<SsaMemoryReference>,
+        ctx: &FormattingContext,
+    ) -> String {
         match expr {
-            Expression::Constant(value) => {
-                value.to_string().color(ctx.colors().const_color).to_string()
-            }
+            Expression::Constant(value) => value
+                .to_string()
+                .color(ctx.colors().const_color)
+                .to_string(),
             Expression::Addressable(addr) => self.format_memory_reference(addr, ctx),
             Expression::Binary { op, lhs, rhs } => {
                 let op_str = op.to_string().color(ctx.colors().op_color).to_string();
@@ -71,7 +80,7 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
                 let lhs_str = self.format_expression(lhs, &ctx.with_precedence(op_prec));
                 let rhs_str = self.format_expression(rhs, &ctx.with_precedence(op_prec));
 
-                let result = format!("{} {} {}", lhs_str, op_str, rhs_str);
+                let result = format!("{lhs_str} {op_str} {rhs_str}");
 
                 if let Some(parent_prec) = ctx.parent_precedence {
                     if parent_prec > op_prec {
@@ -90,8 +99,8 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
                 let op_str = op.to_string().color(ctx.colors().op_color).to_string();
                 let op_prec = unary_op_precedence(op);
                 let arg_str = self.format_expression(arg, &ctx.with_precedence(op_prec));
-                
-                let result = format!("{}{}", op_str, arg_str);
+
+                let result = format!("{op_str}{arg_str}");
 
                 if let Some(parent_prec) = ctx.parent_precedence {
                     if parent_prec > op_prec {
@@ -115,132 +124,60 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             }
         }
     }
-    
+
     // --- Memory Reference Formatting ---
-    
-    fn format_memory_reference(&self, reference: &SsaMemoryReference, ctx: &FormattingContext) -> String {
+
+    fn format_memory_reference(
+        &self,
+        reference: &SsaMemoryReference,
+        ctx: &FormattingContext,
+    ) -> String {
         match reference {
             SsaMemoryReference::Versioned(a) => self.format_versioned_reference(a, ctx),
             SsaMemoryReference::Deref(expr) => {
-                format!(
-                    "*{}",
-                    self.format_expression(expr, ctx)
-                )
+                format!("*{}", self.format_expression(expr, ctx))
             }
         }
     }
-    
-    fn format_versioned_reference(&self, reference: &VersionedMemoryReference, ctx: &FormattingContext) -> String {
+
+    fn format_versioned_reference(
+        &self,
+        reference: &VersionedMemoryReference,
+        ctx: &FormattingContext,
+    ) -> String {
         // Format the kind part
         let base = match reference.kind {
             MemoryReferenceType::RelativeMemory(offset) => {
                 if offset == 0 {
                     "[R]".color(ctx.colors().variable).to_string()
                 } else if offset > -1 {
-                    format!("[R+{}]", offset).color(ctx.colors().variable).to_string()
+                    format!("[R+{offset}]")
+                        .color(ctx.colors().variable)
+                        .to_string()
                 } else {
-                    format!("[R{}]", offset).color(ctx.colors().variable).to_string()
+                    format!("[R{offset}]")
+                        .color(ctx.colors().variable)
+                        .to_string()
                 }
-            },
-            MemoryReferenceType::Memory(addr) => {
-                format!("[{}]", addr).color(ctx.colors().variable).to_string()
-            },
-            MemoryReferenceType::Pointer(addr) => {
-                format!("p{}", addr).color(ctx.colors().variable).to_string()
-            },
+            }
+            MemoryReferenceType::Memory(addr) => format!("[{addr}]")
+                .color(ctx.colors().variable)
+                .to_string(),
+            MemoryReferenceType::Pointer(addr) => format!("p{addr}")
+                .color(ctx.colors().variable)
+                .to_string(),
         };
-        
+
         // Add the version
         format!(
             "{}_{}",
-            base, 
-            reference.version.to_string().color(ctx.colors().low_prio)
+            base,
+            reference.version.to_string().color(ctx.colors().type_color)
         )
     }
-    
-    // --- SSA Variable Formatting ---
-    
-    fn format_ssa_var(&self, var: &SsaVar, ctx: &FormattingContext) -> String {
-        let type_info_result = self.model.type_inference_result();
-        let typ_str = if ctx.show_types() {
-            type_info_result
-                .and_then(|ti| ti.get_type_for_ssavar(var))
-                .map_or_else(String::new, |t| {
-                    format!(": {}", t.to_string().color(ctx.colors().type_color))
-                })
-        } else {
-            String::new()
-        };
 
-        let debug_marker_str = var
-            .origin_info
-            .debug_marker
-            .as_ref()
-            .map(|m| format!("'{} ", m.to_string().color(ctx.colors().low_prio)))
-            .unwrap_or_default();
-
-        let var_version_str = format!("_{}", var.version)
-            .color(ctx.colors().low_prio)
-            .to_string();
-
-        if !ctx.show_vars() {
-            let base_name = match var.kind {
-                SsaVarKind::RelativeMemory(offset) => {
-                    if offset == 0 {
-                        "[R]".color(ctx.colors().variable).to_string()
-                    } else if offset > -1 {
-                        format!("[R+{}]", offset).color(ctx.colors().variable).to_string()
-                    } else {
-                        format!("[R{}]", offset).color(ctx.colors().variable).to_string()
-                    }
-                }
-                SsaVarKind::Memory(addr) => {
-                    format!("[{}]", addr).color(ctx.colors().variable).to_string()
-                }
-                SsaVarKind::Pointer(addr) => {
-                    format!("p{}", addr).color(ctx.colors().variable).to_string()
-                }
-            };
-            format!("{}{}{}{}", debug_marker_str, base_name, var_version_str, typ_str)
-        } else {
-            // show_vars = true logic
-            if var.kind.get_relative_memory() == Some(0) {
-                format!("{}R{}{}", debug_marker_str, var_version_str, typ_str)
-                    .color(ctx.colors().variable)
-                    .to_string()
-            } else if let Some(clusters) = self.model.variable_merger_result() {
-                clusters
-                    .variable_to_cluster
-                    .get(var)
-                    .and_then(|cluster_id| clusters.clusters.get(cluster_id))
-                    .map_or_else(
-                        || {
-                            format!(
-                                "{}{:?}{}{}", 
-                                debug_marker_str, var.kind, var_version_str, typ_str
-                            )
-                            .color(ctx.colors().variable)
-                            .to_string()
-                        },
-                        |cluster| {
-                            format!("{}{}{}", debug_marker_str, cluster.cluster_name, typ_str)
-                                .color(ctx.colors().variable)
-                                .to_string()
-                        },
-                    )
-            } else {
-                format!(
-                    "{}{:?}{}{}",
-                    debug_marker_str, var.kind, var_version_str, typ_str
-                )
-                .color(ctx.colors().variable)
-                .to_string()
-            }
-        }
-    }
-    
     // --- Phi Functions ---
-    
+
     fn format_phi_function(&self, phi: &PhiFunction, ctx: &FormattingContext) -> String {
         let inputs_str = phi
             .inputs
@@ -270,10 +207,14 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             inputs_str
         )
     }
-    
+
     // --- Instructions ---
-    
-    fn format_instruction(&self, instr: &InstructionNode<SsaMemoryReference>, ctx: &FormattingContext) -> String {
+
+    fn format_instruction(
+        &self,
+        instr: &InstructionNode<SsaMemoryReference>,
+        ctx: &FormattingContext,
+    ) -> String {
         match &instr.kind {
             Instruction::Assign { target, src, .. } => {
                 format!(
@@ -325,12 +266,12 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             Instruction::Halt => "halt".color(ctx.colors().keyword).to_string(),
         }
     }
-    
+
     // --- Block Level Formatting ---
-    
-    fn format_block(&self, block: &BlockView<S>, ctx: &FormattingContext) -> String 
-    where 
-        S: HasSsaResult 
+
+    fn format_block(&self, block: &BlockView<S>, ctx: &FormattingContext) -> String
+    where
+        S: HasSsaResult,
     {
         let mut lines = Vec::new();
         let indent_str = ctx.indent_str();
@@ -341,9 +282,15 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
         let block_header = format!(
             "{}{}:{}",
             indent_str,
-            block.block_id().index().to_string().color(ctx.colors().low_prio),
+            block
+                .block_id()
+                .index()
+                .to_string()
+                .color(ctx.colors().low_prio),
             clear_to_end_code
-        ).on_color(ctx.colors().bg_color).to_string();
+        )
+        .on_color(ctx.colors().bg_color)
+        .to_string();
         lines.push(block_header);
 
         // Phi functions
@@ -355,17 +302,16 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
                     inner_indent_str,
                     self.format_phi_function(phi, ctx),
                     clear_to_end_code
-                ).on_color(ctx.colors().bg_color).to_string();
+                )
+                .on_color(ctx.colors().bg_color)
+                .to_string();
                 lines.push(phi_line);
             }
-            
+
             if !block.ssa().phi_functions.is_empty() {
-                let blank_line = format!(
-                    "{}{}{}",
-                    indent_str,
-                    inner_indent_str,
-                    clear_to_end_code
-                ).on_color(ctx.colors().bg_color).to_string();
+                let blank_line = format!("{indent_str}{inner_indent_str}{clear_to_end_code}")
+                    .on_color(ctx.colors().bg_color)
+                    .to_string();
                 lines.push(blank_line);
             }
         }
@@ -381,18 +327,26 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
                     instr.id.to_string().color(ctx.colors().low_prio),
                     instr_str,
                     clear_to_end_code
-                ).on_color(ctx.colors().bg_color).to_string();
+                )
+                .on_color(ctx.colors().bg_color)
+                .to_string();
                 lines.push(instruction_line);
             }
         }
-        
+
         lines.join("\n")
     }
-    
+
     // --- Function Call Info ---
-    
-    fn format_function_call_info(&self, _function: &FunctionView<S>, ctx: &FormattingContext) -> String {
-        if !ctx.show_types() { return "".to_string(); }
+
+    fn format_function_call_info(
+        &self,
+        _function: &FunctionView<S>,
+        ctx: &FormattingContext,
+    ) -> String {
+        if !ctx.show_types() {
+            return "".to_string();
+        }
 
         // This may need more implementation once we have access to the type info
         format!(
@@ -401,16 +355,16 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             "?".color(ctx.colors().low_prio)
         )
     }
-    
+
     // --- Caller Comments ---
-    
+
     fn format_callers_comment(&self, function_id: FunctionId, _ctx: &FormattingContext) -> String
-    where 
-        S: 'static 
+    where
+        S: 'static,
     {
         if let Ok(m_fca) = cast!(self.model, &Model<FunctionCallAnalysisComplete>) {
             let fca_result = m_fca.function_call_analysis_result();
-            
+
             let callers = fca_result
                 .blocks
                 .iter()
@@ -424,19 +378,19 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
                     )
                 })
                 .collect_vec();
-                
+
             if !callers.is_empty() {
                 return format!("{}\n", callers.join("\n"));
             }
         }
         "".to_string()
     }
-    
+
     // --- Function Formatting ---
-    
+
     fn format_function(&self, function: &FunctionView<S>, ctx: &FormattingContext) -> String
-    where 
-        S: HasSsaResult 
+    where
+        S: HasSsaResult,
     {
         let mut lines = Vec::new();
         let indent_str = ctx.indent_str();
@@ -448,26 +402,26 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
         let signature = format!(
             "{}{}{} {{{}",
             "fn ".color(ctx.colors().keyword),
-            function.function_id().to_string().color(ctx.colors().function),
+            function
+                .function_id()
+                .to_string()
+                .color(ctx.colors().function),
             self.format_function_call_info(function, ctx),
             clear_to_end_code
         );
-        
+
         // Apply background color to callers_comment lines if not empty
         if !callers_comment.is_empty() {
             for line in callers_comment.lines() {
-                let comment_line = format!(
-                    "{}{}{}",
-                    indent_str,
-                    line,
-                    clear_to_end_code
-                ).on_color(ctx.colors().bg_color).to_string();
+                let comment_line = format!("{indent_str}{line}{clear_to_end_code}")
+                    .on_color(ctx.colors().bg_color)
+                    .to_string();
                 lines.push(comment_line);
             }
         }
-        
+
         // Add the signature with background color
-        let sig_line = format!("{}{}", indent_str, signature)
+        let sig_line = format!("{indent_str}{signature}")
             .on_color(ctx.colors().bg_color)
             .to_string();
         lines.push(sig_line);
@@ -486,26 +440,28 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             indent_str,
             "}".color(ctx.colors().low_prio),
             clear_to_end_code
-        ).on_color(ctx.colors().bg_color).to_string();
+        )
+        .on_color(ctx.colors().bg_color)
+        .to_string();
         lines.push(close_line);
-        
+
         lines.join("\n")
     }
-    
+
     // --- Program Level Formatting ---
-    
+
     pub fn format_program(&self) -> String
-    where 
-        S: HasSsaResult + HasControlFlowGraphResult 
+    where
+        S: HasSsaResult + HasControlFlowGraphResult,
     {
         let ctx = FormattingContext::new(&self.config);
         let mut functions_sorted: Vec<_> = self.model.functions().map(|(_, f)| f).collect();
         functions_sorted.sort_by_key(|f| f.function_id());
-        
+
         let clear_to_end_code = "\x1b[K";
-        
+
         // Create a blank line with background color for separating functions
-        let blank_line = format!("{}", clear_to_end_code)
+        let blank_line = clear_to_end_code.to_string()
             .on_color(ctx.colors().bg_color)
             .to_string();
 
@@ -513,7 +469,7 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             .iter()
             .map(|f| self.format_function(f, &ctx))
             .collect::<Vec<_>>()
-            .join(&format!("\n{}\n", blank_line))
+            .join(&format!("\n{blank_line}\n"))
     }
 }
 

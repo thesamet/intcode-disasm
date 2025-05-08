@@ -85,14 +85,14 @@ impl<'a> FormattingContext<'a> {
 
     // Create a new context with increased indentation
     pub fn indented(&self) -> Self {
-        let mut ctx = self.clone();
+        let mut ctx = *self;
         ctx.indent_level += 1;
         ctx
     }
 
     // Create a context for a nested expression
     pub fn with_precedence(&self, precedence: u8) -> Self {
-        let mut ctx = self.clone();
+        let mut ctx = *self;
         ctx.parent_precedence = Some(precedence);
         ctx
     }

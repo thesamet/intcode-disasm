@@ -1,14 +1,12 @@
-use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use crate::disasm::v2::model::FunctionId;
 use crate::disasm::v3::define_id_type;
-use crate::disasm::{v2::ssa_form::SsaVar, v2::type_inference::types::Type};
 
 mod disjoint_set;
 
 define_id_type!(ClusterId);
 
+/*
 /// A Variable cluster represents different versions of the same variable across a program
 #[derive(Debug, Clone)]
 pub struct VariableCluster {
@@ -67,7 +65,6 @@ impl FunctionVarNamingState {
     }
 }
 
-/*
 
 impl<'a> VariableMerger<'a> {
     /// Creates a new VariableclusterAnalyzer

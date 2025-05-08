@@ -2,7 +2,8 @@ use std::fmt::{self, Display};
 
 use colored::Colorize;
 use constraints::Constraint;
-use types::{Type, VariableKind};
+use types::Type;
+use types::VariableKind;
 use visuals::TraceColors;
 
 // Declare the submodules

@@ -146,7 +146,6 @@ impl FunctionCallAnalyzer {
                                     .instructions
                                     .iter()
                                     .find(|i| i.id == *instr_id)
-                                    .map(|i| i)
                             })
                             .unwrap();
                         // Manually extract reads like in find_lowest_version_of
@@ -331,14 +330,8 @@ fn build_call_site_maps(
 #[cfg(test)]
 mod tests {
     use crate::disasm::{
-        parser,
-        test_utils::init_logging,
-        v2::pretty_print::pretty_print_ssa,
-        v3::{
-            analysis,
-            model::{FunctionCallAnalysisComplete, Model},
-            FunctionId,
-        },
+        v3::pretty_print::pretty_print_ssa,
+        v3::FunctionId,
     };
 
     // Use the unified TestContext from test_utils

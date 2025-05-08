@@ -1,9 +1,11 @@
 mod code_printer;
 // pub mod hlr;
 pub mod parser;
-mod test_utils;
 pub mod v2;
 pub mod v3;
+
+#[cfg(test)]
+mod test_utils;
 
 use thiserror::Error;
 /*

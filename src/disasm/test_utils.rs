@@ -1,23 +1,19 @@
 // Test utilities for the disassembler crate
-pub(crate) use crate::disasm::{
+
+use super::{
     parser,
     v3::{
         analysis,
         control_flow::FunctionView,
         model::{
             ControlFlowGraphComplete, DataFlowComplete, FunctionCallAnalysisComplete,
-            HasControlFlowGraphResult, ImageScannerComplete, InitialState, Model, ModelState,
-            SsaComplete,
+            HasControlFlowGraphResult, HasInputBinary, ImageScannerComplete, InitialState, Model,
+            ModelState, SsaComplete,
         },
         FunctionId,
     },
     Error,
 };
-
-use super::v3::model::HasInputBinary;
-
-/// Initialize logging for tests
-#[cfg(test)]
 pub fn init_logging() {
     use std::io::Write;
     let _ = env_logger::builder()

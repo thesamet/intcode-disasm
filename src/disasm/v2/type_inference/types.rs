@@ -6,41 +6,16 @@ use std::{
 
 use itertools::Itertools;
 
-use crate::disasm::v2::ssa_form::{SsaOperand, SsaOperandKind, SsaOriginInfo, SsaVar};
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VariableKind {
-    SsaVar(SsaVar),
-    Deref(SsaVar),
-    TypeVar(usize),
-    Const {
-        value: i128,
-        origin_info: SsaOriginInfo,
-    },
-}
+use crate::disasm::v2::ssa_form::SsaMemoryReference;
+/* */
 
 impl VariableKind {
     pub fn origin_info(&self) -> Option<SsaOriginInfo> {
         match self {
-            VariableKind::SsaVar(var) => Some(var.origin_info),
+            VariableKind::SsaMemRef(var) => Some(var.origin_info),
             VariableKind::Const { origin_info, .. } => Some(*origin_info),
             VariableKind::Deref(pointer) => Some(pointer.origin_info),
             VariableKind::TypeVar(_) => None,
-        }
-    }
-
-    pub fn from_ssavar(var: &SsaVar) -> VariableKind {
-        Self::SsaVar(*var)
-    }
-
-    pub fn from_ssaoperand(ssa_op: &SsaOperand) -> VariableKind {
-        match ssa_op.kind {
-            SsaOperandKind::Constant(val) => Self::Const {
-                value: val,
-                origin_info: ssa_op.origin_info,
-            },
-            SsaOperandKind::Variable(ref var) => Self::from_ssavar(var),
-            SsaOperandKind::Deref(ref var) => Self::Deref(*var),
         }
     }
 
@@ -51,7 +26,7 @@ impl VariableKind {
     #[cfg(test)]
     pub fn as_ssavar(&self) -> Option<&SsaVar> {
         match self {
-            VariableKind::SsaVar(var) => Some(var),
+            VariableKind::SsaMemoryReference(var) => Some(var),
             _ => None,
         }
     }
@@ -60,7 +35,7 @@ impl VariableKind {
 impl Display for VariableKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VariableKind::SsaVar(var) => write!(f, "{var}"),
+            VariableKind::SsaMemoryReference(var) => write!(f, "{var}"),
             VariableKind::Deref(var) => write!(f, "*{var}"),
             VariableKind::TypeVar(id) => write!(f, "T{id}"),
             VariableKind::Const { value, .. } => write!(f, "{value}"),
@@ -149,14 +124,6 @@ impl Type {
             (Type::Variable(_), _) => unreachable!(),
             _ => false,
         }
-    }
-
-    pub fn from_ssavar(var: &SsaVar) -> Type {
-        Type::Variable(VariableKind::from_ssavar(var))
-    }
-
-    pub fn from_ssaoperand(ssa_op: &SsaOperand) -> Type {
-        Type::Variable(VariableKind::from_ssaoperand(ssa_op))
     }
 
     pub fn as_variable(&self) -> Option<&VariableKind> {
@@ -276,7 +243,7 @@ impl fmt::Display for Type {
             Type::Pointer(t) => write!(f, "Pointer({t})"),
             Type::Tuple(v) => write!(f, "({})", v.iter().map(|t| format!("{t}")).join(", ")),
             Type::Variable(VariableKind::TypeVar(id)) => write!(f, "T{id}"),
-            Type::Variable(VariableKind::SsaVar(var)) => write!(f, "{var}"),
+            Type::Variable(VariableKind::SsaMemoryReference(var)) => write!(f, "{var}"),
             Type::Variable(VariableKind::Deref(var)) => write!(f, "*{var}"),
             Type::Variable(VariableKind::Const { value, .. }) => write!(f, "{value}"),
             Type::Truthy => write!(f, "Truthy"),

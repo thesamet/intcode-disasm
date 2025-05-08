@@ -11,16 +11,12 @@ use crate::disasm::{
         self,
         control_flow::FunctionView,
         lir::{Expression, MemoryReference, MemoryReferenceInfo},
-        model::{DataFlowComplete, Model, SsaComplete},
-        native::{GenericNativeInstruction, Operand, OperandKind}, // Keep v2 Operand for tests/conversion?
+        model::{DataFlowComplete, Model, SsaComplete}, // Keep v2 Operand for tests/conversion?
     },
 };
 
 use super::instructions::PointerId;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-};
+use std::collections::{HashMap, HashSet};
 pub use v3::ssa::SsaBlock;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -132,7 +128,7 @@ impl std::fmt::Display for VersionedMemoryReference {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SsaMemoryReference {
     Versioned(VersionedMemoryReference),
     Deref(Box<Expression<SsaMemoryReference>>),
@@ -169,263 +165,6 @@ impl ReadAddressExtractor for SsaMemoryReference {
     }
 }
 
-// Represents the kind of a versioned SSA variable (excluding constants)
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum SsaVarKind {
-    Memory(usize),
-    RelativeMemory(i128),
-    Pointer(usize),
-}
-
-impl SsaVarKind {
-    pub fn get_relative_memory(&self) -> Option<i128> {
-        match self {
-            SsaVarKind::RelativeMemory(offset) => Some(*offset),
-            _ => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn get_memory(&self) -> Option<usize> {
-        match self {
-            SsaVarKind::Memory(addr) => Some(*addr),
-            _ => None,
-        }
-    }
-
-    pub fn get_pointer(&self) -> Option<usize> {
-        match self {
-            SsaVarKind::Pointer(addr) => Some(*addr),
-            _ => None,
-        }
-    }
-
-    pub fn to_operand_kind(self) -> OperandKind {
-        match self {
-            SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
-            SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
-            SsaVarKind::Pointer(addr) => OperandKind::Pointer(addr),
-        }
-    }
-
-    pub fn from_operand_kind(operand_kind: &OperandKind) -> Option<SsaVarKind> {
-        Some(match operand_kind {
-            OperandKind::Memory(addr) => SsaVarKind::Memory(*addr),
-            OperandKind::Pointer(addr) => SsaVarKind::Pointer(*addr),
-            OperandKind::RelativeMemory(offset) => SsaVarKind::RelativeMemory(*offset),
-            OperandKind::Deref(_) => return None,
-            OperandKind::Immediate(_) => return None,
-        })
-    }
-}
-// Represents a versioned SSA variable
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SsaOriginInfo {
-    pub function_id: FunctionId,
-    pub offset: usize,
-    pub debug_marker: Option<char>,
-}
-
-impl SsaOriginInfo {
-    pub fn new(function_id: FunctionId, offset: usize, debug_marker: Option<char>) -> Self {
-        Self {
-            function_id,
-            offset,
-            debug_marker,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialOrd, Ord)]
-pub struct SsaVar {
-    pub kind: SsaVarKind,
-    pub version: usize,
-    pub origin_info: SsaOriginInfo,
-}
-
-impl SsaVar {
-    #[cfg(test)]
-    pub fn from_operand(
-        operand: &Operand,
-        version: usize,
-        function_id: FunctionId,
-    ) -> Option<SsaVar> {
-        let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
-        let kind = SsaVarKind::from_operand_kind(&operand.kind)?;
-        Some(SsaVar {
-            kind,
-            origin_info,
-            version,
-        })
-    }
-
-    // Convert SsaVar back to a representative Operand
-    pub fn to_operand(self) -> Operand {
-        Operand {
-            kind: self.kind.to_operand_kind(),
-            offset: self.origin_info.offset,
-            debug_marker: self.origin_info.debug_marker,
-        }
-    }
-
-    pub fn get_relative_memory(&self) -> Option<i128> {
-        self.kind.get_relative_memory()
-    }
-}
-
-impl PartialEq for SsaVar {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-            && self.version == other.version
-            && self.origin_info.function_id == other.origin_info.function_id
-    }
-}
-impl Eq for SsaVar {}
-
-impl std::hash::Hash for SsaVar {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.kind.hash(state);
-        self.version.hash(state);
-        self.origin_info.function_id.hash(state);
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum SsaOperandKind {
-    Constant(i128),
-    Variable(SsaVar),
-    Deref(SsaVar), // SsaVar must be a pointer.
-}
-
-impl SsaOperandKind {
-    pub fn constant_value(&self) -> Option<i128> {
-        match self {
-            SsaOperandKind::Constant(val) => Some(*val),
-            _ => None,
-        }
-    }
-}
-
-// Represents either a constant or a versioned SSA variable in an instruction
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SsaOperand {
-    pub kind: SsaOperandKind,
-    pub origin_info: SsaOriginInfo,
-}
-
-// Implement From<SsaOperand> for Operand to satisfy trait bounds
-impl From<SsaOperand> for Operand {
-    fn from(ssa_op: SsaOperand) -> Self {
-        ssa_op.to_operand() // Delegate to the existing method
-    }
-}
-
-// Helper methods on SsaOperand
-impl SsaOperand {
-    pub fn to_operand(self) -> Operand {
-        match self.kind {
-            SsaOperandKind::Constant(val) => Operand {
-                kind: OperandKind::Immediate(val),
-                offset: self.origin_info.offset,
-                debug_marker: self.origin_info.debug_marker,
-            },
-            SsaOperandKind::Variable(var) => Operand {
-                kind: match var.kind {
-                    SsaVarKind::Memory(addr) => OperandKind::Memory(addr),
-                    SsaVarKind::RelativeMemory(offset) => OperandKind::RelativeMemory(offset),
-                    SsaVarKind::Pointer(addr) => OperandKind::Pointer(addr),
-                },
-                offset: var.origin_info.offset,
-                debug_marker: var.origin_info.debug_marker,
-            },
-            SsaOperandKind::Deref(var) => Operand {
-                kind: OperandKind::Deref(var.origin_info.offset),
-                offset: var.origin_info.offset,
-                debug_marker: var.origin_info.debug_marker,
-            },
-        }
-    }
-
-    pub fn from_operand(operand: &Operand, version: usize, function_id: FunctionId) -> SsaOperand {
-        let origin_info = SsaOriginInfo::new(function_id, operand.offset, operand.debug_marker);
-
-        match operand.kind {
-            OperandKind::Immediate(val) => SsaOperand {
-                kind: SsaOperandKind::Constant(val),
-                origin_info,
-            },
-            OperandKind::Deref(addr) => SsaOperand {
-                kind: SsaOperandKind::Deref(SsaVar {
-                    kind: SsaVarKind::Pointer(addr),
-                    origin_info,
-                    version: 0,
-                }),
-                origin_info,
-            },
-            OperandKind::Memory(addr) => SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::Memory(addr),
-                    origin_info,
-                    version,
-                }),
-                origin_info,
-            },
-            OperandKind::Pointer(addr) => SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::Pointer(addr),
-                    origin_info,
-                    version,
-                }),
-                origin_info,
-            },
-            OperandKind::RelativeMemory(offset) => SsaOperand {
-                kind: SsaOperandKind::Variable(SsaVar {
-                    kind: SsaVarKind::RelativeMemory(offset),
-                    origin_info,
-                    version,
-                }),
-                origin_info,
-            },
-        }
-    }
-
-    pub fn as_variable(&self) -> Option<&SsaVar> {
-        match self.kind {
-            SsaOperandKind::Variable(ref var) => Some(var),
-            _ => None,
-        }
-    }
-}
-
-// Display implementations
-impl fmt::Display for SsaVarKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SsaVarKind::Memory(addr) => write!(f, "[{addr}]"),
-            SsaVarKind::RelativeMemory(offset) if *offset == 0 => write!(f, "[R]"),
-            SsaVarKind::RelativeMemory(offset) if *offset > 0 => write!(f, "[R+{offset}]"),
-            SsaVarKind::RelativeMemory(offset) => write!(f, "[R{offset}]"),
-            SsaVarKind::Pointer(addr) => write!(f, "p{addr}"),
-        }
-    }
-}
-
-impl fmt::Display for SsaVar {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}_{}", self.kind, self.version)
-    }
-}
-
-impl fmt::Display for SsaOperand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            SsaOperandKind::Constant(val) => write!(f, "{val}"),
-            SsaOperandKind::Variable(ref var) => write!(f, "{var}"), // Uses SsaVar Display
-            SsaOperandKind::Deref(var) => write!(f, "*{var}"),
-        }
-    }
-}
-
 /// Represents a phi function in SSA form
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhiFunction {
@@ -439,8 +178,6 @@ pub struct PhiFunction {
         VersionedMemoryReference,
     >,
 }
-
-pub type SsaInstruction = GenericNativeInstruction<SsaOperand>; // Keep using v2 native instruction type for now
 
 /// Represents a function in SSA form
 #[derive(Debug, Clone)]
@@ -1152,9 +889,9 @@ mod tests {
     use crate::disasm::parser;
     use crate::disasm::test_utils::init_logging;
     use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
-    use crate::disasm::v2::pretty_print::pretty_print_ssa;
     // Import v3 analyzers and model states for test setup
     use crate::disasm::v3::model::SsaComplete;
+    use crate::disasm::v3::pretty_print::pretty_print_ssa;
     // Keep v2 dispatching
     use crate::disasm::v3::{
         control_flow::ControlFlowGraphBuilder as V3ControlFlowGraphBuilder, // Alias v3 CFG Builder

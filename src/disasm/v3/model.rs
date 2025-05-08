@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::disasm::v2::listeners::variable_analyzer::VariableMergerResult;
-use crate::disasm::v2::type_inference::result::TypeInferenceResult;
 use crate::disasm::v3::control_flow::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
 use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
@@ -48,13 +46,15 @@ impl<S: ModelState> Model<S> {
         &self.input_binary().image
     }
 
-    pub fn type_inference_result(&self) -> Option<&TypeInferenceResult> {
-        None
-    }
+    // pub fn type_inference_result(&self) -> Option<&TypeInferenceResult> {
+    //     None
+    // }
 
+    /*
     pub fn variable_merger_result(&self) -> Option<&VariableMergerResult> {
         None
     }
+    */
 }
 
 macro_rules! add_block_view_when {

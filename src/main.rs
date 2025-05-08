@@ -133,13 +133,13 @@ fn pipeline(input: String) {
 fn list_available_themes() {
     println!("Available color themes:");
     for (name, description) in Colors::get_theme_descriptions() {
-        println!("  {:20} - {}", name, description);
+        println!("  {name:20} - {description}");
     }
 }
 
 fn validate_theme(theme: &str) {
     if theme != "default" && Colors::get_theme_by_name(theme).is_none() {
-        eprintln!("Error: Invalid theme name '{}'.", theme);
+        eprintln!("Error: Invalid theme name '{theme}'.");
         eprintln!("Available themes: {}", Colors::get_theme_names().join(", "));
         eprintln!("You can also run with --list-themes for more detailed theme information.");
         process::exit(1);
