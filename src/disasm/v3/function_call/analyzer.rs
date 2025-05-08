@@ -142,10 +142,7 @@ impl FunctionCallAnalyzer {
                         let instr = function
                             .blocks()
                             .find_map(|(_, b)| {
-                                b.ssa()
-                                    .instructions
-                                    .iter()
-                                    .find(|i| i.id == *instr_id)
+                                b.ssa().instructions.iter().find(|i| i.id == *instr_id)
                             })
                             .unwrap();
                         // Manually extract reads like in find_lowest_version_of
@@ -329,13 +326,11 @@ fn build_call_site_maps(
 
 #[cfg(test)]
 mod tests {
-    use crate::disasm::{
-        v3::pretty_print::pretty_print_ssa,
-        v3::FunctionId,
-    };
+    use crate::disasm::v3::model::FunctionCallAnalysisComplete;
+    use crate::disasm::{v3::pretty_print::pretty_print_ssa, v3::FunctionId};
 
     // Use the unified TestContext from test_utils
-    use crate::disasm::test_utils::TestContext;
+    use crate::disasm::test_utils::{TestContext, TestContextBuilder};
 
     #[test]
     fn test_negative_write_not_adding_arg() {
@@ -345,7 +340,7 @@ mod tests {
             R -= 3
             goto [R]
             "#;
-        let ctx = TestContext::with_function_calls(assembly).unwrap();
+        let ctx = FunctionCallAnalysisComplete::test_context(assembly).unwrap();
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
         assert_eq!(call_info.parameter_entry_vars.len(), 0);
     }
@@ -366,7 +361,7 @@ mod tests {
             R -= 2
             goto [R]
             "#;
-        let ctx = TestContext::with_function_calls(assembly).unwrap();
+        let ctx = FunctionCallAnalysisComplete::test_context(assembly).unwrap();
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
         pretty_print_ssa(&ctx.model);
         assert_eq!(call_info.parameter_entry_vars.len(), 0);
@@ -380,7 +375,7 @@ mod tests {
             R -= 3
             goto [R]
             "#;
-        let ctx = TestContext::with_function_calls(assembly).unwrap();
+        let ctx = FunctionCallAnalysisComplete::test_context(assembly).unwrap();
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
         assert_eq!(call_info.parameter_entry_vars.len(), 1);
     }
@@ -417,8 +412,7 @@ mod tests {
             R -= 100                      ; 40:
             goto [R]                      ; 42:
         "#;
-
-        let ctx = TestContext::with_function_calls(_assembly).unwrap();
+        let ctx = FunctionCallAnalysisComplete::test_context(_assembly).unwrap();
         // pretty_print_ssa(&ctx.model);
         assert_eq!(
             ctx.model

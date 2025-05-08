@@ -887,7 +887,7 @@ impl<'a> SSAConversionState<'a> {
 mod tests {
     use super::*;
     use crate::disasm::parser;
-    use crate::disasm::test_utils::init_logging;
+    use crate::disasm::test_utils::{init_logging, TestContext, TestContextBuilder};
     use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
     // Import v3 analyzers and model states for test setup
     use crate::disasm::v3::model::SsaComplete;
@@ -1054,42 +1054,11 @@ mod tests {
         }};
     }
 
-    struct TestContext {
-        model: Model<SsaComplete>, // Store v3 model if needed for direct inspection
-    }
-
-    impl TestContext {
-        fn new(assembly: &str) -> Self {
-            let model = setup_analyzed_models(assembly);
-
-            TestContext { model }
-        }
-
-        fn main_function(&self) -> FunctionView<SsaComplete> {
-            self.model.function(&FunctionId::new(0))
-        }
-    }
-
-    // Modify setup to return both the v3 model needed for SSA and the v2 model for other checks
-    fn setup_analyzed_models(assembly: &str) -> Model<SsaComplete> {
-        init_logging(); // Ensure logging is initialized
-        let binary = parser::compile(assembly);
-
-        // Re-run the v3 analysis pipeline explicitly to get the DataFlowComplete model
-        // This duplicates work done by the listener but ensures tests have the correct input type
-        let v3_model_initial = Model::new(InputBinary::new(binary));
-        // Use the aliased v3 analyzers
-        let v3_model_scanned = V3ImageScanner::run(v3_model_initial).unwrap();
-        let v3_model_cfg = V3ControlFlowGraphBuilder::run(v3_model_scanned).unwrap();
-        let v3_model_data_flow = V3DataFlowAnalyzer::run(v3_model_cfg).unwrap();
-        SsaResult::from_program_model(v3_model_data_flow)
-    }
-
     // Test simple SSA conversion for basic blocks
     #[test]
     fn test_basic_ssa_conversion() {
         // Simple program with variable definitions and uses
-        let model = setup_analyzed_models(
+        let ctx = SsaComplete::test_context(
             // Changed variable name
             r#"
             ; Offset 0
@@ -1101,11 +1070,12 @@ mod tests {
             R -= 3          ; stack frame teardown
             goto [R]        ; return
             "#,
-        );
+        )
+        .unwrap();
 
         // SSA conversion is done within setup_analyzed_models now
         // Access the main function view from the resulting model
-        let func_view = model.function(&FunctionId::new(0));
+        let func_view = ctx.main_function();
 
         // Expect the function to have blocks
         assert!(!func_view.blocks().count() > 0);
@@ -1117,12 +1087,11 @@ mod tests {
         // The entry block should have instructions (accessing via BlockView::ssa())
         assert!(!entry_block_view.ssa().instructions.is_empty());
     }
-
     // Test conversion with dominance frontiers and phi functions
     #[test]
     fn test_ssa_conversion_with_phi_functions() {
         // Program with conditional paths that need phi functions
-        let model = setup_analyzed_models(
+        let ctx = SsaComplete::test_context(
             // Changed variable name
             r#"
             ; Offset 0: Entry Block
@@ -1144,10 +1113,11 @@ mod tests {
             R -= 3
             goto [R]
             "#,
-        );
+        )
+        .unwrap();
 
         // Find the block with the output instruction (the merge block)
-        let main_func_view = model.function(&FunctionId::new(0)); // Returns FunctionView directly
+        let main_func_view = ctx.main_function();
         let mut merge_block_id = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1213,7 +1183,7 @@ mod tests {
     #[test]
     fn test_ssa_conversion_with_function_calls() {
         // Program with a function call and return values
-        let model = setup_analyzed_models(
+        let ctx = SsaComplete::test_context(
             // Changed variable name
             r#"
             ; Main function @ 0
@@ -1233,10 +1203,11 @@ mod tests {
             R -= 2
             goto [R]      ; return
             "#,
-        );
+        )
+        .unwrap();
 
         // Find the return block by searching for one that contains output instruction
-        let main_func_view = model.function(&FunctionId::new(0)); // Returns FunctionView directly
+        let main_func_view = ctx.main_function();
         let mut found_return_block = None;
         // Iterate through blocks in the FunctionView
         for (block_id, block_view) in main_func_view.blocks() {
@@ -1288,7 +1259,7 @@ mod tests {
     #[test]
     fn test_proper_version_increments_for_writes() {
         // Test a simple program that reads and writes the same register
-        let model = setup_analyzed_models(
+        let ctx = SsaComplete::test_context(
             // Changed variable name
             r#"
             ; Offset 0
@@ -1299,13 +1270,12 @@ mod tests {
             R -= 3                  ; stack frame teardown
             goto [R]                ; return
             "#,
-        );
+        )
+        .unwrap();
 
         // Get the block view and its SSA data
         let block_id = BlockId::from(0);
-        let block_view = model
-            .function(&FunctionId::new(0)) // Returns FunctionView directly
-            .block(&block_id); // Returns BlockView directly
+        let block_view = ctx.main_function().block(&block_id); // Returns BlockView directly
         let block = block_view.ssa(); // Get the SsaBlock
 
         // Now find the instruction: [R-4] = [R-4] + 10
@@ -1372,7 +1342,7 @@ mod tests {
 
     #[test]
     fn test_basic_versioning() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
                 R += 5
                 [R+3] = 0
@@ -1381,7 +1351,8 @@ mod tests {
                 'c [R+2] = [R+3] + [R+4]
                 halt
             "#,
-        );
+        )
+        .unwrap();
         // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
@@ -1390,7 +1361,7 @@ mod tests {
 
     #[test]
     fn test_deref_versioning() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
                 R += 5
                 ptr = 500
@@ -1401,8 +1372,9 @@ mod tests {
                 'd [R+1] = 'c *ptr
                 halt
                 "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(23, 2));
         assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(23, 3));
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3));
@@ -1411,22 +1383,23 @@ mod tests {
 
     #[test]
     fn test_deref_read_after_write() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
                 R += 5
                 'a ptr = [R-2]
                 'b *ptr = 1
                 halt
                 "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
     }
 
     #[test]
     fn test_deref_read_after_cond_write() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
                 R += 5
                 'a ptr = 345
@@ -1436,8 +1409,9 @@ mod tests {
                 'c *ptr = 17
                 halt
                 "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(16, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(16, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_deref!(16, 3));
@@ -1445,21 +1419,22 @@ mod tests {
 
     #[test]
     fn test_incr_write_after_read() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
                 R += 5
                 output('a [R-1])
                 'b [R-1] = 17
                 halt
                 "#,
-        );
+        )
+        .unwrap();
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-1, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-1, 1));
     }
 
     #[test]
     fn test_function_calls_and_loop() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
               R += 6                          ; Setup frame
               ptr = [R-5]                     ; ptr = [R-5]_0
@@ -1485,7 +1460,8 @@ mod tests {
               R += -6                         ; Teardown frame
               goto [R]                        ; Return
                 "#,
-        );
+        )
+        .unwrap();
         pretty_print_ssa(&ctx.model); // Removed pretty print
 
         // Initial assignments before loop
@@ -1511,7 +1487,7 @@ mod tests {
 
     #[test]
     fn test_end_state() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
         R += 3                  ; 0
         [R-1] = [R-2] == 0      ; 2
@@ -1525,7 +1501,8 @@ mod tests {
         R += -3
         goto [R]
         "#,
-        );
+        )
+        .unwrap();
         // Access function info from v3 model
         let func_view = ctx.main_function();
         let return_block_id = func_view.return_block().expect("Return block not found"); // Option<BlockId> needs expect
@@ -1553,7 +1530,7 @@ mod tests {
 
     #[test]
     fn test_versioning() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
     R += 3
     [R-1] = 15               ; version 1
@@ -1571,8 +1548,9 @@ exit:
     R += -3                  ; phi makes version 2
     goto [R]
     "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         // Access function info from v3 model
         let func_view = ctx.main_function();
         let return_block_id = func_view.return_block().expect("Return block not found"); // Option<BlockId> needs expect
@@ -1589,7 +1567,7 @@ exit:
 
     #[test]
     fn test_versioning_with_if() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
             R += 5
             if [R-1] goto @true
@@ -1604,8 +1582,9 @@ exit:
             R -= 5
             goto [R]
             "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
@@ -1613,7 +1592,7 @@ exit:
 
     #[test]
     fn test_if_convergence_versioning() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
             R += 5
             if [R-1] goto @true
@@ -1628,8 +1607,9 @@ exit:
             R -= 5
             goto [R]
             "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
@@ -1640,7 +1620,7 @@ exit:
         // [R-2] is a parameter that gets modified in a branch.
         // we want to ensure that a phi function under br2 bumps up
         // its version.
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
             R += 3
             [R-1] = 'a [R-2] == 0
@@ -1660,8 +1640,9 @@ exit:
                 goto [R]
 
           "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
@@ -1669,7 +1650,7 @@ exit:
 
     #[test]
     fn function_call_with_arg_that_is_branched() {
-        let ctx = TestContext::new(
+        let ctx = SsaComplete::test_context(
             r#"
             R += 3                  ; blocks[0]
             if [R-1] goto @true
@@ -1686,8 +1667,9 @@ exit:
             R -= 3
             goto [R]
             "#,
-        );
-        // pretty_print_ssa(&ctx.v2_model); // Removed pretty print
+        )
+        .unwrap();
+        // pretty_print_ssa(&ctx.model); // Removed pretty print
         assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
         assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
         assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));

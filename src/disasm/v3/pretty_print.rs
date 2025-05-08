@@ -160,12 +160,12 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
                         .to_string()
                 }
             }
-            MemoryReferenceType::Memory(addr) => format!("[{addr}]")
-                .color(ctx.colors().variable)
-                .to_string(),
-            MemoryReferenceType::Pointer(addr) => format!("p{addr}")
-                .color(ctx.colors().variable)
-                .to_string(),
+            MemoryReferenceType::Memory(addr) => {
+                format!("[{addr}]").color(ctx.colors().variable).to_string()
+            }
+            MemoryReferenceType::Pointer(addr) => {
+                format!("p{addr}").color(ctx.colors().variable).to_string()
+            }
         };
 
         // Add the version
@@ -184,7 +184,10 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             .iter()
             .sorted_by_key(|(pred_kind, _)| pred_kind.source_block_id())
             .map(|(pred_kind, addressable)| {
-                let source_id_str = pred_kind.source_block_id().to_string();
+                let source_id_str = pred_kind
+                    .source_block_id()
+                    .to_string()
+                    .color(ctx.colors().const_color);
                 let call_marker_str =
                     if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
                         "(call)".color(ctx.colors().low_prio).to_string()
@@ -201,9 +204,10 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
             .join(", ");
 
         format!(
-            "{} {} φ({})",
+            "{} {} {}({})",
             self.format_versioned_reference(&phi.result, ctx),
             "=".color(ctx.colors().op_color),
+            "φ".color(ctx.colors().function),
             inputs_str
         )
     }
@@ -461,7 +465,8 @@ impl<'a, S: ModelState + 'static> ModelPrinter<'a, S> {
         let clear_to_end_code = "\x1b[K";
 
         // Create a blank line with background color for separating functions
-        let blank_line = clear_to_end_code.to_string()
+        let blank_line = clear_to_end_code
+            .to_string()
             .on_color(ctx.colors().bg_color)
             .to_string();
 
