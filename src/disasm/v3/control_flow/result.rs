@@ -49,4 +49,16 @@ where
             .iter()
             .map(|(id, function)| (*id, FunctionView::new(self, function)))
     }
+    /// Returns whether a function exists in the model.
+    ///
+    /// # Parameters
+    /// * `function_id` - The ID of the function to check for
+    ///
+    /// # Returns
+    /// `true` if the function exists, `false` otherwise
+    pub fn has_function(&self, function_id: &FunctionId) -> bool {
+        self.control_flow_graph_result()
+            .functions
+            .contains_key(function_id)
+    }
 }

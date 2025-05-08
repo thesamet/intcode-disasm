@@ -341,21 +341,8 @@ mod tests {
         },
     };
 
-    struct TestContext {
-        model: Model<FunctionCallAnalysisComplete>,
-    }
-
-    impl TestContext {
-        fn new(assembly: &str) -> Self {
-            init_logging();
-            let binary = parser::compile(assembly);
-            let model = analysis::binary_to_function_calls(binary).unwrap();
-
-            // Extract the main function (always at ID 0)
-
-            TestContext { model }
-        }
-    }
+    // Use the unified TestContext from test_utils
+    use crate::disasm::test_utils::TestContext;
 
     #[test]
     fn test_negative_write_not_adding_arg() {
@@ -365,7 +352,7 @@ mod tests {
             R -= 3
             goto [R]
             "#;
-        let ctx = TestContext::new(assembly);
+        let ctx = TestContext::with_function_calls(assembly).unwrap();
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
         assert_eq!(call_info.parameter_entry_vars.len(), 0);
     }
@@ -386,7 +373,7 @@ mod tests {
             R -= 2
             goto [R]
             "#;
-        let ctx = TestContext::new(assembly);
+        let ctx = TestContext::with_function_calls(assembly).unwrap();
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
         pretty_print_ssa(&ctx.model);
         assert_eq!(call_info.parameter_entry_vars.len(), 0);
@@ -400,7 +387,7 @@ mod tests {
             R -= 3
             goto [R]
             "#;
-        let ctx = TestContext::new(assembly);
+        let ctx = TestContext::with_function_calls(assembly).unwrap();
         let call_info = ctx.model.function(&FunctionId::from(0)).callee_info();
         assert_eq!(call_info.parameter_entry_vars.len(), 1);
     }
@@ -438,7 +425,7 @@ mod tests {
             goto [R]                      ; 42:
         "#;
 
-        let ctx = TestContext::new(_assembly);
+        let ctx = TestContext::with_function_calls(_assembly).unwrap();
         // pretty_print_ssa(&ctx.model);
         assert_eq!(
             ctx.model
