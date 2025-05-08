@@ -1,6 +1,6 @@
-use crate::disasm::v2::ssa_form::{SsaMemoryReference, VersionedMemoryReference};
 use crate::disasm::v3::id_types::{BlockId, FunctionId};
 use crate::disasm::v3::lir::Expression;
+use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 // Use LIR MemoryReference
 use crate::disasm::v3::model::add_block_view_when;
 use std::collections::HashMap;

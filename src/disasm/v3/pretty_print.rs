@@ -2,6 +2,7 @@ use castaway::cast;
 use colored::Colorize;
 use itertools::Itertools;
 
+use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
     common::formatting::{
         colors::Colors,
@@ -11,17 +12,16 @@ use crate::disasm::v3::{
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
     },
+    ssa::types::MemoryReferenceType,
     PredecessorKind,
 };
 
 // Import from V2/V3
-use crate::disasm::v2::ssa_form::{
-    MemoryReferenceType, PhiFunction, SsaMemoryReference, VersionedMemoryReference,
-};
 use crate::disasm::v2::{
     instructions::{BinaryOperator, Expression, Instruction, InstructionNode, UnaryOperator},
     model::FunctionId,
 };
+use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
 // --- Model Wrapper ---
 // A wrapper that allows accessing the model during formatting

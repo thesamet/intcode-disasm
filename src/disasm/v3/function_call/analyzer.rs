@@ -4,13 +4,13 @@ use itertools::Itertools;
 use log::{info, trace};
 
 use crate::disasm::{
-    v2::ssa_form::{MemoryReferenceType, SsaMemoryReference, VersionedMemoryReference},
     v3::{
         control_flow::FunctionView,
         data_flow::OriginationPoint,
         function_call::result::{CallSiteInfo, CalleeInfo},
         lir::{memory_reference::MemoryReferenceInfo, Expression, ReadAddressExtractor},
         model::{FunctionCallAnalysisComplete, Model, SsaComplete},
+        ssa::{types::MemoryReferenceType, SsaMemoryReference, VersionedMemoryReference},
         FunctionId, InstructionId, NextKind,
     },
     Error,

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use super::types::SsaBlock;
 use crate::disasm::v3::id_types::BlockId;
-use super::block::SsaBlock;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct SsaResult {
