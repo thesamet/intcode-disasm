@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use crate::disasm::v3::control_flow::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
+use crate::disasm::v3::folded_ssa::FoldedSsaResult; // Import FoldedSsaBlock if directly used, for now FoldedSsaResult is enough
 use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::image_scanner::ImageScannerResult;
@@ -26,6 +27,7 @@ enum ModelState {
     DataFlowComplete(DataFlowResult),
     SsaComplete(SsaResult),
     FunctionCallAnalysisComplete(FunctionCallAnalysisResult),
+    FoldedSsaComplete(FoldedSsaResult),
 }
 
 #[model]

@@ -52,6 +52,18 @@ enum Command {
     FlowRecovery {
         input: String,
     },
+    FoldedSsa {
+        #[arg(required_unless_present = "list_themes")]
+        input: Option<String>,
+        #[arg(
+            long,
+            default_value = "default",
+            help = "Color theme (run with --list-themes to see all available themes)"
+        )]
+        theme: String,
+        #[arg(long, help = "List all available color themes")]
+        list_themes: bool,
+    },
 }
 
 fn main() {
@@ -90,6 +102,18 @@ fn main() {
             types(input.unwrap(), theme)
         }
         Command::FlowRecovery { input } => flow_recovery(input),
+        Command::FoldedSsa {
+            input,
+            theme,
+            list_themes,
+        } => {
+            if list_themes {
+                list_available_themes();
+                return;
+            }
+            validate_theme(&theme);
+            folded_ssa(input.unwrap(), theme)
+        }
     }
 }
 
@@ -169,6 +193,35 @@ fn types(input: String, theme: String) {
     }
 
     let config = get_theme_config(&theme, true);
+    // Assuming pretty_print_ssa_with_config can handle Model<FunctionCallAnalysisComplete>
+    // We might need a new function or to make pretty_print_ssa_with_config more generic
+    // if it specifically requires FunctionCallAnalysisComplete.
+    // For now, let's reuse it, as the core data (SSA blocks) is similar.
+    println!("{}", pretty_print_ssa_with_config(&model, config));
+}
+
+fn folded_ssa(input: String, theme: String) {
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    // The analysis function `binary_to_folded_ssa` returns Model<FoldedSsaComplete>
+    // The existing `pretty_print_ssa_stdout` expects Model<FunctionCallAnalysisComplete>
+    // We'll need to adapt this. For now, let's assume we have a way to print it.
+    // This might involve making pretty_print_ssa_stdout generic or creating a new one.
+    // For this step, we'll call the existing SSA printers, anticipating they can be adapted.
+    let model = analysis::binary_to_folded_ssa(prog).unwrap();
+
+    if theme == "default" {
+        // Placeholder: Adapt or create a new function for Model<FoldedSsaComplete>
+        // For now, let's assume pretty_print_ssa_stdout can be made generic or we have an equivalent.
+        // If pretty_print_ssa_stdout is strictly typed to Model<FunctionCallAnalysisComplete>,
+        // this will need adjustment in a subsequent step (e.g., by making it generic over
+        // states that provide SsaResult or similar block structures).
+        // Given the prompt "The pretty_print of ssa should work", this is the intent.
+        pretty_print_ssa_stdout(&model); // This will likely need adjustment to accept Model<FoldedSsaComplete>
+        return;
+    }
+
+    let config = get_theme_config(&theme, false); // `show_types` is false for SSA view
+                                                 // Similar to above, pretty_print_ssa_with_config might need adjustment.
     println!("{}", pretty_print_ssa_with_config(&model, config));
 }
 

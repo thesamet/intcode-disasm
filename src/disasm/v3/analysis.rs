@@ -3,15 +3,15 @@ use crate::disasm::Error;
 use super::{
     control_flow::ControlFlowGraphBuilder,
     data_flow::DataFlowAnalyzer,
+    folded_ssa::FoldedSsaBuilder,
     function_call::FunctionCallAnalyzer,
     image_scanner::ImageScanner,
     model::{
-        ControlFlowGraphComplete, DataFlowComplete, FunctionCallAnalysisComplete, ImageScannerComplete, Model,
-        SsaComplete,
+        ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
+        FunctionCallAnalysisComplete, ImageScannerComplete, Model, SsaComplete,
     },
     ssa::SsaConverter,
 };
-
 
 pub fn binary_to_scanned_image(binary: Vec<i128>) -> Result<Model<ImageScannerComplete>, Error> {
     let model = Model::from_binary(binary);
@@ -38,4 +38,9 @@ pub fn binary_to_function_calls(
 ) -> Result<Model<FunctionCallAnalysisComplete>, Error> {
     let model = binary_to_ssa(binary)?;
     FunctionCallAnalyzer::run(model)
+}
+
+pub fn binary_to_folded_ssa(binary: Vec<i128>) -> Result<Model<FoldedSsaComplete>, Error> {
+    let model = binary_to_function_calls(binary)?;
+    FoldedSsaBuilder::run(model)
 }

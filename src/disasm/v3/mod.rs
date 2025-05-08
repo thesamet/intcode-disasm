@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod common;
 pub mod control_flow;
 pub mod data_flow;
+pub mod folded_ssa;
 pub mod function_call;
 pub mod id_types;
 pub mod image_scanner;
