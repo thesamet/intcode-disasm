@@ -122,6 +122,18 @@ where
             _ => None,
         }
     }
+
+    pub fn collect_read_addresses(&self) -> Vec<&T> {
+        match self {
+            NextKind::Follows(_) => vec![],
+            NextKind::Goto(_) => vec![],
+            NextKind::FunctionCall(call) => call.function_addr.collect_read_addresses(),
+            NextKind::Condition(cond) => cond.condition_operand.collect_read_addresses(),
+            NextKind::Return => vec![],
+            NextKind::Halt => vec![],
+            NextKind::Unknown => vec![],
+        }
+    }
 }
 
 // Describes how control flow enters a block

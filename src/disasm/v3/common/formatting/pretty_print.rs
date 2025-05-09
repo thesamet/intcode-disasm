@@ -25,35 +25,35 @@ impl PrettyPrintConfig {
     pub fn colors(&self) -> &Colors {
         &self.colors
     }
-    
+
     pub fn show_types(&self) -> bool {
         self.show_types
     }
-    
+
     pub fn show_vars(&self) -> bool {
         self.show_vars
     }
-    
+
     pub fn indent_width(&self) -> usize {
         self.indent_width
     }
-    
+
     // Builder methods
     pub fn with_colors(mut self, colors: Colors) -> Self {
         self.colors = colors;
         self
     }
-    
+
     pub fn with_show_types(mut self, show_types: bool) -> Self {
         self.show_types = show_types;
         self
     }
-    
+
     pub fn with_show_vars(mut self, show_vars: bool) -> Self {
         self.show_vars = show_vars;
         self
     }
-    
+
     pub fn with_indent_width(mut self, indent_width: usize) -> Self {
         self.indent_width = indent_width;
         self
@@ -101,12 +101,12 @@ impl<'a> FormattingContext<'a> {
     pub fn indent_str(&self) -> String {
         " ".repeat(self.indent_level * self.config.indent_width())
     }
-    
+
     // Convenience methods to access config
     pub fn show_types(&self) -> bool {
         self.config.show_types()
     }
-    
+
     pub fn show_vars(&self) -> bool {
         self.config.show_vars()
     }

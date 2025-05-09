@@ -72,12 +72,15 @@
 //!     - The broader SSA algorithm also inserts Phi functions into SsaBlocks.
 //! ```
 //!
+use std::fmt::Display;
+
 use crate::disasm::v2::instructions::InstructionNode;
+use crate::disasm::v3::common::formatting::{FormattingContext, PrettyPrintConfig};
 use crate::disasm::v3::control_flow::{NextKind, PredecessorKind};
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::lir::{Expression, MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::add_block_view_when;
-use crate::disasm::v3::{FunctionId, PointerId};
+use crate::disasm::v3::{pretty_print, FunctionId, PointerId};
 
 use super::converter::{PhiFunction, VersionRegistry};
 
@@ -228,7 +231,7 @@ impl AsRef<MemoryReferenceType> for VersionedMemoryReference {
 
 impl std::fmt::Display for VersionedMemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}_{}_{}", self.kind, self.function_id, self.version)
+        write!(f, "{}/{}_{}", self.function_id, self.kind, self.version)
     }
 }
 
@@ -255,6 +258,15 @@ impl SsaMemoryReference {
             SsaMemoryReference::Versioned(v) => Some(v),
             _ => None,
         }
+    }
+}
+
+impl Display for SsaMemoryReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&pretty_print::format_memory_reference(
+            self,
+            &FormattingContext::new(&PrettyPrintConfig::default()),
+        ))
     }
 }
 

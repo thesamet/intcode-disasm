@@ -1,7 +1,4 @@
-use super::{
-    expression::Expression,
-    memory_reference::ReadAddressExtractor,
-};
+use super::{expression::Expression, memory_reference::ReadAddressExtractor};
 use crate::disasm::v3::id_types::{BlockId, InstructionId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,19 +109,24 @@ impl<A: ReadAddressExtractor> Instruction<A> {
 }
 
 impl<A> InstructionNode<A> {
-    // Removed the recently added 'map' method.
-
-    /// Maps addressable references within the instruction, distinguishing between reads and writes.
-    /// - `map_read` is applied to all references within expressions (RHS of Assign, If cond, Call addr, Output expr).
-    /// - `map_write` is applied *only* to the target reference of an Assign instruction.
-    pub fn map_rw<C, R, W, T>(
+    /// Maps addressable references within the instruction, distinguishing between reads and writes using provided mapping functions.
+    ///
+    /// This function allows for the transformation of memory references within the instruction, providing separate mapping functions
+    /// for read and write contexts.  This is particularly useful when the type of memory reference needs to change based on whether
+    /// it's being read from or written to.
+    ///
+    /// - `map_read` is applied to all memory references within expressions (RHS of Assign, If cond, Call addr, Output expr).
+    ///   This function should transform a read-context memory reference (`&A`) into a new expression containing transformed references (`Expression<T>`).
+    /// - `map_write` is applied *only* to the target memory reference of an Assign instruction.
+    ///   This function should transform a write-context memory reference (`&A`) into a new memory reference of type `T`.
+    pub fn flat_map_rw<C, R, W, T>(
         &self,
         context: &mut C,
         mut map_read: R,
         mut map_write: W,
     ) -> InstructionNode<T>
     where
-        R: FnMut(&mut C, &A) -> T,
+        R: FnMut(&mut C, &A) -> Expression<T>,
         W: FnMut(&mut C, &A) -> T,
         C: std::fmt::Debug, // Keep Debug constraint if needed
     {
@@ -139,7 +141,7 @@ impl<A> InstructionNode<A> {
                     id: self.id,
                     kind: Instruction::Assign {
                         target: map_write(context, target),
-                        src: src.map(&mut |v| map_read(context, v)),
+                        src: src.flat_map(&mut |v| map_read(context, v)),
                         target_debug_marker: *target_debug_marker,
                     },
                 }
@@ -151,7 +153,7 @@ impl<A> InstructionNode<A> {
             } => InstructionNode {
                 id: self.id,
                 kind: Instruction::If {
-                    cond: cond.map(&mut |v| map_read(context, v)),
+                    cond: cond.flat_map(&mut |v| map_read(context, v)),
                     then_addr: *then_addr,
                     else_addr: *else_addr,
                 },
@@ -163,13 +165,13 @@ impl<A> InstructionNode<A> {
             Instruction::Call { addr, return_to } => InstructionNode {
                 id: self.id,
                 kind: Instruction::Call {
-                    addr: addr.map(&mut |v| map_read(context, v)),
+                    addr: addr.flat_map(&mut |v| map_read(context, v)),
                     return_to: *return_to,
                 },
             },
             Instruction::Output(expr) => InstructionNode {
                 id: self.id,
-                kind: Instruction::Output(expr.map(&mut |v| map_read(context, v))),
+                kind: Instruction::Output(expr.flat_map(&mut |v| map_read(context, v))),
             },
             Instruction::Return => InstructionNode {
                 id: self.id,
@@ -181,6 +183,22 @@ impl<A> InstructionNode<A> {
             },
         }
     }
-}
 
-// Removed convert_block, from_native_instruction_pair, etc. - belong in converter
+    pub fn map_rw<C, R, W, T>(
+        &self,
+        context: &mut C,
+        map_read: &mut R,
+        map_write: &mut W,
+    ) -> InstructionNode<T>
+    where
+        R: FnMut(&mut C, &A) -> T,
+        W: FnMut(&mut C, &A) -> T,
+        C: std::fmt::Debug, // Keep Debug constraint if needed
+    {
+        self.flat_map_rw(
+            context,
+            |c, v| Expression::Addressable(map_read(c, v)),
+            |c, v| map_write(c, v),
+        )
+    }
+}

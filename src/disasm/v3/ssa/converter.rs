@@ -292,9 +292,9 @@ impl<'a> SSAConversionState<'a> {
         fn map_read(
             (pre_state, _, _): &mut (&VersionRegistry, &mut VersionRegistry, &mut VersionRegistry),
             op: &MemoryReference,
-        ) -> SsaMemoryReference {
+        ) -> Expression<SsaMemoryReference> {
             // Use the read-only pre_state captured before the instruction's write
-            pre_state.convert_to_ssa_memory_reference(op)
+            Expression::Addressable(pre_state.convert_to_ssa_memory_reference(op))
         }
 
         // Closure uses the mutable global ('current') and block-local ('end') states
@@ -373,7 +373,7 @@ impl<'a> SSAConversionState<'a> {
 
                 // Map the v3 instruction node using the read/write mappers and the new state tuple
                 // map_read will use pre_instr_state, map_write will use version_registry & end_state
-                instructions.push(instr_node.map_rw(&mut state, map_read, map_write));
+                instructions.push(instr_node.flat_map_rw(&mut state, map_read, map_write));
             }
 
             // Create the v2 SsaBlock structure
@@ -674,7 +674,7 @@ impl<'a> SSAConversionState<'a> {
                 // Map reads using start_state, map writes by cloning (version is already final)
                 let read_mapped_instr = instr_node.map_rw(
                     &mut start_state, // Pass start_state as context
-                    |reg, ssa_mem_ref: &SsaMemoryReference| {
+                    &mut |reg, ssa_mem_ref: &SsaMemoryReference| {
                         // reg is the start_state
                         // map_read closure: Resolve reads using the start_state (reg) or the existing version
                         match ssa_mem_ref {
@@ -699,7 +699,7 @@ impl<'a> SSAConversionState<'a> {
                             }
                         }
                     },
-                    |_, ssa_mem_ref| ssa_mem_ref.clone(), // map_write: Write target version is already final, just clone.
+                    &mut |_, ssa_mem_ref| ssa_mem_ref.clone(),
                 );
                 populated_instructions.push(read_mapped_instr);
             }

@@ -1,4 +1,4 @@
- // Use LIR MemoryReference
+// Use LIR MemoryReference
 use std::fmt::Display;
 
 /// Represents a low-level expression that can be evaluated.
@@ -81,21 +81,28 @@ impl<A> Expression<A> {
     where
         F: FnMut(&A) -> B,
     {
-        match self {
+        self.flat_map(&mut |x| Expression::Addressable(map(x)))
+    }
+
+    pub fn flat_map<T, F>(&self, f: &mut F) -> Expression<T>
+    where
+        F: FnMut(&A) -> Expression<T>,
+    {
+        match &self {
             Expression::Constant(val) => Expression::Constant(*val),
-            Expression::Addressable(a) => Expression::Addressable(map(a)),
+            Expression::Addressable(a) => f(a),
             Expression::Binary { op, lhs, rhs } => Expression::Binary {
                 op: *op,
-                lhs: Box::new(lhs.map(map)),
-                rhs: Box::new(rhs.map(map)),
+                lhs: Box::new(lhs.flat_map(f)),
+                rhs: Box::new(rhs.flat_map(f)),
             },
             Expression::Unary { op, arg } => Expression::Unary {
                 op: *op,
-                arg: Box::new(arg.map(map)),
+                arg: Box::new(arg.flat_map(f)),
             },
             Expression::Input() => Expression::Input(),
             Expression::DebugMarker(marker, expr) => {
-                Expression::DebugMarker(*marker, Box::new(expr.map(map)))
+                Expression::DebugMarker(*marker, Box::new(expr.flat_map(f)))
             }
         }
     }

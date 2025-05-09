@@ -3,7 +3,7 @@
 mod tests {
     use crate::disasm::{
         parser,
-        test_utils::init_logging,
+        test_utils::{init_logging, TestContextBuilder},
         v3::{
             control_flow::ControlFlowGraphBuilder, // v3 CFG Builder
             data_flow::{analyzer::DataFlowAnalyzer, block::OriginationPoint, DataFlowBlock},
@@ -27,7 +27,6 @@ mod tests {
         // Pass binary by value (ownership)
         let image_scanned = ImageScanner::run(initial_model).expect("Image scanning failed");
         let cfg_built = ControlFlowGraphBuilder::run(image_scanned).expect("CFG building failed");
-        
 
         DataFlowAnalyzer::run(cfg_built).expect("Data flow analysis failed") // Return model with DataFlow results
     }
@@ -895,5 +894,29 @@ mod tests {
                 .contains_key(&MemoryReference::StackRelative(-1)),
             "[R-1] should be in live_in due to use in instruction 13"
         );
+    }
+
+    #[test]
+    fn test_if_result_in_live_in() {
+        let ctx = DataFlowComplete::test_context(
+            r#"
+            R += 3                ; 0
+            if [R-1] goto @merge  ; 2  ; Use R-1 (instr 0 in block 0)
+            output [R-2]          ; 5
+            merge:
+            output [R-2]          ; 5
+            R -= 3
+            goto [R]
+            "#,
+        )
+        .unwrap();
+
+        let block0_id = BlockId::from(0);
+        assert!(ctx
+            .main_function()
+            .block(&block0_id)
+            .data_flow()
+            .live_in
+            .contains_key(&MemoryReference::StackRelative(-1)));
     }
 }
