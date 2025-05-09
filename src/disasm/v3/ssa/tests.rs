@@ -800,3 +800,20 @@ fn function_call_with_arg_that_is_branched() {
     );
     assert_eq!(merge_block.phi_functions[0].result.version, 3);
 }
+
+#[test]
+fn increment_on_add_after_mul() {
+    let ctx = SsaComplete::test_context(
+        r#"
+            R += 3
+            'a [R-3] = [R-3] * -1
+            [R-5] = [R-5] + 'b [R-3]
+            halt
+
+          "#,
+    )
+    .unwrap();
+    println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
+    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-3, 1));
+    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 2));
+}

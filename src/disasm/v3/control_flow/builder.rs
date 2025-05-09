@@ -336,9 +336,9 @@ impl ControlFlowGraphBuilder {
         match &last_instr.kind {
             Instruction::Halt => NextKind::Halt,
             Instruction::Goto(target_addr) => NextKind::Goto(*target_addr),
-            Instruction::Call { addr, return_to } => {
-                NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), *return_to))
-            }
+            Instruction::Call {
+                addr, return_to, ..
+            } => NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), *return_to)),
             Instruction::Return => NextKind::Return,
             Instruction::If {
                 cond,

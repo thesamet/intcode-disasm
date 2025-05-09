@@ -2,6 +2,7 @@ use super::{
     expression::{BinaryOperator, Expression, UnaryOperator},
     instruction::{Instruction, InstructionNode},
     memory_reference::MemoryReference,
+    MemoryReferenceInfo,
 };
 use crate::disasm::v3::{
     id_types::{BlockId, InstructionId, PointerId},
@@ -52,7 +53,8 @@ impl InstructionNode<MemoryReference> {
         let mut iter = native.into_iter().peekable();
         let mut result = vec![];
         while let Some(native) = iter.next() {
-            let (skip, low) = InstructionNode::from_native_instruction_pair(native, iter.peek());
+            let (skip, low) =
+                InstructionNode::from_native_instruction_pair(native, iter.peek(), &result);
             result.extend(low);
             assert!(skip == 2 || skip == 1);
             if skip == 2 {
@@ -67,9 +69,12 @@ impl InstructionNode<MemoryReference> {
     fn from_native_instruction_pair(
         native: NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
+        previous_instructions: &[InstructionNode<MemoryReference>],
     ) -> (usize, Option<InstructionNode<MemoryReference>>) {
         // Handle special cases that need to look at the next instruction
-        if let Some(result) = Self::handle_special_instruction_pairs(&native, next_instruction) {
+        if let Some(result) =
+            Self::handle_special_instruction_pairs(&native, next_instruction, previous_instructions)
+        {
             return result;
         }
 
@@ -190,6 +195,7 @@ impl InstructionNode<MemoryReference> {
     fn handle_special_instruction_pairs(
         native: &NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
+        previous_instructions: &[InstructionNode<MemoryReference>],
     ) -> Option<(usize, Option<InstructionNode<MemoryReference>>)> {
         match &native.kind {
             // Handle function return sequence: R -= N followed by goto [R]
@@ -208,15 +214,13 @@ impl InstructionNode<MemoryReference> {
                                     ..
                                 }),
                             ..
-                        }) => {
-                            Some((
-                                2,
-                                Some(InstructionNode {
-                                    id: InstructionId::fresh(),
-                                    kind: Instruction::Return,
-                                }),
-                            ))
-                        }
+                        }) => Some((
+                            2,
+                            Some(InstructionNode {
+                                id: InstructionId::fresh(),
+                                kind: Instruction::Return,
+                            }),
+                        )),
                         _ => panic!("Expected GOTO [R] after R adjustment for function return"),
                     }
                 } else if adjust > 0 {
@@ -250,11 +254,17 @@ impl InstructionNode<MemoryReference> {
                                 ..
                             }) = next_instruction
                             {
+                                let collected_args = extract_arguments(previous_instructions);
+
                                 return Some((
                                     2,
                                     Some(InstructionNode {
                                         kind: Instruction::Call {
                                             addr: (*func_addr).into(),
+                                            args: collected_args
+                                                .into_iter()
+                                                .map(|a| Expression::Addressable(a))
+                                                .collect(),
                                             return_to: BlockId::from(return_to),
                                         },
                                         id: InstructionId::fresh(),
@@ -269,4 +279,69 @@ impl InstructionNode<MemoryReference> {
             _ => None,
         }
     }
+}
+
+fn extract_arguments(
+    previous_instructions: &[InstructionNode<MemoryReference>],
+) -> Vec<MemoryReference> {
+    // Extract arguments for a call
+    // Arguments are expected to be assignments to [R+1], [R+2], ..., [R+N]
+    // appearing consecutively in previous_instructions just before this call sequence.
+    // Iterating previous_instructions in reverse means we see [R+N], then [R+N-1], ..., [R+1].
+    let mut collected_args: Vec<MemoryReference> = Vec::new();
+    // Stores the offset expected for the *next* argument in the reversed sequence.
+    // e.g., if we just saw R+k, this will be R+(k-1).
+    let mut next_expected_lower_offset: Option<i128> = None;
+
+    for prev_node in previous_instructions.iter().rev() {
+        // Guard 1: Must be an Assign instruction
+        let Instruction::Assign { target, .. } = &prev_node.kind else {
+            // Not an Assign instruction. Argument sequence ends here.
+            break;
+        };
+
+        // Guard 2: Target must be stack-relative
+        // MemoryReferenceInfo::as_stack_relative is used here.
+        let Some(offset_val) = target.as_stack_relative() else {
+            // Not a stack-relative assignment. Argument sequence ends here.
+            break;
+        };
+
+        // Guard 3: Stack offset must be positive
+        if offset_val <= 0 {
+            // Not a positive stack offset (e.g., R+0 or R-ve).
+            // Argument sequence ends here.
+            break;
+        }
+
+        // At this point, we have a positive stack-relative assignment, a potential argument.
+        match next_expected_lower_offset {
+            None => {
+                // This is the first potential argument found (should be R+N).
+                collected_args.push(target.clone());
+                next_expected_lower_offset = Some(offset_val - 1);
+            }
+            Some(expected_offset) => {
+                // Assert it's consecutive [R-3] then [R-1]...
+                assert_eq!(offset_val, expected_offset);
+                collected_args.push(target.clone());
+                next_expected_lower_offset = Some(offset_val - 1);
+            }
+        }
+        if offset_val == 1 {
+            // Found R+1 as the very first argument (single argument case)
+            break;
+        }
+    }
+
+    // Validate the collected arguments:
+    // If arguments were found, the sequence must be complete,
+    // meaning it ended with R+1 (so next_expected_lower_offset became Some(0)).
+    // If no arguments were found, next_expected_lower_offset is None, and collected_args is empty.
+    assert!(next_expected_lower_offset.is_none_or(|x| x == 0));
+
+    // The collected_args are currently in [R+N, ..., R+1] order. Reverse it.
+    collected_args.reverse();
+    // Now in [R+1, ..., R+N] order.
+    collected_args
 }

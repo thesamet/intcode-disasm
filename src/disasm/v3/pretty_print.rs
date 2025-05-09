@@ -86,7 +86,7 @@ fn format_function_call_info<S: ModelState + 'static>(
                 .values()
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
                 .map(|v| format_versioned_reference(v, ctx))
-                .join(", "),
+                .join(&", ".color(ctx.colors().low_prio).to_string()),
             ") -> ?".color(ctx.colors().low_prio)),
         _ => "".to_string(),
     })
@@ -316,11 +316,20 @@ pub fn format_instruction(
                 addr.to_string().color(ctx.colors().const_color)
             )
         }
-        Instruction::Call { addr, return_to } => {
+        Instruction::Call {
+            addr,
+            args,
+            return_to,
+        } => {
             format!(
-                "{} {} {} {}",
+                "{} {}{}{}{} {} {}",
                 "call".color(ctx.colors().keyword),
                 format_expression(addr, ctx),
+                "(".color(ctx.colors().low_prio),
+                args.iter()
+                    .map(|e| format_expression(e, ctx))
+                    .join(&", ".color(ctx.colors().low_prio).to_string()),
+                ")".color(ctx.colors().low_prio),
                 "return to".color(ctx.colors().keyword),
                 return_to.to_string().color(ctx.colors().const_color)
             )

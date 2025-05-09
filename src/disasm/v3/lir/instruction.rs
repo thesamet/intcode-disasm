@@ -36,6 +36,7 @@ pub enum Instruction<A> {
     /// Calls a function. Does not contain information on arguments and return values.
     Call {
         addr: Expression<A>,
+        args: Vec<Expression<A>>,
         return_to: BlockId,
     },
     /// Outputs the result of an expression.
@@ -62,7 +63,11 @@ impl<A> Instruction<A> {
             Instruction::Assign { src, .. } => vec![src],
             Instruction::If { cond, .. } => vec![cond],
             Instruction::Goto(_) => vec![],
-            Instruction::Call { addr, .. } => vec![addr],
+            Instruction::Call { addr, args, .. } => {
+                let mut exprs = vec![addr];
+                exprs.extend(args.iter());
+                exprs
+            }
             Instruction::Output(expr) => vec![expr],
             Instruction::Return | Instruction::Halt => vec![],
         }
@@ -162,10 +167,18 @@ impl<A> InstructionNode<A> {
                 id: self.id,
                 kind: Instruction::Goto(*addr),
             },
-            Instruction::Call { addr, return_to } => InstructionNode {
+            Instruction::Call {
+                addr,
+                args,
+                return_to,
+            } => InstructionNode {
                 id: self.id,
                 kind: Instruction::Call {
                     addr: addr.flat_map(&mut |v| map_read(context, v)),
+                    args: args
+                        .iter()
+                        .map(|e| e.flat_map(&mut |v| map_read(context, v)))
+                        .collect(),
                     return_to: *return_to,
                 },
             },
