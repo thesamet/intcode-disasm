@@ -77,7 +77,7 @@ impl<A> Expression<A> {
     /// # Returns
     ///
     /// A new expression with all addressable references transformed from type `A` to type `B`
-    pub fn map<F, B>(&self, map: &mut F) -> Expression<B>
+    pub fn map<F, B>(&self, mut map: F) -> Expression<B>
     where
         F: FnMut(&A) -> B,
     {

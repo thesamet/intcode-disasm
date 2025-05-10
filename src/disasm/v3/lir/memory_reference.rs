@@ -1,6 +1,8 @@
+use castaway::LifetimeFree;
+
 use super::expression::Expression; // Use LIR Expression
 use crate::disasm::v3::id_types::PointerId;
- // Keep Display if needed for MemoryReference
+// Keep Display if needed for MemoryReference
 
 /// Represents a reference to a memory location that can be read from or written to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -17,16 +19,13 @@ pub enum MemoryReference {
     /// Dereference of a pointer expression.
     Deref(Box<Expression<MemoryReference>>),
 }
+unsafe impl LifetimeFree for MemoryReference {}
 
 impl<'a> From<&'a MemoryReference> for MemoryReference {
     fn from(value: &'a MemoryReference) -> Self {
         value.clone()
     }
 }
-
-// Removed From<&'a SsaMemoryReference> for MemoryReference - belongs in ssa module
-// Removed From<&'a VersionedMemoryReference> for MemoryReference - belongs in ssa module
-// Removed From<&'a MemoryReferenceType> for MemoryReference - belongs in ssa module
 
 /// A trait for types that can be converted to a MemoryReference.
 ///

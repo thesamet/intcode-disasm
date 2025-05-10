@@ -204,6 +204,7 @@ dependencies = [
  "clap",
  "colored",
  "derive_more",
+ "either",
  "env_logger",
  "itertools 0.14.0",
  "log",

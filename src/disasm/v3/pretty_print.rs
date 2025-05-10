@@ -2,7 +2,7 @@ use castaway::{cast, match_type};
 use colored::Colorize;
 use itertools::Itertools;
 
-use crate::disasm::v3::lir::MemoryReferenceInfo;
+use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::FoldedSsaComplete;
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
@@ -14,7 +14,6 @@ use crate::disasm::v3::{
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
     },
-    ssa::types::MemoryReferenceType,
     PredecessorKind,
 };
 
@@ -85,17 +84,17 @@ fn format_function_call_info<S: ModelState + 'static>(
                 .parameter_entry_vars
                 .values()
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
-                .map(|v| format_versioned_reference(v, ctx))
+                .map(|v| format_versioned_reference(*v, ctx))
                 .join(&", ".color(ctx.colors().low_prio).to_string()),
             ") -> ?".color(ctx.colors().low_prio)),
         _ => "".to_string(),
     })
 }
 
-pub fn format_expression(expr: &Expression<SsaMemoryReference>, ctx: &FormattingContext) -> String {
+pub fn format_expression<S: 'static>(expr: &Expression<S>, ctx: &FormattingContext) -> String {
     match expr {
         Expression::Constant(value) => format_constant(*value, ctx),
-        Expression::Addressable(addr) => format_memory_reference(addr, ctx),
+        Expression::Addressable(addr) => format_any_memory_reference(addr, ctx),
         Expression::Binary { op, lhs, rhs } => {
             let op_str = op.to_string().color(ctx.colors().op_color).to_string();
             let op_prec = binary_op_precedence(op);
@@ -171,14 +170,14 @@ fn format_phi_function(phi: &PhiFunction, ctx: &FormattingContext) -> String {
                 "{}{}: {}",
                 source_id_str,
                 call_marker_str,
-                format_versioned_reference(addressable, ctx)
+                format_versioned_reference(*addressable, ctx)
             )
         })
         .join(", ");
 
     format!(
         "{} {} {}({})",
-        format_versioned_reference(&phi.result, ctx),
+        format_versioned_reference(phi.result, ctx),
         "=".color(ctx.colors().op_color),
         "φ".color(ctx.colors().function),
         inputs_str
@@ -281,15 +280,23 @@ where
     lines.join("\n")
 }
 
-pub fn format_instruction(
-    instr: &InstructionNode<SsaMemoryReference>,
+pub fn format_instruction<A: 'static>(
+    instr: &InstructionNode<A>,
     ctx: &FormattingContext,
 ) -> String {
     match &instr.kind {
-        Instruction::Assign { target, src, .. } => {
+        Instruction::Assign {
+            ref target,
+            ref src,
+            target_debug_marker,
+        } => {
+            let debug_marker = match target_debug_marker {
+                Some(marker) => format!("'{} ", marker.to_string().color(ctx.colors().low_prio)),
+                None => "".to_string(),
+            };
             format!(
-                "{} {} {}",
-                format_memory_reference(target, ctx),
+                "{debug_marker}{} {} {}",
+                format_any_memory_reference(target, ctx),
                 "=".color(ctx.colors().op_color),
                 format_expression(src, ctx)
             )
@@ -346,14 +353,26 @@ pub fn format_instruction(
     }
 }
 
-pub fn format_memory_reference(reference: &SsaMemoryReference, ctx: &FormattingContext) -> String {
+pub fn format_ssa_memory_reference(
+    reference: &SsaMemoryReference,
+    ctx: &FormattingContext,
+) -> String {
     match reference {
-        SsaMemoryReference::Versioned(a) => format_versioned_reference(a, ctx),
+        SsaMemoryReference::Versioned(a) => format_versioned_reference(*a, ctx),
         SsaMemoryReference::Deref(expr) => {
             format!("*{}", format_expression(expr, ctx))
         }
     }
 }
+
+pub fn format_any_memory_reference<S>(reference: &S, ctx: &FormattingContext) -> String {
+    match_type!(reference, {
+        &SsaMemoryReference as s => format_ssa_memory_reference(s, ctx),
+        &MemoryReference as m => format_memory_reference(m, ctx),
+        _ => unreachable!(),
+    })
+}
+
 fn format_function<S: ModelState + 'static>(
     model: &Model<S>,
     function: &FunctionView<S>,
@@ -456,15 +475,12 @@ fn format_constant(value: i128, ctx: &FormattingContext) -> String {
         .to_string()
 }
 
-pub fn format_versioned_reference(
-    reference: &VersionedMemoryReference,
-    ctx: &FormattingContext,
-) -> String {
-    let base = match reference.kind {
-        MemoryReferenceType::RelativeMemory(offset) => {
-            if offset == 0 {
+pub fn format_memory_reference(mem_ref: &MemoryReference, ctx: &FormattingContext) -> String {
+    match mem_ref {
+        MemoryReference::StackRelative(offset) => {
+            if *offset == 0 {
                 "[R]".color(ctx.colors().variable).to_string()
-            } else if offset > -1 {
+            } else if *offset > -1 {
                 format!("[R+{offset}]")
                     .color(ctx.colors().variable)
                     .to_string()
@@ -474,18 +490,25 @@ pub fn format_versioned_reference(
                     .to_string()
             }
         }
-        MemoryReferenceType::Memory(addr) => {
+        MemoryReference::Global(addr) => {
             format!("[{addr}]").color(ctx.colors().variable).to_string()
         }
-        MemoryReferenceType::Pointer(addr) => {
+        MemoryReference::Pointer(addr) => {
             format!("p{addr}").color(ctx.colors().variable).to_string()
         }
-    };
+        MemoryReference::Deref(expr) => format!("*{}", format_expression(expr.as_ref(), ctx)),
+    }
+}
 
+pub fn format_versioned_reference(
+    reference: VersionedMemoryReference,
+    ctx: &FormattingContext,
+) -> String {
     // Add the version
+    let mem_ref = reference.to_memory_reference();
     format!(
         "{}_{}",
-        base,
+        format_memory_reference(&mem_ref, ctx),
         reference.version.to_string().color(ctx.colors().type_color)
     )
 }

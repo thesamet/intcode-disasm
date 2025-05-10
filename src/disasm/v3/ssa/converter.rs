@@ -1,4 +1,5 @@
 use crate::disasm::v3::model::{DataFlowComplete, Model, SsaComplete};
+use crate::disasm::v3::InstructionId;
 use crate::disasm::Error;
 
 /// Converts the control flow graph to SSA form
@@ -22,6 +23,8 @@ impl SsaConverter {
     }
 }
 
+use colored::{Color, Colorize};
+use either::Either;
 use itertools::Itertools;
 use log::trace;
 use std::convert::From;
@@ -29,7 +32,7 @@ use std::convert::From;
 use crate::disasm;
 use crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns;
 use crate::disasm::v3::data_flow::OriginationPoint;
-use crate::disasm::v3::ssa::types::MemoryReferenceType;
+use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 use crate::disasm::{
     v2::model::{BlockId, FunctionId},
@@ -121,14 +124,14 @@ impl SsaResult {
     }
 }
 
-// Modified to hold v3 model and function view
 struct SSAConversionState<'a> {
     function: FunctionView<'a, DataFlowComplete>,
+    assignments_to_versions: HashMap<InstructionId, VersionedMemoryReference>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VersionRegistry {
-    current_versions: HashMap<MemoryReferenceType, VersionedMemoryReference>,
+    current_versions: HashMap<VersionableMemoryKind, usize>,
     function_id: FunctionId,
 }
 
@@ -140,115 +143,102 @@ impl VersionRegistry {
         }
     }
 
-    pub fn current_version(
-        &self,
-        memory_reference_type: &MemoryReferenceType,
-    ) -> VersionedMemoryReference {
+    pub fn current_version(&self, memory_reference_type: &VersionableMemoryKind) -> usize {
         self.current_versions
             .get(memory_reference_type)
             .cloned()
-            .unwrap_or(VersionedMemoryReference {
-                kind: *memory_reference_type,
-                function_id: self.function_id,
-                version: 0,
-            })
+            .unwrap_or(0)
     }
 
     fn create_next_version(
         &mut self,
-        memory_reference_type: &MemoryReferenceType,
+        memory_reference_type: &VersionableMemoryKind,
     ) -> VersionedMemoryReference {
-        let mut versioned_memory_reference = self.current_version(memory_reference_type);
-        versioned_memory_reference.version += 1;
+        let next_version = self.current_version(memory_reference_type) + 1;
         self.current_versions
-            .insert(*memory_reference_type, versioned_memory_reference);
-        versioned_memory_reference
+            .insert(*memory_reference_type, next_version);
+        VersionedMemoryReference {
+            kind: *memory_reference_type,
+            function_id: self.function_id,
+            version: next_version,
+        }
     }
 
-    fn set_version(
-        &mut self,
-        memory_reference_type: MemoryReferenceType,
-        versioned_memory_reference: VersionedMemoryReference,
-    ) {
-        self.current_versions
-            .insert(memory_reference_type, versioned_memory_reference);
+    fn set_version(&mut self, memory_reference_type: VersionableMemoryKind, version: usize) {
+        self.current_versions.insert(memory_reference_type, version);
     }
 
     /// Converts a MemoryReference (or similar) into an SsaMemoryReference using the *current* state.
-    /// Used during the initial pass (build_ssa_blocks...).
-    fn convert_to_ssa_memory_reference<T>(&self, memory_reference: &T) -> SsaMemoryReference
+    fn resolve_to_ssa_memory_reference<T>(
+        &self,
+        memory_reference: &MemoryReference,
+    ) -> SsaMemoryReference
     where
-        T: std::fmt::Debug,
         MemoryReference: for<'a> From<&'a T>, // T can be converted to MemoryReference
     {
-        let mem_ref: MemoryReference = memory_reference.into();
-        MemoryReferenceType::try_from(&mem_ref)
-            .map(|kind| SsaMemoryReference::Versioned(self.current_version(&kind)))
-            .unwrap_or_else(|_| match mem_ref {
-                MemoryReference::Deref(expr) => {
-                    // Recursively convert the inner expression
-                    SsaMemoryReference::Deref(Box::new(
-                        self.convert_to_ssa_expression::<MemoryReference>(expr.as_ref()),
-                    ))
-                }
-                _ => unreachable!(
-                    "Expected Deref or versionable type, got: {:?}",
-                    memory_reference
-                ),
-            })
+        match VersionableMemoryKind::split_kind_or_deref(memory_reference) {
+            Either::Left(kind) => {
+                SsaMemoryReference::Versioned(self.resolve_to_versioned_ssa_memory_reference(&kind))
+            }
+            Either::Right(expr) => {
+                SsaMemoryReference::Deref(Box::new(self.convert_to_ssa_expression(expr)))
+            }
+        }
     }
 
-    /// Converts an Expression containing MemoryReferences (or similar) into an
+    /// Creates a VersionedMemoryReference for a given versionable kind using the current version.
+    fn resolve_to_versioned_ssa_memory_reference(
+        &self,
+        kind: &VersionableMemoryKind,
+    ) -> VersionedMemoryReference {
+        VersionedMemoryReference {
+            kind: *kind,
+            function_id: self.function_id,
+            version: self.current_version(kind),
+        }
+    }
+
+    /// Converts an Expression containing MemoryReferences  into an
     /// Expression containing SsaMemoryReferences based on the current versions.
     /// Used during the initial pass (build_ssa_blocks...).
-    fn convert_to_ssa_expression<T>(&self, expr: &Expression<T>) -> Expression<SsaMemoryReference>
-    where
-        MemoryReference: for<'a> From<&'a T>, // T can be converted to MemoryReference
-        T: std::fmt::Debug,
-    {
-        // Map using the conversion helper
-        expr.map(&mut |op| self.convert_to_ssa_memory_reference(op))
-    }
-
-    /// Resolves an existing SSA expression (Expression<SsaMemoryReference>)
-    /// to use the final versions stored in this registry.
-    /// Used during the second pass (populate_reads...).
-    fn resolve_ssa_expression(
+    fn convert_to_ssa_expression(
         &self,
-        expr: &Expression<SsaMemoryReference>,
+        expr: &Expression<MemoryReference>,
     ) -> Expression<SsaMemoryReference> {
-        expr.map(&mut |op: &SsaMemoryReference| {
-            // Input is already SsaMemoryReference
-            match op {
-                SsaMemoryReference::Versioned(v_partial) => {
-                    // Check if this registry (self, the start_state) has a definition for this kind
-                    if self.has_version_for(&v_partial.kind) {
-                        // If yes, the version in this registry dominates. Use it.
-                        self.current_version(&v_partial.kind).into()
-                    } else {
-                        // If no, the version already present (v_partial) is the one to keep,
-                        // as it must have been defined within the current block in the first pass.
-                        SsaMemoryReference::Versioned(*v_partial) // Clone v_partial
-                    }
-                }
-                SsaMemoryReference::Deref(inner_ssa_expr) => {
-                    // Recursively resolve the inner SSA expression using *this* same registry
-                    // This avoids calling the conversion functions again.
-                    let resolved_inner = self.resolve_ssa_expression(inner_ssa_expr.as_ref());
-                    SsaMemoryReference::Deref(Box::new(resolved_inner))
-                }
-            }
-        })
+        // Map using the conversion helper
+        expr.map(|op| self.resolve_to_ssa_memory_reference(op))
     }
 
-    pub fn iter_versions(
-        &self,
-    ) -> impl Iterator<Item = (&MemoryReferenceType, &VersionedMemoryReference)> {
+    pub fn iter_versions(&self) -> impl Iterator<Item = (&VersionableMemoryKind, &usize)> {
         self.current_versions.iter()
     }
 
-    fn has_version_for(&self, memory_reference_type: &MemoryReferenceType) -> bool {
+    pub fn iter_versioned(
+        &self,
+    ) -> impl Iterator<Item = (&VersionableMemoryKind, VersionedMemoryReference)> {
+        self.current_versions
+            .iter()
+            .map(|(k, v)| (k, VersionedMemoryReference::new(*k, self.function_id, *v)))
+    }
+
+    pub fn has_version_for(&self, memory_reference_type: &VersionableMemoryKind) -> bool {
         self.current_versions.contains_key(memory_reference_type)
+    }
+}
+
+impl std::fmt::Debug for VersionRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VersionRegistry<")?;
+        for (kind, version) in self.current_versions.iter().sorted() {
+            write!(
+                f,
+                "{}: {}, ",
+                kind.to_string().color(Color::Yellow),
+                version.to_string().color(Color::Cyan)
+            )?;
+        }
+        f.write_str(">")?;
+        Ok(())
     }
 }
 
@@ -258,7 +248,10 @@ impl<'a> SSAConversionState<'a> {
     // Modified constructor
     fn new(function: FunctionView<'a, DataFlowComplete>) -> Self {
         // Convert v3 FunctionId to v2 FunctionId
-        Self { function }
+        Self {
+            function,
+            assignments_to_versions: HashMap::new(),
+        }
     }
 
     fn convert_function(&mut self) -> HashMap<BlockId, SsaBlock> {
@@ -267,7 +260,7 @@ impl<'a> SSAConversionState<'a> {
 
         // Step 2: Populate versions for phi results and targets of writes in top-bottom order.
         // Pass only phi_placements now.
-        let mut ssa_blocks = self.build_ssa_blocks_with_write_versioning(&phi_placements);
+        let mut ssa_blocks = self.compute_end_state_for_vars_assigned_in_block(&phi_placements);
 
         // Step 3: Compute start and end states for all blocks
         self.compute_start_end_states(&mut ssa_blocks);
@@ -279,122 +272,6 @@ impl<'a> SSAConversionState<'a> {
         ssa_blocks
     }
 
-    // Modified to remove 'function' parameter and use self.function (FunctionView)
-    fn build_ssa_blocks_with_write_versioning(
-        &mut self,
-        phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
-    ) -> HashMap<BlockId, SsaBlock> {
-        let mut ssa_blocks = HashMap::new();
-        // Get the v2 function ID for VersionRegistry
-        let v2_function_id = FunctionId::new(self.function.function_id().index());
-
-        // Closure uses the read-only pre-instruction state
-        fn map_read(
-            (pre_state, _, _): &mut (&VersionRegistry, &mut VersionRegistry, &mut VersionRegistry),
-            op: &MemoryReference,
-        ) -> Expression<SsaMemoryReference> {
-            // Use the read-only pre_state captured before the instruction's write
-            Expression::Addressable(pre_state.convert_to_ssa_memory_reference(op))
-        }
-
-        // Closure uses the mutable global ('current') and block-local ('end') states
-        fn map_write(
-            (_, current, end): &mut (&VersionRegistry, &mut VersionRegistry, &mut VersionRegistry),
-            op: &MemoryReference,
-        ) -> SsaMemoryReference {
-            match MemoryReferenceType::try_from(op) {
-                Ok(mem_ref) => {
-                    // Assign next version in 'current' (global) registry and update 'end' (block-local) state
-                    let next_var = current.create_next_version(&mem_ref); // Increments global counter, gets v_n+1
-                    end.set_version(mem_ref, next_var); // Store v_n+1 in block's end state
-                                                        // Return the correctly incremented version
-                    next_var.into()
-                }
-                Err(_) => {
-                    // Non-versionable writes (like Deref targets) are still converted using the mutable 'current' state
-                    // This resolves the *pointer* expression based on the latest global version.
-                    current.convert_to_ssa_memory_reference(op)
-                }
-            }
-        }
-
-        // Initialize the global version registry tracking the latest version created across all blocks/instructions
-        let mut version_registry = VersionRegistry::new(v2_function_id);
-
-        // Iterate over blocks using the FunctionView, sorted by BlockId
-        for (block_id, block_view) in self.function.blocks().sorted_by_key(|(id, _)| *id) {
-            // Initialize end_state for this block using the v2 function ID
-            let mut end_state = VersionRegistry::new(v2_function_id);
-
-            // Handle initial definitions for the entry block using v3 data flow info
-            if block_id == self.function.entry_block() {
-                block_view
-                    .data_flow() // Get v3 DataFlowBlock
-                    .defs_in // Access v3 defs_in
-                    .iter()
-                    .filter(|d| d.source == OriginationPoint::FunctionInput) // Check source
-                    .filter_map(|d| MemoryReferenceType::try_from(&d.kind).ok()) // Convert v3 MemoryReference to v2 MemoryReferenceType
-                    .for_each(|versioned_kind| {
-                        // Set version 0 for function inputs
-                        end_state.set_version(
-                            versioned_kind,
-                            VersionedMemoryReference {
-                                kind: versioned_kind,
-                                function_id: v2_function_id, // Use v2 ID
-                                version: 0,
-                            },
-                        );
-                    });
-            }
-
-            // Get phi functions placed for this block
-            let mut phi_functions = phi_placements.get(&block_id).cloned().unwrap_or_default();
-
-            // Assign versions to phi results and update the end_state
-            for phi in phi_functions.iter_mut() {
-                // Use the main version_registry to get the next version
-                phi.result = version_registry.create_next_version(&phi.result.kind);
-                // Update the block's end_state with the new phi result version
-                end_state.set_version(phi.result.kind, phi.result);
-            }
-
-            // The state after phi assignments is the initial start state for this block's instructions
-            let start_state = end_state.clone();
-
-            // Convert v3 LIR instructions to v2 SSA instructions, updating versions
-            let mut instructions = Vec::new();
-            for instr_node in block_view.low_instructions() {
-                // Use v3 low_instructions
-                // Capture the read-state *before* this instruction potentially writes
-                let pre_instr_state = version_registry.clone();
-
-                // Prepare the 3-tuple state for map_rw
-                let mut state = (&pre_instr_state, &mut version_registry, &mut end_state);
-
-                // Map the v3 instruction node using the read/write mappers and the new state tuple
-                // map_read will use pre_instr_state, map_write will use version_registry & end_state
-                instructions.push(instr_node.flat_map_rw(&mut state, map_read, map_write));
-            }
-
-            // Create the v2 SsaBlock structure
-            // Create the v2 SsaBlock structure (without native fields)
-            let ssa_block = SsaBlock {
-                original_id: block_id, // Remove dereference
-                phi_functions,
-                instructions,
-                start_state,
-                end_state,
-                // Initialize next/predecessors, will be populated in populate_reads_and_phis
-                next: disasm::v3::control_flow::NextKind::Unknown,
-                predecessors: vec![],
-            };
-
-            ssa_blocks.insert(block_id, ssa_block); // Remove dereference
-        }
-        ssa_blocks
-    }
-
-    // Modified to use v3 data structures from self.function and self.model
     fn place_phi_functions(&mut self) -> HashMap<BlockId, Vec<PhiFunction>> {
         let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
         // Use self.function.function_id() to get the v3 ID, then convert to v2 ID
@@ -474,7 +351,7 @@ impl<'a> SSAConversionState<'a> {
             // For each variable needing a phi function...
             for mem_ref in vars_needing_phi {
                 // Try converting the v3 MemoryReference to the v2 MemoryReferenceType used for versioning
-                let Ok(phi_kind) = MemoryReferenceType::try_from(mem_ref) else {
+                let Ok(phi_kind) = VersionableMemoryKind::try_from(mem_ref) else {
                     // Skip if it's not a type we version (e.g., Deref)
                     trace!(
                         "{}: Skipping phi for non-versionable type {:?}",
@@ -506,6 +383,83 @@ impl<'a> SSAConversionState<'a> {
         phi_placements
     }
 
+    fn compute_end_state_for_vars_assigned_in_block(
+        &mut self,
+        phi_placements: &HashMap<BlockId, Vec<PhiFunction>>,
+    ) -> HashMap<BlockId, SsaBlock> {
+        let mut ssa_blocks = HashMap::new();
+
+        // Initialize a version registry that tracks the highest version assigned to each versionable
+        // memory kind across the entire function during this block-by-block processing pass.
+        // This registry is updated every time a new version is created (for phi results or writes).
+        let mut global_registry = VersionRegistry::new(self.function.function_id());
+
+        // Iterate over blocks using the FunctionView, sorted by BlockId
+        for (block_id, block_view) in self.function.blocks().sorted_by_key(|(id, _)| *id) {
+            let mut end_state = VersionRegistry::new(self.function.function_id());
+
+            // Handle initial definitions for the entry block using v3 data flow info
+            if block_id == self.function.entry_block() {
+                block_view
+                    .data_flow() // Get v3 DataFlowBlock
+                    .defs_in // Access v3 defs_in
+                    .iter()
+                    .filter(|d| d.source == OriginationPoint::FunctionInput) // Check source
+                    .filter_map(|d| VersionableMemoryKind::try_from(&d.kind).ok())
+                    .for_each(|versioned_kind| {
+                        // Set version 0 for function inputs
+                        end_state.set_version(versioned_kind, 0);
+                    });
+            }
+
+            // Get phi functions placed for this block
+            let mut phi_functions = phi_placements.get(&block_id).cloned().unwrap_or_default();
+
+            // Assign versions to phi results and update the end_state
+            for phi in phi_functions.iter_mut() {
+                // Use the main version_registry to get the next version
+                phi.result = global_registry.create_next_version(&phi.result.kind);
+                // Update the block's end_state with the new phi result version
+                end_state.set_version(phi.result.kind, phi.result.version);
+            }
+            // start_state is frozen after phi has been assigned. That means we have the latest
+            // version for all variables that were updated by phi functions within this block.
+            let start_state = end_state.clone();
+
+            // In this initial pass, we focus solely on incrementing  versions each time           let mut instructions: Vec<InstructionNode<SsaMemoryReference>> = Vec::new();
+            // we encounter a write. This determines the end_state for each block for the
+            // flow computation that comes later.
+            for instr_node in block_view.low_instructions() {
+                let Some(write_ref) = instr_node.kind.get_write_address() else {
+                    continue;
+                };
+                let Ok(versionable_kind) = VersionableMemoryKind::try_from(write_ref) else {
+                    continue;
+                };
+                // When processing a write, allocate a new version and record that version in
+                // assignments_to_versions. Update the version in end_state. In populate_reads_and_phis,
+                // we will use this version to when creating the assignment target.
+                let new_ver = global_registry.create_next_version(&versionable_kind);
+                self.assignments_to_versions.insert(instr_node.id, new_ver);
+                end_state.set_version(versionable_kind, new_ver.version);
+            }
+
+            let ssa_block = SsaBlock {
+                original_id: block_id, // Remove dereference
+                phi_functions,
+                instructions: vec![],
+                start_state,
+                end_state,
+                // Initialize next/predecessors, will be populated in populate_reads_and_phis
+                next: disasm::v3::control_flow::NextKind::Unknown,
+                predecessors: vec![],
+            };
+
+            ssa_blocks.insert(block_id, ssa_block); // Remove dereference
+        }
+        ssa_blocks
+    }
+
     // Modified to use v3 data structures from self.function
     fn compute_start_end_states(&self, ssa_blocks: &mut HashMap<BlockId, SsaBlock>) {
         let block_ids = ssa_blocks.keys().copied().collect_vec();
@@ -532,30 +486,31 @@ impl<'a> SSAConversionState<'a> {
                 // Clone the initial states calculated in build_ssa_blocks_with_write_versioning
                 let mut new_in = initial_start_states[block_id].clone();
                 let mut new_out = initial_end_states[block_id].clone();
+                let ssa_block = ssa_blocks.get(block_id).unwrap();
 
                 // Iterate over v3 predecessors
                 for pred in block_view.predecessors() {
                     let pred_id = pred.source_block_id();
                     // Get the end state from the *current* iteration's ssa_blocks map
-                    let pred_end_state = &ssa_blocks.get(&pred_id).unwrap().end_state;
+                    let pred_end_state = &ssa_blocks[&pred_id].end_state;
 
                     // Iterate through versions defined in the predecessor's end state
-                    for (mem_ref_type, versioned_mem_ref) in pred_end_state.iter_versions() {
+                    for (mem_ref_type, mem_ref_version) in pred_end_state.iter_versions() {
                         // Convert MemoryReferenceType to MemoryReference for live_in check
                         let mem_ref = mem_ref_type.to_memory_reference();
 
                         // Check if the variable is live at the entry of the current block
-                        // AND is not already defined by a phi function in this block (checked via initial_start_states)
                         if !live_in.contains_key(&mem_ref) {
                             // This var isn't live coming into this block from this path
                             trace!("Skipping var {} from predecessor {} because it is not live-in for block {}", mem_ref_type, pred_id, block_id);
                             continue;
                         }
 
-                        if initial_start_states[block_id].has_version_for(mem_ref_type) {
-                            // This block defines this variable via a phi function,
-                            // so the predecessor's version doesn't propagate directly.
-                            trace!("Skipping var {} from predecessor {} because block {} defines it with a phi", mem_ref_type, pred_id, block_id);
+                        if ssa_block
+                            .phi_functions
+                            .iter()
+                            .any(|phi| phi.result.kind == *mem_ref_type)
+                        {
                             continue;
                         }
 
@@ -564,36 +519,17 @@ impl<'a> SSAConversionState<'a> {
                         // this implies an issue earlier (data flow or phi placement).
                         // Propagate the version from the predecessor to the current block's start state (new_in)
                         // This handles the case where the variable is live-in and not defined by a phi here.
-                        new_in.set_version(*mem_ref_type, *versioned_mem_ref);
+                        new_in.set_version(*mem_ref_type, *mem_ref_version);
 
                         // If the current block *doesn't* write to this variable (checked via initial_end_states),
                         // then the version also propagates to the end state (new_out).
                         if !initial_end_states[block_id].has_version_for(mem_ref_type) {
-                            new_out.set_version(*mem_ref_type, *versioned_mem_ref);
+                            new_out.set_version(*mem_ref_type, *mem_ref_version);
                         }
-                        // If the current block writes to this variable (checked via initial_end_states),
-                        // the propagated version doesn't affect the end_state (new_out).
-                        if initial_end_states[block_id].has_version_for(mem_ref_type) {
-                            continue;
-                        }
-                        /*
-                        assert!(
-                            ssa_blocks[block_id]
-                                .end_state
-                                .get(var_kind)
-                                .is_none_or(|x| x == var),
-                            "End state of {} contains {}, but {} provided from predecessor {}",
-                            block_id,
-                            ssa_blocks[block_id].end_state.get(var_kind).unwrap(),
-                            var,
-                            pred.source_block_id()
-                        );
-                        */
-                        // --- REMOVED DUPLICATE CALL to new_out.set_version ---
                     }
                 }
-
                 let ssa_block = ssa_blocks.get_mut(block_id).unwrap();
+
                 if ssa_block.start_state != new_in {
                     changed = true;
                     ssa_block.start_state = new_in; // Move new_in here
@@ -612,7 +548,7 @@ impl<'a> SSAConversionState<'a> {
     // Modified to remove 'function' parameter and use self.function (FunctionView)
     fn populate_reads_and_phis(&self, ssa_blocks: &mut HashMap<BlockId, SsaBlock>) {
         // Iterate over blocks using the FunctionView
-        for (block_id, block_view) in self.function.blocks() {
+        for (block_id, block_view) in self.function.blocks().sorted_by_key(|(id, _)| *id) {
             // Get the mutable SSA block we are populating
             let ssa_block = ssa_blocks.get(&block_id).unwrap(); // Need mutable borrow later
 
@@ -634,7 +570,7 @@ impl<'a> SSAConversionState<'a> {
                     let mut map_mem_ref = |mem_ref: &MemoryReference| {
                         pred_ssa_block
                             .end_state
-                            .convert_to_ssa_memory_reference(mem_ref)
+                            .resolve_to_ssa_memory_reference(mem_ref)
                     };
 
                     // Special handling for return values from function calls
@@ -651,8 +587,9 @@ impl<'a> SSAConversionState<'a> {
                         phi_inputs.insert(pred.map(&mut map_mem_ref), phi.result);
                     } else {
                         // Get the version from the predecessor's end state
-                        let input_version =
-                            pred_ssa_block.end_state.current_version(&phi.result.kind);
+                        let input_version = pred_ssa_block
+                            .end_state
+                            .resolve_to_versioned_ssa_memory_reference(&phi.result.kind);
                         // Map the predecessor *before* inserting.
                         phi_inputs.insert(pred.map(&mut map_mem_ref), input_version);
                     }
@@ -664,51 +601,47 @@ impl<'a> SSAConversionState<'a> {
                 });
             }
 
-            // Now, process instructions using the computed start state to resolve reads.
-            // The write targets already have their final versions from the previous step.
-            let mut start_state = &ssa_block.start_state; // Use immutable borrow of the final start state
-            let mut populated_instructions = Vec::with_capacity(ssa_block.instructions.len());
+            // Now, process instructions starting from computed start state to resolve reads
+            // and writes.
+            let mut running_state = ssa_block.start_state.clone();
+            let mut populated_instructions =
+                Vec::with_capacity(block_view.low_instructions().len());
 
-            for instr_node in &ssa_block.instructions {
-                // Iterate over instructions with finalized writes
-                // Map reads using start_state, map writes by cloning (version is already final)
+            for instr_node in block_view.low_instructions() {
+                // Iterate over instructions, use assignments_to_versions to get the vesrions
+                // determined in the first pass.
                 let read_mapped_instr = instr_node.map_rw(
-                    &mut start_state, // Pass start_state as context
-                    &mut |reg, ssa_mem_ref: &SsaMemoryReference| {
-                        // reg is the start_state
-                        // map_read closure: Resolve reads using the start_state (reg) or the existing version
-                        match ssa_mem_ref {
-                            SsaMemoryReference::Versioned(v_local) => {
-                                // Check if the start state (reg) has a definition for this kind
-                                if reg.has_version_for(&v_local.kind) {
-                                    // If yes, the start state version dominates. Use it.
-                                    reg.current_version(&v_local.kind).into()
-                                } else {
-                                    // If no, the version assigned in the first pass (v_local) is correct
-                                    // for reads defined within the block before this read.
-                                    SsaMemoryReference::Versioned(*v_local) // Clone the existing versioned ref
-                                }
+                    &mut running_state,
+                    &mut |running_state: &mut VersionRegistry,
+                          mem_ref: &MemoryReference|
+                     -> SsaMemoryReference {
+                        // Resolve reads using the current running_state.
+                        running_state.resolve_to_ssa_memory_reference(mem_ref)
+                    },
+                    &mut |running_state: &mut VersionRegistry, mem_ref: &MemoryReference| {
+                        match VersionableMemoryKind::split_kind_or_deref(mem_ref) {
+                            Either::Left(versionable) => {
+                                let next_ver = self.assignments_to_versions[&instr_node.id];
+                                // Update running_state with the new version
+                                running_state.set_version(versionable, next_ver.version);
+                                SsaMemoryReference::Versioned(next_ver)
                             }
-                            SsaMemoryReference::Deref(expr_local) => {
-                                // expr_local is Box<Expression<SsaMemoryReference>>
-                                // Resolve the inner expression using the start state registry (reg)
-                                // This recursive call uses resolve_ssa_expression, which now has the correct logic.
-                                let resolved_inner_expr =
-                                    reg.resolve_ssa_expression(expr_local.as_ref());
-                                SsaMemoryReference::Deref(Box::new(resolved_inner_expr))
-                            }
+                            Either::Right(expr) => SsaMemoryReference::Deref(Box::new(
+                                running_state.convert_to_ssa_expression(expr),
+                            )),
                         }
                     },
-                    &mut |_, ssa_mem_ref| ssa_mem_ref.clone(),
                 );
                 populated_instructions.push(read_mapped_instr);
             }
+            // Sanity check: we must arrive to the same end state as the original pass.
+            assert_eq!(running_state, ssa_block.end_state);
 
             // Map the NextKind using the final end_state of the block
             // Map the NextKind using the final end_state of the block to *convert* MemoryReferences
             let ssa_block_next = block_view.next().map(&mut |op: &MemoryReference| {
                 // Use the computed end_state for the block to convert MemoryReferences
-                ssa_block.end_state.convert_to_ssa_memory_reference(op)
+                ssa_block.end_state.resolve_to_ssa_memory_reference(op)
             });
 
             // Update the mutable ssa_block with populated phis and instructions

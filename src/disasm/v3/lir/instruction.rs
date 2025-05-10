@@ -141,12 +141,15 @@ impl<A> InstructionNode<A> {
                 src,
                 target_debug_marker,
             } => {
+                // must evaluate reads first.
+                let src = src.flat_map(&mut |v| map_read(context, v));
+                let target = map_write(context, target);
                 // Removed debug print
                 InstructionNode {
                     id: self.id,
                     kind: Instruction::Assign {
-                        target: map_write(context, target),
-                        src: src.flat_map(&mut |v| map_read(context, v)),
+                        target,
+                        src,
                         target_debug_marker: *target_debug_marker,
                     },
                 }

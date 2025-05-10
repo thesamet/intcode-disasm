@@ -74,6 +74,9 @@
 //!
 use std::fmt::Display;
 
+use castaway::LifetimeFree;
+use either::Either;
+
 use crate::disasm::v2::instructions::InstructionNode;
 use crate::disasm::v3::common::formatting::{FormattingContext, PrettyPrintConfig};
 use crate::disasm::v3::control_flow::{NextKind, PredecessorKind};
@@ -118,73 +121,70 @@ add_block_view_when!(Ssa, ssa);
 /// For example, `lir::MemoryReference::Global(0x100)` would correspond
 /// to `MemoryReferenceType::Memory(0x100)`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub enum MemoryReferenceType {
+pub enum VersionableMemoryKind {
     Memory(usize),
     RelativeMemory(i128),
     Pointer(PointerId),
 }
 
-impl MemoryReferenceType {
-    /// Converts an `Addressable` to a `VersionedAddressableKind`.
-    ///
-    /// This function is used during SSA conversion to transform addressable expressions into their versioned counterparts.
-    ///
-    /// # Arguments
-    /// * `addressable` - A reference to an `Addressable` to convert
-    ///
-    /// # Returns
-    /// * `Some(VersionedAddressableKind)` - If the addressable is Memory, RelativeMemory, or Pointer
-    /// * `None` - If the addressable is a Deref
-    #[deprecated = "Use TryFrom<MemoryReference> instead"]
-    pub fn try_from_memory_reference(addressable: &MemoryReference) -> Option<Self> {
-        addressable.try_into().ok()
-    }
-}
-
-impl TryFrom<&MemoryReference> for MemoryReferenceType {
-    type Error = String;
-    fn try_from(value: &MemoryReference) -> Result<Self, Self::Error> {
-        match value {
-            MemoryReference::Global(addr) => Ok(MemoryReferenceType::Memory(*addr)),
+impl VersionableMemoryKind {
+    pub fn split_kind_or_deref(
+        mem_ref: &MemoryReference,
+    ) -> Either<VersionableMemoryKind, &Expression<MemoryReference>> {
+        match mem_ref {
+            MemoryReference::Global(addr) => Either::Left(VersionableMemoryKind::Memory(*addr)),
             MemoryReference::StackRelative(offset) => {
-                Ok(MemoryReferenceType::RelativeMemory(*offset))
+                Either::Left(VersionableMemoryKind::RelativeMemory(*offset))
             }
-            MemoryReference::Pointer(id) => Ok(MemoryReferenceType::Pointer(*id)),
-            MemoryReference::Deref(_) => {
-                Err("MemoryReferenceType::try_from_addressable: Deref not supported".to_string())
-            }
+            MemoryReference::Pointer(id) => Either::Left(VersionableMemoryKind::Pointer(*id)),
+            MemoryReference::Deref(expr) => Either::Right(expr),
         }
     }
 }
 
-impl From<MemoryReferenceType> for MemoryReference {
-    fn from(value: MemoryReferenceType) -> Self {
+impl TryFrom<&MemoryReference> for VersionableMemoryKind {
+    type Error = String;
+    fn try_from(value: &MemoryReference) -> Result<Self, Self::Error> {
+        match Self::split_kind_or_deref(value) {
+            Either::Left(kind) => Ok(kind),
+            Either::Right(_) => Err(
+                "MemoryReferenceType::try_from: Deref can't be converted to VersionableMemoryKind"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
+impl From<VersionableMemoryKind> for MemoryReference {
+    fn from(value: VersionableMemoryKind) -> Self {
         (&value).to_memory_reference()
     }
 }
 
-impl std::fmt::Display for MemoryReferenceType {
+impl std::fmt::Display for VersionableMemoryKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MemoryReferenceType::Memory(addr) => write!(f, "[{addr}]"),
-            MemoryReferenceType::RelativeMemory(offset) if *offset == 0 => {
+            VersionableMemoryKind::Memory(addr) => write!(f, "[{addr}]"),
+            VersionableMemoryKind::RelativeMemory(offset) if *offset == 0 => {
                 write!(f, "[R]")
             }
-            MemoryReferenceType::RelativeMemory(offset) if *offset > 0 => {
+            VersionableMemoryKind::RelativeMemory(offset) if *offset > 0 => {
                 write!(f, "[R+{offset}]")
             }
-            MemoryReferenceType::RelativeMemory(offset) => write!(f, "[R{offset}]"),
-            MemoryReferenceType::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
+            VersionableMemoryKind::RelativeMemory(offset) => write!(f, "[R{offset}]"),
+            VersionableMemoryKind::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
         }
     }
 }
 
-impl<'a> MemoryReferenceInfo<'a> for &'a MemoryReferenceType {
+impl<'a> MemoryReferenceInfo<'a> for &'a VersionableMemoryKind {
     fn to_memory_reference(&self) -> MemoryReference {
         match self {
-            MemoryReferenceType::Memory(addr) => MemoryReference::Global(*addr),
-            MemoryReferenceType::RelativeMemory(offset) => MemoryReference::StackRelative(*offset),
-            MemoryReferenceType::Pointer(id) => MemoryReference::Pointer(*id),
+            VersionableMemoryKind::Memory(addr) => MemoryReference::Global(*addr),
+            VersionableMemoryKind::RelativeMemory(offset) => {
+                MemoryReference::StackRelative(*offset)
+            }
+            VersionableMemoryKind::Pointer(id) => MemoryReference::Pointer(*id),
         }
     }
 
@@ -206,7 +206,7 @@ impl<'a> MemoryReferenceInfo<'a> for &'a MemoryReferenceType {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VersionedMemoryReference {
     /// The underlying, unversioned kind of memory location (e.g., global, stack relative).
-    pub kind: MemoryReferenceType,
+    pub kind: VersionableMemoryKind,
     /// The ID of the function this versioned reference belongs to.
     pub function_id: FunctionId,
     /// The version number for this specific instance of the memory location.
@@ -214,7 +214,7 @@ pub struct VersionedMemoryReference {
 }
 
 impl VersionedMemoryReference {
-    pub fn new(kind: MemoryReferenceType, function_id: FunctionId, version: usize) -> Self {
+    pub fn new(kind: VersionableMemoryKind, function_id: FunctionId, version: usize) -> Self {
         Self {
             kind,
             function_id,
@@ -223,8 +223,8 @@ impl VersionedMemoryReference {
     }
 }
 
-impl AsRef<MemoryReferenceType> for VersionedMemoryReference {
-    fn as_ref(&self) -> &MemoryReferenceType {
+impl AsRef<VersionableMemoryKind> for VersionedMemoryReference {
+    fn as_ref(&self) -> &VersionableMemoryKind {
         &self.kind
     }
 }
@@ -252,6 +252,8 @@ pub enum SsaMemoryReference {
     Deref(Box<Expression<SsaMemoryReference>>),
 }
 
+unsafe impl LifetimeFree for SsaMemoryReference {}
+
 impl SsaMemoryReference {
     pub fn as_versioned(&self) -> Option<&VersionedMemoryReference> {
         match self {
@@ -259,11 +261,32 @@ impl SsaMemoryReference {
             _ => None,
         }
     }
+
+    pub fn as_deref(&self) -> Option<&Expression<SsaMemoryReference>> {
+        match self {
+            SsaMemoryReference::Deref(expr) => Some(expr),
+            _ => None,
+        }
+    }
+
+    /// Returns an `Either` containing a reference to the inner `VersionedMemoryReference`
+    /// if `self` is `Versioned`, or a reference to the inner `Expression<SsaMemoryReference>`
+    /// if `self` is `Deref`.
+    ///
+    /// This is useful for pattern matching or destructuring the `SsaMemoryReference`
+    /// without needing a full `match` statement in some contexts, providing a
+    /// convenient way to handle both major variants.
+    pub fn as_either(&self) -> Either<&VersionedMemoryReference, &Expression<SsaMemoryReference>> {
+        match self {
+            SsaMemoryReference::Versioned(v) => Either::Left(v),
+            SsaMemoryReference::Deref(e) => Either::Right(e),
+        }
+    }
 }
 
 impl Display for SsaMemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&pretty_print::format_memory_reference(
+        f.write_str(&pretty_print::format_ssa_memory_reference(
             self,
             &FormattingContext::new(&PrettyPrintConfig::default()),
         ))

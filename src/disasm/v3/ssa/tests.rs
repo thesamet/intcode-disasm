@@ -7,7 +7,7 @@ use crate::disasm::v3::control_flow::FunctionView;
 use crate::disasm::v3::lir::Expression;
 use crate::disasm::v3::model::SsaComplete;
 use crate::disasm::v3::pretty_print::pretty_print_ssa;
-use crate::disasm::v3::ssa::types::MemoryReferenceType;
+use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::PointerId;
 use crate::disasm::v3::{BlockId, FunctionId};
 // Keep v2 dispatching
@@ -19,7 +19,7 @@ use pretty_assertions::assert_eq;
 macro_rules! ssa_var_rel {
     ($offset:expr, $version:expr) => {
         SsaMemoryReference::Versioned(VersionedMemoryReference {
-            kind: MemoryReferenceType::RelativeMemory($offset),
+            kind: VersionableMemoryKind::RelativeMemory($offset),
             function_id: FunctionId::from(0),
             version: $version,
         })
@@ -29,7 +29,7 @@ macro_rules! ssa_var_rel {
 macro_rules! ssa_var_pointer {
     ($addr:expr, $version:expr) => {
         SsaMemoryReference::Versioned(VersionedMemoryReference {
-            kind: MemoryReferenceType::Pointer(PointerId::from($addr)),
+            kind: VersionableMemoryKind::Pointer(PointerId::from($addr)),
             function_id: FunctionId::from(0),
             version: $version,
         })
@@ -42,7 +42,7 @@ macro_rules! ssa_var_deref {
         // Added addr_ver
         SsaMemoryReference::Deref(Box::new(Expression::Addressable(
             SsaMemoryReference::Versioned(VersionedMemoryReference {
-                kind: MemoryReferenceType::Pointer(PointerId::from($addr)),
+                kind: VersionableMemoryKind::Pointer(PointerId::from($addr)),
                 function_id: FunctionId::from(0),
                 version: $addr_ver,
             }),
@@ -276,7 +276,7 @@ fn test_ssa_conversion_with_phi_functions() {
         Expression::Addressable(SsaMemoryReference::Versioned(versioned)) => {
             assert_eq!(
                 versioned.kind,
-                MemoryReferenceType::Memory(100),
+                VersionableMemoryKind::Memory(100),
                 "Output should use [100]"
             );
             assert!(
@@ -407,7 +407,7 @@ fn test_proper_version_increments_for_writes() {
                 {
                     // Check if target is [R-4] and lhs is also [R-4]
                     if let (
-                        MemoryReferenceType::RelativeMemory(target_offset),
+                        VersionableMemoryKind::RelativeMemory(target_offset),
                         Expression::Addressable(SsaMemoryReference::Versioned(_)),
                     ) = (target_var.kind, lhs.as_ref())
                     // Remove double deref
@@ -417,7 +417,7 @@ fn test_proper_version_increments_for_writes() {
                             lhs.as_ref()
                         {
                             return target_offset == -4
-                                && lhs_var.kind == MemoryReferenceType::RelativeMemory(-4);
+                                && lhs_var.kind == VersionableMemoryKind::RelativeMemory(-4);
                         }
                     }
                 }
@@ -458,7 +458,7 @@ fn test_basic_versioning() {
                 [R+3] = 0
                 [R+4] = 1
                 'b [R+2] = 'a [R+3] + [R+4]
-                'c [R+2] = [R+3] + [R+4]
+                'c [R+2] = 'd [R+3] + 'e [R+4]
                 halt
             "#,
     )
@@ -467,6 +467,8 @@ fn test_basic_versioning() {
     assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
     assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
     assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
+    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(3, 1));
+    assert_marker_at_main!(ctx, 'e', ssa_var_rel!(4, 1));
 }
 
 #[test]
@@ -521,7 +523,7 @@ fn test_deref_read_after_cond_write() {
                 "#,
     )
     .unwrap();
-    // pretty_print_ssa(&ctx.model); // Removed pretty print
+    println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
     assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(16, 1));
     assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(16, 2));
     assert_marker_at_main!(ctx, 'c', ssa_var_deref!(16, 3));
@@ -622,8 +624,7 @@ fn test_end_state() {
             .block(&return_block_id) // Returns BlockView directly
             .ssa() // Get SsaBlock via view
             .end_state
-            .current_version(&MemoryReferenceType::RelativeMemory(-1))
-            .version,
+            .current_version(&VersionableMemoryKind::RelativeMemory(-1)),
         3 // Expecting version 3 based on the control flow
     );
     // Access block 13 via the view
@@ -632,8 +633,7 @@ fn test_end_state() {
             .block(&BlockId::from(13)) // Returns BlockView directly
             .ssa() // Get SsaBlock via view
             .end_state
-            .current_version(&MemoryReferenceType::RelativeMemory(-1))
-            .version,
+            .current_version(&VersionableMemoryKind::RelativeMemory(-1)),
         3 // Expecting version 3 based on the control flow
     );
 }
@@ -669,8 +669,7 @@ exit:
     assert_eq!(
         return_block
             .end_state // Access end_state from SsaBlock
-            .current_version(&MemoryReferenceType::RelativeMemory(-1))
-            .version,
+            .current_version(&VersionableMemoryKind::RelativeMemory(-1)),
         return_block.phi_functions[0].result.version // Compare with phi result version
     );
 }
@@ -779,7 +778,7 @@ fn function_call_with_arg_that_is_branched() {
             "#,
     )
     .unwrap();
-    // pretty_print_ssa(&ctx.model); // Removed pretty print
+    println!("{}", pretty_print_ssa(&ctx.model));
     assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
     assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
     assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
@@ -796,7 +795,7 @@ fn function_call_with_arg_that_is_branched() {
     assert_eq!(merge_block.phi_functions.len(), 1);
     assert_eq!(
         merge_block.phi_functions[0].result.kind,
-        MemoryReferenceType::RelativeMemory(1)
+        VersionableMemoryKind::RelativeMemory(1)
     );
     assert_eq!(merge_block.phi_functions[0].result.version, 3);
 }
@@ -805,15 +804,42 @@ fn function_call_with_arg_that_is_branched() {
 fn increment_on_add_after_mul() {
     let ctx = SsaComplete::test_context(
         r#"
-            R += 3
-            'a [R-3] = [R-3] * -1
-            [R-5] = [R-5] + 'b [R-3]
-            halt
+                R += 3
+                'a [R-3] = [R-3] * -1
+                [R-5] = [R-5] + 'b [R-3]
+                halt
 
-          "#,
+            "#,
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
     assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-3, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 2));
+    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 1));
+}
+
+#[test]
+fn version_correct_following_a_conditional_jump() {
+    let ctx = SsaComplete::test_context(
+        r#"
+                R += 3
+                'a [R-2] = [R-2] * -1
+                if [R-1] goto @true
+                [R+1] = [R-3] * 3
+                [R+1] = [R+1] * 5
+            true:
+                'd [R-2] = 'e [R-2] * 7     ; 17
+                halt
+            "#,
+    )
+    .unwrap();
+    println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
+    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
+    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-2, 2));
+    assert_marker_at_main!(ctx, 'e', ssa_var_rel!(-2, 1));
+    assert!(!ctx
+        .main_function()
+        .block(&BlockId::from(17))
+        .ssa()
+        .start_state
+        .has_version_for(&VersionableMemoryKind::RelativeMemory(1)));
 }

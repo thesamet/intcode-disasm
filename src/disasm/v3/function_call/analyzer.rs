@@ -10,7 +10,7 @@ use crate::disasm::{
         function_call::result::{CallSiteInfo, CalleeInfo},
         lir::{memory_reference::MemoryReferenceInfo, Expression, ReadAddressExtractor},
         model::{FunctionCallAnalysisComplete, Model, SsaComplete},
-        ssa::{types::MemoryReferenceType, SsaMemoryReference, VersionedMemoryReference},
+        ssa::{types::VersionableMemoryKind, SsaMemoryReference, VersionedMemoryReference},
         FunctionId, InstructionId, NextKind,
     },
     Error,
@@ -47,9 +47,7 @@ impl FunctionCallAnalyzer {
             // Analyze parameters using live_in at entry block
             let entry_flow = function.block(&entry_block_id).data_flow();
             for (live_addressable, points) in &entry_flow.live_in {
-                let Ok(live_kind) = MemoryReferenceType::try_from(live_addressable)
-                // Use TryFrom
-                else {
+                let Ok(live_kind) = VersionableMemoryKind::try_from(live_addressable) else {
                     continue;
                 };
                 let Some(offset) = (&live_kind).to_memory_reference().as_stack_relative() else {
@@ -79,7 +77,10 @@ impl FunctionCallAnalyzer {
                     .end_state
                     .iter_versions()
                     .filter(|(k, _)| k.is_local_or_parameter())
-                    .filter_map(|(k, v)| k.as_stack_relative().map(|r| (r, *v)))
+                    .filter_map(|(k, v)| {
+                        k.as_stack_relative()
+                            .map(|r| (r, VersionedMemoryReference::new(*k, function_id, *v)))
+                    })
                     .collect()
             } else {
                 HashMap::new()
@@ -109,9 +110,9 @@ impl FunctionCallAnalyzer {
                         .block(&calling_block_id)
                         .ssa()
                         .end_state
-                        .iter_versions()
+                        .iter_versioned()
                         .filter_map(|(k, v)| {
-                            k.as_stack_relative().filter(|r| *r > 0).map(|r| (r, *v))
+                            k.as_stack_relative().filter(|r| *r > 0).map(|r| (r, v))
                         })
                         .collect();
                     let mut return_reads: HashMap<i128, VersionedMemoryReference> = HashMap::new();
@@ -230,7 +231,7 @@ impl FunctionCallAnalysisResult {
 
 fn find_lowest_version_of(
     function: &FunctionView<SsaComplete>,
-    kind: &MemoryReferenceType,
+    kind: &VersionableMemoryKind,
 ) -> Option<VersionedMemoryReference> {
     let mut min_var: Option<VersionedMemoryReference> = None;
 

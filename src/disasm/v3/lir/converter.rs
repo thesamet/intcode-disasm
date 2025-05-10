@@ -263,7 +263,7 @@ impl InstructionNode<MemoryReference> {
                                             addr: (*func_addr).into(),
                                             args: collected_args
                                                 .into_iter()
-                                                .map(|a| Expression::Addressable(a))
+                                                .map(Expression::Addressable)
                                                 .collect(),
                                             return_to: BlockId::from(return_to),
                                         },

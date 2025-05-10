@@ -30,6 +30,7 @@ pretty_assertions = { version = "1.4.1", features = ["unstable"] }
 statum = "0.1.48"
 thiserror = "2.0.12"
 castaway = "0.2.3"
+either = "1.15.0"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
