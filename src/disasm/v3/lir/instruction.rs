@@ -217,4 +217,65 @@ impl<A> InstructionNode<A> {
             |c, v| map_write(c, v),
         )
     }
+
+    pub fn map_expr<R>(&self, mut map: R) -> InstructionNode<A>
+    where
+        A: Clone,
+        R: FnMut(&Expression<A>) -> Expression<A>,
+    {
+        match &self.kind {
+            Instruction::Assign {
+                target,
+                src,
+                target_debug_marker,
+            } => InstructionNode {
+                id: self.id,
+                kind: Instruction::Assign {
+                    target: target.clone(),
+                    src: map(src),
+                    target_debug_marker: *target_debug_marker,
+                },
+            },
+            Instruction::If {
+                cond,
+                then_addr,
+                else_addr,
+            } => InstructionNode {
+                id: self.id,
+                kind: Instruction::If {
+                    cond: map(cond),
+                    then_addr: *then_addr,
+                    else_addr: *else_addr,
+                },
+            },
+            Instruction::Goto(addr) => InstructionNode {
+                id: self.id,
+                kind: Instruction::Goto(*addr),
+            },
+            Instruction::Call {
+                addr,
+                args,
+                return_to,
+            } => InstructionNode {
+                id: self.id,
+                kind: Instruction::Call {
+                    addr: map(addr),
+                    args: args.iter().map(|e| map(e)).collect(),
+                    return_to: *return_to,
+                },
+            },
+            Instruction::Output(expr) => InstructionNode {
+                id: self.id,
+                kind: Instruction::Output(map(expr)),
+            },
+            Instruction::Return => InstructionNode {
+                id: self.id,
+                kind: Instruction::Return,
+            },
+            Instruction::Halt => InstructionNode {
+                id: self.id,
+                kind: Instruction::Halt,
+            },
+        }
+    }
 }

@@ -296,8 +296,12 @@ impl DataFlowAnalyzer {
                 let block_flow = df_result.blocks.get_mut(block_id).unwrap();
                 if new_live_out != block_flow.live_out {
                     debug!(
-                        "Block {:?}: LiveOut changed to {:?}",
-                        block_id, new_live_out
+                        "Block {:?}: LiveOut changed to {}",
+                        block_id,
+                        new_live_out
+                            .iter()
+                            .map(|(k, v)| format!("{}->{:?}", k.to_string(), v))
+                            .join(", ")
                     );
                     block_flow.live_out = new_live_out;
                     changed = true; // Continue iteration
@@ -336,8 +340,12 @@ impl DataFlowAnalyzer {
                 // Update block's IN set if changed
                 if current_live_in != block_flow.live_in {
                     debug!(
-                        "Block {:?}: LiveIn changed to {:?}", // Use block_id.0 for Debug
-                        block_id, current_live_in
+                        "Block {:?}: LiveIn changed to {}", // Use block_id.0 for Debug
+                        block_id,
+                        current_live_in
+                            .iter()
+                            .map(|(k, v)| format!("{}->{:?}", k.to_string(), v))
+                            .join(", ")
                     );
                     block_flow.live_in = current_live_in;
                     changed = true;

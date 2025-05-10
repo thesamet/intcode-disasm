@@ -1,5 +1,5 @@
 use crate::disasm::v3::model::{DataFlowComplete, Model, SsaComplete};
-use crate::disasm::v3::InstructionId;
+use crate::disasm::v3::{InstructionId, NextKind};
 use crate::disasm::Error;
 
 /// Converts the control flow graph to SSA form
@@ -27,6 +27,8 @@ use colored::{Color, Colorize};
 use either::Either;
 use itertools::Itertools;
 use log::trace;
+use petgraph::algo::dominators::simple_fast;
+use petgraph::visit::IntoNeighbors;
 use std::convert::From;
 
 use crate::disasm;
@@ -273,14 +275,80 @@ impl<'a> SSAConversionState<'a> {
     }
 
     fn place_phi_functions(&mut self) -> HashMap<BlockId, Vec<PhiFunction>> {
+        let function_id = self.function.function_id();
+        let dominators = simple_fast(&self.function, self.function.entry_block());
         let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
-        // Use self.function.function_id() to get the v3 ID, then convert to v2 ID
-        let function_id = FunctionId::new(self.function.function_id().index());
 
-        // Initialize empty phi function vectors for all blocks in the current function view
+        let mut dom_frontier: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
+        let mut dominates: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
         for (block_id, _) in self.function.blocks() {
-            phi_placements.insert(block_id, Vec::new());
+            for dominator in dominators.dominators(block_id).unwrap() {
+                dominates.entry(dominator).or_default().insert(block_id);
+            }
         }
+        for (block_id, block_view) in self.function.blocks() {
+            let dom_set = &dominates[&block_id];
+            for dom in dominates.get(&block_id).unwrap() {
+                for n in self.function.neighbors(*dom) {
+                    if !dom_set.contains(&n) {
+                        dom_frontier.entry(block_id).or_default().insert(n);
+                    }
+                }
+            }
+            let block_data_flow = self.function.block(&block_id).data_flow();
+            for var in block_data_flow.gen.keys() {
+                let Ok(kind) = VersionableMemoryKind::try_from(var) else {
+                    continue;
+                };
+                for frontier in dom_frontier.get(&block_id).cloned().unwrap_or_default() {
+                    if !self
+                        .function
+                        .block(&frontier)
+                        .data_flow()
+                        .live_in
+                        .contains_key(var)
+                    {
+                        continue;
+                    }
+                    let c = phi_placements.entry(frontier).or_default();
+                    if c.iter().any(|p| p.result.kind == kind) {
+                        continue;
+                    }
+                    c.push(PhiFunction {
+                        result: VersionedMemoryReference::new(kind, self.function.function_id(), 0),
+                        inputs: HashMap::new(),
+                    });
+                }
+            }
+            // If there are return values accessed, create phi functions for them at the return block
+            if let Some(ret_values) = block_data_flow.return_values_accessed.as_ref() {
+                let NextKind::FunctionCall(fc) = block_view.next() else {
+                    panic!("Has return_value_accessed but not a function call");
+                };
+                let return_block_phis = phi_placements.entry(fc.return_block).or_default();
+
+                for &ret_var_offset in ret_values.keys() {
+                    let kind = VersionableMemoryKind::RelativeMemory(ret_var_offset);
+
+                    // Skip if we already have a phi function for this kind
+                    if return_block_phis.iter().any(|phi| phi.result.kind == kind) {
+                        continue;
+                    }
+
+                    // Add a new phi function
+                    return_block_phis.push(PhiFunction {
+                        result: VersionedMemoryReference::new(kind, self.function.function_id(), 0),
+                        inputs: HashMap::new(),
+                    });
+                }
+            }
+        }
+
+        for (_, phis) in phi_placements.iter_mut() {
+            phis.sort_by_key(|p| p.result.kind);
+            phis.reverse();
+        }
+        /*
 
         for (block_id, block_view) in self.function.blocks() {
             let predecessors = block_view.predecessors(); // v3 PredecessorKind<MemoryReference>
@@ -379,6 +447,7 @@ impl<'a> SSAConversionState<'a> {
                 phi_placements.get_mut(&block_id).unwrap().push(phi);
             }
         }
+        */
 
         phi_placements
     }
@@ -502,7 +571,6 @@ impl<'a> SSAConversionState<'a> {
                         // Check if the variable is live at the entry of the current block
                         if !live_in.contains_key(&mem_ref) {
                             // This var isn't live coming into this block from this path
-                            trace!("Skipping var {} from predecessor {} because it is not live-in for block {}", mem_ref_type, pred_id, block_id);
                             continue;
                         }
 

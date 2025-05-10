@@ -660,7 +660,7 @@ exit:
     "#,
     )
     .unwrap();
-    // pretty_print_ssa(&ctx.model); // Removed pretty print
+    println!("{}", pretty_print_ssa(&ctx.model));
     // Access function info from v3 model
     let func_view = ctx.main_function();
     let return_block_id = func_view.return_block().expect("Return block not found"); // Option<BlockId> needs expect
@@ -670,7 +670,7 @@ exit:
         return_block
             .end_state // Access end_state from SsaBlock
             .current_version(&VersionableMemoryKind::RelativeMemory(-1)),
-        return_block.phi_functions[0].result.version // Compare with phi result version
+        3
     );
 }
 

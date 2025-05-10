@@ -1,6 +1,10 @@
 // Use LIR MemoryReference
 use std::fmt::Display;
 
+use either::Either::{self, Left};
+
+use crate::{lir_expr, match_expr};
+
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Expression<A> {
@@ -133,6 +137,164 @@ impl<A> Expression<A> {
             _ => None,
         }
     }
+
+    pub fn simplify(self) -> Either<Self, Self>
+    where
+        A: Clone,
+    {
+        match_expr!(self, binary BinaryOperator::Add, lhs, rhs => {
+            match_expr!(*lhs, const 0 => {
+                return Left(*lhs)
+            });
+            match_expr!(*rhs, const 0 => {
+                return Left(*rhs)
+            });
+            match_expr!(*lhs, unary UnaryOperator::Minus, arg => {
+                return Left(lir_expr!(sub {arg} {*rhs}));
+            });
+            match_expr!(*rhs, unary UnaryOperator::Minus, arg => {
+                return Left(lir_expr!(sub {lhs} {arg}));
+            });
+            match_expr!(*lhs, const -1 => {
+                return Left(lir_expr!(neg {rhs}));
+            });
+            match_expr!(*rhs, const -1 => {
+                return Left(lir_expr!(neg {lhs}));
+            });
+        });
+        Left(self)
+    }
+
+    /*
+        match self {
+            Expression::Binary {
+                op: BinaryOperator::Add,
+                lhs,
+                rhs,
+            } => match (*lhs, *rhs) {
+                (Expression::Constant(0), expr) |
+                (expr, Expression::Constant(0)) => *self = expr,
+                (
+                    Expression::Unary {
+                        op: UnaryOperator::Minus,
+                        arg,
+                    },
+                    expr,
+                ) => Some(Expression::Binary {
+                    op: BinaryOperator::Sub,
+                    lhs: Box::new(expr),
+                    rhs: arg,
+                }),
+                (
+                    expr,
+                    Expression::Unary {
+                        op: UnaryOperator::Minus,
+                        arg,
+                    },
+                ) => Some(Expression::Binary {
+                    op: BinaryOperator::Sub,
+                    lhs: Box::new(expr),
+                    rhs: arg,
+                }),
+                (lhs, rhs) => {
+                    let lhs_simplified = lhs.simplify();
+                    let rhs_simplified = rhs.simplify();
+
+                    match (lhs_simplified, rhs_simplified) {
+                        (None, None) => None,
+                        (l_opt, r_opt) => Some(Expression::Binary {
+                            op: BinaryOperator::Add,
+                            lhs: Box::new(l_opt.unwrap_or(lhs)),
+                            rhs: Box::new(r_opt.unwrap_or(rhs)),
+                        }),
+                    }
+                }
+            },
+            Expression::Binary {
+                op: BinaryOperator::Mul,
+                lhs,
+                rhs,
+            } => match (*lhs, *rhs) {
+                (Expression::Constant(1), expr) => Some(expr),
+                (expr, Expression::Constant(1)) => Some(expr),
+                (Expression::Constant(-1), expr) => Some(Expression::Unary {
+                    op: UnaryOperator::Minus,
+                    arg: Box::new(expr),
+                }),
+                (expr, Expression::Constant(-1)) => Some(Expression::Unary {
+                    op: UnaryOperator::Minus,
+                    arg: Box::new(expr),
+                }),
+                (lhs, rhs) => {
+                    let lhs_simplified = lhs.simplify();
+                    let rhs_simplified = rhs.simplify();
+                    match (lhs_simplified, rhs_simplified) {
+                        (None, None) => None,
+                        _ => Some(Expression::Binary {
+                            op: BinaryOperator::Mul,
+                            lhs: Box::new(lhs_simplified.unwrap_or(lhs)),
+                            rhs: Box::new(rhs_simplified.unwrap_or(rhs)),
+                        }),
+                    }
+                }
+            },
+            Expression::Binary {
+                op: BinaryOperator::Sub,
+                lhs,
+                rhs,
+            } => match (*lhs, *rhs) {
+                (
+                    lhs,
+                    Expression::Unary {
+                        op: UnaryOperator::Minus,
+                        arg,
+                    },
+                ) => Some(Expression::Binary {
+                    op: BinaryOperator::Add,
+                    lhs: Box::new(lhs),
+                    rhs: arg,
+                }),
+                (lhs, rhs) => Some(Expression::Binary {
+                    op: BinaryOperator::Sub,
+                    lhs: Box::new(lhs.simplify().unwrap_or(lhs)),
+                    rhs: Box::new(rhs.simplify().unwrap_or(rhs)),
+                }),
+            },
+            Expression::Binary { op, lhs, rhs } => {
+                let lhs_simplified = lhs.simplify();
+                let rhs_simplified = rhs.simplify();
+
+                if lhs_simplified.is_none() && rhs_simplified.is_none() {
+                    None
+                } else {
+                    Some(Expression::Binary {
+                        op,
+                        lhs: Box::new(lhs_simplified.unwrap_or(lhs.as_ref()),
+                        rhs: Box::new(rhs_simplified.unwrap_or(rhs)),
+                    })
+                }
+            }
+            Expression::Unary { op, arg } => {
+                let arg_simplified = arg.simplify();
+
+                if let Some(arg_simp) = arg_simplified {
+                    Some(Expression::Unary {
+                        op,
+                        arg: Box::new(arg_simp),
+                    })
+                } else {
+                    None
+                }
+            }
+            Expression::DebugMarker(marker, expr) => expr
+                .simplify()
+                .map(|simplified_expr| Expression::DebugMarker(marker, Box::new(simplified_expr))),
+            Expression::Constant(_) => None,
+            Expression::Addressable(_) => None,
+            Expression::Input() => None,
+        }
+    }
+    */
 }
 
 /// Represents binary operations that can be performed on two operands.
@@ -191,6 +353,3 @@ impl Display for UnaryOperator {
         }
     }
 }
-
-// Removed From<Operand> for Expression<MemoryReference> - belongs in converter
-// Removed impl Expression<A> { as_binary_op } - was in v2 instructions, not v3 common

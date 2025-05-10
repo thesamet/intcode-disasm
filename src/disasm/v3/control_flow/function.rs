@@ -1,9 +1,11 @@
+use petgraph::visit::{GraphBase, GraphRef, IntoNeighbors, Visitable};
+
 use super::block::{Block, BlockView};
 use crate::disasm::v3::{
     id_types::{BlockId, FunctionId},
     model::{Model, ModelState},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct Function {
@@ -87,5 +89,34 @@ impl<'a, S: ModelState> FunctionView<'a, S> {
             .blocks
             .iter()
             .map(|(id, block)| (*id, BlockView::new(self.model, block)))
+    }
+}
+
+impl<'a, S: ModelState> GraphBase for FunctionView<'a, S> {
+    type EdgeId = ();
+
+    type NodeId = BlockId;
+}
+
+impl<'a, S: ModelState> IntoNeighbors for &FunctionView<'a, S> {
+    type Neighbors = std::vec::IntoIter<Self::NodeId>;
+
+    #[doc = r" Return an iterator of the neighbors of node `a`."]
+    fn neighbors(self, a: Self::NodeId) -> Self::Neighbors {
+        self.block(&a).next().successors().into_iter()
+    }
+}
+
+impl<'a, S: ModelState> Visitable for FunctionView<'a, S> {
+    type Map = HashSet<Self::NodeId>;
+
+    #[doc = r" Create a new visitor map"]
+    fn visit_map(self: &Self) -> Self::Map {
+        HashSet::new()
+    }
+
+    #[doc = r" Reset the visitor map (and resize to new size of graph if needed)"]
+    fn reset_map(self: &Self, map: &mut Self::Map) {
+        map.clear();
     }
 }

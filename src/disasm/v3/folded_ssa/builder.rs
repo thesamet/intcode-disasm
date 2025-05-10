@@ -4,8 +4,9 @@ use itertools::Itertools;
 
 use super::result::{FoldedSsaBlock, FoldedSsaResult};
 use crate::disasm::v3::common::formatting::{FormattingContext, PrettyPrintConfig};
+use crate::disasm::v3::common::{fixed_point, fixed_point_mut};
 use crate::disasm::v3::control_flow::FunctionView;
-use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNode is needed for transformation logic
+use crate::disasm::v3::lir::{Expression, Instruction, UnaryOperator}; // Assuming InstructionNode is needed for transformation logic
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::pretty_print::format_expression;
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
@@ -67,21 +68,20 @@ impl FoldedSsaBuilder {
                 },
             );
         }
-        let mut next = current.clone();
 
-        loop {
-            let mut changed = false;
+        fixed_point_mut(current, |current| {
             let mut defs = HashMap::new();
             let mut reads: HashMap<_, Vec<_>> = HashMap::new();
 
-            for (block_id, block) in current {
+            for (block_id, block) in current.iter() {
                 for instruction in block.instructions.iter() {
                     if let Instruction::Assign {
-                            target: SsaMemoryReference::Versioned(mr),
-                            src,
-                            ..
-                        } = &instruction.kind {
-                        defs.insert(*mr, (block_id, instruction.id, src.clone()));
+                        target: SsaMemoryReference::Versioned(mr),
+                        src,
+                        ..
+                    } = &instruction.kind
+                    {
+                        defs.insert(*mr, (*block_id, instruction.id, src.clone()));
                     };
                     for r in instruction
                         .kind
@@ -92,7 +92,7 @@ impl FoldedSsaBuilder {
                         reads
                             .entry(*r)
                             .or_default()
-                            .push((block_id, instruction.id));
+                            .push((*block_id, instruction.id));
                     }
                 }
             }
@@ -103,12 +103,13 @@ impl FoldedSsaBuilder {
                     continue;
                 };
 
-                next.get_mut(var_def_block_id)
+                current
+                    .get_mut(var_def_block_id)
                     .unwrap()
                     .instructions
                     .retain(|i| i.id != *var_def_instruction_id);
 
-                let x = next
+                let x = current
                     .get_mut(&use_block)
                     .unwrap()
                     .instructions
@@ -127,23 +128,9 @@ impl FoldedSsaBuilder {
                     },
                     |_, x| x.clone(),
                 );
-
-                log::log!(
-                    log::Level::Trace,
-                    "Working on {}. Replaced {} with {}",
-                    function_view.function_id(),
-                    var,
-                    format_expression(expr, &FormattingContext::new(&PrettyPrintConfig::default())),
-                );
-                changed = true;
-                break;
+                return true;
             }
-            if !changed {
-                break;
-            }
-            current = next.clone();
-        }
-
-        next
+            false
+        })
     }
 }

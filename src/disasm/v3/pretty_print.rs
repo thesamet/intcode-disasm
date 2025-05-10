@@ -3,7 +3,7 @@ use colored::Colorize;
 use itertools::Itertools;
 
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
-use crate::disasm::v3::model::FoldedSsaComplete;
+use crate::disasm::v3::model::{FoldedSsaComplete, HasFunctionCallAnalysisResult};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
     common::formatting::{
@@ -68,15 +68,25 @@ where
         .join(&format!("\n{blank_line}\n"))
 }
 
-fn format_function_call_info<S: ModelState + 'static>(
+fn format_signature<S: ModelState + 'static>(
     function: &FunctionView<S>,
     ctx: &FormattingContext,
 ) -> String {
-    match_type!(function.model, {
-        &Model<FunctionCallAnalysisComplete> as m =>
-        format!("{}{}{}",
+    fn format_signature<
+        T: HasFunctionCallAnalysisResult + ModelState + 'static,
+        S: ModelState + 'static,
+    >(
+        model: &Model<T>,
+        function: &FunctionView<S>,
+        ctx: &FormattingContext,
+    ) -> String
+    where
+        T: HasFunctionCallAnalysisResult,
+    {
+        format!(
+            "{}{}{}",
             "(".color(ctx.colors().low_prio),
-            m
+            model
                 .function_call_analysis_result()
                 .functions
                 .get(&function.function_id())
@@ -86,7 +96,13 @@ fn format_function_call_info<S: ModelState + 'static>(
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
                 .map(|v| format_versioned_reference(*v, ctx))
                 .join(&", ".color(ctx.colors().low_prio).to_string()),
-            ") -> ?".color(ctx.colors().low_prio)),
+            ") -> ?".color(ctx.colors().low_prio)
+        )
+    }
+
+    match_type!(function.model, {
+        &Model<FunctionCallAnalysisComplete> as m => format_signature(m, function, ctx),
+        &Model<FoldedSsaComplete> as m => format_signature(m, function, ctx),
         _ => "".to_string(),
     })
 }
@@ -395,7 +411,7 @@ where
             .function_id()
             .to_string()
             .color(ctx.colors().function),
-        format_function_call_info(function, ctx),
+        format_signature(function, ctx),
         clear_to_end_code
     );
 

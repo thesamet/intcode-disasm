@@ -99,11 +99,6 @@ impl FunctionCallAnalyzer {
         for (calling_function_id, function) in self.model.functions() {
             for (calling_block_id, block) in function.blocks() {
                 if let NextKind::FunctionCall(call) = &block.ssa().next {
-                    trace!(
-                        "Analyzing call site in block {} (func {})",
-                        calling_block_id,
-                        calling_function_id
-                    );
                     let argument_writes: HashMap<i128, VersionedMemoryReference> = self
                         .model
                         .function(&calling_function_id)
