@@ -142,6 +142,12 @@ impl<A> Expression<A> {
     where
         A: Clone,
     {
+        match_expr!(self, {
+            x => { 4},
+            y => { 7},
+            _ => { 5}
+        });
+        /*
         match_expr!(self, binary BinaryOperator::Add, lhs, rhs => {
             match_expr!(*lhs, const 0 => {
                 return Left(*lhs)
@@ -150,19 +156,20 @@ impl<A> Expression<A> {
                 return Left(*rhs)
             });
             match_expr!(*lhs, unary UnaryOperator::Minus, arg => {
-                return Left(lir_expr!(sub {arg} {*rhs}));
+                return Left(lir_expr!(sub {*arg} {*rhs}));
             });
             match_expr!(*rhs, unary UnaryOperator::Minus, arg => {
-                return Left(lir_expr!(sub {lhs} {arg}));
+                return Left(lir_expr!(sub {*lhs} {*arg}));
             });
             match_expr!(*lhs, const -1 => {
-                return Left(lir_expr!(neg {rhs}));
+                return Left(lir_expr!(neg {*rhs}));
             });
             match_expr!(*rhs, const -1 => {
-                return Left(lir_expr!(neg {lhs}));
+                return Left(lir_expr!(neg {*lhs}));
             });
         });
-        Left(self)
+        */
+        panic!("simplify not implemented");
     }
 
     /*
