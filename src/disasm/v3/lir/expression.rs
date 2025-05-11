@@ -1,9 +1,7 @@
 // Use LIR MemoryReference
 use std::fmt::Display;
 
-use either::Either::{self, Left};
-
-use crate::{lir_expr, match_expr};
+use crate::{disasm::v3::common::formatting::ContextualPrettyPrint, lir_expr, match_expr};
 
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -138,170 +136,95 @@ impl<A> Expression<A> {
         }
     }
 
-    pub fn simplify(self) -> Either<Self, Self>
+    pub fn simplify(&self) -> Option<Expression<A>>
     where
         A: Clone,
     {
-        match_expr!(self, {
-            x => { 4},
-            y => { 7},
-            _ => { 5}
+        match_expr!(self,
+        binary BinaryOperator::Add { lhs, rhs } => {
+            match_expr!(**lhs, const 0 => {
+                return Some((**lhs).clone())
+            });
+            match_expr!(**rhs, const 0 => {
+                return Some((**rhs).clone())
+            });
+            match_expr!(**rhs, const x if x < 0 => {
+                return Some(lir_expr!(sub {lhs.as_ref().clone()} {lir_expr!(const -x)}));
+            });
+            match_expr!(lhs.as_ref(), unary UnaryOperator::Minus {arg} => {
+                return Some(lir_expr!(sub {rhs.as_ref().clone()} {arg.as_ref().clone()}));
+            });
+            match_expr!(rhs.as_ref(), unary UnaryOperator::Minus {arg} => {
+                return Some(lir_expr!(sub {lhs.as_ref().clone()} {arg.as_ref().clone()}));
+            });
+            let lhs_simplified = lhs.simplify();
+            let rhs_simplified = rhs.simplify();
+            if lhs_simplified.is_some() || rhs_simplified.is_some() {
+                return Some(lir_expr!(add {lhs_simplified.unwrap_or_else(|| lhs.as_ref().clone())} {rhs_simplified.unwrap_or_else(|| rhs.as_ref().clone())}));
+            }
+            return None
         });
-        /*
-        match_expr!(self, binary BinaryOperator::Add, lhs, rhs => {
-            match_expr!(*lhs, const 0 => {
-                return Left(*lhs)
+        match_expr!(self,
+        binary BinaryOperator::Sub { lhs, rhs } => {
+            match_expr!(**lhs, const 0 => {
+                return Some((**lhs).clone())
             });
-            match_expr!(*rhs, const 0 => {
-                return Left(*rhs)
+            match_expr!(**rhs, const 0 => {
+                return Some((**rhs).clone())
             });
-            match_expr!(*lhs, unary UnaryOperator::Minus, arg => {
-                return Left(lir_expr!(sub {*arg} {*rhs}));
+            match_expr!(**rhs, const x if x < 0 => {
+                return Some(lir_expr!(add {lhs.as_ref().clone()} {lir_expr!(const -x)}));
             });
-            match_expr!(*rhs, unary UnaryOperator::Minus, arg => {
-                return Left(lir_expr!(sub {*lhs} {*arg}));
+            match_expr!(rhs.as_ref(), unary UnaryOperator::Minus { arg }=> {
+                return Some(lir_expr!(add {lhs.as_ref().clone()} {arg.as_ref().clone()}));
             });
-            match_expr!(*lhs, const -1 => {
-                return Left(lir_expr!(neg {*rhs}));
-            });
-            match_expr!(*rhs, const -1 => {
-                return Left(lir_expr!(neg {*lhs}));
-            });
+            let lhs_simplified = lhs.simplify();
+            let rhs_simplified = rhs.simplify();
+            if lhs_simplified.is_some() || rhs_simplified.is_some() {
+                return Some(lir_expr!(sub {lhs_simplified.unwrap_or_else(|| lhs.as_ref().clone())} {rhs_simplified.unwrap_or_else(|| rhs.as_ref().clone())}));
+            }
+            return None
         });
-        */
-        panic!("simplify not implemented");
-    }
-
-    /*
-        match self {
-            Expression::Binary {
-                op: BinaryOperator::Add,
-                lhs,
-                rhs,
-            } => match (*lhs, *rhs) {
-                (Expression::Constant(0), expr) |
-                (expr, Expression::Constant(0)) => *self = expr,
-                (
-                    Expression::Unary {
-                        op: UnaryOperator::Minus,
-                        arg,
-                    },
-                    expr,
-                ) => Some(Expression::Binary {
-                    op: BinaryOperator::Sub,
-                    lhs: Box::new(expr),
-                    rhs: arg,
-                }),
-                (
-                    expr,
-                    Expression::Unary {
-                        op: UnaryOperator::Minus,
-                        arg,
-                    },
-                ) => Some(Expression::Binary {
-                    op: BinaryOperator::Sub,
-                    lhs: Box::new(expr),
-                    rhs: arg,
-                }),
-                (lhs, rhs) => {
-                    let lhs_simplified = lhs.simplify();
-                    let rhs_simplified = rhs.simplify();
-
-                    match (lhs_simplified, rhs_simplified) {
-                        (None, None) => None,
-                        (l_opt, r_opt) => Some(Expression::Binary {
-                            op: BinaryOperator::Add,
-                            lhs: Box::new(l_opt.unwrap_or(lhs)),
-                            rhs: Box::new(r_opt.unwrap_or(rhs)),
-                        }),
-                    }
-                }
-            },
-            Expression::Binary {
-                op: BinaryOperator::Mul,
-                lhs,
-                rhs,
-            } => match (*lhs, *rhs) {
-                (Expression::Constant(1), expr) => Some(expr),
-                (expr, Expression::Constant(1)) => Some(expr),
-                (Expression::Constant(-1), expr) => Some(Expression::Unary {
-                    op: UnaryOperator::Minus,
-                    arg: Box::new(expr),
-                }),
-                (expr, Expression::Constant(-1)) => Some(Expression::Unary {
-                    op: UnaryOperator::Minus,
-                    arg: Box::new(expr),
-                }),
-                (lhs, rhs) => {
-                    let lhs_simplified = lhs.simplify();
-                    let rhs_simplified = rhs.simplify();
-                    match (lhs_simplified, rhs_simplified) {
-                        (None, None) => None,
-                        _ => Some(Expression::Binary {
-                            op: BinaryOperator::Mul,
-                            lhs: Box::new(lhs_simplified.unwrap_or(lhs)),
-                            rhs: Box::new(rhs_simplified.unwrap_or(rhs)),
-                        }),
-                    }
-                }
-            },
-            Expression::Binary {
-                op: BinaryOperator::Sub,
-                lhs,
-                rhs,
-            } => match (*lhs, *rhs) {
-                (
-                    lhs,
-                    Expression::Unary {
-                        op: UnaryOperator::Minus,
-                        arg,
-                    },
-                ) => Some(Expression::Binary {
-                    op: BinaryOperator::Add,
-                    lhs: Box::new(lhs),
-                    rhs: arg,
-                }),
-                (lhs, rhs) => Some(Expression::Binary {
-                    op: BinaryOperator::Sub,
-                    lhs: Box::new(lhs.simplify().unwrap_or(lhs)),
-                    rhs: Box::new(rhs.simplify().unwrap_or(rhs)),
-                }),
-            },
-            Expression::Binary { op, lhs, rhs } => {
+        match_expr!(self,
+            binary BinaryOperator::Mul { lhs, rhs } => {
+                match_expr!(**lhs, const 0 => {
+                    return Some((**lhs).clone())
+                });
+                match_expr!(**rhs, const 0 => {
+                    return Some((**rhs).clone())
+                });
+                match_expr!(**rhs, const -1 => {
+                    return Some(lir_expr!(minus {lhs.as_ref().clone()}));
+                });
+                match_expr!(**lhs, const -1 => {
+                    return Some(lir_expr!(minus {rhs.as_ref().clone()}));
+                });
                 let lhs_simplified = lhs.simplify();
                 let rhs_simplified = rhs.simplify();
-
-                if lhs_simplified.is_none() && rhs_simplified.is_none() {
-                    None
-                } else {
-                    Some(Expression::Binary {
-                        op,
-                        lhs: Box::new(lhs_simplified.unwrap_or(lhs.as_ref()),
-                        rhs: Box::new(rhs_simplified.unwrap_or(rhs)),
-                    })
+                if lhs_simplified.is_some() || rhs_simplified.is_some() {
+                    return Some(lir_expr!(mul {lhs_simplified.unwrap_or_else(|| lhs.as_ref().clone())} {rhs_simplified.unwrap_or_else(|| rhs.as_ref().clone())}));
                 }
+                return None;
             }
-            Expression::Unary { op, arg } => {
-                let arg_simplified = arg.simplify();
-
-                if let Some(arg_simp) = arg_simplified {
-                    Some(Expression::Unary {
-                        op,
-                        arg: Box::new(arg_simp),
-                    })
-                } else {
-                    None
+        );
+        match_expr!(self,
+            unary UnaryOperator::Not { arg } => {
+                if let Expression::Binary { op, lhs, rhs } = arg.as_ref() {
+                    if let Some(new_op) = op.logical_negate() {
+                        return Some(lir_expr!(binary new_op {lhs.as_ref().clone()} {rhs.as_ref().clone()}));
+                    }
                 }
+                return arg.simplify().map(|arg| lir_expr!(not {arg}));
             }
-            Expression::DebugMarker(marker, expr) => expr
-                .simplify()
-                .map(|simplified_expr| Expression::DebugMarker(marker, Box::new(simplified_expr))),
-            Expression::Constant(_) => None,
-            Expression::Addressable(_) => None,
-            Expression::Input() => None,
-        }
+        );
+        return None;
     }
-    */
+}
+
+impl<A: 'static> Display for Expression<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.pretty_print())
+    }
 }
 
 /// Represents binary operations that can be performed on two operands.
@@ -325,6 +248,22 @@ pub enum BinaryOperator {
     Equals,
     /// Inequality comparison (!=).
     NotEquals,
+}
+
+impl BinaryOperator {
+    pub fn logical_negate(&self) -> Option<BinaryOperator> {
+        match self {
+            BinaryOperator::Add => None,
+            BinaryOperator::Mul => None,
+            BinaryOperator::Sub => None,
+            BinaryOperator::LessThan => Some(BinaryOperator::GreaterThanOrEqual),
+            BinaryOperator::LessThanOrEqual => Some(BinaryOperator::GreaterThan),
+            BinaryOperator::GreaterThan => Some(BinaryOperator::LessThanOrEqual),
+            BinaryOperator::GreaterThanOrEqual => Some(BinaryOperator::LessThan),
+            BinaryOperator::Equals => Some(BinaryOperator::NotEquals),
+            BinaryOperator::NotEquals => Some(BinaryOperator::Equals),
+        }
+    }
 }
 
 impl Display for BinaryOperator {

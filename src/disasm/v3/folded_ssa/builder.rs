@@ -8,9 +8,9 @@ use crate::disasm::v3::common::{fixed_point, fixed_point_mut};
 use crate::disasm::v3::control_flow::FunctionView;
 use crate::disasm::v3::lir::{Expression, Instruction, UnaryOperator}; // Assuming InstructionNode is needed for transformation logic
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
-use crate::disasm::v3::pretty_print::format_expression;
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
-use crate::disasm::v3::BlockId;
+use crate::disasm::v3::ssa::VersionedMemoryReference;
+use crate::disasm::v3::{BlockId, InstructionId};
 // For InstructionNode<SsaMemoryReference>
 use crate::disasm::Error;
 
@@ -73,8 +73,22 @@ impl FoldedSsaBuilder {
             let mut defs = HashMap::new();
             let mut reads: HashMap<_, Vec<_>> = HashMap::new();
 
-            for (block_id, block) in current.iter() {
-                for instruction in block.instructions.iter() {
+            let mut instructions_changed = false;
+            for (block_id, block) in current.iter_mut() {
+                for instruction in block.instructions.iter_mut() {
+                    *instruction = instruction.map_expr(|e| {
+                        if instruction.id == InstructionId::new(386) {
+                            println!("Before: {:?}", e);
+                        }
+
+                        match e.simplify() {
+                            Some(e) => {
+                                instructions_changed = true;
+                                e
+                            }
+                            None => e.clone(),
+                        }
+                    });
                     if let Instruction::Assign {
                         target: SsaMemoryReference::Versioned(mr),
                         src,
@@ -96,12 +110,16 @@ impl FoldedSsaBuilder {
                     }
                 }
             }
+            if instructions_changed {
+                return true;
+            }
             for (var, (var_def_block_id, var_def_instruction_id, expr)) in &defs {
                 let Some(&(use_block, use_instruction)) =
                     reads.get(var).and_then(|v| v.iter().exactly_one().ok())
                 else {
                     continue;
                 };
+                println!("Removing {var_def_instruction_id} from {var_def_block_id} to be replaced with {expr}");
 
                 current
                     .get_mut(var_def_block_id)
@@ -109,7 +127,8 @@ impl FoldedSsaBuilder {
                     .instructions
                     .retain(|i| i.id != *var_def_instruction_id);
 
-                let x = current
+                println!("Looking for use block {use_block:?} and instruction {use_instruction:?} to update {var}");
+                let use_instruction = current
                     .get_mut(&use_block)
                     .unwrap()
                     .instructions
@@ -117,7 +136,43 @@ impl FoldedSsaBuilder {
                     .find(|i| i.id == use_instruction)
                     .unwrap();
 
-                *x = x.flat_map_rw(
+                fn update_read_args(
+                    var: &VersionedMemoryReference,
+                    expr: &Expression<SsaMemoryReference>,
+                    scrutinee: &SsaMemoryReference,
+                ) -> Expression<SsaMemoryReference> {
+                    match scrutinee {
+                        SsaMemoryReference::Versioned(x) => {
+                            if x == var {
+                                expr.clone()
+                            } else {
+                                Expression::Addressable(scrutinee.clone())
+                            }
+                        }
+                        SsaMemoryReference::Deref(e) => {
+                            e.flat_map(&mut |s| update_read_args(var, expr, s))
+                        }
+                    }
+                }
+
+                fn update_write_arg(
+                    var: &VersionedMemoryReference,
+                    expr: &Expression<SsaMemoryReference>,
+                    scrutinee: &SsaMemoryReference,
+                ) -> SsaMemoryReference {
+                    match scrutinee {
+                        SsaMemoryReference::Versioned(x) => {
+                            assert_ne!(x, var);
+                            scrutinee.clone()
+                        }
+                        SsaMemoryReference::Deref(e) => SsaMemoryReference::Deref(Box::new(
+                            e.flat_map(&mut |s| update_read_args(var, expr, s)),
+                        )),
+                    }
+                }
+
+                /*
+                *use_instruction = use_instruction.flat_map_rw(
                     &mut (),
                     |_, x| {
                         if x.as_versioned() == Some(var) {
@@ -127,6 +182,13 @@ impl FoldedSsaBuilder {
                         }
                     },
                     |_, x| x.clone(),
+                );
+                */
+
+                *use_instruction = use_instruction.flat_map_rw(
+                    &mut (),
+                    |_, x| update_read_args(var, expr, x),
+                    |_, x| update_write_arg(var, expr, x),
                 );
                 return true;
             }

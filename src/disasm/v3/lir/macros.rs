@@ -15,7 +15,7 @@ macro_rules! lir_expr {
     };
 
     // Unary operations:
-    (neg {$($arg:tt)+}) => {
+    (minus {$($arg:tt)+}) => {
         $crate::disasm::v3::lir::Expression::Unary {
             op: $crate::disasm::v3::lir::UnaryOperator::Minus,
             arg: Box::new($crate::lir_expr!($($arg)+)),
@@ -25,6 +25,14 @@ macro_rules! lir_expr {
         $crate::disasm::v3::lir::Expression::Unary {
             op: $crate::disasm::v3::lir::UnaryOperator::Not,
             arg: Box::new($crate::lir_expr!($($arg)+)),
+        }
+    };
+
+    (binary $op:path { $($lhs:tt)+ } { $($rhs:tt)+ }) => {
+        $crate::disasm::v3::lir::Expression::Binary {
+            op: $op,
+            lhs: Box::new($crate::lir_expr!($($lhs)+)),
+            rhs: Box::new($crate::lir_expr!($($rhs)+)),
         }
     };
 
@@ -105,74 +113,42 @@ macro_rules! lir_expr {
 }
 
 #[macro_export]
-macro_rules! match_arm {
-    ($expr_to_match:expr, _ => $default_body: expr) => {
-        $default_body
-    };
-    ($expr_to_match:expr, $pattern:pat => { $body:expr }, $($tail:tt)*) => {
-        if let $pattern = $expr_to_match {
-            $body
-        } else { $crate::match_arm!($expr_to_match, $($tail)*) }
-    };
-}
-
-#[macro_export]
 macro_rules! match_expr {
-        ($expr_to_match:expr, {
-            $($pats:tt)*
-            // $( $pattern:pat => $body:expr ),*
-        }) => {
-            $crate::match_arm!($expr_to_match, $($pats)*);
+    ($expr: expr, const $val_pat:pat $(if $val_guard:expr)? => $body:expr) => {
+        if let $crate::disasm::v3::lir::Expression::Constant($val_pat) = $expr {
+            if true $(&& $val_guard)? {
+                $body
+            }
         }
-    }
-
-/*
-        $( const $val_pat:pat $(if $guard_const:expr)? => $body_const:expr, )*
-        $( addr $addr_pat:pat $(if $guard_addr:expr)? => $body_addr:expr, )*
-        $( unary $op_pat:path, $arg_pat:pat $(if $guard_unary:expr)? => $body_unary:expr, )*
-        $( binary $op_pat2:path, $lhs_pat:pat, $rhs_pat:pat $(if $guard_binary:expr)? => $body_binary:expr, )*
-        $( _ => $default_body:expr )?
-       ) => {
-           $(
-               if let $crate::disasm::v3::lir::Expression::Constant($val_pat) = $expr_to_match {
-                   $(if $guard_const)? {
-                       $body_const
-                   } else {
-                       continue;
-                   }
-               }
-           )*
-           $(
-               if let $crate::disasm::v3::lir::Expression::Addressable($addr_pat) = $expr_to_match {
-                   $(if $guard_addr)? {
-                       $body_addr
-                   } else {
-                       continue;
-                   }
-               }
-           )*
-           $(
-               if let $crate::disasm::v3::lir::Expression::Unary { op: $op_pat, arg: $arg_pat } = $expr_to_match {
-                   $(if $guard_unary)? {
-                       $body_unary
-                   } else {
-                       continue;
-                   }
-               }
-           )*
-           $(
-               if let $crate::disasm::v3::lir::Expression::Binary { op: $op_pat, lhs: $lhs_pat, rhs: $rhs_pat } = $expr_to_match {
-                   $(if $guard_binary)? {
-                       $body_binary
-                   } else {
-                       continue;
-                   }
-               }
-           )*
-           $(
-               { $default_body }
-           )?
-       };
-    }
+    };
+    ($expr: expr, addr $addr_pat:pat $(if $addr_guard:expr)? => $body:expr) => {
+        if let $crate::disasm::v3::lir::Expression::Addressable($addr_pat) = $expr {
+            if true $(&& $addr_guard)? {
+                $body
+            }
+        }
+    };
+    ($expr: expr, binary $op_pat2:path { $lhs_pat:pat, $rhs_pat:pat } $(if $binary_guard:expr)? => $body_binary:expr) => {
+        if let $crate::disasm::v3::lir::Expression::Binary {
+            op: $op_pat2,
+            lhs: $lhs_pat,
+            rhs: $rhs_pat,
+        } = $expr
+        {
+            if true $(&& $binary_guard)? {
+                $body_binary
+            }
+        }
+    };
+    ($expr: expr, unary $op_pat:path { $arg_pat:pat } $(if $unary_guard:expr)? => $body_unary:expr) => {
+        if let $crate::disasm::v3::lir::Expression::Unary {
+            op: $op_pat,
+            arg: $arg_pat,
+        } = $expr
+        {
+            if true $(&& $unary_guard)? {
+                $body_unary
+            }
+        }
+    };
 }
-*/

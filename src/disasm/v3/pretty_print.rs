@@ -24,6 +24,8 @@ use crate::disasm::v2::{
 };
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
+use super::common::formatting::ContextualPrettyPrint;
+
 // --- Operator Precedence Helpers ---
 fn binary_op_precedence(op: &BinaryOperator) -> u8 {
     match op {
@@ -107,58 +109,60 @@ fn format_signature<S: ModelState + 'static>(
     })
 }
 
-pub fn format_expression<S: 'static>(expr: &Expression<S>, ctx: &FormattingContext) -> String {
-    match expr {
-        Expression::Constant(value) => format_constant(*value, ctx),
-        Expression::Addressable(addr) => format_any_memory_reference(addr, ctx),
-        Expression::Binary { op, lhs, rhs } => {
-            let op_str = op.to_string().color(ctx.colors().op_color).to_string();
-            let op_prec = binary_op_precedence(op);
+impl<A: 'static> ContextualPrettyPrint for Expression<A> {
+    fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
+        match self {
+            Expression::Constant(value) => format_constant(*value, ctx),
+            Expression::Addressable(addr) => format_any_memory_reference(addr, ctx),
+            Expression::Binary { op, lhs, rhs } => {
+                let op_str = op.to_string().color(ctx.colors().op_color).to_string();
+                let op_prec = binary_op_precedence(&op);
 
-            let lhs_str = format_expression(lhs, &ctx.with_precedence(op_prec));
-            let rhs_str = format_expression(rhs, &ctx.with_precedence(op_prec));
+                let lhs_str = lhs.pretty_print_with_context(&ctx.with_precedence(op_prec));
+                let rhs_str = rhs.pretty_print_with_context(&ctx.with_precedence(op_prec));
 
-            let result = format!("{lhs_str} {op_str} {rhs_str}");
+                let result = format!("{lhs_str} {op_str} {rhs_str}");
 
-            if let Some(parent_prec) = ctx.parent_precedence {
-                if parent_prec > op_prec {
-                    // Add parentheses if needed based on precedence
-                    return format!(
-                        "{}{}{}",
-                        "(".color(ctx.colors().low_prio),
-                        result,
-                        ")".color(ctx.colors().low_prio)
-                    );
+                if let Some(parent_prec) = ctx.parent_precedence {
+                    if parent_prec > op_prec {
+                        // Add parentheses if needed based on precedence
+                        return format!(
+                            "{}{}{}",
+                            "(".color(ctx.colors().low_prio),
+                            result,
+                            ")".color(ctx.colors().low_prio)
+                        );
+                    }
                 }
+                result
             }
-            result
-        }
-        Expression::Unary { op, arg } => {
-            let op_str = op.to_string().color(ctx.colors().op_color).to_string();
-            let op_prec = unary_op_precedence(op);
-            let arg_str = format_expression(arg, &ctx.with_precedence(op_prec));
+            Expression::Unary { op, arg } => {
+                let op_str = op.to_string().color(ctx.colors().op_color).to_string();
+                let op_prec = unary_op_precedence(&op);
+                let arg_str = arg.pretty_print_with_context(&ctx.with_precedence(op_prec));
 
-            let result = format!("{op_str}{arg_str}");
+                let result = format!("{op_str}{arg_str}");
 
-            if let Some(parent_prec) = ctx.parent_precedence {
-                if parent_prec > op_prec {
-                    return format!(
-                        "{}{}{}",
-                        "(".color(ctx.colors().low_prio),
-                        result,
-                        ")".color(ctx.colors().low_prio)
-                    );
+                if let Some(parent_prec) = ctx.parent_precedence {
+                    if parent_prec > op_prec {
+                        return format!(
+                            "{}{}{}",
+                            "(".color(ctx.colors().low_prio),
+                            result,
+                            ")".color(ctx.colors().low_prio)
+                        );
+                    }
                 }
+                result
             }
-            result
-        }
-        Expression::Input() => "input()".color(ctx.colors().keyword).to_string(),
-        Expression::DebugMarker(marker, expr) => {
-            format!(
-                "'{} ({})",
-                marker.to_string().color(ctx.colors().low_prio),
-                format_expression(expr, ctx)
-            )
+            Expression::Input() => "input()".color(ctx.colors().keyword).to_string(),
+            Expression::DebugMarker(marker, expr) => {
+                format!(
+                    "'{} ({})",
+                    marker.to_string().color(ctx.colors().low_prio),
+                    expr.pretty_print_with_context(ctx)
+                )
+            }
         }
     }
 }
@@ -314,7 +318,7 @@ pub fn format_instruction<A: 'static>(
                 "{debug_marker}{} {} {}",
                 format_any_memory_reference(target, ctx),
                 "=".color(ctx.colors().op_color),
-                format_expression(src, ctx)
+                src.pretty_print_with_context(ctx)
             )
         }
         Instruction::If {
@@ -325,7 +329,7 @@ pub fn format_instruction<A: 'static>(
             format!(
                 "{} {} {} {} {} {}",
                 "if".color(ctx.colors().keyword),
-                format_expression(cond, ctx),
+                cond.pretty_print_with_context(ctx),
                 "goto".color(ctx.colors().keyword),
                 then_addr.to_string().color(ctx.colors().const_color),
                 "else goto".color(ctx.colors().keyword),
@@ -347,10 +351,10 @@ pub fn format_instruction<A: 'static>(
             format!(
                 "{} {}{}{}{} {} {}",
                 "call".color(ctx.colors().keyword),
-                format_expression(addr, ctx),
+                addr.pretty_print_with_context(ctx),
                 "(".color(ctx.colors().low_prio),
                 args.iter()
-                    .map(|e| format_expression(e, ctx))
+                    .map(|e| e.pretty_print_with_context(ctx))
                     .join(&", ".color(ctx.colors().low_prio).to_string()),
                 ")".color(ctx.colors().low_prio),
                 "return to".color(ctx.colors().keyword),
@@ -361,7 +365,7 @@ pub fn format_instruction<A: 'static>(
             format!(
                 "{} {}",
                 "output".color(ctx.colors().keyword),
-                format_expression(expr, ctx)
+                expr.pretty_print_with_context(ctx)
             )
         }
         Instruction::Return => "return".color(ctx.colors().keyword).to_string(),
@@ -376,7 +380,7 @@ pub fn format_ssa_memory_reference(
     match reference {
         SsaMemoryReference::Versioned(a) => format_versioned_reference(*a, ctx),
         SsaMemoryReference::Deref(expr) => {
-            format!("*{}", format_expression(expr, ctx))
+            format!("*({})", expr.pretty_print_with_context(ctx))
         }
     }
 }
@@ -512,7 +516,7 @@ pub fn format_memory_reference(mem_ref: &MemoryReference, ctx: &FormattingContex
         MemoryReference::Pointer(addr) => {
             format!("p{addr}").color(ctx.colors().variable).to_string()
         }
-        MemoryReference::Deref(expr) => format!("*{}", format_expression(expr.as_ref(), ctx)),
+        MemoryReference::Deref(expr) => format!("*{}", expr.pretty_print_with_context(ctx)),
     }
 }
 
