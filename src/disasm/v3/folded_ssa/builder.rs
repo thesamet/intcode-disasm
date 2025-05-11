@@ -73,7 +73,7 @@ impl FoldedSsaBuilder {
             let mut reads: HashMap<_, Vec<_>> = HashMap::new();
 
             let mut instructions_changed = false;
-            for (block_id, block) in current.iter_mut() {
+            for (_, block) in current.iter_mut() {
                 for instruction in block.instructions.iter_mut() {
                     *instruction = instruction.map_expr(|e| {
                         if instruction.id == InstructionId::new(386) {
@@ -88,6 +88,13 @@ impl FoldedSsaBuilder {
                             None => e.clone(),
                         }
                     });
+                }
+            }
+            if instructions_changed {
+                return true;
+            }
+            for (block_id, block) in current.iter() {
+                for instruction in block.instructions.iter() {
                     if let Instruction::Assign {
                         target: SsaMemoryReference::Versioned(mr),
                         src,
@@ -108,9 +115,6 @@ impl FoldedSsaBuilder {
                             .push((*block_id, instruction.id));
                     }
                 }
-            }
-            if instructions_changed {
-                return true;
             }
             for (var, (var_def_block_id, var_def_instruction_id, expr)) in &defs {
                 let Some(&(use_block, use_instruction)) =

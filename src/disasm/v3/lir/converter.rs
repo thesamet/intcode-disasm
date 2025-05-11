@@ -169,7 +169,7 @@ impl InstructionNode<MemoryReference> {
             cond.into()
         };
 
-        let target_addr = match addr.into() {
+        let target_addr = match <Operand as Into<Expression<MemoryReference>>>::into(addr) {
             Expression::Constant(a) => BlockId::from(a as usize),
             _ => panic!("Expected constant address for jump"),
         };

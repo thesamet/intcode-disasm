@@ -1,4 +1,5 @@
 pub mod converter;
+mod dsl;
 pub mod result; // Make public
 pub mod types; // Make public // Make public
 

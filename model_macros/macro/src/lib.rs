@@ -1,7 +1,7 @@
 //! Macros for defining model states and models that progress through those states.
 //!
 //! This module provides procedural macros for defining compile-time safe models
-//! that track data as analysis progresses through different states.
+mod dsl;
 
 use std::{
     collections::HashMap,
@@ -420,4 +420,18 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
     };
 
     Ok(combined.into())
+}
+
+/*
+#[proc_macro]
+pub fn build_expr(input: TokenStream) -> TokenStream {
+    parse_macro_input!(input as dsl::FullExpressionParser).into()
+}
+*/
+
+#[proc_macro]
+pub fn build_expr(input: TokenStream) -> TokenStream {
+    parse_macro_input!(input as dsl::VersionedRelativeMemory)
+        .to_expr_tokens()
+        .into()
 }

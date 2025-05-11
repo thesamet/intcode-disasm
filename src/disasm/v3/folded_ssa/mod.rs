@@ -10,3 +10,6 @@ pub mod result;
 pub use builder::FoldedSsaBuilder;
 pub use result::FoldedSsaResult;
 // pub use block::FoldedSsaBlock; // If FoldedSsaBlock moves to its own file
+
+#[cfg(test)]
+mod tests;

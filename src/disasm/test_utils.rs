@@ -6,8 +6,9 @@ use super::{
         analysis,
         control_flow::FunctionView,
         model::{
-            ControlFlowGraphComplete, DataFlowComplete, FunctionCallAnalysisComplete,
-            HasControlFlowGraphResult, ImageScannerComplete, Model, ModelState, SsaComplete,
+            ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
+            FunctionCallAnalysisComplete, HasControlFlowGraphResult, ImageScannerComplete, Model,
+            ModelState, SsaComplete,
         },
         FunctionId,
     },
@@ -79,6 +80,14 @@ impl TestContextBuilder<FunctionCallAnalysisComplete> for FunctionCallAnalysisCo
     fn test_context(asm: &str) -> Result<TestContext<FunctionCallAnalysisComplete>, Error> {
         let binary = parser::compile(asm);
         let model = analysis::binary_to_function_calls(binary)?;
+        Ok(TestContext { model })
+    }
+}
+
+impl TestContextBuilder<FoldedSsaComplete> for FoldedSsaComplete {
+    fn test_context(asm: &str) -> Result<TestContext<FoldedSsaComplete>, Error> {
+        let binary = parser::compile(asm);
+        let model = analysis::binary_to_folded_ssa(binary)?;
         Ok(TestContext { model })
     }
 }

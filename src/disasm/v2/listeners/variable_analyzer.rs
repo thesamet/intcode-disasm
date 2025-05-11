@@ -2,9 +2,9 @@ use std::hash::Hash;
 
 use crate::disasm::v3::define_id_type;
 
-mod disjoint_set;
+// mod disjoint_set;
 
-define_id_type!(ClusterId);
+// define_id_type!(ClusterId);
 
 /*
 /// A Variable cluster represents different versions of the same variable across a program
