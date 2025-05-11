@@ -1,7 +1,10 @@
+use std::fmt::Display;
+
 use castaway::{cast, match_type};
 use colored::Colorize;
 use itertools::Itertools;
 
+use crate::derive_display;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, HasFunctionCallAnalysisResult};
 use crate::disasm::v3::ssa::converter::PhiFunction;
@@ -113,6 +116,15 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
     }
 }
 
+impl<A> Display for InstructionNode<A>
+where
+    A: 'static + ContextualPrettyPrint,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.pretty_print())
+    }
+}
+
 impl ContextualPrettyPrint for PhiFunction {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let inputs_str = self
@@ -134,20 +146,22 @@ impl ContextualPrettyPrint for PhiFunction {
                     "{}{}: {}",
                     source_id_str,
                     call_marker_str,
-                    format_versioned_reference(*addressable, ctx)
+                    addressable.pretty_print_with_context(ctx)
                 )
             })
             .join(", ");
 
         format!(
             "{} {} {}({})",
-            format_versioned_reference(self.result, ctx),
+            self.result.pretty_print_with_context(ctx),
             "=".color(ctx.colors().op_color),
             "φ".color(ctx.colors().function),
             inputs_str
         )
     }
 }
+
+derive_display!(PhiFunction);
 
 fn unary_op_precedence(_op: &UnaryOperator) -> u8 {
     6 // Unary operators typically have high precedence
@@ -178,6 +192,15 @@ where
     }
 }
 
+impl<S> Display for Model<S>
+where
+    S: ModelState + HasSsaResult + HasControlFlowGraphResult + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.pretty_print())
+    }
+}
+
 fn format_signature<S: ModelState + 'static>(
     function: &FunctionView<S>,
     ctx: &FormattingContext,
@@ -204,7 +227,7 @@ fn format_signature<S: ModelState + 'static>(
                 .parameter_entry_vars
                 .values()
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
-                .map(|v| format_versioned_reference(*v, ctx))
+                .map(|v| v.pretty_print_with_context(ctx))
                 .join(&", ".color(ctx.colors().low_prio).to_string()),
             ") -> ?".color(ctx.colors().low_prio)
         )
@@ -220,7 +243,7 @@ fn format_signature<S: ModelState + 'static>(
 impl<A: ContextualPrettyPrint + 'static> ContextualPrettyPrint for Expression<A> {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
-            Expression::Constant(value) => format_constant(*value, ctx),
+            Expression::Constant(value) => value.pretty_print_with_context(ctx),
             Expression::Addressable(addr) => addr.pretty_print_with_context(ctx),
             Expression::Binary { op, lhs, rhs } => {
                 let op_str = op.to_string().color(ctx.colors().op_color).to_string();
@@ -275,13 +298,12 @@ impl<A: ContextualPrettyPrint + 'static> ContextualPrettyPrint for Expression<A>
     }
 }
 
-// --- Memory Reference Formatting ---
+impl<A: ContextualPrettyPrint + 'static> Display for Expression<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.pretty_print())
+    }
+}
 
-// --- Phi Functions ---
-
-// --- Instructions ---
-
-// --- Block Level Formatting ---
 fn right_instructions<'a, S: ModelState + 'static>(
     block: &BlockView<'a, S>,
 ) -> &'a Vec<InstructionNode<SsaMemoryReference>>
@@ -368,16 +390,27 @@ where
     }
 }
 
+impl<'a, S> Display for BlockView<'a, S>
+where
+    S: ModelState + HasSsaResult + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.pretty_print())
+    }
+}
+
 impl ContextualPrettyPrint for SsaMemoryReference {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
-            SsaMemoryReference::Versioned(a) => format_versioned_reference(*a, ctx),
+            SsaMemoryReference::Versioned(a) => a.pretty_print_with_context(ctx),
             SsaMemoryReference::Deref(expr) => {
                 format!("*({})", expr.pretty_print_with_context(ctx))
             }
         }
     }
 }
+
+derive_display!(SsaMemoryReference);
 
 impl ContextualPrettyPrint for MemoryReference {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
@@ -405,6 +438,8 @@ impl ContextualPrettyPrint for MemoryReference {
         }
     }
 }
+
+derive_display!(MemoryReference);
 
 impl<'a, S> ContextualPrettyPrint for FunctionView<'a, S>
 where
@@ -466,6 +501,15 @@ where
     }
 }
 
+impl<'a, S> Display for FunctionView<'a, S>
+where
+    S: ModelState + HasSsaResult + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.pretty_print())
+    }
+}
+
 fn format_callers_comment<S: ModelState + 'static>(
     model: &Model<S>,
     function_id: FunctionId,
@@ -497,25 +541,25 @@ where
     "".to_string()
 }
 
-fn format_constant(value: i128, ctx: &FormattingContext) -> String {
-    value
-        .to_string()
-        .color(ctx.colors().const_color)
-        .to_string()
+impl ContextualPrettyPrint for i128 {
+    fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
+        self.to_string().color(ctx.colors().const_color).to_string()
+    }
 }
 
-pub fn format_versioned_reference(
-    reference: VersionedMemoryReference,
-    ctx: &FormattingContext,
-) -> String {
-    // Add the version
-    let mem_ref = reference.to_memory_reference();
-    format!(
-        "{}_{}",
-        mem_ref.pretty_print_with_context(ctx),
-        reference.version.to_string().color(ctx.colors().type_color)
-    )
+impl ContextualPrettyPrint for VersionedMemoryReference {
+    fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
+        // Add the version
+        let mem_ref = self.to_memory_reference();
+        format!(
+            "{}_{}",
+            mem_ref.pretty_print_with_context(ctx),
+            self.version.to_string().color(ctx.colors().type_color)
+        )
+    }
 }
+
+derive_display!(VersionedMemoryReference);
 
 // --- Public API ---
 

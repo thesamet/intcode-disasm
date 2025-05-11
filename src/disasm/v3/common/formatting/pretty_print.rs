@@ -125,3 +125,21 @@ pub trait ContextualPrettyPrint {
         self.pretty_print_with_config(&PrettyPrintConfig::default())
     }
 }
+
+#[macro_export]
+macro_rules! derive_display {
+    ($t:ident { $($param:ty),* }) => {
+        impl <$($param),*> std::fmt::Display for $t<$($param),*> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.pretty_print())
+            }
+        }
+    };
+    ($t:ty) => {
+        impl std::fmt::Display for $t {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.pretty_print())
+            }
+        }
+    };
+}

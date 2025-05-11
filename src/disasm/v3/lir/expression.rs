@@ -1,7 +1,7 @@
 // Use LIR MemoryReference
 use std::fmt::Display;
 
-use crate::{disasm::v3::common::formatting::ContextualPrettyPrint, lir_expr, match_expr};
+use crate::{lir_expr, match_expr};
 
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -218,12 +218,6 @@ impl<A> Expression<A> {
             }
         );
         None
-    }
-}
-
-impl<A: 'static + ContextualPrettyPrint> Display for Expression<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.pretty_print())
     }
 }
 

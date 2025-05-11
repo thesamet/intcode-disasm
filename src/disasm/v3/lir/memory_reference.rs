@@ -1,9 +1,7 @@
-use std::fmt::Display;
-
 use castaway::LifetimeFree;
 
 use super::expression::Expression; // Use LIR Expression
-use crate::disasm::v3::{common::formatting::ContextualPrettyPrint, id_types::PointerId};
+use crate::disasm::v3::id_types::PointerId;
 // Keep Display if needed for MemoryReference
 
 /// Represents a reference to a memory location that can be read from or written to.
@@ -26,12 +24,6 @@ unsafe impl LifetimeFree for MemoryReference {}
 impl<'a> From<&'a MemoryReference> for MemoryReference {
     fn from(value: &'a MemoryReference) -> Self {
         value.clone()
-    }
-}
-
-impl Display for MemoryReference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.pretty_print())
     }
 }
 
