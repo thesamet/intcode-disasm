@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
-use log::{info, trace};
+use log::info;
 
 use crate::disasm::{
     v3::{

@@ -217,11 +217,11 @@ impl<A> Expression<A> {
                 return arg.simplify().map(|arg| lir_expr!(not {arg}));
             }
         );
-        return None;
+        None
     }
 }
 
-impl<A: 'static> Display for Expression<A> {
+impl<A: 'static + ContextualPrettyPrint> Display for Expression<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.pretty_print())
     }

@@ -114,9 +114,14 @@ impl DataFlowAnalyzer {
                 .collect::<HashSet<_>>(); // Added type annotation for collect
 
             debug!(
-                "Block {:?}: GEN={:?}, USE={:?}, FuncIn={:?}", // Use block_id.0 for Debug
+                "Block {:?}: GEN=[{}], USE={:?}, FuncIn={:?}", // Use block_id.0 for Debug
                 block_id,
-                block_flow.gen.keys().collect::<Vec<_>>(),
+                block_flow
+                    .gen
+                    .keys()
+                    .map(|k| k.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 block_flow.use_before_def,
                 block_flow.function_returns_in // Added FuncIn to debug
             );
@@ -300,7 +305,7 @@ impl DataFlowAnalyzer {
                         block_id,
                         new_live_out
                             .iter()
-                            .map(|(k, v)| format!("{}->{:?}", k.to_string(), v))
+                            .map(|(k, v)| format!("{k}->{v:?}"))
                             .join(", ")
                     );
                     block_flow.live_out = new_live_out;
@@ -344,7 +349,7 @@ impl DataFlowAnalyzer {
                         block_id,
                         current_live_in
                             .iter()
-                            .map(|(k, v)| format!("{}->{:?}", k.to_string(), v))
+                            .map(|(k, v)| format!("{k}->{v:?}"))
                             .join(", ")
                     );
                     block_flow.live_in = current_live_in;

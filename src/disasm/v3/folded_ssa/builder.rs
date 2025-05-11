@@ -3,10 +3,9 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use super::result::{FoldedSsaBlock, FoldedSsaResult};
-use crate::disasm::v3::common::formatting::{FormattingContext, PrettyPrintConfig};
-use crate::disasm::v3::common::{fixed_point, fixed_point_mut};
+use crate::disasm::v3::common::fixed_point_mut;
 use crate::disasm::v3::control_flow::FunctionView;
-use crate::disasm::v3::lir::{Expression, Instruction, UnaryOperator}; // Assuming InstructionNode is needed for transformation logic
+use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNode is needed for transformation logic
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
@@ -78,7 +77,7 @@ impl FoldedSsaBuilder {
                 for instruction in block.instructions.iter_mut() {
                     *instruction = instruction.map_expr(|e| {
                         if instruction.id == InstructionId::new(386) {
-                            println!("Before: {:?}", e);
+                            println!("Before: {e:?}");
                         }
 
                         match e.simplify() {

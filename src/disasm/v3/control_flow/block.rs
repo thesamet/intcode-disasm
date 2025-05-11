@@ -1,4 +1,3 @@
-use petgraph::visit::IntoNeighbors;
 
 // Use v3 types
 use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types here
@@ -10,7 +9,6 @@ use crate::disasm::v3::lir::{
 };
 use crate::disasm::v3::model::{Model, ModelState};
 
-use super::FunctionView;
 // use crate::disasm::v3::native::NativeInstruction; // Removed - unresolved
 
 /// A block in the control flow graph

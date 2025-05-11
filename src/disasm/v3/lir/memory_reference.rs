@@ -3,11 +3,7 @@ use std::fmt::Display;
 use castaway::LifetimeFree;
 
 use super::expression::Expression; // Use LIR Expression
-use crate::disasm::v3::{
-    common::formatting::{FormattingContext, PrettyPrintConfig},
-    id_types::PointerId,
-    pretty_print::format_memory_reference,
-};
+use crate::disasm::v3::{common::formatting::ContextualPrettyPrint, id_types::PointerId};
 // Keep Display if needed for MemoryReference
 
 /// Represents a reference to a memory location that can be read from or written to.
@@ -35,10 +31,7 @@ impl<'a> From<&'a MemoryReference> for MemoryReference {
 
 impl Display for MemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format_memory_reference(
-            self,
-            &FormattingContext::new(&PrettyPrintConfig::default()),
-        ))
+        f.write_str(&self.pretty_print())
     }
 }
 

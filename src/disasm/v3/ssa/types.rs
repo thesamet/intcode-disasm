@@ -78,12 +78,12 @@ use castaway::LifetimeFree;
 use either::Either;
 
 use crate::disasm::v2::instructions::InstructionNode;
-use crate::disasm::v3::common::formatting::{FormattingContext, PrettyPrintConfig};
+use crate::disasm::v3::common::formatting::ContextualPrettyPrint;
 use crate::disasm::v3::control_flow::{NextKind, PredecessorKind};
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::lir::{Expression, MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::add_block_view_when;
-use crate::disasm::v3::{pretty_print, FunctionId, PointerId};
+use crate::disasm::v3::{FunctionId, PointerId};
 
 use super::converter::{PhiFunction, VersionRegistry};
 
@@ -286,10 +286,7 @@ impl SsaMemoryReference {
 
 impl Display for SsaMemoryReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&pretty_print::format_ssa_memory_reference(
-            self,
-            &FormattingContext::new(&PrettyPrintConfig::default()),
-        ))
+        f.write_str(&self.pretty_print())
     }
 }
 

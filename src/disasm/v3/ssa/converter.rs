@@ -26,7 +26,6 @@ impl SsaConverter {
 use colored::{Color, Colorize};
 use either::Either;
 use itertools::Itertools;
-use log::trace;
 use petgraph::algo::dominators::simple_fast;
 use petgraph::visit::IntoNeighbors;
 use std::convert::From;
@@ -275,7 +274,6 @@ impl<'a> SSAConversionState<'a> {
     }
 
     fn place_phi_functions(&mut self) -> HashMap<BlockId, Vec<PhiFunction>> {
-        let function_id = self.function.function_id();
         let dominators = simple_fast(&self.function, self.function.entry_block());
         let mut phi_placements: HashMap<BlockId, Vec<PhiFunction>> = HashMap::new();
 

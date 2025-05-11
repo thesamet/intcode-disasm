@@ -260,7 +260,7 @@ impl<A> InstructionNode<A> {
                 id: self.id,
                 kind: Instruction::Call {
                     addr: map(addr),
-                    args: args.iter().map(|e| map(e)).collect(),
+                    args: args.iter().map(&mut map).collect(),
                     return_to: *return_to,
                 },
             },
