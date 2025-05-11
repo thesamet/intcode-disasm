@@ -480,19 +480,20 @@ fn test_creates_phi_on_same_block_loop() {
                 loop:
                 'c [R-2] = 'b [R-2] + -1
                 output(10)
-                if [R-2] goto @loop
+                if 'd [R-2] goto @loop
                 halt
             "#,
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
     assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
+    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 2));
+    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 3));
+    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-2, 3));
 }
 
 #[test]
-fn test_creates_phi_on_multi_block_looop() {
+fn test_creates_phi_on_multi_block_loop() {
     let ctx = SsaComplete::test_context(
         r#"
                 R += 5
@@ -503,15 +504,16 @@ fn test_creates_phi_on_multi_block_looop() {
                 if [R-1] goto @merge
                 output(10)
                 merge:
-                if [R-2] goto @loop
+                if 'd [R-2] goto @loop
                 halt
             "#,
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
     assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
+    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 2));
+    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 3));
+    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-2, 3));
 }
 
 #[test]

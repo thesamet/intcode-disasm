@@ -284,15 +284,20 @@ impl<'a> SSAConversionState<'a> {
                 dominates.entry(dominator).or_default().insert(block_id);
             }
         }
-        for (block_id, block_view) in self.function.blocks() {
-            let dom_set = &dominates[&block_id];
-            for dom in dominates.get(&block_id).unwrap() {
-                for n in self.function.neighbors(*dom) {
-                    if !dom_set.contains(&n) {
-                        dom_frontier.entry(block_id).or_default().insert(n);
+        for (block_id, _) in self.function.blocks() {
+            // n is in DF(block_id) if block_id dominates d but block_id does not
+            // strictly dominate n
+            if let Some(dom_set) = dominates.get(&block_id) {
+                for d in dom_set {
+                    for n in self.function.neighbors(*d) {
+                        if !dom_set.contains(&n) || (block_id == n) {
+                            dom_frontier.entry(block_id).or_default().insert(n);
+                        }
                     }
                 }
             }
+        }
+        for (block_id, block_view) in self.function.blocks() {
             let block_data_flow = self.function.block(&block_id).data_flow();
             for var in block_data_flow.gen.keys() {
                 let Ok(kind) = VersionableMemoryKind::try_from(var) else {
