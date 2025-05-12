@@ -8,9 +8,13 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+use dsl::FullExpr;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, parse_quote, Data, DataEnum, DeriveInput, Fields, Type, Variant};
+use syn::{
+    parse::{ParseBuffer, ParseStream},
+    parse_macro_input, parse_quote, Data, DataEnum, DeriveInput, Fields, Type, Variant,
+};
 
 /// Stores information about a state in the model.
 struct StateInfo {
@@ -431,7 +435,6 @@ pub fn build_expr(input: TokenStream) -> TokenStream {
 
 #[proc_macro]
 pub fn build_expr(input: TokenStream) -> TokenStream {
-    parse_macro_input!(input as dsl::VersionedRelativeMemory)
-        .to_expr_tokens()
-        .into()
+    let input = parse_macro_input!(input as FullExpr);
+    input.0.into()
 }

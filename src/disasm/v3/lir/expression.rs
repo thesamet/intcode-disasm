@@ -221,6 +221,12 @@ impl<A> Expression<A> {
     }
 }
 
+impl<A> From<A> for Expression<A> {
+    fn from(value: A) -> Self {
+        Expression::Addressable(value)
+    }
+}
+
 /// Represents binary operations that can be performed on two operands.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum BinaryOperator {
