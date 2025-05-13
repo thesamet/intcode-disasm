@@ -6,15 +6,6 @@ use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 // Assuming these provide the correct base paths
 use quote::quote; // Required for path generation in stubs
 
-/// Represents an atomic part of a pattern, which can be a literal, a variable, or a wildcard.
-#[derive(Debug, Clone)]
-pub enum PatternAtom {
-    Wildcard(Token![_]), // Represents '_'
-    Expression(Ident),   // Represents $e:expr, or just $e (expr is the default)
-    Addressable(Ident),  // Represents $a:addr,  binds as a memory reference
-    Literal(LitInt),     // Represents $a:const binds as a constant literal.
-}
-
 // Helper module for parsing tokens until a specific delimiter
 mod limited_scope_parser {
     use super::*;

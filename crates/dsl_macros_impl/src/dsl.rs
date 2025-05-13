@@ -85,11 +85,62 @@ impl VersionedElement {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum PatternMatchingAtom {
+    Wildcard(),         // Represents '_'
+    Expression(Ident),  // Represents $e:expr, or just $e (expr is the default)
+    Addressable(Ident), // Represents $a:addr,  binds as a memory reference
+    Literal(Ident),     // Represents $a:const binds as a constant literal.
+}
+
 enum ParsedAtom {
     MemoryRef(TokenStream2),
     SubExpression(TokenStream2),
     Constant(TokenStream2),
     ExternalVar(Ident), // NEW: For #var
+    PatternMatchingAtom(PatternMatchingAtom),
+}
+
+fn parse_pattern_matching_atom(input: ParseStream) -> Result<PatternMatchingAtom> {
+    if input.peek(Ident) {
+        let ident: Ident = input.parse()?;
+        if ident == "_" {
+            return Ok(PatternMatchingAtom::Wildcard());
+        }
+        Ok(PatternMatchingAtom::Expression(ident))
+    } else if input.peek(Token![$]) {
+        let _dollar_token: Token![$] = input.parse()?; // Consume '$'
+        let var_ident: Ident = input.parse()?; // Parse the identifier (e.g., 'e', 'a')
+
+        // Check for optional type specifier (:expr, :addr, :const)
+        if input.peek(Token![:]) {
+            let _colon_token: Token![:] = input.parse()?; // Consume ':'
+            let type_specifier: Ident = input.parse()?; // Parse the type specifier (e.g., 'expr', 'addr', 'const')
+
+            if type_specifier == "expr" {
+                Ok(PatternMatchingAtom::Expression(var_ident))
+            } else if type_specifier == "addr" {
+                Ok(PatternMatchingAtom::Addressable(var_ident))
+            } else if type_specifier == "const" {
+                // Note: PatternMatchingAtom::Literal is defined as Literal(LitInt),
+                // but the syntax $a:const implies binding the identifier 'a'.
+                // Based on the prompt and other variants, we assume the intent
+                // is to store the identifier. This might require adjusting
+                // PatternMatchingAtom::Literal's type elsewhere if Literal(LitInt)
+                // was strictly intended for direct literal values.
+                Ok(PatternMatchingAtom::Literal(var_ident))
+            } else {
+                Err(input.error(format!("Unknown pattern matching atom type specifier: `{}`. Expected `expr`, `addr`, or `const`", type_specifier)))
+            }
+        } else {
+            // No type specifier, default is :expr
+            Ok(PatternMatchingAtom::Expression(var_ident))
+        }
+    } else {
+        Err(input.error(
+            "Expected #var, assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
+        ))
+    }
 }
 
 fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
@@ -105,12 +156,15 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
     } else if input.peek(token::Paren) {
         let content;
         syn::parenthesized!(content in input);
-        let sub_expr_tokens = parse_addition_subtraction(&content)?; // Recursively parse, returns Expression
+        let sub_expr_tokens = parse_expr(&content)?; // Recursively parse, returns Expression
         Ok(ParsedAtom::SubExpression(sub_expr_tokens))
     } else if input.peek(LitInt) {
         // Constant Literal
         let lit: LitInt = input.parse()?;
         Ok(ParsedAtom::Constant(quote! { #lit }))
+    } else if input.peek(Token![$]) {
+        let pma = parse_pattern_matching_atom(input)?;
+        Ok(ParsedAtom::PatternMatchingAtom(pma))
     } else {
         Err(input.error(
             "Expected #var, assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
@@ -139,10 +193,10 @@ fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
             // If 'ident' is already an Expression, this will directly interpolate it.
             Ok(quote! { #ident })
         }
+        ParsedAtom::PatternMatchingAtom(pattern_matching_atom) => todo!(),
     }
 }
 
-// --- NEW: Parser for Unary Operations ---
 // Handles expressions like -term, !term
 fn parse_unary(input: ParseStream) -> Result<TokenStream2> {
     let cp = lir_path();
@@ -198,6 +252,10 @@ fn parse_addition_subtraction(input: ParseStream) -> Result<TokenStream2> {
     Ok(lhs)
 }
 
+fn parse_expr(input: ParseStream) -> Result<TokenStream2> {
+    parse_addition_subtraction(input)
+}
+
 // --- MODIFIED: parse_multiplication ---
 // Now calls parse_unary instead of parse_atom for its operands
 fn parse_multiplication(input: ParseStream) -> Result<TokenStream2> {
@@ -215,13 +273,11 @@ fn parse_multiplication(input: ParseStream) -> Result<TokenStream2> {
     Ok(lhs)
 }
 
-// --- Full Expression Parser (for build_expr!) ---
-
-pub struct FullExprParse(pub TokenStream2); // Renamed from FullExpr to avoid conflict if used elsewhere
+pub struct FullExprParse(pub TokenStream2);
 
 impl Parse for FullExprParse {
     fn parse(input: ParseStream) -> Result<Self> {
-        let result = parse_addition_subtraction(input)?;
+        let result = parse_expr(input)?;
         if !input.is_empty() {
             return Err(input.error("Unexpected tokens after expression"));
         }
@@ -236,7 +292,7 @@ fn parse_ssa_memory_reference(input: ParseStream) -> Result<TokenStream2> {
         let _star: Token![*] = input.parse()?;
         let content;
         syn::parenthesized!(content in input);
-        let inner_expr_tokens = parse_addition_subtraction(&content)?;
+        let inner_expr_tokens = parse_expr(&content)?;
         Ok(quote! {
             #ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
         })
@@ -304,7 +360,7 @@ impl Parse for DslInstructionParse {
             let keyword_ident: Ident = input.fork().parse()?;
             if keyword_ident == "output" {
                 let _keyword: Ident = input.parse()?;
-                let expr_tokens = parse_addition_subtraction(input)?;
+                let expr_tokens = parse_expr(input)?;
                 if !input.is_empty() {
                     return Err(input.error("Unexpected tokens after output expression"));
                 }
@@ -317,7 +373,7 @@ impl Parse for DslInstructionParse {
         let lhs_tokens = parse_ssa_memory_reference(input)?;
         if input.peek(Token![=]) {
             let _eq_token: Token![=] = input.parse()?;
-            let rhs_tokens = parse_addition_subtraction(input)?;
+            let rhs_tokens = parse_expr(input)?;
             if !input.is_empty() {
                 return Err(input.error("Unexpected tokens after assignment expression"));
             }
