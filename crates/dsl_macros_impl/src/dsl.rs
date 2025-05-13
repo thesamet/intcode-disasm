@@ -48,10 +48,10 @@ pub fn ssa_path() -> TokenStream2 {
 
 #[derive(Debug, Clone)]
 pub struct VersionedElement {
-    sign: i128,
-    offset: LitInt,
-    version: LitInt,
-    is_relative: bool,
+    pub sign: i128,
+    pub offset: LitInt,
+    pub version: LitInt,
+    pub is_relative: bool,
 }
 
 impl Parse for VersionedElement {

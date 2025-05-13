@@ -56,7 +56,7 @@ mod limited_scope_parser {
         }
         Ok(TokenStream2::from_iter(tokens))
     }
-}
+} // Closing brace for mod limited_scope_parser was missing in diff, ensuring it's here.
 
 // Wrapper struct to enable parsing a TokenStream2 into a PatternExpression
 // using the generic parsing infrastructure from dsl.rs.
@@ -202,5 +202,224 @@ impl MatchDslInput {
             }
         };
         expanded.into() // Convert TokenStream2 back to proc_macro::TokenStream
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Import items from parent module (match_dsl_parser)
+    use crate::dsl::{
+        PatternBindType, PatternBindVariable, PatternExpression, PatternSsaMemoryReference,
+        VersionedElement,
+    }; // Import AST components from dsl
+    use crate::dsl::{PatternBinaryOperator, PatternUnaryOperator}; // DSL specific operators
+    use proc_macro2::Span;
+    use syn::{parse_quote, LitInt};
+
+    // Helper to create a simple block for test bodies
+    fn test_body() -> Block {
+        parse_quote!({
+            // Test body
+        })
+    }
+
+    #[test]
+    fn test_parse_match_arm_simple_pattern() {
+        let input_str = "_ => { }";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse simple arm: {:?}", result.err());
+        let arm = result.unwrap();
+        assert!(matches!(arm.pattern, PatternExpression::Wildcard));
+        assert!(arm.guard.is_none());
+    }
+
+    #[test]
+    fn test_parse_match_arm_constant_pattern() {
+        let input_str = "123 => { }";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse constant pattern arm: {:?}", result.err());
+        let arm = result.unwrap();
+        match arm.pattern {
+            PatternExpression::Constant(lit) => {
+                assert_eq!(lit.base10_digits(), "123");
+            }
+            _ => panic!("Expected PatternExpression::Constant, got {:?}", arm.pattern),
+        }
+        assert!(arm.guard.is_none());
+    }
+
+    #[test]
+    fn test_parse_match_arm_variable_binding() {
+        let input_str = "$x:expr => { }";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse variable binding arm: {:?}", result.err());
+        let arm = result.unwrap();
+        match arm.pattern {
+            PatternExpression::Bind(PatternBindVariable { ident, bind_type }) => {
+                assert_eq!(ident.to_string(), "x");
+                assert!(matches!(bind_type, PatternBindType::Expression));
+            }
+            _ => panic!("Expected PatternExpression::Bind, got {:?}", arm.pattern),
+        }
+    }
+
+    #[test]
+    fn test_parse_match_arm_with_guard() {
+        let input_str = "$y:const if y > 10 => { }";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse arm with guard: {:?}", result.err());
+        let arm = result.unwrap();
+        match arm.pattern {
+            PatternExpression::Bind(PatternBindVariable { ident, bind_type }) => {
+                assert_eq!(ident.to_string(), "y");
+                assert!(matches!(bind_type, PatternBindType::Constant));
+            }
+            _ => panic!("Expected PatternExpression::Bind, got {:?}", arm.pattern),
+        }
+        assert!(arm.guard.is_some());
+        // Further checks on guard expression possible if needed
+    }
+
+    #[test]
+    fn test_parse_match_arm_complex_pattern() {
+        let input_str = "([R+1].5 * $val) + _ => { }";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse complex pattern arm: {:?}", result.err());
+        // Detailed AST structure check would be verbose.
+        // Relying on the dsl.rs pattern parser tests for full structure validation.
+        // Here, we just ensure it parses without error.
+    }
+
+    #[test]
+    fn test_parse_match_dsl_input_single_arm() {
+        let input_str = "my_expr, _ => { }";
+        let result = syn::parse_str::<MatchDslInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse DSL input with single arm: {:?}", result.err());
+        let dsl_input = result.unwrap();
+        assert_eq!(dsl_input.arms.len(), 1);
+        // Target expression check:
+        // let target_expr_str = quote!(#dsl_input.target_expr).to_string();
+        // assert_eq!(target_expr_str, "my_expr"); // This depends on how Expr stringifies
+    }
+
+    #[test]
+    fn test_parse_match_dsl_input_multiple_arms() {
+        let input_str = "another_expr, $a:addr => { }, [R-10].0 => { }, _ if guard_cond => { }";
+        let result = syn::parse_str::<MatchDslInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse DSL input with multiple arms: {:?}", result.err());
+        let dsl_input = result.unwrap();
+        assert_eq!(dsl_input.arms.len(), 3);
+    }
+    
+    #[test]
+    fn test_parse_match_dsl_input_trailing_comma_arm() {
+        let input_str = "my_expr, _ => { },";
+        let result = syn::parse_str::<MatchDslInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse DSL input with trailing comma: {:?}", result.err());
+        let dsl_input = result.unwrap();
+        assert_eq!(dsl_input.arms.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_match_dsl_input_no_arms() {
+        let input_str = "my_expr,";
+        let result = syn::parse_str::<MatchDslInput>(input_str);
+        assert!(result.is_err(), "Expected error for no arms, but parsed successfully.");
+    }
+    
+    #[test]
+    fn test_parse_match_dsl_input_missing_comma_after_target() {
+        let input_str = "my_expr _ => { }"; // Missing comma
+        let result = syn::parse_str::<MatchDslInput>(input_str);
+        assert!(result.is_err(), "Expected error for missing comma after target.");
+    }
+
+    #[test]
+    fn test_parse_match_dsl_input_missing_comma_between_arms() {
+        let input_str = "my_expr, _ => { } $x => { }"; // Missing comma
+        let result = syn::parse_str::<MatchDslInput>(input_str);
+        assert!(result.is_err(), "Expected error for missing comma between arms.");
+    }
+
+    #[test]
+    fn test_parse_match_arm_versioned_element_pattern() {
+        let input_str = "[R+123].45 => {}";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse VersionedElement pattern: {:?}", result.err());
+        let arm = result.unwrap();
+        match arm.pattern {
+            PatternExpression::Addressable(PatternSsaMemoryReference::Versioned(ve)) => {
+                // Can check ve.sign, ve.offset, ve.version if LitInt had an easy way to get value
+                // For now, this structural match is good.
+                 assert_eq!(ve.offset.base10_digits(), "123");
+                 assert_eq!(ve.version.base10_digits(), "45");
+                 assert!(ve.is_relative);
+
+            }
+            _ => panic!("Expected Versioned Element, got {:?}", arm.pattern),
+        }
+    }
+
+    #[test]
+    fn test_parse_match_arm_deref_pattern() {
+        let input_str = "*($x:expr) => {}";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse Deref pattern: {:?}", result.err());
+        let arm = result.unwrap();
+         match arm.pattern {
+            PatternExpression::Addressable(PatternSsaMemoryReference::Deref(boxed_inner)) => {
+                match *boxed_inner {
+                    PatternExpression::Bind(PatternBindVariable { ident, bind_type }) => {
+                        assert_eq!(ident.to_string(), "x");
+                        assert!(matches!(bind_type, PatternBindType::Expression));
+                    }
+                    _ => panic!("Expected inner Bind, got {:?}", *boxed_inner),
+                }
+            }
+            _ => panic!("Expected Deref pattern, got {:?}", arm.pattern),
+        }
+    }
+     #[test]
+    fn test_parse_match_arm_binary_op_pattern() {
+        let input_str = "$lhs + 100 => {}";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse binary op pattern: {:?}", result.err());
+        let arm = result.unwrap();
+        match arm.pattern {
+            PatternExpression::Binary { op, lhs, rhs } => {
+                assert_eq!(op, PatternBinaryOperator::Add);
+                match *lhs {
+                     PatternExpression::Bind(PatternBindVariable { ident, .. }) => {
+                        assert_eq!(ident.to_string(), "lhs");
+                    }
+                    _ => panic!("Expected LHS to be Bind, got {:?}", lhs),
+                }
+                match *rhs {
+                    PatternExpression::Constant(lit) => assert_eq!(lit.base10_digits(), "100"),
+                    _ => panic!("Expected RHS to be Constant, got {:?}", rhs),
+                }
+            }
+            _ => panic!("Expected Binary op pattern, got {:?}", arm.pattern),
+        }
+    }
+
+    #[test]
+    fn test_parse_match_arm_unary_op_pattern() {
+        let input_str = "-$val => {}";
+        let result = syn::parse_str::<MatchArmInput>(input_str);
+        assert!(result.is_ok(), "Failed to parse unary op pattern: {:?}", result.err());
+        let arm = result.unwrap();
+        match arm.pattern {
+            PatternExpression::Unary { op, arg } => {
+                assert_eq!(op, PatternUnaryOperator::Minus);
+                 match *arg {
+                     PatternExpression::Bind(PatternBindVariable { ident, .. }) => {
+                        assert_eq!(ident.to_string(), "val");
+                    }
+                    _ => panic!("Expected arg to be Bind, got {:?}", arg),
+                }
+            }
+            _ => panic!("Expected Unary op pattern, got {:?}", arm.pattern),
+        }
     }
 }
