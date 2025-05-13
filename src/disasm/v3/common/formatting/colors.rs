@@ -1,4 +1,17 @@
-use colored::{Color, Colorize};
+use colored::Color;
+
+// Added Enum
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticColor {
+    Keyword,
+    Variable,
+    Operator,
+    Type,
+    Constant,
+    LowPrio, // For punctuation, comments, etc.
+    Function,
+    // Add more semantic types if needed
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Colors {
@@ -39,32 +52,17 @@ impl Colors {
         }
     }
 
-    pub fn open_paren(&self) -> String {
-        "(".color(self.low_prio).to_string()
-    }
-    pub fn close_paren(&self) -> String {
-        ")".color(self.low_prio).to_string()
-    }
-    pub fn open_brace(&self) -> String {
-        "{".color(self.low_prio).to_string()
-    }
-    pub fn close_brace(&self) -> String {
-        "}".color(self.low_prio).to_string()
-    }
-    pub fn colon(&self) -> String {
-        ":".color(self.low_prio).to_string()
-    }
-    pub fn comma(&self) -> String {
-        ", ".color(self.low_prio).to_string()
-    }
-    pub fn eq(&self) -> String {
-        "=".color(self.op_color).to_string()
-    }
-    pub fn semicolon(&self) -> String {
-        ";".color(self.low_prio).to_string()
-    }
-    pub fn ampersand(&self) -> String {
-        "&".color(self.op_color).to_string()
+    // Helper to get the actual color based on semantic type
+    pub fn get_color(&self, semantic: SemanticColor) -> Color {
+        match semantic {
+            SemanticColor::Keyword => self.keyword,
+            SemanticColor::Variable => self.variable,
+            SemanticColor::Operator => self.op_color,
+            SemanticColor::Type => self.type_color,
+            SemanticColor::Constant => self.const_color,
+            SemanticColor::LowPrio => self.low_prio,
+            SemanticColor::Function => self.function,
+        }
     }
 
     pub fn default_color_theme() -> Colors {
@@ -112,7 +110,7 @@ impl Colors {
             }, // bg_color - dark gray
         )
     }
-    
+
     pub fn high_contrast_theme() -> Colors {
         // High contrast theme for better readability
         Colors::new(
@@ -126,7 +124,7 @@ impl Colors {
             Color::Black,        // bg_color
         )
     }
-    
+
     pub fn light_theme() -> Colors {
         // Light theme for those who prefer light backgrounds
         Colors::new(
@@ -140,7 +138,7 @@ impl Colors {
             Color::White,       // bg_color
         )
     }
-    
+
     pub fn monochrome_theme() -> Colors {
         // Simple monochrome theme for terminals with limited color support
         Colors::new(
@@ -154,7 +152,7 @@ impl Colors {
             Color::Black, // bg_color
         )
     }
-    
+
     pub fn blue_accent_theme() -> Colors {
         // A dark theme with blue accents
         Colors::new(
@@ -200,7 +198,7 @@ impl Colors {
             }, // bg_color - dark blue-gray
         )
     }
-    
+
     pub fn tokyo_night_theme() -> Colors {
         // Tokyo Night theme - dark blue background with vibrant accents
         Colors::new(
@@ -246,7 +244,7 @@ impl Colors {
             }, // bg_color - dark blue-black (official Tokyo Night color)
         )
     }
-    
+
     pub fn tokyo_night_storm_theme() -> Colors {
         // Tokyo Night Storm theme - slightly lighter variation of Tokyo Night
         Colors::new(
@@ -292,7 +290,7 @@ impl Colors {
             }, // bg_color - medium blue-black (official Tokyo Night Storm color)
         )
     }
-    
+
     pub fn catppuccin_mocha_theme() -> Colors {
         // Catppuccin Mocha theme - dark and cozy
         Colors::new(
@@ -338,7 +336,7 @@ impl Colors {
             }, // bg_color - dark blue (official Catppuccin Mocha color)
         )
     }
-    
+
     pub fn catppuccin_macchiato_theme() -> Colors {
         // Catppuccin Macchiato theme - medium dark and cozy
         Colors::new(
@@ -384,7 +382,7 @@ impl Colors {
             }, // bg_color - medium dark blue (official Catppuccin Macchiato color)
         )
     }
-    
+
     pub fn catppuccin_frappe_theme() -> Colors {
         // Catppuccin Frappe theme - balanced and cozy
         Colors::new(
@@ -430,7 +428,7 @@ impl Colors {
             }, // bg_color - medium blue (official Catppuccin Frappe color)
         )
     }
-    
+
     pub fn catppuccin_latte_theme() -> Colors {
         // Catppuccin Latte theme - light and cozy
         Colors::new(
@@ -476,7 +474,7 @@ impl Colors {
             }, // bg_color - white (official Catppuccin Latte color)
         )
     }
-    
+
     pub fn dracula_theme() -> Colors {
         // Dracula theme - dark theme with vibrant colors
         Colors::new(
@@ -522,7 +520,7 @@ impl Colors {
             }, // bg_color - dark background
         )
     }
-    
+
     pub fn nord_theme() -> Colors {
         // Nord theme - arctic, north-bluish color palette
         Colors::new(
@@ -568,7 +566,7 @@ impl Colors {
             }, // bg_color - polar night 1
         )
     }
-    
+
     pub fn solarized_dark_theme() -> Colors {
         // Solarized Dark theme - careful color selection based on fixed color wheel relationships
         Colors::new(
@@ -614,7 +612,7 @@ impl Colors {
             }, // bg_color - base03
         )
     }
-    
+
     pub fn onedark_theme() -> Colors {
         // One Dark Pro - Atom's iconic One Dark theme
         Colors::new(
@@ -660,7 +658,7 @@ impl Colors {
             }, // bg_color - background
         )
     }
-    
+
     pub fn github_dark_theme() -> Colors {
         // GitHub Dark theme - official GitHub dark theme colors
         Colors::new(
@@ -722,69 +720,69 @@ pub struct ThemeInfo {
 
 impl Colors {
     pub const THEMES: &'static [ThemeInfo] = &[
-        ThemeInfo { 
-            name: "default", 
-            description: "Default dark theme with pink accent colors" 
+        ThemeInfo {
+            name: "default",
+            description: "Default dark theme with pink accent colors",
         },
-        ThemeInfo { 
-            name: "high-contrast", 
-            description: "High contrast theme for better readability" 
+        ThemeInfo {
+            name: "high-contrast",
+            description: "High contrast theme for better readability",
         },
-        ThemeInfo { 
-            name: "light", 
-            description: "Light theme for those who prefer light backgrounds" 
+        ThemeInfo {
+            name: "light",
+            description: "Light theme for those who prefer light backgrounds",
         },
-        ThemeInfo { 
-            name: "monochrome", 
-            description: "Simple monochrome theme for limited color support" 
+        ThemeInfo {
+            name: "monochrome",
+            description: "Simple monochrome theme for limited color support",
         },
-        ThemeInfo { 
-            name: "blue", 
-            description: "A dark theme with blue accents" 
+        ThemeInfo {
+            name: "blue",
+            description: "A dark theme with blue accents",
         },
-        ThemeInfo { 
-            name: "tokyo-night", 
-            description: "Tokyo Night theme - dark blue background with vibrant accents" 
+        ThemeInfo {
+            name: "tokyo-night",
+            description: "Tokyo Night theme - dark blue background with vibrant accents",
         },
-        ThemeInfo { 
-            name: "tokyo-night-storm", 
-            description: "Tokyo Night Storm theme - slightly lighter variation of Tokyo Night" 
+        ThemeInfo {
+            name: "tokyo-night-storm",
+            description: "Tokyo Night Storm theme - slightly lighter variation of Tokyo Night",
         },
-        ThemeInfo { 
-            name: "catppuccin-mocha", 
-            description: "Catppuccin Mocha theme - dark and cozy" 
+        ThemeInfo {
+            name: "catppuccin-mocha",
+            description: "Catppuccin Mocha theme - dark and cozy",
         },
-        ThemeInfo { 
-            name: "catppuccin-macchiato", 
-            description: "Catppuccin Macchiato theme - medium dark and cozy" 
+        ThemeInfo {
+            name: "catppuccin-macchiato",
+            description: "Catppuccin Macchiato theme - medium dark and cozy",
         },
-        ThemeInfo { 
-            name: "catppuccin-frappe", 
-            description: "Catppuccin Frappe theme - balanced and cozy" 
+        ThemeInfo {
+            name: "catppuccin-frappe",
+            description: "Catppuccin Frappe theme - balanced and cozy",
         },
-        ThemeInfo { 
-            name: "catppuccin-latte", 
-            description: "Catppuccin Latte theme - light and cozy" 
+        ThemeInfo {
+            name: "catppuccin-latte",
+            description: "Catppuccin Latte theme - light and cozy",
         },
-        ThemeInfo { 
-            name: "dracula", 
-            description: "Dracula theme - dark theme with vibrant colors" 
+        ThemeInfo {
+            name: "dracula",
+            description: "Dracula theme - dark theme with vibrant colors",
         },
-        ThemeInfo { 
-            name: "nord", 
-            description: "Nord theme - arctic, north-bluish color palette" 
+        ThemeInfo {
+            name: "nord",
+            description: "Nord theme - arctic, north-bluish color palette",
         },
-        ThemeInfo { 
-            name: "solarized-dark", 
-            description: "Solarized Dark - precision colors with careful color selection" 
+        ThemeInfo {
+            name: "solarized-dark",
+            description: "Solarized Dark - precision colors with careful color selection",
         },
-        ThemeInfo { 
-            name: "onedark", 
-            description: "One Dark Pro - Atom's iconic One Dark theme" 
+        ThemeInfo {
+            name: "onedark",
+            description: "One Dark Pro - Atom's iconic One Dark theme",
         },
-        ThemeInfo { 
-            name: "github-dark", 
-            description: "GitHub Dark - official GitHub dark theme colors" 
+        ThemeInfo {
+            name: "github-dark",
+            description: "GitHub Dark - official GitHub dark theme colors",
         },
     ];
 
@@ -795,7 +793,10 @@ impl Colors {
 
     // Get theme descriptions for display
     pub fn get_theme_descriptions() -> Vec<(&'static str, &'static str)> {
-        Self::THEMES.iter().map(|info| (info.name, info.description)).collect()
+        Self::THEMES
+            .iter()
+            .map(|info| (info.name, info.description))
+            .collect()
     }
 
     // Convenience method to get a color theme by name

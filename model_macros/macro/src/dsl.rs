@@ -3,24 +3,15 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, token, Expr, Ident, LitInt, Result, Token,
+    token, Ident, LitInt, Result, Token,
 }; // Use TokenStream2 from proc-macro2 for quote
 
-// Helper to get the crate path for generated code, assuming your types are in the root
-// or a known module of the calling crate. For robust macros, this path might need
-// to be configurable or discovered.
 fn lir_path() -> TokenStream2 {
-    // If your types (Expression, VersionedVar, RelativeVar, R) are in the crate root:
     quote!(crate::disasm::v3::lir)
-    // If they are in a module `my_types`: quote!(crate::my_types)
-    // For a generic macro, you might use ::my_crate_name if types are re-exported.
 }
 
 fn ssa_path() -> TokenStream2 {
-    // If your types (Expression, VersionedVar, RelativeVar, R) are in the crate root:
     quote!(crate::disasm::v3::ssa)
-    // If they are in a module `my_types`: quote!(crate::my_types)
-    // For a generic macro, you might use ::my_crate_name if types are re-exported.
 }
 
 // --- Parser for individual versioned elements: `[base_expr]_version_num` ---
@@ -105,57 +96,90 @@ impl VersionedElement {
     }
 }
 
-// Parses additive/subtractive expressions: term (`+` term | `-` term)*
+enum ParsedAtom {
+    MemoryRef(TokenStream2),     // Contains tokens for SsaMemoryReference
+    SubExpression(TokenStream2), // Contains tokens for a parsed Expression
+    Constant(TokenStream2),      // Contains tokens for a literal (e.g., LitInt)
+}
+
+fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
+    if input.peek(token::Bracket) {
+        // Versioned Memory Reference: [...]
+        let version_atom: VersionedElement = input.parse()?;
+        let ssa_ref_tokens = version_atom.to_expr_tokens();
+        Ok(ParsedAtom::MemoryRef(ssa_ref_tokens))
+    } else if input.peek(token::Paren) {
+        // Parenthesized Sub-Expression: (...)
+        let content;
+        syn::parenthesized!(content in input);
+        let sub_expr_tokens = parse_addition_subtraction(&content)?; // Recursively parse, returns Expression
+        Ok(ParsedAtom::SubExpression(sub_expr_tokens))
+    } else if input.peek(LitInt) {
+        // Constant Literal
+        let lit: LitInt = input.parse()?;
+        Ok(ParsedAtom::Constant(quote! { #lit }))
+    } else {
+        Err(input.error(
+            "Expected a versioned element like '[expr].version', a constant, or a parenthesized expression",
+        ))
+    }
+}
+
+// --- NEW: Public atom parser, calls internal and wraps into Expression ---
+fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
+    let cp = lir_path();
+    match parse_atom_internal(input)? {
+        ParsedAtom::MemoryRef(tokens) => Ok(quote! { #cp::Expression::Addressable(#tokens) }),
+        ParsedAtom::SubExpression(tokens) => Ok(tokens),
+        ParsedAtom::Constant(tokens) => Ok(quote! { #cp::Expression::Constant(#tokens) }),
+    }
+}
+
 fn parse_addition_subtraction(input: ParseStream) -> Result<TokenStream2> {
-    let mut lhs = parse_multiplication(input)?; // Higher precedence
+    let mut lhs = parse_multiplication(input)?; // Higher precedence, calls new parse_atom -> returns Expression
     let cp = lir_path();
 
     while input.peek(Token![+]) || input.peek(Token![-]) {
         if input.peek(Token![+]) {
             let _op: Token![+] = input.parse()?;
-            let rhs = parse_multiplication(input)?;
+            let rhs = parse_multiplication(input)?; // Returns Expression
+                                                    // Construct Binary, operands are already Expressions, remove .into()
             lhs = quote! { #cp::Expression::Binary {
-            op: #cp::BinaryOperator::Add,
-            lhs: Box::new(#lhs.into()),
-            rhs: Box::new(#rhs.into()) }};
+                op: #cp::BinaryOperator::Add,
+                lhs: Box::new(#lhs),
+                rhs: Box::new(#rhs)
+            }};
         } else if input.peek(Token![-]) {
             let _op: Token![-] = input.parse()?;
-            let rhs = parse_multiplication(input)?;
-            lhs = quote! { #cp::Expression::Binary { op: #cp::BinaryOperator::Sub, lhs: Box::new(#lhs.into()), rhs: Box::new(#rhs.into()) }};
+            let rhs = parse_multiplication(input)?; // Returns Expression
+                                                    // Construct Binary, operands are already Expressions, remove .into()
+            lhs = quote! { #cp::Expression::Binary {
+                op: #cp::BinaryOperator::Sub,
+                lhs: Box::new(#lhs),
+                rhs: Box::new(#rhs)
+            }};
         }
     }
     Ok(lhs)
 }
 
 fn parse_multiplication(input: ParseStream) -> Result<TokenStream2> {
-    let mut lhs = parse_atom(input)?;
+    let mut lhs = parse_atom(input)?; // Calls NEW parse_atom -> returns Expression
     let cp = lir_path();
 
     while input.peek(Token![*]) {
         let _op: Token![*] = input.parse()?;
         let rhs = parse_atom(input)?;
-        lhs = quote! { #cp::Expression::Binary { op: #cp::BinaryOperator::Mul, lhs: Box::new(#lhs.into()), rhs: Box::new(#rhs.into()) }};
+        lhs = quote! { #cp::Expression::Binary {
+            op: #cp::BinaryOperator::Mul,
+            lhs: Box::new(#lhs),
+            rhs: Box::new(#rhs)
+        }};
     }
     Ok(lhs)
 }
 
-fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
-    if input.peek(token::Bracket) {
-        // Check for `[`
-        let version_atom: VersionedElement = input.parse()?;
-        Ok(version_atom.to_expr_tokens())
-    } else if input.peek(token::Paren) {
-        // Check for `(`
-        let content;
-        syn::parenthesized!(content in input);
-        parse_addition_subtraction(&content) // Recursively parse expression inside parens
-    } else {
-        Err(input.error(
-            "Expected a versioned element like '[expr]_version' or a parenthesized expression",
-        ))
-    }
-}
-
+// --- Full Expression Parser ---
 pub struct FullExpr(pub TokenStream2);
 
 impl Parse for FullExpr {
@@ -167,20 +191,3 @@ impl Parse for FullExpr {
         Ok(FullExpr(result))
     }
 }
-
-// --- Recursive Descent Parser for Expressions ---
-
-// Top-level parser for the macro input
-/*
-struct FullExpressionParser;
-
-impl Parse for FullExpressionParser {
-    fn parse(input: ParseStream) -> Result<FullExpressionParser> {
-        let result = parse_addition_subtraction(input)?;
-        if !input.is_empty() {
-            return Err(input.error("Unexpected tokens after expression"));
-        }
-        Ok(result)
-    }
-}
-*/

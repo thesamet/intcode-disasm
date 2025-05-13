@@ -236,7 +236,7 @@ fn get_theme_config(theme: &str, show_types: bool) -> PrettyPrintConfig {
     let colors = Colors::get_theme_by_name(theme).unwrap();
 
     PrettyPrintConfig {
-        colors,
+        colors: Some(colors),
         show_types,
         show_vars: false,
         indent_width: 4,

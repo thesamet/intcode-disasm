@@ -9,10 +9,7 @@ use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, HasFunctionCallAnalysisResult};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
-    common::formatting::{
-        colors::Colors,
-        pretty_print::{FormattingContext, PrettyPrintConfig},
-    },
+    common::formatting::pretty_print::{FormattingContext, PrettyPrintConfig},
     control_flow::{BlockView, FunctionView},
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
@@ -27,7 +24,7 @@ use crate::disasm::v2::{
 };
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
-use super::common::formatting::ContextualPrettyPrint;
+use super::common::formatting::{ContextualPrettyPrint, SemanticColor};
 
 // --- Operator Precedence Helpers ---
 fn binary_op_precedence(op: &BinaryOperator) -> u8 {
@@ -52,14 +49,17 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
             } => {
                 let debug_marker = match target_debug_marker {
                     Some(marker) => {
-                        format!("'{} ", marker.to_string().color(ctx.colors().low_prio))
+                        format!(
+                            "'{} ",
+                            marker.to_string().color(ctx.colors().unwrap().low_prio)
+                        )
                     }
                     None => "".to_string(),
                 };
                 format!(
                     "{debug_marker}{} {} {}",
                     target.pretty_print_with_context(ctx),
-                    "=".color(ctx.colors().op_color),
+                    "=".color(ctx.colors().unwrap().op_color),
                     src.pretty_print_with_context(ctx)
                 )
             }
@@ -70,19 +70,23 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
             } => {
                 format!(
                     "{} {} {} {} {} {}",
-                    "if".color(ctx.colors().keyword),
+                    "if".color(ctx.colors().unwrap().keyword),
                     cond.pretty_print_with_context(ctx),
-                    "goto".color(ctx.colors().keyword),
-                    then_addr.to_string().color(ctx.colors().const_color),
-                    "else goto".color(ctx.colors().keyword),
-                    else_addr.to_string().color(ctx.colors().const_color)
+                    "goto".color(ctx.colors().unwrap().keyword),
+                    then_addr
+                        .to_string()
+                        .color(ctx.colors().unwrap().const_color),
+                    "else goto".color(ctx.colors().unwrap().keyword),
+                    else_addr
+                        .to_string()
+                        .color(ctx.colors().unwrap().const_color)
                 )
             }
             Instruction::Goto(addr) => {
                 format!(
                     "{} {}",
-                    "goto".color(ctx.colors().keyword),
-                    addr.to_string().color(ctx.colors().const_color)
+                    "goto".color(ctx.colors().unwrap().keyword),
+                    addr.to_string().color(ctx.colors().unwrap().const_color)
                 )
             }
             Instruction::Call {
@@ -92,26 +96,28 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
             } => {
                 format!(
                     "{} {}{}{}{} {} {}",
-                    "call".color(ctx.colors().keyword),
+                    "call".color(ctx.colors().unwrap().keyword),
                     addr.pretty_print_with_context(ctx),
-                    "(".color(ctx.colors().low_prio),
+                    "(".color(ctx.colors().unwrap().low_prio),
                     args.iter()
                         .map(|e| e.pretty_print_with_context(ctx))
-                        .join(&", ".color(ctx.colors().low_prio).to_string()),
-                    ")".color(ctx.colors().low_prio),
-                    "return to".color(ctx.colors().keyword),
-                    return_to.to_string().color(ctx.colors().const_color)
+                        .join(&", ".color(ctx.colors().unwrap().low_prio).to_string()),
+                    ")".color(ctx.colors().unwrap().low_prio),
+                    "return to".color(ctx.colors().unwrap().keyword),
+                    return_to
+                        .to_string()
+                        .color(ctx.colors().unwrap().const_color)
                 )
             }
             Instruction::Output(expr) => {
                 format!(
                     "{} {}",
-                    "output".color(ctx.colors().keyword),
+                    "output".color(ctx.colors().unwrap().keyword),
                     expr.pretty_print_with_context(ctx)
                 )
             }
-            Instruction::Return => "return".color(ctx.colors().keyword).to_string(),
-            Instruction::Halt => "halt".color(ctx.colors().keyword).to_string(),
+            Instruction::Return => "return".color(ctx.colors().unwrap().keyword).to_string(),
+            Instruction::Halt => "halt".color(ctx.colors().unwrap().keyword).to_string(),
         }
     }
 }
@@ -135,10 +141,10 @@ impl ContextualPrettyPrint for PhiFunction {
                 let source_id_str = pred_kind
                     .source_block_id()
                     .to_string()
-                    .color(ctx.colors().const_color);
+                    .color(ctx.colors().unwrap().const_color);
                 let call_marker_str =
                     if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
-                        "(call)".color(ctx.colors().low_prio).to_string()
+                        "(call)".color(ctx.colors().unwrap().low_prio).to_string()
                     } else {
                         String::new()
                     };
@@ -154,8 +160,8 @@ impl ContextualPrettyPrint for PhiFunction {
         format!(
             "{} {} {}({})",
             self.result.pretty_print_with_context(ctx),
-            "=".color(ctx.colors().op_color),
-            "φ".color(ctx.colors().function),
+            "=".color(ctx.colors().unwrap().op_color),
+            "φ".color(ctx.colors().unwrap().function),
             inputs_str
         )
     }
@@ -168,6 +174,15 @@ fn unary_op_precedence(_op: &UnaryOperator) -> u8 {
 }
 
 // --- Expression Formatting ---
+fn line(s: &str, ctx: &FormattingContext) -> String {
+    let clear_to_end_code = "\x1b[K";
+    match ctx.colors() {
+        Some(colors) => format!("{}{}", s, clear_to_end_code)
+            .on_color(colors.bg_color)
+            .to_string(),
+        None => s.to_string(),
+    }
+}
 
 impl<S: ModelState + 'static> ContextualPrettyPrint for Model<S>
 where
@@ -182,7 +197,7 @@ where
         // Create a blank line with background color for separating functions
         let blank_line = clear_to_end_code
             .to_string()
-            .on_color(ctx.colors().bg_color)
+            .on_color(ctx.colors().unwrap().bg_color)
             .to_string();
 
         functions_sorted
@@ -218,7 +233,7 @@ fn format_signature<S: ModelState + 'static>(
     {
         format!(
             "{}{}{}",
-            "(".color(ctx.colors().low_prio),
+            "(".color(ctx.colors().unwrap().low_prio),
             model
                 .function_call_analysis_result()
                 .functions
@@ -228,8 +243,8 @@ fn format_signature<S: ModelState + 'static>(
                 .values()
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
                 .map(|v| v.pretty_print_with_context(ctx))
-                .join(&", ".color(ctx.colors().low_prio).to_string()),
-            ") -> ?".color(ctx.colors().low_prio)
+                .join(&", ".color(ctx.colors().unwrap().low_prio).to_string()),
+            ") -> ?".color(ctx.colors().unwrap().low_prio)
         )
     }
 
@@ -246,52 +261,67 @@ impl<A: ContextualPrettyPrint + 'static> ContextualPrettyPrint for Expression<A>
             Expression::Constant(value) => value.pretty_print_with_context(ctx),
             Expression::Addressable(addr) => addr.pretty_print_with_context(ctx),
             Expression::Binary { op, lhs, rhs } => {
-                let op_str = op.to_string().color(ctx.colors().op_color).to_string();
+                let op_display_str = match op {
+                    BinaryOperator::Add => " + ",
+                    BinaryOperator::Sub => " - ",
+                    BinaryOperator::Mul => " * ",
+                    BinaryOperator::Equals => " == ",
+                    BinaryOperator::NotEquals => " != ",
+                    BinaryOperator::LessThan => " < ",
+                    BinaryOperator::LessThanOrEqual => " <= ",
+                    BinaryOperator::GreaterThan => " > ",
+                    BinaryOperator::GreaterThanOrEqual => " >= ",
+                };
+                let op_str_formatted = ctx.format(op_display_str, SemanticColor::Operator);
                 let op_prec = binary_op_precedence(op);
 
                 let lhs_str = lhs.pretty_print_with_context(&ctx.with_precedence(op_prec));
                 let rhs_str = rhs.pretty_print_with_context(&ctx.with_precedence(op_prec));
 
-                let result = format!("{lhs_str} {op_str} {rhs_str}");
+                let result = format!("{lhs_str}{op_str_formatted}{rhs_str}");
 
                 if let Some(parent_prec) = ctx.parent_precedence {
                     if parent_prec > op_prec {
                         // Add parentheses if needed based on precedence
                         return format!(
                             "{}{}{}",
-                            "(".color(ctx.colors().low_prio),
+                            ctx.fmt_open_paren(),
                             result,
-                            ")".color(ctx.colors().low_prio)
+                            ctx.fmt_close_paren()
                         );
                     }
                 }
                 result
             }
             Expression::Unary { op, arg } => {
-                let op_str = op.to_string().color(ctx.colors().op_color).to_string();
+                let op_str_formatted = ctx.format(op.to_string(), SemanticColor::Operator);
                 let op_prec = unary_op_precedence(op);
                 let arg_str = arg.pretty_print_with_context(&ctx.with_precedence(op_prec));
 
-                let result = format!("{op_str}{arg_str}");
+                let result = format!("{op_str_formatted}{arg_str}");
 
                 if let Some(parent_prec) = ctx.parent_precedence {
                     if parent_prec > op_prec {
                         return format!(
                             "{}{}{}",
-                            "(".color(ctx.colors().low_prio),
+                            ctx.fmt_open_paren(),
                             result,
-                            ")".color(ctx.colors().low_prio)
+                            ctx.fmt_close_paren()
                         );
                     }
                 }
                 result
             }
-            Expression::Input() => "input()".color(ctx.colors().keyword).to_string(),
+            Expression::Input() => format!("{}", ctx.format("input()", SemanticColor::Keyword)),
             Expression::DebugMarker(marker, expr) => {
                 format!(
-                    "'{} ({})",
-                    marker.to_string().color(ctx.colors().low_prio),
-                    expr.pretty_print_with_context(ctx)
+                    "{}{}{}{}{}{}",
+                    ctx.format('\'', SemanticColor::LowPrio),
+                    ctx.format(*marker, SemanticColor::LowPrio), // Color the marker itself low_prio as per original
+                    ctx.format(" ", SemanticColor::LowPrio),     // Explicit space, also low_prio
+                    ctx.fmt_open_paren(),                        // Helper for '('
+                    expr.pretty_print_with_context(&ctx.indented()), // Use indented context for the expression
+                    ctx.fmt_close_paren()                            // Helper for ')'
                 )
             }
         }
@@ -329,42 +359,32 @@ where
         let mut lines = Vec::new();
         let indent_str = ctx.indent_str();
         let inner_indent_str = " ".repeat(ctx.config.indent_width());
-        let clear_to_end_code = "\x1b[K";
 
         // Block header with line number
         let block_header = format!(
-            "{}{}:{}",
+            "{}{}:",
             indent_str,
-            self.block_id()
-                .index()
-                .to_string()
-                .color(ctx.colors().low_prio),
-            clear_to_end_code
-        )
-        .on_color(ctx.colors().bg_color)
-        .to_string();
-        lines.push(block_header);
+            self.block_id().index().to_string().color(
+                ctx.colors()
+                    .map(|c| c.get_color(SemanticColor::LowPrio))
+                    .unwrap_or(colored::Color::White)
+            )
+        );
+        lines.push(line(&block_header, ctx));
 
         // Phi functions
-        if !ctx.show_vars() {
+        if ctx.show_vars() {
+            // Instructions
+        } else {
             for phi in &self.ssa().phi_functions {
-                let phi_line = format!(
-                    "{}{}{}{}",
-                    indent_str,
-                    inner_indent_str,
-                    phi.pretty_print_with_context(ctx),
-                    clear_to_end_code
-                )
-                .on_color(ctx.colors().bg_color)
-                .to_string();
-                lines.push(phi_line);
+                let phi_line = format!("{}{}", indent_str, inner_indent_str,)
+                    + &phi.pretty_print_with_context(ctx);
+                lines.push(line(&phi_line, ctx));
             }
 
             if !self.ssa().phi_functions.is_empty() {
-                let blank_line = format!("{indent_str}{inner_indent_str}{clear_to_end_code}")
-                    .on_color(ctx.colors().bg_color)
-                    .to_string();
-                lines.push(blank_line);
+                let blank_line = format!("{}{}", indent_str, inner_indent_str);
+                lines.push(line(&blank_line, ctx));
             }
         }
 
@@ -373,16 +393,17 @@ where
             let instr_str = instr.pretty_print_with_context(ctx);
             if !instr_str.is_empty() {
                 let instruction_line = format!(
-                    "{}{}{:<5}        {}{}",
+                    "{}{}{:<5}        {}",
                     indent_str,
                     inner_indent_str,
-                    instr.id.to_string().color(ctx.colors().low_prio),
+                    instr.id.to_string().color(
+                        ctx.colors()
+                            .map(|c| c.get_color(SemanticColor::LowPrio))
+                            .unwrap_or(colored::Color::White)
+                    ),
                     instr_str,
-                    clear_to_end_code
-                )
-                .on_color(ctx.colors().bg_color)
-                .to_string();
-                lines.push(instruction_line);
+                );
+                lines.push(line(&instruction_line, ctx));
             }
         }
 
@@ -404,7 +425,13 @@ impl ContextualPrettyPrint for SsaMemoryReference {
         match self {
             SsaMemoryReference::Versioned(a) => a.pretty_print_with_context(ctx),
             SsaMemoryReference::Deref(expr) => {
-                format!("*({})", expr.pretty_print_with_context(ctx))
+                format!(
+                    "{}{}{}{}",
+                    ctx.fmt_star(),
+                    ctx.fmt_open_paren(),
+                    expr.pretty_print_with_context(ctx),
+                    ctx.fmt_close_paren()
+                )
             }
         }
     }
@@ -416,25 +443,52 @@ impl ContextualPrettyPrint for MemoryReference {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
             MemoryReference::StackRelative(offset) => {
-                if *offset == 0 {
-                    "[R]".color(ctx.colors().variable).to_string()
-                } else if *offset > -1 {
-                    format!("[R+{offset}]")
-                        .color(ctx.colors().variable)
-                        .to_string()
+                // Use context helpers for '[' and ']' and ctx.format for 'R' and offset
+                let base = ctx.format("R", SemanticColor::Variable);
+                let offset_str = if *offset == 0 {
+                    // No offset needed for [R]
+                    String::new()
+                } else if *offset > 0 {
+                    // Format positive offset like +offset
+                    format!("{}{}", ctx.format("+", SemanticColor::Operator), offset)
                 } else {
-                    format!("[R{offset}]")
-                        .color(ctx.colors().variable)
-                        .to_string()
-                }
+                    // Format negative offset directly like -offset
+                    format!("{}", offset)
+                };
+
+                format!(
+                    "{}{}{}{}",
+                    ctx.fmt_open_bracket(),  // Helper for '['
+                    base,                    // Formatted 'R'
+                    offset_str,              // Formatted offset string
+                    ctx.fmt_close_bracket()  // Helper for ']'
+                )
             }
             MemoryReference::Global(addr) => {
-                format!("[{addr}]").color(ctx.colors().variable).to_string()
+                // Use context helpers for '[' and ']' and ctx.format for the address
+                format!(
+                    "{}{}{}",
+                    ctx.fmt_open_bracket(), // Helper for '['
+                    ctx.format(addr, SemanticColor::Variable), // Format the address
+                    ctx.fmt_close_bracket()  // Helper for ']'
+                )
             }
             MemoryReference::Pointer(addr) => {
-                format!("p{addr}").color(ctx.colors().variable).to_string()
+                // Use ctx.format for 'p' and the address
+                format!(
+                    "{}{}",
+                    ctx.format("p", SemanticColor::Variable), // Format 'p'
+                    ctx.format(addr, SemanticColor::Variable)  // Format the address
+                )
             }
-            MemoryReference::Deref(expr) => format!("*{}", expr.pretty_print_with_context(ctx)),
+            MemoryReference::Deref(expr) => {
+                // Use ctx.format for '*'
+                format!(
+                    "{}{}",
+                    ctx.fmt_star(),                      // Helper for '*'
+                    expr.pretty_print_with_context(ctx)  // Recursively print the inner expression
+                )
+            }
         }
     }
 }
@@ -449,53 +503,48 @@ where
         let model = self.model;
         let mut lines = Vec::new();
         let indent_str = ctx.indent_str();
-        let clear_to_end_code = "\x1b[K";
 
         let callers_comment = format_callers_comment(model, self.function_id());
 
-        // Format signature
-        let signature = format!(
-            "{}{}{} {{{}",
-            "fn ".color(ctx.colors().keyword),
-            self.function_id().to_string().color(ctx.colors().function),
-            format_signature(self, ctx),
-            clear_to_end_code
+        // Format signature content
+        let signature_content = format!(
+            "{}{}{} {}", // Construct the content of the line *without* clear_to_end_code or outer coloring
+            ctx.format("fn ", SemanticColor::Keyword), // Use ctx.format
+            ctx.format(self.function_id().to_string(), SemanticColor::Function), // Use ctx.format
+            format_signature(self, ctx), // Assuming format_signature handles its own coloring conditionally or returns plain string
+            ctx.fmt_open_brace()         // Use helper for '{'
         );
 
-        // Apply background color to callers_comment lines if not empty
+        // Use the `line` helper for the signature line
+        lines.push(line(&format!("{}{}", indent_str, signature_content), ctx));
+
+        // Use the `line` helper for callers_comment lines
         if !callers_comment.is_empty() {
-            for line in callers_comment.lines() {
-                let comment_line = format!("{indent_str}{line}{clear_to_end_code}")
-                    .on_color(ctx.colors().bg_color)
-                    .to_string();
-                lines.push(comment_line);
+            for comment_text in callers_comment.lines() {
+                let comment_line_content = format!("{}{}", indent_str, comment_text);
+                lines.push(line(&comment_line_content, ctx));
             }
         }
-
-        // Add the signature with background color
-        let sig_line = format!("{indent_str}{signature}")
-            .on_color(ctx.colors().bg_color)
-            .to_string();
-        lines.push(sig_line);
 
         // Format blocks
         let mut blocks_sorted: Vec<_> = self.blocks().map(|(_, b)| b).collect();
         blocks_sorted.sort_by_key(|b| b.block_id());
 
         for block in blocks_sorted {
-            lines.push(block.pretty_print_with_context(&ctx.indented()));
+            // Block pretty-printing is recursive. Split its output into lines
+            // and apply the line formatting to each line.
+            let block_lines = block.pretty_print_with_context(&ctx.indented());
+            lines.extend(block_lines.lines().map(|l| line(l, ctx))); // Apply line formatting to each line
         }
 
-        // Add closing brace
-        let close_line = format!(
-            "{}{}{}",
-            indent_str,
-            "}".color(ctx.colors().low_prio),
-            clear_to_end_code
-        )
-        .on_color(ctx.colors().bg_color)
-        .to_string();
-        lines.push(close_line);
+        // Format closing brace line content
+        let close_line_content = format!(
+            "{}",
+            ctx.fmt_close_brace() // Use helper for '}'
+        );
+
+        // Use the `line` helper for the closing brace line
+        lines.push(line(&format!("{}{}", indent_str, close_line_content), ctx));
 
         lines.join("\n")
     }
@@ -543,7 +592,7 @@ where
 
 impl ContextualPrettyPrint for i128 {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
-        self.to_string().color(ctx.colors().const_color).to_string()
+        ctx.format(self, SemanticColor::Constant).to_string()
     }
 }
 
@@ -554,7 +603,7 @@ impl ContextualPrettyPrint for VersionedMemoryReference {
         format!(
             "{}_{}",
             mem_ref.pretty_print_with_context(ctx),
-            self.version.to_string().color(ctx.colors().type_color)
+            ctx.format(self.version, SemanticColor::Type).to_string()
         )
     }
 }
@@ -577,12 +626,9 @@ pub fn pretty_print_ssa<S: ModelState + 'static>(model: &Model<S>) -> String
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
-    let config = PrettyPrintConfig {
-        colors: Colors::default(),
-        show_types: false,
-        show_vars: false,
-        indent_width: 4,
-    };
+    let config = PrettyPrintConfig::default()
+        .with_show_types(false)
+        .with_show_vars(false);
     pretty_print_ssa_with_config(model, config)
 }
 
@@ -600,12 +646,9 @@ pub fn pretty_print_folded_ssa<S: ModelState + 'static>(model: &Model<S>) -> Str
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
-    let config = PrettyPrintConfig {
-        colors: Colors::default(),
-        show_types: false,
-        show_vars: false,
-        indent_width: 4,
-    };
+    let config = PrettyPrintConfig::default()
+        .with_show_types(false)
+        .with_show_vars(false);
     pretty_print_folded_ssa_with_config(model, config)
 }
 
@@ -613,12 +656,7 @@ pub fn pretty_print_with_types<S: ModelState + 'static>(model: &Model<S>) -> Str
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
-    let config = PrettyPrintConfig {
-        colors: Colors::default(),
-        show_types: true,
-        show_vars: false,
-        indent_width: 4,
-    };
+    let config = PrettyPrintConfig::default().with_show_vars(false);
     pretty_print_ssa_with_config(model, config)
 }
 
