@@ -2,6 +2,7 @@
 //!
 //! This module provides procedural macros for defining compile-time safe models
 mod dsl;
+mod match_dsl_parser; // Our new module for match_dsl
 
 use std::{
     collections::HashMap,
@@ -424,6 +425,12 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
     };
 
     Ok(combined.into())
+}
+
+#[proc_macro]
+pub fn match_dsl(input: TokenStream) -> TokenStream {
+    let parsed_input = parse_macro_input!(input as match_dsl_parser::MatchDslInput);
+    parsed_input.expanded().into()
 }
 
 #[proc_macro]

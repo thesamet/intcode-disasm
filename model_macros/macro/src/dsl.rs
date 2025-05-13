@@ -3,14 +3,14 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, token, Ident, LitInt, Result, Token,
+    token, Ident, LitInt, Result, Token,
 };
 
-fn lir_path() -> TokenStream2 {
+pub fn lir_path() -> TokenStream2 {
     quote!(crate::disasm::v3::lir)
 }
 
-fn ssa_path() -> TokenStream2 {
+pub fn ssa_path() -> TokenStream2 {
     quote!(crate::disasm::v3::ssa)
 }
 
@@ -93,9 +93,10 @@ enum ParsedAtom {
 }
 
 fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
-    if input.peek(Token![#]) { // Check for '#'
+    if input.peek(Token![#]) {
+        // Check for '#'
         let _hash_token: Token![#] = input.parse()?; // Consume '#'
-        let var_ident: Ident = input.parse()?;    // Parse the identifier
+        let var_ident: Ident = input.parse()?; // Parse the identifier
         Ok(ParsedAtom::ExternalVar(var_ident))
     } else if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
         // Delegate to parse_ssa_memory_reference for *(expr) or [...]
@@ -145,7 +146,8 @@ fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
 // Handles expressions like -term, !term
 fn parse_unary(input: ParseStream) -> Result<TokenStream2> {
     let cp = lir_path();
-    if input.peek(Token![-]) { // Check for negation
+    if input.peek(Token![-]) {
+        // Check for negation
         let _op: Token![-] = input.parse()?; // Consume '-'
         let arg = parse_unary(input)?; // Recursively parse the operand (allows --x or -!(y))
         Ok(quote! {
@@ -154,7 +156,8 @@ fn parse_unary(input: ParseStream) -> Result<TokenStream2> {
                 arg: Box::new(#arg)
             }
         })
-    } else if input.peek(Token![!]) { // Check for logical NOT
+    } else if input.peek(Token![!]) {
+        // Check for logical NOT
         let _op: Token![!] = input.parse()?; // Consume '!'
         let arg = parse_unary(input)?; // Recursively parse the operand
         Ok(quote! {
