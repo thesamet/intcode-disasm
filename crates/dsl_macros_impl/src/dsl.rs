@@ -6,6 +6,38 @@ use syn::{
     token, Ident, LitInt, Result, Token,
 };
 
+// Bring in LIR operators for use in Pattern AST
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub enum PatternBinaryOperator {
+    /// Addition operation (+).
+    Add,
+    /// Multiplication operation (*).
+    Mul,
+    /// Subtraction operation (-).
+    Sub,
+    /// Less than comparison (<).
+    LessThan,
+    /// Less than or equal comparison (<=).
+    LessThanOrEqual,
+    /// Greater than comparison (>).
+    GreaterThan,
+    /// Greater than or equal comparison (>=).
+    GreaterThanOrEqual,
+    /// Equality comparison (==).
+    Equals,
+    /// Inequality comparison (!=).
+    NotEquals,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PatternUnaryOperator {
+    /// Logical negation operation (!).
+    Not,
+    /// Arithmetic negation operation (-).
+    Minus,
+}
+
 pub fn lir_path() -> TokenStream2 {
     quote!(crate::disasm::v3::lir)
 }
@@ -14,6 +46,7 @@ pub fn ssa_path() -> TokenStream2 {
     quote!(crate::disasm::v3::ssa)
 }
 
+#[derive(Debug, Clone)]
 pub struct VersionedElement {
     sign: i128,
     offset: LitInt,
@@ -92,6 +125,54 @@ pub enum PatternMatchingAtom {
     Addressable(Ident), // Represents $a:addr,  binds as a memory reference
     Literal(Ident),     // Represents $a:const binds as a constant literal.
 }
+
+// AST for Pattern Matching
+
+// Represents the type of binding for a pattern variable (e.g., $v:expr, $v:addr, $v:const)
+#[derive(Debug, Clone, Copy)]
+pub enum PatternBindType {
+    Expression,  // Binds as Expression<SsaMemoryReference>
+    Addressable, // Binds as SsaMemoryReference
+    Constant,    // Binds as a literal value (e.g., i128)
+}
+
+// Represents a variable binding in a pattern, e.g., $v:const
+#[derive(Debug, Clone)]
+pub struct PatternBindVariable {
+    pub ident: Ident,
+    pub bind_type: PatternBindType,
+}
+
+// AST node for patterns involving SsaMemoryReference-like structures
+#[derive(Debug, Clone)]
+pub enum PatternSsaMemoryReference {
+    // For patterns like [R-3].3, where the structure is literal.
+    // Reuses VersionedElement as it parses concrete values.
+    Versioned(VersionedElement),
+    // For patterns like *($pattern_expr) or *(ConcretePattern)
+    Deref(Box<PatternExpression>),
+}
+
+// AST for representing a parsed pattern expression
+#[derive(Debug, Clone)]
+pub enum PatternExpression {
+    Wildcard,                               // _
+    Bind(PatternBindVariable),              // $v, $v:const, $v:addr
+    Constant(LitInt),                       // e.g., 123
+    Addressable(PatternSsaMemoryReference), // e.g., [R-3].3, *($pattern)
+    Unary {
+        op: PatternUnaryOperator, // Reusing from crate::disasm::v3::lir
+        arg: Box<PatternExpression>,
+    },
+    Binary {
+        op: PatternBinaryOperator, // Reusing from crate::disasm::v3::lir
+        lhs: Box<PatternExpression>,
+        rhs: Box<PatternExpression>,
+    },
+    // Potentially others like Tuple, Struct, if matching more complex structures
+}
+
+// End of AST for Pattern Matching
 
 enum ParsedAtom {
     MemoryRef(TokenStream2),
