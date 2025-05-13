@@ -189,11 +189,7 @@ pub trait ParseStrategy {
     fn parse_atom(&self, input: ParseStream) -> Result<Self::Output>;
 
     // Constructs a unary expression node
-    fn build_unary(
-        &self,
-        op: Self::UnaryOpType,
-        arg: Self::Output,
-    ) -> Result<Self::Output>;
+    fn build_unary(&self, op: Self::UnaryOpType, arg: Self::Output) -> Result<Self::Output>;
 
     // Constructs a binary expression node
     fn build_binary(
@@ -228,7 +224,11 @@ impl ParseStrategy for LirParseStrategy {
         parse_atom(input)
     }
 
-    fn build_unary(&self, op_variant: Self::UnaryOpType, arg: Self::Output) -> Result<Self::Output> {
+    fn build_unary(
+        &self,
+        op_variant: Self::UnaryOpType,
+        arg: Self::Output,
+    ) -> Result<Self::Output> {
         let cp = self.lir_path_token();
         Ok(quote! {
             #cp::Expression::Unary {
@@ -238,7 +238,12 @@ impl ParseStrategy for LirParseStrategy {
         })
     }
 
-    fn build_binary(&self, op_variant: Self::BinaryOpType, lhs: Self::Output, rhs: Self::Output) -> Result<Self::Output> {
+    fn build_binary(
+        &self,
+        op_variant: Self::BinaryOpType,
+        lhs: Self::Output,
+        rhs: Self::Output,
+    ) -> Result<Self::Output> {
         let cp = self.lir_path_token();
         Ok(quote! { #cp::Expression::Binary {
             op: #op_variant,
@@ -275,53 +280,177 @@ impl ParseStrategy for LirParseStrategy {
 
 // --- End of Generic Parsing Infrastructure ---
 
+// --- Pattern Parsing Specifics ---
+
+// Parses specific SsaMemoryReference-like patterns: [R+X].Y or *(PatternExpression)
+fn parse_pattern_ssa_memory_reference(input: ParseStream) -> Result<PatternSsaMemoryReference> {
+    if input.peek(Token![*]) && input.peek2(token::Paren) {
+        let _star: Token![*] = input.parse()?;
+        let content;
+        syn::parenthesized!(content in input);
+        // Inside the parentheses, we expect another pattern expression.
+        // We use the generic parser with the PatternParseStrategy.
+        let inner_pattern_expr = parse_expr_generic(&content, &PatternParseStrategy)?;
+        Ok(PatternSsaMemoryReference::Deref(Box::new(
+            inner_pattern_expr,
+        )))
+    } else if input.peek(token::Bracket) {
+        // Parses concrete [R+X].Y or [OFFSET].VER
+        let ve: VersionedElement = input.parse()?;
+        Ok(PatternSsaMemoryReference::Versioned(ve))
+    } else {
+        Err(input.error(
+            "Expected pattern for memory location: '[base].version' or '*(pattern_expression)'",
+        ))
+    }
+}
+
+// Parses an \"atom\" for a pattern expression.
+// This includes wildcards, bind variables, literals, memory patterns, and parenthesized patterns.
+fn parse_pattern_atom_internal(input: ParseStream) -> Result<PatternExpression> {
+    let lookahead = input.lookahead1();
+    if lookahead.peek(Token![$]) {
+        // This is $var, $var:type
+        // parse_pattern_matching_atom now directly returns Result<PatternExpression>
+        parse_pattern_matching_atom(input)
+    } else if lookahead.peek(Ident) {
+        // Could be '_' or a named constant (if we decide to support them directly in patterns)
+        // For now, only '_' is a non-$ identifier atom.
+        let ident_fork = input.fork();
+        let ident: Ident = ident_fork.parse()?;
+        if ident == "_" {
+            input.parse::<Ident>()?; // Consume '_'
+            Ok(PatternExpression::Wildcard)
+        } else {
+            // Bare identifiers (other than '_') are not standard pattern atoms unless they are part of a memory reference
+            // or a literal (which is handled by LitInt).
+            // This error might need adjustment if named constants (not LitInt) become part of patterns.
+            Err(lookahead.error()) // More specific error might be needed here or handled by callers
+                                   // Err(input.error("Unexpected identifier in pattern atom. Expected '$var', '_', literal, memory pattern, or parenthesized pattern."))
+        }
+    } else if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
+        // This is for [R+X].Y or *(PatternExpression)
+        let pattern_mem_ref = parse_pattern_ssa_memory_reference(input)?;
+        Ok(PatternExpression::Addressable(pattern_mem_ref))
+    } else if input.peek(token::Paren) {
+        let content;
+        syn::parenthesized!(content in input);
+        // Recursively parse the inner expression as a pattern
+        let strategy = PatternParseStrategy;
+        parse_expr_generic(&content, &strategy)
+    } else if input.peek(LitInt) {
+        let lit: LitInt = input.parse()?;
+        Ok(PatternExpression::Constant(lit))
+    } else {
+        Err(input.error(
+            "Expected a pattern atom: '$var', '_', memory location pattern, (pattern_expression), or constant literal",
+        ))
+    }
+}
+
+pub struct PatternParseStrategy;
+
+impl ParseStrategy for PatternParseStrategy {
+    type Output = PatternExpression;
+    type UnaryOpType = PatternUnaryOperator; // Using the one defined in this file
+    type BinaryOpType = PatternBinaryOperator; // Using the one defined in this file
+
+    fn parse_atom(&self, input: ParseStream) -> Result<Self::Output> {
+        parse_pattern_atom_internal(input)
+    }
+
+    fn build_unary(&self, op: Self::UnaryOpType, arg: Self::Output) -> Result<Self::Output> {
+        Ok(PatternExpression::Unary {
+            op, // op is already PatternUnaryOperator
+            arg: Box::new(arg),
+        })
+    }
+
+    fn build_binary(
+        &self,
+        op: Self::BinaryOpType,
+        lhs: Self::Output,
+        rhs: Self::Output,
+    ) -> Result<Self::Output> {
+        Ok(PatternExpression::Binary {
+            op, // op is already PatternBinaryOperator
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        })
+    }
+
+    fn lir_path_token(&self) -> TokenStream2 {
+        // Not used when constructing PatternExpression AST nodes directly.
+        // Could error out or return an empty quote if called.
+        quote!()
+    }
+
+    fn get_unary_minus_op(&self) -> Self::UnaryOpType {
+        PatternUnaryOperator::Minus
+    }
+    fn get_unary_not_op(&self) -> Self::UnaryOpType {
+        PatternUnaryOperator::Not
+    }
+    fn get_binary_add_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::Add
+    }
+    fn get_binary_sub_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::Sub
+    }
+    fn get_binary_mul_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::Mul
+    }
+    // Note: PatternBinaryOperator has more variants (LessThan, Equals etc.)
+    // If the generic parser needs to support them, corresponding get_binary_xxx_op methods would be needed.
+    // For now, only Add, Sub, Mul are in the generic parsing logic.
+}
+
+// --- End of Pattern Parsing Specifics ---
+
 enum ParsedAtom {
     MemoryRef(TokenStream2),
     SubExpression(TokenStream2),
     Constant(TokenStream2),
     ExternalVar(Ident), // NEW: For #var
-    PatternMatchingAtom(PatternMatchingAtom),
 }
 
-fn parse_pattern_matching_atom(input: ParseStream) -> Result<PatternMatchingAtom> {
-    if input.peek(Ident) {
-        let ident: Ident = input.parse()?;
-        if ident == "_" {
-            return Ok(PatternMatchingAtom::Wildcard());
-        }
-        Ok(PatternMatchingAtom::Expression(ident))
-    } else if input.peek(Token![$]) {
-        let _dollar_token: Token![$] = input.parse()?; // Consume '$'
-        let var_ident: Ident = input.parse()?; // Parse the identifier (e.g., 'e', 'a')
+// Parses a pattern variable binding e.g. $var, $var:expr, $var:addr, $var:const
+// Assumes that `parse_pattern_atom_internal` has already peeked `Token![$]`
+// and this function is called to consume and parse it.
+// Returns `Result<PatternExpression>` directly.
+fn parse_pattern_matching_atom(input: ParseStream) -> Result<PatternExpression> {
+    let _dollar_token: Token![$] = input.parse()?; // Consume '$'
+    let var_ident: Ident = input.parse()?; // Parse the identifier (e.g., 'e', 'a')
 
-        // Check for optional type specifier (:expr, :addr, :const)
-        if input.peek(Token![:]) {
-            let _colon_token: Token![:] = input.parse()?; // Consume ':'
-            let type_specifier: Ident = input.parse()?; // Parse the type specifier (e.g., 'expr', 'addr', 'const')
+    // Check for optional type specifier (:expr, :addr, :const)
+    if input.peek(Token![:]) {
+        let _colon_token: Token![:] = input.parse()?; // Consume ':'
+        let type_specifier: Ident = input.parse()?; // Parse the type specifier (e.g., 'expr', 'addr', 'const')
 
-            if type_specifier == "expr" {
-                Ok(PatternMatchingAtom::Expression(var_ident))
-            } else if type_specifier == "addr" {
-                Ok(PatternMatchingAtom::Addressable(var_ident))
-            } else if type_specifier == "const" {
-                // Note: PatternMatchingAtom::Literal is defined as Literal(LitInt),
-                // but the syntax $a:const implies binding the identifier 'a'.
-                // Based on the prompt and other variants, we assume the intent
-                // is to store the identifier. This might require adjusting
-                // PatternMatchingAtom::Literal's type elsewhere if Literal(LitInt)
-                // was strictly intended for direct literal values.
-                Ok(PatternMatchingAtom::Literal(var_ident))
-            } else {
-                Err(input.error(format!("Unknown pattern matching atom type specifier: `{}`. Expected `expr`, `addr`, or `const`", type_specifier)))
-            }
+        if type_specifier == "expr" {
+            Ok(PatternExpression::Bind(PatternBindVariable {
+                ident: var_ident,
+                bind_type: PatternBindType::Expression,
+            }))
+        } else if type_specifier == "addr" {
+            Ok(PatternExpression::Bind(PatternBindVariable {
+                ident: var_ident,
+                bind_type: PatternBindType::Addressable,
+            }))
+        } else if type_specifier == "const" {
+            Ok(PatternExpression::Bind(PatternBindVariable {
+                ident: var_ident,
+                bind_type: PatternBindType::Constant,
+            }))
         } else {
-            // No type specifier, default is :expr
-            Ok(PatternMatchingAtom::Expression(var_ident))
+            Err(input.error(format!("Unknown pattern matching atom type specifier: `{}`. Expected `expr`, `addr`, or `const`", type_specifier)))
         }
     } else {
-        Err(input.error(
-            "Expected #var, assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
-        ))
+        // No type specifier, default is :expr
+        Ok(PatternExpression::Bind(PatternBindVariable {
+            ident: var_ident,
+            bind_type: PatternBindType::Expression,
+        }))
     }
 }
 
@@ -344,9 +473,6 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
         // Constant Literal
         let lit: LitInt = input.parse()?;
         Ok(ParsedAtom::Constant(quote! { #lit }))
-    } else if input.peek(Token![$]) {
-        let pma = parse_pattern_matching_atom(input)?;
-        Ok(ParsedAtom::PatternMatchingAtom(pma))
     } else {
         Err(input.error(
             "Expected #var, assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
@@ -375,7 +501,6 @@ fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
             // If 'ident' is already an Expression, this will directly interpolate it.
             Ok(quote! { #ident })
         }
-        ParsedAtom::PatternMatchingAtom(pattern_matching_atom) => todo!(),
     }
 }
 
@@ -395,7 +520,10 @@ fn parse_unary_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Re
 }
 
 // Generic Multiplication Parser
-fn parse_multiplication_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+fn parse_multiplication_generic<S: ParseStrategy>(
+    input: ParseStream,
+    strategy: &S,
+) -> Result<S::Output> {
     let mut lhs = parse_unary_generic(input, strategy)?;
     // The check `!(input.peek2(token::Paren) && ...)` used in some designs to disambiguate
     // multiplication from dereference `*(...)` is complex.
@@ -411,7 +539,10 @@ fn parse_multiplication_generic<S: ParseStrategy>(input: ParseStream, strategy: 
 }
 
 // Generic Addition/Subtraction Parser
-fn parse_addition_subtraction_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+fn parse_addition_subtraction_generic<S: ParseStrategy>(
+    input: ParseStream,
+    strategy: &S,
+) -> Result<S::Output> {
     let mut lhs = parse_multiplication_generic(input, strategy)?;
     while input.peek(Token![+]) || input.peek(Token![-]) {
         if input.peek(Token![+]) {
@@ -438,7 +569,6 @@ pub fn parse_lir_expr(input: ParseStream) -> Result<TokenStream2> {
     let strategy = LirParseStrategy;
     parse_expr_generic(input, &strategy)
 }
-
 
 pub struct FullExprParse(pub TokenStream2);
 
