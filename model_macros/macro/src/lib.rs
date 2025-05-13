@@ -8,7 +8,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use dsl::{DslInstruction, FullExpr};
+use dsl::{DslInstructionParse, FullExprParse};
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -428,12 +428,12 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
 
 #[proc_macro]
 pub fn build_expr(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as FullExpr);
+    let input = parse_macro_input!(input as FullExprParse);
     input.0.into()
 }
 
 #[proc_macro]
-pub fn build_instruction(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DslInstruction);
-    input.0.into()
+pub fn build_instruction(input: proc_macro::TokenStream) -> TokenStream {
+    let parsed_instruction_wrapper = parse_macro_input!(input as DslInstructionParse);
+    parsed_instruction_wrapper.to_tokens().into()
 }

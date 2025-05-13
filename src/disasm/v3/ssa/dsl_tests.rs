@@ -3,7 +3,7 @@ mod tests {
 
     use crate::disasm::v3::lir::Expression;
     use crate::disasm::v3::{common::formatting::ContextualPrettyPrint, lir::InstructionNode};
-    use crate::disasm::v3::{FunctionId, InstructionId};
+    
     use model_macros::{build_expr, build_instruction};
 
     use crate::disasm::v3::ssa::SsaMemoryReference;
@@ -128,6 +128,26 @@ mod tests {
         assert_eq!(
             build_instruction! { [R+14].8 = *(*([R+15].0)) }.nocolor(),
             "[R+14]_8 = *(*([R+15]_0))"
+        );
+    }
+
+    #[test]
+    fn test_output_instruction() {
+        assert_eq!(
+            (build_instruction! { output 123 } as InstructionNode<SsaMemoryReference>).nocolor(),
+            "output 123"
+        );
+        assert_eq!(
+            build_instruction! { output [R+1].5 }.nocolor(),
+            "output [R+1]_5"
+        );
+        assert_eq!(
+            build_instruction! { output ([R+2].3 + 45) }.nocolor(),
+            "output [R+2]_3 + 45"
+        );
+        assert_eq!(
+            build_instruction! { output *([R+7].0 - [R-1].2) }.nocolor(),
+            "output *([R+7]_0 - [R-1]_2)"
         );
     }
 }
