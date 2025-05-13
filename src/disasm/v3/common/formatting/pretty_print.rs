@@ -76,16 +76,16 @@ impl PrettyPrintConfig {
 #[derive(Clone, Copy)]
 pub struct FormattedText<'a, T: fmt::Display> {
     text: T,
-    color: Option<colored::Color>,
+    pub color: Option<colored::Color>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a, T: fmt::Display> fmt::Display for FormattedText<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(color) = self.color {
-            f.write_str(&self.text.to_string().color(color))
+            write!(f, "{}", self.text.to_string().color(color))
         } else {
-            f.write_str(&self.text.to_string())
+            write!(f, "{}", self.text)
         }
     }
 }
