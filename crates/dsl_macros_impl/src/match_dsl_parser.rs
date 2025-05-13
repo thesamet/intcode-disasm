@@ -6,6 +6,9 @@ use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 // Assuming these provide the correct base paths
 use quote::quote; // Required for path generation in stubs
 
+// Imports from the dsl module for pattern parsing
+use crate::dsl::{parse_expr_generic, PatternExpression, PatternParseStrategy};
+
 // Helper module for parsing tokens until a specific delimiter
 mod limited_scope_parser {
     use super::*;
@@ -55,13 +58,27 @@ mod limited_scope_parser {
     }
 }
 
-type PatternNode = i128;
+// Wrapper struct to enable parsing a TokenStream2 into a PatternExpression
+// using the generic parsing infrastructure from dsl.rs.
+struct ParsablePatternExpression(PatternExpression);
+
+impl Parse for ParsablePatternExpression {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let strategy = PatternParseStrategy {}; // Use the strategy for parsing patterns
+        let pattern_expr = parse_expr_generic(input, &strategy)?;
+        // Ensure the entire stream was consumed by the pattern parser
+        if !input.is_empty() {
+            return Err(input.error("Unexpected tokens after pattern expression"));
+        }
+        Ok(ParsablePatternExpression(pattern_expr))
+    }
+}
 
 #[derive(Debug)]
 pub struct MatchArmInput {
     // pub pattern_ts: TokenStream2, // The raw TokenStream for the pattern
-    pub pattern: PatternNode, // The parsed pattern AST
-    pub guard: Option<Expr>,  // Optional if condition: if $var > 10
+    pub pattern: PatternExpression, // The parsed pattern AST
+    pub guard: Option<Expr>,        // Optional if condition: if $var > 10
     pub body: Block,
 }
 
@@ -69,8 +86,11 @@ impl Parse for MatchArmInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // 1. Parse the pattern part (everything before `if` or `=>`)
         let pattern_tokens = limited_scope_parser::parse_tokens_until_if_or_fat_arrow(input)?;
-        let pattern: PatternNode = todo!("foo"); // syn::parse2(pattern_tokens)?;
-                                                 // let pattern: PatternNode = parse_pattern_expr.parse2(pattern_tokens)?;
+
+        // Convert the collected pattern tokens into a PatternExpression AST node
+        let parsed_wrapper: ParsablePatternExpression = syn::parse2(pattern_tokens)
+            .map_err(|e| syn::Error::new(e.span(), format!("Failed to parse pattern: {}", e)))?;
+        let pattern: PatternExpression = parsed_wrapper.0; // Extract the PatternExpression
 
         // 2. Check for an optional guard
         let guard: Option<Expr>;
@@ -152,7 +172,8 @@ impl MatchDslInput {
         let mut arm_debug_strings = Vec::new();
 
         for (i, arm) in self.arms.iter().enumerate() {
-            let pattern_str = arm.pattern.to_string();
+            // Use Debug formatting for PatternExpression (PatternExpression) as Display might not be implemented yet.
+            let pattern_str = format!("{:?}", arm.pattern);
             // Using format! to build parts of the debug string
             arm_debug_strings.push(format!("Arm {}: Pattern=\'{}\'", i, pattern_str));
         }
