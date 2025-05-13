@@ -89,33 +89,83 @@ enum ParsedAtom {
     MemoryRef(TokenStream2),
     SubExpression(TokenStream2),
     Constant(TokenStream2),
+    ExternalVar(Ident), // NEW: For #var
 }
 
 fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
-    if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
+    if input.peek(Token![#]) { // Check for '#'
+        let _hash_token: Token![#] = input.parse()?; // Consume '#'
+        let var_ident: Ident = input.parse()?;    // Parse the identifier
+        Ok(ParsedAtom::ExternalVar(var_ident))
+    } else if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
+        // Delegate to parse_ssa_memory_reference for *(expr) or [...]
         let ssa_mem_ref_tokens = parse_ssa_memory_reference(input)?;
         Ok(ParsedAtom::MemoryRef(ssa_mem_ref_tokens))
     } else if input.peek(token::Paren) {
         let content;
         syn::parenthesized!(content in input);
-        let sub_expr_tokens = parse_addition_subtraction(&content)?;
+        let sub_expr_tokens = parse_addition_subtraction(&content)?; // Recursively parse, returns Expression
         Ok(ParsedAtom::SubExpression(sub_expr_tokens))
     } else if input.peek(LitInt) {
+        // Constant Literal
         let lit: LitInt = input.parse()?;
         Ok(ParsedAtom::Constant(quote! { #lit }))
     } else {
         Err(input.error(
-            "Expected an assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
+            "Expected #var, assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
         ))
     }
 }
 
 fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
-    let cp = lir_path();
+    let cp = lir_path(); // cp stands for crate_path, used for Expression variants
     match parse_atom_internal(input)? {
-        ParsedAtom::MemoryRef(tokens) => Ok(quote! { #cp::Expression::Addressable(#tokens) }),
-        ParsedAtom::SubExpression(tokens) => Ok(tokens),
-        ParsedAtom::Constant(tokens) => Ok(quote! { #cp::Expression::Constant(#tokens) }),
+        ParsedAtom::MemoryRef(tokens) => {
+            // Wrap SsaMemoryReference in Expression::Addressable
+            Ok(quote! { #cp::Expression::Addressable(#tokens) })
+        }
+        ParsedAtom::SubExpression(tokens) => {
+            // Already an Expression (came from parenthesized expression), return as is
+            Ok(tokens)
+        }
+        ParsedAtom::Constant(tokens) => {
+            // Wrap literal in Expression::Constant
+            Ok(quote! { #cp::Expression::Constant(#tokens) })
+        }
+        ParsedAtom::ExternalVar(ident) => {
+            // The ident is the Rust variable name. It's assumed to be in scope
+            // and of a type compatible with Expression<SsaMemoryReference>.
+            // If 'ident' is already an Expression, this will directly interpolate it.
+            Ok(quote! { #ident })
+        }
+    }
+}
+
+// --- NEW: Parser for Unary Operations ---
+// Handles expressions like -term, !term
+fn parse_unary(input: ParseStream) -> Result<TokenStream2> {
+    let cp = lir_path();
+    if input.peek(Token![-]) { // Check for negation
+        let _op: Token![-] = input.parse()?; // Consume '-'
+        let arg = parse_unary(input)?; // Recursively parse the operand (allows --x or -!(y))
+        Ok(quote! {
+            #cp::Expression::Unary {
+                op: #cp::UnaryOperator::Minus,
+                arg: Box::new(#arg)
+            }
+        })
+    } else if input.peek(Token![!]) { // Check for logical NOT
+        let _op: Token![!] = input.parse()?; // Consume '!'
+        let arg = parse_unary(input)?; // Recursively parse the operand
+        Ok(quote! {
+            #cp::Expression::Unary {
+                op: #cp::UnaryOperator::Not,
+                arg: Box::new(#arg)
+            }
+        })
+    } else {
+        // If no unary operator, parse an atom (which includes parenthesized expressions, literals, #vars, memory refs)
+        parse_atom(input)
     }
 }
 
@@ -132,8 +182,9 @@ fn parse_addition_subtraction(input: ParseStream) -> Result<TokenStream2> {
                 rhs: Box::new(#rhs)
             }};
         } else if input.peek(Token![-]) {
+            // This '-' is for binary subtraction. Unary minus is handled by parse_unary.
             let _op: Token![-] = input.parse()?;
-            let rhs = parse_multiplication(input)?;
+            let rhs = parse_multiplication(input)?; // This call chain now includes unary
             lhs = quote! { #cp::Expression::Binary {
                 op: #cp::BinaryOperator::Sub,
                 lhs: Box::new(#lhs),
@@ -144,12 +195,14 @@ fn parse_addition_subtraction(input: ParseStream) -> Result<TokenStream2> {
     Ok(lhs)
 }
 
+// --- MODIFIED: parse_multiplication ---
+// Now calls parse_unary instead of parse_atom for its operands
 fn parse_multiplication(input: ParseStream) -> Result<TokenStream2> {
-    let mut lhs = parse_atom(input)?;
+    let mut lhs = parse_unary(input)?; // MODIFIED: Call parse_unary for higher precedence
     let cp = lir_path();
     while input.peek(Token![*]) {
         let _op: Token![*] = input.parse()?;
-        let rhs = parse_atom(input)?;
+        let rhs = parse_unary(input)?; // MODIFIED: Call parse_unary for higher precedence
         lhs = quote! { #cp::Expression::Binary {
             op: #cp::BinaryOperator::Mul,
             lhs: Box::new(#lhs),

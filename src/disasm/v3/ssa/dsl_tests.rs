@@ -3,7 +3,7 @@ mod tests {
 
     use crate::disasm::v3::lir::Expression;
     use crate::disasm::v3::{common::formatting::ContextualPrettyPrint, lir::InstructionNode};
-    
+
     use model_macros::{build_expr, build_instruction};
 
     use crate::disasm::v3::ssa::SsaMemoryReference;
@@ -149,5 +149,59 @@ mod tests {
             build_instruction! { output *([R+7].0 - [R-1].2) }.nocolor(),
             "output *([R+7]_0 - [R-1]_2)"
         );
+    }
+
+    #[test]
+    fn mix_external_expressions() {
+        let expr: Expression<SsaMemoryReference> = build_expr! { [R+1].3 + 123 };
+        let complex_expr = build_expr! { (3 + #expr) * [R-1].7 };
+        assert_eq!(complex_expr.nocolor(), "(3 + [R+1]_3 + 123) * [R-1]_7");
+        let expr: Expression<SsaMemoryReference> = build_expr! { [R+1].3 + 123 };
+        let use_expr = build_instruction! { [R+2].5 = 7 * #expr };
+        assert_eq!(use_expr.nocolor(), "[R+2]_5 = 7 * ([R+1]_3 + 123)");
+    }
+
+    #[test]
+    fn test_unary_expressions() {
+        let expr_neg_const: Expression<SsaMemoryReference> = build_expr! { -123 };
+        assert_eq!(expr_neg_const.nocolor(), "-123");
+
+        let expr_not_const: Expression<SsaMemoryReference> = build_expr! { !123 };
+        assert_eq!(expr_not_const.nocolor(), "!123");
+
+        let expr_neg_mem: Expression<SsaMemoryReference> = build_expr! { -[R+1].5 };
+        assert_eq!(expr_neg_mem.nocolor(), "-[R+1]_5");
+
+        let expr_not_mem: Expression<SsaMemoryReference> = build_expr! { ![R+1].5 };
+        assert_eq!(expr_not_mem.nocolor(), "![R+1]_5");
+
+        let expr_neg_paren: Expression<SsaMemoryReference> = build_expr! { -(123 + [R+1].5) };
+        assert_eq!(expr_neg_paren.nocolor(), "-(123 + [R+1]_5)");
+
+        let expr_not_paren: Expression<SsaMemoryReference> = build_expr! { !(123 + [R+1].5) };
+        assert_eq!(expr_not_paren.nocolor(), "!(123 + [R+1]_5)");
+
+        assert_eq!(
+            build_expr! { -([R+1].3 + 123) * [R-2].7 }.nocolor(),
+            "-([R+1]_3 + 123) * [R-2]_7"
+        );
+
+        assert_eq!(
+            build_expr! { ![R+1].3 + 123 }.nocolor(), // Precedence: (!([R+1].3)) + 123
+            "![R+1]_3 + 123"
+        );
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { -5 * 10 }; // Precedence: (-5) * 10
+        assert_eq!(expr.nocolor(), "-5 * 10");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { 5 * -10 }; // Precedence: 5 * (-10)
+        assert_eq!(expr.nocolor(), "5 * -10");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { --5 };
+        assert_eq!(expr.nocolor(), "--5");
+        let expr: Expression<SsaMemoryReference> = build_expr! { !!5 };
+        assert_eq!(expr.nocolor(), "!!5");
+        let expr: Expression<SsaMemoryReference> = build_expr! { -!5 };
+        assert_eq!(expr.nocolor(), "-!5");
     }
 }
