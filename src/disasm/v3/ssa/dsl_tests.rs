@@ -4,7 +4,7 @@ mod tests {
     use crate::disasm::v3::lir::Expression;
     use crate::disasm::v3::{common::formatting::ContextualPrettyPrint, lir::InstructionNode};
 
-    use model_macros::{build_expr, build_instruction};
+    use crate::macros::{build_expr, build_instruction};
 
     use crate::disasm::v3::ssa::SsaMemoryReference;
 

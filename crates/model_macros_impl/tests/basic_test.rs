@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use model_macros::{model, states};
+    use model_macros_impl::{model, states};
     use std::marker::PhantomData; // Keep this import if used elsewhere, or remove if not
 
     pub struct InitialData {

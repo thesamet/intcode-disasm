@@ -1,23 +1,16 @@
 //! Macros for defining model states and models that progress through those states.
-//!
-//! This module provides procedural macros for defining compile-time safe models
-mod dsl;
-mod match_dsl_parser; // Our new module for match_dsl
-
+use heck::AsSnakeCase;
+use proc_macro::TokenStream;
+use proc_macro2;
+use quote::{format_ident, quote};
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
 };
-
-use dsl::{DslInstructionParse, FullExprParse};
-use proc_macro::TokenStream;
-use quote::{format_ident, quote};
-use syn::{
-    parse::{ParseBuffer, ParseStream},
-    parse_macro_input, parse_quote, Data, DataEnum, DeriveInput, Fields, Type, Variant,
-};
+use syn::{parse_macro_input, parse_quote, Data, DataEnum, DeriveInput, Fields, Type, Variant};
 
 /// Stores information about a state in the model.
+#[derive(Clone)] // Added Clone
 struct StateInfo {
     /// The name of the state (e.g., "InitialState").
     state_name: String,
@@ -87,41 +80,21 @@ fn state_info(variant: &Variant) -> syn::Result<StateInfo> {
 
 /// Converts a CamelCase string to snake_case.
 fn to_snake_case(s: &str) -> String {
-    heck::AsSnakeCase(s).to_string()
+    AsSnakeCase(s).to_string()
 }
 
 /// Macro for defining states for a model.
-///
-/// This macro takes an enum definition that specifies the possible states of a model
-/// and their associated data types, and generates:
-/// 1. A marker trait with the same name as the enum.
-/// 2. Marker structs for each enum variant.
-/// 3. `Has*` traits for each data type associated with a state.
-/// 4. Implementations of the marker trait and `Has*` traits for each state.
-///
-/// # Example
-///
-/// ```rust
-/// #[states]
-/// enum ModelState {
-///     InitialState(()),
-///     FirstPassComplete(FirstPassResult),
-///     SecondPassComplete(SecondPassResult),
-///     AggregationComplete(AggregationResult),
-///     Done(FinalSummary),
-/// }
-/// ```
 #[proc_macro_attribute]
 pub fn states(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let output = handle_states(parse_macro_input!(item as DeriveInput));
-    match output {
+    let input = parse_macro_input!(item as DeriveInput);
+    match handle_states(input) {
         Ok(output) => output.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
 /// Handles the `states` macro logic.
-fn handle_states(input: DeriveInput) -> syn::Result<TokenStream> {
+fn handle_states(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let trait_name = &input.ident;
     let enum_data = match &input.data {
         Data::Enum(data) => data,
@@ -133,7 +106,7 @@ fn handle_states(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     };
 
-    let states = build_state_info(enum_data)?;
+    let states_vec = build_state_info(enum_data)?;
 
     let mut state_marker_structs = Vec::new();
     let mut has_trait_defs = Vec::new();
@@ -141,48 +114,49 @@ fn handle_states(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let mut last_non_unit_has_trait: Option<proc_macro2::Ident> = None;
 
-    for (idx, state) in states.iter().enumerate() {
-        let state_name = format_ident!("{}", &state.state_name);
+    for (idx, state) in states_vec.iter().enumerate() {
+        let state_name_ident = format_ident!("{}", &state.state_name);
 
         let state_struct = quote! {
-            pub struct #state_name {}
+            #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+            pub struct #state_name_ident {}
 
-            impl #trait_name for #state_name {}
+            impl #trait_name for #state_name_ident {}
         };
         state_marker_structs.push(state_struct);
 
         if !state.is_unit {
-            let has_trait_name = format_ident!("{}", &state.has_trait_name);
+            let has_trait_name_ident = format_ident!("{}", &state.has_trait_name);
 
             let supertrait_bound = last_non_unit_has_trait
                 .as_ref()
                 .map(|prev_trait| quote! { : #prev_trait });
 
             let has_trait_def = quote! {
-                pub trait #has_trait_name #supertrait_bound {}
+                pub trait #has_trait_name_ident #supertrait_bound {}
             };
             has_trait_defs.push(has_trait_def);
 
-            for later_state_idx in idx..states.len() {
-                let later_state = &states[later_state_idx];
-                let later_state_name = format_ident!("{}", &later_state.state_name);
+            for later_state_idx in idx..states_vec.len() {
+                let later_state = &states_vec[later_state_idx];
+                let later_state_name_ident = format_ident!("{}", &later_state.state_name);
 
                 let has_impl = quote! {
-                    impl #has_trait_name for #later_state_name {}
+                    impl #has_trait_name_ident for #later_state_name_ident {}
                 };
                 has_trait_impls.push(has_impl);
             }
 
-            last_non_unit_has_trait = Some(has_trait_name.clone());
+            last_non_unit_has_trait = Some(has_trait_name_ident.clone());
         }
     }
     get_state_infos()
         .lock()
-        .unwrap()
-        .insert(trait_name.to_string(), states);
+        .unwrap() // Standard to panic on poisoned mutex
+        .insert(trait_name.to_string(), states_vec);
 
     let output = quote! {
-        pub trait #trait_name {}
+        pub trait #trait_name: Sized + Send + Sync + Copy + std::fmt::Debug + PartialEq + Eq + std::hash::Hash {}
 
         #(#state_marker_structs)*
 
@@ -191,7 +165,7 @@ fn handle_states(input: DeriveInput) -> syn::Result<TokenStream> {
         #(#has_trait_impls)*
     };
 
-    Ok(output.into())
+    Ok(output)
 }
 
 /// Extracts the type name from a `Type::Path`.
@@ -205,30 +179,17 @@ fn extract_type_name(ty: &Type) -> syn::Result<proc_macro2::Ident> {
                 syn::Error::new_spanned(type_path, "Type path should have at least one segment")
             })
             .map(|segment| segment.ident.clone()),
+        Type::Tuple(tuple_path) if tuple_path.elems.is_empty() => {
+            Ok(format_ident!("Unit")) // Special name for () type
+        }
         _ => Err(syn::Error::new_spanned(
             ty,
-            "Unsupported field type: only simple type paths are supported",
+            "Unsupported field type: only simple type paths or unit type `()` are supported for deriving Has<Trait> names.",
         )),
     }
 }
 
 /// Macro for defining a model that transitions through states.
-///
-/// This macro takes a struct definition with a type parameter bounded by a ModelState trait
-/// and generates methods for transitioning the model through its states. It also automatically
-/// adds a `_state: PhantomData<S>` field to the struct.
-///
-/// # Example
-///
-/// ```rust
-/// #[model]
-/// pub struct Model<S: ModelState> {
-///     // User-defined fields go here
-///     data: HashMap<String, String>,
-///     state_data: Option<Box<dyn Any>>,
-///     // The macro adds _state: PhantomData<S> automatically
-/// }
-/// ```
 #[proc_macro_attribute]
 pub fn model(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as DeriveInput);
@@ -239,54 +200,92 @@ pub fn model(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Handles the `model` macro logic.
-fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
+fn handle_model(input: &mut DeriveInput) -> Result<proc_macro2::TokenStream, syn::Error> {
     let model_name = &input.ident;
     let generics = &input.generics;
 
     if generics.params.len() != 1 {
-        panic!("model attribute can only be applied to structs with exactly one type parameter");
+        return Err(syn::Error::new_spanned(
+            generics,
+            "model attribute can only be applied to structs with exactly one type parameter",
+        ));
     }
 
     let type_param = generics.params.first().unwrap();
     let state_type_param = match type_param {
         syn::GenericParam::Type(param) => param,
-        _ => panic!("model attribute requires a type parameter"),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                type_param,
+                "model attribute requires a type parameter",
+            ))
+        }
     };
 
     let state_param_name = &state_type_param.ident;
 
-    let state_trait_name = state_type_param
+    let state_trait_name_str = state_type_param
         .bounds
         .iter()
         .find_map(|b| {
             if let syn::TypeParamBound::Trait(t) = b {
-                Some(t.path.segments.last().unwrap().ident.to_string())
+                t.path.segments.last().map(|seg| seg.ident.to_string())
             } else {
                 None
             }
         })
-        .unwrap();
-    let state_infos = get_state_infos().lock().unwrap();
-    let Some(state_info) = state_infos.get(&state_trait_name) else {
-        panic!("The trait bound is not a valid state trait");
+        .ok_or_else(|| {
+            syn::Error::new_spanned(
+                &state_type_param.bounds,
+                "Model state parameter must have a trait bound representing the #[states] enum.",
+            )
+        })?;
+
+    let state_infos_guard = get_state_infos().lock().unwrap(); // Panic on poison
+    let state_info_vec_option = state_infos_guard.get(&state_trait_name_str);
+
+    let state_info_vec = match state_info_vec_option {
+        Some(siv) => siv.clone(), // Clone to release mutex guard sooner
+        None =>  return Err(syn::Error::new_spanned(&state_type_param.bounds, format!("The trait bound '{}' is not a registered state trait. Ensure an `#[states]` enum named '{}' is defined and compiled before this `#[model]` macro.", state_trait_name_str, state_trait_name_str))),
     };
+    drop(state_infos_guard);
+
+    if state_info_vec.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &state_type_param.bounds,
+            format!(
+                "No states found for '{}'. The #[states] enum must not be empty.",
+                state_trait_name_str
+            ),
+        ));
+    }
 
     let original_fields = match &input.data {
         syn::Data::Struct(ref struct_data) => match &struct_data.fields {
             syn::Fields::Named(fields) => fields.named.clone(),
-            _ => panic!("model macro currently only supports structs with named fields"),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &struct_data.fields,
+                    "model macro currently only supports structs with named fields",
+                ))
+            }
         },
-        _ => panic!("model macro can only be applied to structs"),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "model macro can only be applied to structs",
+            ))
+        }
     };
 
     match &mut input.data {
         syn::Data::Struct(ref mut struct_data) => match &mut struct_data.fields {
             syn::Fields::Named(fields) => {
                 fields.named.push(parse_quote! {
-                    _state: PhantomData<#state_param_name>
+                    _state: ::std::marker::PhantomData<#state_param_name>
                 });
 
-                for info in state_info {
+                for info in &state_info_vec {
                     if !info.is_unit {
                         let field_name = format_ident!("{}", &info.getter_name);
                         let field_type: Type = syn::parse_str(&info.state_data_type)?;
@@ -297,23 +296,32 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
                 }
             }
             syn::Fields::Unnamed(_) => {
-                panic!("model macro currently only supports structs with named fields");
+                return Err(syn::Error::new_spanned(
+                    &struct_data.fields,
+                    "model macro currently only supports structs with named fields",
+                ));
             }
             syn::Fields::Unit => {
-                panic!("model macro cannot add fields to unit structs");
+                return Err(syn::Error::new_spanned(
+                    &struct_data.fields,
+                    "model macro cannot add fields to unit structs",
+                ));
             }
         },
-        _ => panic!("model macro can only be applied to structs"),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "model macro can only be applied to structs",
+            ))
+        }
     };
 
-    let initial_state = format_ident!("{}", &state_info[0].state_name);
-    let initial_state_info = &state_info[0];
-
-    // --- Generate Constructor ---
-    let mut initializers = vec![];
-    initializers.push(quote! { _state: ::std::marker::PhantomData });
+    let initial_state_info = &state_info_vec[0];
+    let initial_state_ident = format_ident!("{}", &initial_state_info.state_name);
 
     let mut constructor_params = vec![];
+    let mut initializers = vec![quote! { _state: ::std::marker::PhantomData }];
+
     for field in original_fields.iter() {
         let field_name = &field.ident;
         let field_ty = &field.ty;
@@ -323,31 +331,25 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
 
     if !initial_state_info.is_unit {
         let initial_data_type: Type = syn::parse_str(&initial_state_info.state_data_type)?;
-        let _initial_data_type = initial_data_type; // Suppress unused warning
         let initial_field_name = format_ident!("{}", &initial_state_info.getter_name);
         let param_name = format_ident!("{}", to_snake_case(&initial_state_info.state_data_type));
 
-        constructor_params.push(quote! { #param_name: #_initial_data_type });
+        constructor_params.push(quote! { #param_name: #initial_data_type });
         initializers.push(quote! { #initial_field_name: Some(#param_name) });
-    } else {
-        let initial_field_name = format_ident!("{}", &initial_state_info.getter_name);
-        if state_info
-            .iter()
-            .any(|si| si.getter_name == initial_state_info.getter_name && !si.is_unit)
-        {
-            initializers.push(quote! { #initial_field_name: Some(()) });
-        }
     }
 
-    for info in state_info.iter().skip(1) {
+    for info in &state_info_vec {
         if !info.is_unit {
-            let field_name = format_ident!("{}", &info.getter_name);
-            initializers.push(quote! { #field_name: None });
+            // Add initializer for this field if it's not the initial state's (already handled)
+            if !(info.state_name == initial_state_info.state_name && !initial_state_info.is_unit) {
+                let field_name = format_ident!("{}", &info.getter_name);
+                initializers.push(quote! { #field_name: None });
+            }
         }
     }
 
     let constructor = quote! {
-        impl #model_name<#initial_state> {
+        impl #model_name<#initial_state_ident> {
             pub fn new(#(#constructor_params),*) -> Self {
                 Self {
                     #(#initializers),*
@@ -356,36 +358,51 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
         }
     };
 
-    // --- Generate Transitions ---
     let mut transition_blocks = vec![];
-
-    for (i, current_info) in state_info.iter().enumerate().take(state_info.len() - 1) {
-        let current_state = format_ident!("{}", &current_info.state_name);
-        let next_info = &state_info[i + 1];
-        let next_state = format_ident!("{}", &next_info.state_name);
-        let transition_method = format_ident!("with_{}", to_snake_case(&next_info.state_data_type));
+    for (i, current_info) in state_info_vec
+        .iter()
+        .enumerate()
+        .take(state_info_vec.len().saturating_sub(1))
+    {
+        let current_state_ident = format_ident!("{}", &current_info.state_name);
+        let next_info = &state_info_vec[i + 1];
+        let next_state_ident = format_ident!("{}", &next_info.state_name);
+        let transition_method_name = format_ident!(
+            "with_{}",
+            to_snake_case(
+                &extract_type_name(&syn::parse_str::<Type>(&next_info.state_data_type)?)?
+                    .to_string()
+            )
+        );
 
         let transition_impl = if next_info.is_unit {
             quote! {
-               impl #model_name<#current_state> {
-                   pub fn #transition_method(self) -> #model_name<#next_state> {
+               impl #model_name<#current_state_ident> {
+                   pub fn #transition_method_name(self) -> #model_name<#next_state_ident> {
                        unsafe {
-                           std::mem::transmute(self)
+                           // This is safe because the layout is the same, only PhantomData changes type.
+                           // And PhantomData is a zero-sized type.
+                           ::std::mem::transmute(self)
                        }
                    }
                }
             }
         } else {
             let next_data_type: Type = syn::parse_str(&next_info.state_data_type)?;
-            let param_name = format_ident!("{}", to_snake_case(&next_info.state_data_type));
+            let param_name = format_ident!(
+                "{}",
+                to_snake_case(&extract_type_name(&next_data_type)?.to_string())
+            );
             let field_to_set = format_ident!("{}", &next_info.getter_name);
 
             quote! {
-                impl #model_name<#current_state> {
-                    pub fn #transition_method(mut self, #param_name: #next_data_type) -> #model_name<#next_state> {
+                impl #model_name<#current_state_ident> {
+                    pub fn #transition_method_name(mut self, #param_name: #next_data_type) -> #model_name<#next_state_ident> {
                        self.#field_to_set = Some(#param_name);
                        unsafe {
-                        std::mem::transmute(self)
+                        // This is safe because the layout is the same, only PhantomData changes type.
+                        // And PhantomData is a zero-sized type.
+                        ::std::mem::transmute(self)
                        }
                     }
                 }
@@ -394,23 +411,28 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
         transition_blocks.push(transition_impl);
     }
 
-    // --- Generate Getters ---
     let mut getters_blocks = vec![];
-    let state_trait_name = format_ident!("{}", state_trait_name);
-    for info in state_info {
+    let state_trait_ident = format_ident!("{}", state_trait_name_str);
+    for info in &state_info_vec {
         if info.is_unit {
             continue;
         }
 
-        let has_trait_name = format_ident!("{}", &info.has_trait_name);
+        let has_trait_name_ident = format_ident!("{}", &info.has_trait_name);
         let data_type: Type = syn::parse_str(&info.state_data_type)?;
-        let getter_method = format_ident!("{}", &info.getter_name);
-        let field_name = format_ident!("{}", &info.getter_name);
+        let getter_method_ident = format_ident!("{}", &info.getter_name);
+        let field_name_ident = format_ident!("{}", &info.getter_name); // This is also the field name
 
         let getter_impl = quote! {
-            impl<#state_param_name: #state_trait_name> #model_name<#state_param_name> where #state_param_name: #has_trait_name {
-                pub fn #getter_method(&self) -> &#data_type {
-                    self.#field_name.as_ref().unwrap()
+            impl<#state_param_name: #state_trait_ident> #model_name<#state_param_name> where #state_param_name: #has_trait_name_ident {
+                pub fn #getter_method_ident(&self) -> &#data_type {
+                    self.#field_name_ident.as_ref().unwrap_or_else(|| {
+                        panic!(
+                            "Accessed data field '{}' which was None. This indicates either a misuse of the model (not respecting Has{} trait bound) or an internal error in state management.",
+                            stringify!(#field_name_ident),
+                            stringify!(#has_trait_name_ident)
+                        )
+                    })
                 }
             }
         };
@@ -418,29 +440,11 @@ fn handle_model(input: &mut DeriveInput) -> Result<TokenStream, syn::Error> {
     }
 
     let combined = quote! {
-        #input
+        #input // The original struct definition, now modified with new fields
         #constructor
         #(#transition_blocks)*
         #(#getters_blocks)*
     };
 
-    Ok(combined.into())
-}
-
-#[proc_macro]
-pub fn match_dsl(input: TokenStream) -> TokenStream {
-    let parsed_input = parse_macro_input!(input as match_dsl_parser::MatchDslInput);
-    parsed_input.expanded().into()
-}
-
-#[proc_macro]
-pub fn build_expr(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as FullExprParse);
-    input.0.into()
-}
-
-#[proc_macro]
-pub fn build_instruction(input: proc_macro::TokenStream) -> TokenStream {
-    let parsed_instruction_wrapper = parse_macro_input!(input as DslInstructionParse);
-    parsed_instruction_wrapper.to_tokens().into()
+    Ok(combined)
 }

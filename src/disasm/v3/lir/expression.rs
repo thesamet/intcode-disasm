@@ -1,7 +1,7 @@
 // Use LIR MemoryReference
 use std::fmt::Display;
 
-use model_macros::build_expr;
+use crate::macros::build_expr;
 
 use crate::match_expr;
 

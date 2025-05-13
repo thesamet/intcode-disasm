@@ -7,6 +7,7 @@ use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::image_scanner::ImageScannerResult;
 use crate::disasm::v3::ssa::SsaResult;
+use crate::macros::{model, states};
 
 #[derive(Clone, Debug)]
 pub struct InputBinary {
@@ -90,7 +91,6 @@ macro_rules! add_block_view_when {
     };
 }
 pub(crate) use add_block_view_when;
-use model_macros::{model, states};
 
 use super::{control_flow::BlockView, FunctionId};
 
