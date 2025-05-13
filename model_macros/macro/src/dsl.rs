@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
-    token, Ident, LitInt, Result, Token,
+    parse_macro_input, token, Ident, LitInt, Result, Token,
 }; // Use TokenStream2 from proc-macro2 for quote
 
 fn lir_path() -> TokenStream2 {
@@ -15,6 +15,7 @@ fn ssa_path() -> TokenStream2 {
 }
 
 // --- Parser for individual versioned elements: `[base_expr]_version_num` ---
+// (VersionedElement struct and its impls remain unchanged)
 pub struct VersionedElement {
     sign: i128,
     offset: LitInt,
@@ -103,24 +104,11 @@ enum ParsedAtom {
 }
 
 fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
-    let ssa = ssa_path(); // For SsaMemoryReference::Deref
-
-    if input.peek(Token![*]) && input.peek2(token::Paren) {
-        // Dereference: *(expr)
-        let _star: Token![*] = input.parse()?; // Consume '*'
-        let content;
-        syn::parenthesized!(content in input); // Consume and get content of '(...)'
-        let inner_expr_tokens = parse_addition_subtraction(&content)?; // Parse inner expr, returns Expression
-
-        let deref_tokens = quote! {
-            #ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
-        };
-        Ok(ParsedAtom::MemoryRef(deref_tokens))
-    } else if input.peek(token::Bracket) {
-        // Versioned Memory Reference: [...]
-        let version_atom: VersionedElement = input.parse()?;
-        let ssa_ref_tokens = version_atom.to_expr_tokens();
-        Ok(ParsedAtom::MemoryRef(ssa_ref_tokens))
+    // Peek to see if it's a pattern that parse_ssa_memory_reference can handle
+    if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
+        // Delegate to parse_ssa_memory_reference for *(expr) or [...]
+        let ssa_mem_ref_tokens = parse_ssa_memory_reference(input)?;
+        Ok(ParsedAtom::MemoryRef(ssa_mem_ref_tokens))
     } else if input.peek(token::Paren) {
         // Parenthesized Sub-Expression: (...)
         let content;
@@ -133,7 +121,7 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
         Ok(ParsedAtom::Constant(quote! { #lit }))
     } else {
         Err(input.error(
-            "Expected dereference '*(expr)', versioned element '[expr].version', a constant, or a parenthesized expression",
+            "Expected an assignable memory location ('[base].version' or '*(expression)'), a parenthesized expression, or a constant literal",
         ))
     }
 }
@@ -202,5 +190,66 @@ impl Parse for FullExpr {
             return Err(input.error("Unexpected tokens after expression"));
         }
         Ok(FullExpr(result))
+    }
+}
+
+// --- NEW: Parser for SsaMemoryReference (LHS of assignment) ---
+// This parses specifically what can be an LHS: a VersionedElement or a Deref.
+// It does NOT produce a full Expression, but rather the tokens for an SsaMemoryReference.
+fn parse_ssa_memory_reference(input: ParseStream) -> Result<TokenStream2> {
+    let ssa = ssa_path();
+
+    if input.peek(Token![*]) && input.peek2(token::Paren) {
+        // Dereference: *(expr)
+        let _star: Token![*] = input.parse()?;
+        let content;
+        syn::parenthesized!(content in input);
+        let inner_expr_tokens = parse_addition_subtraction(&content)?; // Inner part is a full expression
+        Ok(quote! {
+            #ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
+        })
+    } else if input.peek(token::Bracket) {
+        // Versioned Memory Reference: [...]
+        let version_atom: VersionedElement = input.parse()?;
+        Ok(version_atom.to_expr_tokens()) // to_expr_tokens() returns SsaMemoryReference::Versioned(...)
+    } else {
+        Err(input
+            .error("Expected an assignable memory location: '[base].version' or '*(expression)'"))
+    }
+}
+
+// --- NEW: Struct to parse the Assign instruction ---
+pub struct DslInstruction(pub TokenStream2);
+
+impl Parse for DslInstruction {
+    fn parse(input: ParseStream) -> Result<Self> {
+        // 1. Parse LHS (SsaMemoryReference)
+        let lhs_tokens = parse_ssa_memory_reference(input)?;
+
+        // 2. Parse '='
+        let _eq_token: Token![=] = input.parse()?;
+
+        let rhs_tokens = parse_addition_subtraction(input)?;
+
+        if !input.is_empty() {
+            return Err(input.error("Unexpected tokens after assignment expression"));
+        }
+        let lir = lir_path();
+
+        let instr = quote! {
+            #lir::Instruction::Assign {
+                target: #lhs_tokens,
+                src: #rhs_tokens,
+                target_debug_marker: None, // Defaulting to None for now
+            }
+        };
+        let instr_node = quote! {
+            #lir::InstructionNode {
+                id: crate::disasm::v3::InstructionId::new(0),
+                kind: #instr,
+            }
+        };
+
+        Ok(DslInstruction(instr_node))
     }
 }

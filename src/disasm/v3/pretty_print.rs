@@ -50,8 +50,8 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
                 let debug_marker = match target_debug_marker {
                     Some(marker) => {
                         format!(
-                            "'{} ",
-                            marker.to_string().color(ctx.colors().unwrap().low_prio)
+                            "{} ",
+                            ctx.format(marker.to_string(), SemanticColor::LowPrio)
                         )
                     }
                     None => "".to_string(),
@@ -59,7 +59,7 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
                 format!(
                     "{debug_marker}{} {} {}",
                     target.pretty_print_with_context(ctx),
-                    "=".color(ctx.colors().unwrap().op_color),
+                    ctx.fmt_eq(),
                     src.pretty_print_with_context(ctx)
                 )
             }
@@ -70,23 +70,19 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
             } => {
                 format!(
                     "{} {} {} {} {} {}",
-                    "if".color(ctx.colors().unwrap().keyword),
+                    ctx.format("if", SemanticColor::Keyword),
                     cond.pretty_print_with_context(ctx),
-                    "goto".color(ctx.colors().unwrap().keyword),
-                    then_addr
-                        .to_string()
-                        .color(ctx.colors().unwrap().const_color),
-                    "else goto".color(ctx.colors().unwrap().keyword),
-                    else_addr
-                        .to_string()
-                        .color(ctx.colors().unwrap().const_color)
+                    ctx.format("goto", SemanticColor::Keyword),
+                    ctx.format(then_addr, SemanticColor::Constant),
+                    ctx.format("else goto", SemanticColor::Keyword),
+                    ctx.format(else_addr, SemanticColor::Constant)
                 )
             }
             Instruction::Goto(addr) => {
                 format!(
                     "{} {}",
-                    "goto".color(ctx.colors().unwrap().keyword),
-                    addr.to_string().color(ctx.colors().unwrap().const_color)
+                    ctx.format("goto", SemanticColor::Keyword),
+                    ctx.format(addr, SemanticColor::Constant)
                 )
             }
             Instruction::Call {
@@ -96,28 +92,26 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
             } => {
                 format!(
                     "{} {}{}{}{} {} {}",
-                    "call".color(ctx.colors().unwrap().keyword),
+                    ctx.format("call", SemanticColor::Keyword),
                     addr.pretty_print_with_context(ctx),
-                    "(".color(ctx.colors().unwrap().low_prio),
+                    ctx.fmt_open_paren(),
                     args.iter()
                         .map(|e| e.pretty_print_with_context(ctx))
-                        .join(&", ".color(ctx.colors().unwrap().low_prio).to_string()),
-                    ")".color(ctx.colors().unwrap().low_prio),
-                    "return to".color(ctx.colors().unwrap().keyword),
-                    return_to
-                        .to_string()
-                        .color(ctx.colors().unwrap().const_color)
+                        .join(&ctx.fmt_comma().to_string()),
+                    ctx.fmt_close_paren(),
+                    ctx.format("return to", SemanticColor::Keyword),
+                    ctx.format(return_to, SemanticColor::Constant)
                 )
             }
             Instruction::Output(expr) => {
                 format!(
                     "{} {}",
-                    "output".color(ctx.colors().unwrap().keyword),
+                    ctx.format("output", SemanticColor::Keyword),
                     expr.pretty_print_with_context(ctx)
                 )
             }
-            Instruction::Return => "return".color(ctx.colors().unwrap().keyword).to_string(),
-            Instruction::Halt => "halt".color(ctx.colors().unwrap().keyword).to_string(),
+            Instruction::Return => ctx.format("return", SemanticColor::Keyword).to_string(),
+            Instruction::Halt => ctx.format("halt", SemanticColor::Keyword).to_string(),
         }
     }
 }
