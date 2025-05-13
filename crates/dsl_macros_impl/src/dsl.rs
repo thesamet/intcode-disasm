@@ -174,6 +174,107 @@ pub enum PatternExpression {
 
 // End of AST for Pattern Matching
 
+// --- Generic Parsing Infrastructure ---
+
+// Trait to define the behavior for a specific parsing strategy (LIR or Pattern)
+pub trait ParseStrategy {
+    // The output type of the parser for this strategy (e.g., TokenStream2 or PatternExpression)
+    type Output;
+    // The type for unary operators for this strategy (e.g., TokenStream2 for LIR, PatternUnaryOperator for patterns)
+    type UnaryOpType;
+    // The type for binary operators for this strategy (e.g., TokenStream2 for LIR, PatternBinaryOperator for patterns)
+    type BinaryOpType;
+
+    // Parses the most basic elements (atoms, literals, parenthesized expressions for this strategy)
+    fn parse_atom(&self, input: ParseStream) -> Result<Self::Output>;
+
+    // Constructs a unary expression node
+    fn build_unary(
+        &self,
+        op: Self::UnaryOpType,
+        arg: Self::Output,
+    ) -> Result<Self::Output>;
+
+    // Constructs a binary expression node
+    fn build_binary(
+        &self,
+        op: Self::BinaryOpType,
+        lhs: Self::Output,
+        rhs: Self::Output,
+    ) -> Result<Self::Output>;
+
+    // Gets the LIR path (used by LIR strategy for quoting) - can return an empty quote for Pattern strategy
+    fn lir_path_token(&self) -> TokenStream2; // TODO: Maybe make this Option<TokenStream2> or part of LirStrategy only
+
+    // Specific Unary Operators for this strategy
+    fn get_unary_minus_op(&self) -> Self::UnaryOpType;
+    fn get_unary_not_op(&self) -> Self::UnaryOpType;
+
+    // Specific Binary Operators for this strategy
+    fn get_binary_add_op(&self) -> Self::BinaryOpType;
+    fn get_binary_sub_op(&self) -> Self::BinaryOpType;
+    fn get_binary_mul_op(&self) -> Self::BinaryOpType;
+}
+
+pub struct LirParseStrategy;
+
+impl ParseStrategy for LirParseStrategy {
+    type Output = TokenStream2;
+    type UnaryOpType = TokenStream2; // Will be quote!(crate::disasm::v3::lir::UnaryOperator::Minus), etc.
+    type BinaryOpType = TokenStream2; // Will be quote!(crate::disasm::v3::lir::BinaryOperator::Add), etc.
+
+    fn parse_atom(&self, input: ParseStream) -> Result<Self::Output> {
+        // Calls the original `parse_atom` function that produces TokenStream2 for LIR expressions
+        parse_atom(input)
+    }
+
+    fn build_unary(&self, op_variant: Self::UnaryOpType, arg: Self::Output) -> Result<Self::Output> {
+        let cp = self.lir_path_token();
+        Ok(quote! {
+            #cp::Expression::Unary {
+                op: #op_variant,
+                arg: Box::new(#arg)
+            }
+        })
+    }
+
+    fn build_binary(&self, op_variant: Self::BinaryOpType, lhs: Self::Output, rhs: Self::Output) -> Result<Self::Output> {
+        let cp = self.lir_path_token();
+        Ok(quote! { #cp::Expression::Binary {
+            op: #op_variant,
+            lhs: Box::new(#lhs),
+            rhs: Box::new(#rhs)
+        }})
+    }
+
+    fn lir_path_token(&self) -> TokenStream2 {
+        lir_path() // Uses the existing lir_path() helper
+    }
+
+    fn get_unary_minus_op(&self) -> Self::UnaryOpType {
+        let cp = self.lir_path_token();
+        quote!(#cp::UnaryOperator::Minus)
+    }
+    fn get_unary_not_op(&self) -> Self::UnaryOpType {
+        let cp = self.lir_path_token();
+        quote!(#cp::UnaryOperator::Not)
+    }
+    fn get_binary_add_op(&self) -> Self::BinaryOpType {
+        let cp = self.lir_path_token();
+        quote!(#cp::BinaryOperator::Add)
+    }
+    fn get_binary_sub_op(&self) -> Self::BinaryOpType {
+        let cp = self.lir_path_token();
+        quote!(#cp::BinaryOperator::Sub)
+    }
+    fn get_binary_mul_op(&self) -> Self::BinaryOpType {
+        let cp = self.lir_path_token();
+        quote!(#cp::BinaryOperator::Mul)
+    }
+}
+
+// --- End of Generic Parsing Infrastructure ---
+
 enum ParsedAtom {
     MemoryRef(TokenStream2),
     SubExpression(TokenStream2),
@@ -237,7 +338,7 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
     } else if input.peek(token::Paren) {
         let content;
         syn::parenthesized!(content in input);
-        let sub_expr_tokens = parse_expr(&content)?; // Recursively parse, returns Expression
+        let sub_expr_tokens = parse_lir_expr(&content)?; // Recursively parse LIR expression
         Ok(ParsedAtom::SubExpression(sub_expr_tokens))
     } else if input.peek(LitInt) {
         // Constant Literal
@@ -278,87 +379,73 @@ fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
     }
 }
 
-// Handles expressions like -term, !term
-fn parse_unary(input: ParseStream) -> Result<TokenStream2> {
-    let cp = lir_path();
+// Generic Unary Parser
+fn parse_unary_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
     if input.peek(Token![-]) {
-        // Check for negation
-        let _op: Token![-] = input.parse()?; // Consume '-'
-        let arg = parse_unary(input)?; // Recursively parse the operand (allows --x or -!(y))
-        Ok(quote! {
-            #cp::Expression::Unary {
-                op: #cp::UnaryOperator::Minus,
-                arg: Box::new(#arg)
-            }
-        })
+        let _op: Token![-] = input.parse()?;
+        let arg = parse_unary_generic(input, strategy)?; // Recursive call
+        strategy.build_unary(strategy.get_unary_minus_op(), arg)
     } else if input.peek(Token![!]) {
-        // Check for logical NOT
-        let _op: Token![!] = input.parse()?; // Consume '!'
-        let arg = parse_unary(input)?; // Recursively parse the operand
-        Ok(quote! {
-            #cp::Expression::Unary {
-                op: #cp::UnaryOperator::Not,
-                arg: Box::new(#arg)
-            }
-        })
+        let _op: Token![!] = input.parse()?;
+        let arg = parse_unary_generic(input, strategy)?; // Recursive call
+        strategy.build_unary(strategy.get_unary_not_op(), arg)
     } else {
-        // If no unary operator, parse an atom (which includes parenthesized expressions, literals, #vars, memory refs)
-        parse_atom(input)
+        strategy.parse_atom(input)
     }
 }
 
-fn parse_addition_subtraction(input: ParseStream) -> Result<TokenStream2> {
-    let mut lhs = parse_multiplication(input)?;
-    let cp = lir_path();
+// Generic Multiplication Parser
+fn parse_multiplication_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+    let mut lhs = parse_unary_generic(input, strategy)?;
+    // The check `!(input.peek2(token::Paren) && ...)` used in some designs to disambiguate
+    // multiplication from dereference `*(...)` is complex.
+    // We rely on `parse_atom` (called by `parse_unary_generic`) to correctly consume `*(expr)`
+    // or `*(pattern)` if that's the intended syntax. If `parse_atom` does not consume it,
+    // then a `*` token here is treated as binary multiplication.
+    while input.peek(Token![*]) {
+        let _op: Token![*] = input.parse()?;
+        let rhs = parse_unary_generic(input, strategy)?;
+        lhs = strategy.build_binary(strategy.get_binary_mul_op(), lhs, rhs)?;
+    }
+    Ok(lhs)
+}
+
+// Generic Addition/Subtraction Parser
+fn parse_addition_subtraction_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+    let mut lhs = parse_multiplication_generic(input, strategy)?;
     while input.peek(Token![+]) || input.peek(Token![-]) {
         if input.peek(Token![+]) {
             let _op: Token![+] = input.parse()?;
-            let rhs = parse_multiplication(input)?;
-            lhs = quote! { #cp::Expression::Binary {
-                op: #cp::BinaryOperator::Add,
-                lhs: Box::new(#lhs),
-                rhs: Box::new(#rhs)
-            }};
+            let rhs = parse_multiplication_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_add_op(), lhs, rhs)?;
         } else if input.peek(Token![-]) {
-            // This '-' is for binary subtraction. Unary minus is handled by parse_unary.
             let _op: Token![-] = input.parse()?;
-            let rhs = parse_multiplication(input)?; // This call chain now includes unary
-            lhs = quote! { #cp::Expression::Binary {
-                op: #cp::BinaryOperator::Sub,
-                lhs: Box::new(#lhs),
-                rhs: Box::new(#rhs)
-            }};
+            let rhs = parse_multiplication_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_sub_op(), lhs, rhs)?;
         }
     }
     Ok(lhs)
 }
 
-fn parse_expr(input: ParseStream) -> Result<TokenStream2> {
-    parse_addition_subtraction(input)
+// Generic Top-Level Expression Parser
+pub fn parse_expr_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+    parse_addition_subtraction_generic(input, strategy)
 }
 
-// --- MODIFIED: parse_multiplication ---
-// Now calls parse_unary instead of parse_atom for its operands
-fn parse_multiplication(input: ParseStream) -> Result<TokenStream2> {
-    let mut lhs = parse_unary(input)?; // MODIFIED: Call parse_unary for higher precedence
-    let cp = lir_path();
-    while input.peek(Token![*]) {
-        let _op: Token![*] = input.parse()?;
-        let rhs = parse_unary(input)?; // MODIFIED: Call parse_unary for higher precedence
-        lhs = quote! { #cp::Expression::Binary {
-            op: #cp::BinaryOperator::Mul,
-            lhs: Box::new(#lhs),
-            rhs: Box::new(#rhs)
-        }};
-    }
-    Ok(lhs)
+// This function is now a specific instance of using the generic parser for LIR.
+// It's kept if direct LIR parsing is needed outside of FullExprParse, otherwise FullExprParse can call generic directly.
+pub fn parse_lir_expr(input: ParseStream) -> Result<TokenStream2> {
+    let strategy = LirParseStrategy;
+    parse_expr_generic(input, &strategy)
 }
+
 
 pub struct FullExprParse(pub TokenStream2);
 
 impl Parse for FullExprParse {
     fn parse(input: ParseStream) -> Result<Self> {
-        let result = parse_expr(input)?;
+        let strategy = LirParseStrategy {};
+        let result = parse_expr_generic(input, &strategy)?;
         if !input.is_empty() {
             return Err(input.error("Unexpected tokens after expression"));
         }
@@ -373,7 +460,7 @@ fn parse_ssa_memory_reference(input: ParseStream) -> Result<TokenStream2> {
         let _star: Token![*] = input.parse()?;
         let content;
         syn::parenthesized!(content in input);
-        let inner_expr_tokens = parse_expr(&content)?;
+        let inner_expr_tokens = parse_lir_expr(&content)?; // Parse the inner expression as LIR
         Ok(quote! {
             #ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
         })
@@ -441,7 +528,7 @@ impl Parse for DslInstructionParse {
             let keyword_ident: Ident = input.fork().parse()?;
             if keyword_ident == "output" {
                 let _keyword: Ident = input.parse()?;
-                let expr_tokens = parse_expr(input)?;
+                let expr_tokens = parse_lir_expr(input)?; // Parse the output expression as LIR
                 if !input.is_empty() {
                     return Err(input.error("Unexpected tokens after output expression"));
                 }
@@ -454,7 +541,7 @@ impl Parse for DslInstructionParse {
         let lhs_tokens = parse_ssa_memory_reference(input)?;
         if input.peek(Token![=]) {
             let _eq_token: Token![=] = input.parse()?;
-            let rhs_tokens = parse_expr(input)?;
+            let rhs_tokens = parse_lir_expr(input)?; // Parse the RHS as LIR
             if !input.is_empty() {
                 return Err(input.error("Unexpected tokens after assignment expression"));
             }
