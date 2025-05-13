@@ -1,18 +1,9 @@
 // disasm/model_macros/macro/src/match_dsl_parser.rs
 use proc_macro2::{Ident, TokenStream as TokenStream2};
-use quote::ToTokens;
 use syn::parse::{Parse, ParseStream, Peek};
 use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 
-// Re-exporting these from the main LIR module for use in patterns.
-// Assuming the main crate root for model_macros is accessible as `crate`
-// and it re-exports or provides a path to lir types.
-// We'll use a placeholder path for now and adjust if needed.
-// For example, if `disasm` is a crate, and `v3::lir` is a module:
-// use disasm::disasm::v3::lir::{BinaryOperator, UnaryOperator};
-// For now, let's assume they are brought into scope somehow or we define local versions.
-// To make this self-contained for now, let's use the actual path.
-use crate::dsl::{lir_path, ssa_path}; // Assuming these provide the correct base paths
+// Assuming these provide the correct base paths
 use quote::quote; // Required for path generation in stubs
 
 /// Represents an atomic part of a pattern, which can be a literal, a variable, or a wildcard.

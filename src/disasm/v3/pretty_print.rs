@@ -9,7 +9,7 @@ use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, HasFunctionCallAnalysisResult};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
-    common::formatting::pretty_print::{FormattingContext, PrettyPrintConfig},
+    common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
     control_flow::{BlockView, FunctionView},
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
