@@ -103,7 +103,20 @@ enum ParsedAtom {
 }
 
 fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
-    if input.peek(token::Bracket) {
+    let ssa = ssa_path(); // For SsaMemoryReference::Deref
+
+    if input.peek(Token![*]) && input.peek2(token::Paren) {
+        // Dereference: *(expr)
+        let _star: Token![*] = input.parse()?; // Consume '*'
+        let content;
+        syn::parenthesized!(content in input); // Consume and get content of '(...)'
+        let inner_expr_tokens = parse_addition_subtraction(&content)?; // Parse inner expr, returns Expression
+
+        let deref_tokens = quote! {
+            #ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
+        };
+        Ok(ParsedAtom::MemoryRef(deref_tokens))
+    } else if input.peek(token::Bracket) {
         // Versioned Memory Reference: [...]
         let version_atom: VersionedElement = input.parse()?;
         let ssa_ref_tokens = version_atom.to_expr_tokens();
@@ -120,7 +133,7 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
         Ok(ParsedAtom::Constant(quote! { #lit }))
     } else {
         Err(input.error(
-            "Expected a versioned element like '[expr].version', a constant, or a parenthesized expression",
+            "Expected dereference '*(expr)', versioned element '[expr].version', a constant, or a parenthesized expression",
         ))
     }
 }
