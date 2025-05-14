@@ -217,7 +217,8 @@ mod tests {
         assert_eq!(x, 5);
 
         let match_input = match_dsl!(&num,
-            123 => {},
+            123 => 9,
+            _ => 4
         );
 
         /*
