@@ -170,15 +170,16 @@ impl Parse for MatchDslInput {
 fn generate_match_conditions_and_bindings(
     target_path: &TokenStream2, // Path to the current part of the target expression being matched
     pattern: &PatternExpression,
-    bindings: &mut Vec<TokenStream2>, // Accumulates `let` bindings
-    lir_path: &TokenStream2,          // Path to LIR types (e.g., quote!(crate::disasm::v3::lir))
-    ssa_path: &TokenStream2,          // Path to SSA types (e.g., quote!(crate::disasm::v3::ssa))
-) -> Result<TokenStream2> {
-    // Returns the condition code for an `if` statement
+    // REMOVED: bindings: &mut Vec<TokenStream2>,
+    lir_path: &TokenStream2, // Path to LIR types (e.g., quote!(crate::disasm::v3::lir))
+    ssa_path: &TokenStream2, // Path to SSA types (e.g., quote!(crate::disasm::v3::ssa))
+) -> Result<(TokenStream2, Vec<TokenStream2>)> {
+    // CHANGED RETURN TYPE
+    // Returns the condition code for an `if` statement, and a vec of `let` bindings
     match pattern {
         PatternExpression::Wildcard => {
             // Wildcard always matches, condition is true. No bindings.
-            Ok(quote!(true))
+            Ok((quote!(true), vec![]))
         }
         PatternExpression::Constant(pattern_lit) => {
             // Target must be an LIR Constant expression and its value must match pattern_lit.
@@ -192,46 +193,37 @@ fn generate_match_conditions_and_bindings(
                     }
                 )
             };
-            Ok(condition)
+            Ok((condition, vec![]))
         }
         PatternExpression::Bind(var_bind) => {
             let var_ident = &var_bind.ident;
             match var_bind.bind_type {
                 crate::dsl::PatternBindType::Expression => {
-                    // Binds the current target_path directly.
-                    // The condition is true, as it matches any expression at this level.
-                    bindings.push(quote!(let #var_ident = (#target_path).clone();));
-                    Ok(quote!(true))
+                    let condition = quote!(true);
+                    let generated_bindings = vec![quote!(let #var_ident = (#target_path).clone();)];
+                    Ok((condition, generated_bindings))
                 }
                 crate::dsl::PatternBindType::Constant => {
-                    // Target must be an LIR Constant expression.
-                    // The binding is pushed as a side-effect if the match succeeds.
-                    let condition = quote! {
-                        (match *#target_path {
-                            #lir_path::Expression::Constant(ref __val_for_binding) => {
-                                bindings.push(quote!(let #var_ident = *__val_for_binding;));
-                                true
-                            }
-                            _ => false,
-                        })
-                    };
-                    Ok(condition)
+                    let condition =
+                        quote!(matches!(*#target_path, #lir_path::Expression::Constant(_)));
+                    let generated_bindings = vec![quote! {
+                        let #var_ident = match *#target_path {
+                            #lir_path::Expression::Constant(ref __val) => *__val,
+                            _ => unreachable!("pattern guard ensured this variant; an Expression::Constant was expected"),
+                        };
+                    }];
+                    Ok((condition, generated_bindings))
                 }
                 crate::dsl::PatternBindType::Addressable => {
-                    // Target must be an LIR Addressable expression.
-                    // The binding is pushed as a side-effect if the match succeeds.
-                    let condition = quote! {
-                        (match *#target_path {
-                            #lir_path::Expression::Addressable(ref __val_for_binding) => {
-                                // Assuming the addressable type `A` in `Expression<A>` is Clone.
-                                // For SsaMemoryReference, this should be fine.
-                                bindings.push(quote!(let #var_ident = __val_for_binding.clone();));
-                                true
-                            }
-                            _ => false,
-                        })
-                    };
-                    Ok(condition)
+                    let condition =
+                        quote!(matches!(*#target_path, #lir_path::Expression::Addressable(_)));
+                    let generated_bindings = vec![quote! {
+                        let #var_ident = match *#target_path {
+                            #lir_path::Expression::Addressable(ref __val) => __val.clone(),
+                            _ => unreachable!("pattern guard ensured this variant; an Expression::Addressable was expected"),
+                        };
+                    }];
+                    Ok((condition, generated_bindings))
                 }
             }
         }
@@ -269,7 +261,7 @@ fn generate_match_conditions_and_bindings(
                                                 *lir_rel_offset_signed_val == expected_lir_rel_offset_signed
                                             }
                                             (#ssa_path::types::VersionableMemoryKind::Memory(lir_abs_offset_val), false) => {
-                                                (*lir_abs_offset_val == #pattern_offset_val as usize) && #pattern_sign_val == 1
+                                                (*lir_abs_offset_val as i128 == #pattern_offset_val) && #pattern_sign_val == 1
                                             }
                                             _ => false,
                                         };
@@ -281,17 +273,26 @@ fn generate_match_conditions_and_bindings(
                             _ => false,
                         })
                     };
-                    Ok(condition)
+                    Ok((condition, vec![])) // No bindings from Versioned structure itself
                 }
                 crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
                     let lir_deref_inner_expr_ident =
                         Ident::new("__addr_deref_lir_inner", Span::call_site());
-                    let lir_deref_inner_expr_path = quote!(#lir_deref_inner_expr_ident.as_ref());
+                    // Path to the dereferenced inner LIR expression.
+                    // The `ref #lir_deref_inner_expr_ident` in the match below binds to the Box<Expression>.
+                    // So, for the recursive call, the target_path should refer to the *content* of the Box.
+                    // A common way is to bind the content directly if possible or use `.as_ref()` if binding the Box.
+                    // Let's assume `ref #lir_deref_inner_expr_ident` binds `Box<Expression>`, so recursive target is `(*#lir_deref_inner_expr_ident).as_ref()`
+                    // Or, more simply, if we match `Deref(inner_expr_box)`, then `inner_expr_box` is the `Box`.
+                    // The path `ref #ident` will be `&Box<Expression>`.
+                    // The recursive call needs `&Expression`. So, `(*#ident).as_ref()` or similar.
+                    // Simpler: bind the inner expression directly.
+                    let inner_lir_expr_target_path = quote!(*#lir_deref_inner_expr_ident);
 
-                    let sub_condition = generate_match_conditions_and_bindings(
-                        &lir_deref_inner_expr_path,
-                        &*inner_pattern_expr, // Dereference Box and take reference
-                        bindings,
+                    let (sub_condition, sub_bindings) = generate_match_conditions_and_bindings(
+                        &inner_lir_expr_target_path, // Path to the inner LIR Expression
+                        &*inner_pattern_expr, // Dereference Box and take reference for pattern
+                        // REMOVED: bindings,
                         lir_path,
                         ssa_path,
                     )?;
@@ -300,8 +301,12 @@ fn generate_match_conditions_and_bindings(
                         (match *#target_path {
                             #lir_path::Expression::Addressable(ref ssa_ref) => {
                                 match ssa_ref {
-                                    #ssa_path::SsaMemoryReference::Deref(ref #lir_deref_inner_expr_ident) => {
-                                        #sub_condition
+                                    #ssa_path::SsaMemoryReference::Deref(ref #lir_deref_inner_expr_ident) => { // #lir_deref_inner_expr_ident is Box<Expression>
+                                        // Embed sub_bindings and sub_condition here
+                                        {
+                                            #(#sub_bindings)*
+                                            #sub_condition
+                                        }
                                     }
                                     _ => false,
                                 }
@@ -309,7 +314,8 @@ fn generate_match_conditions_and_bindings(
                             _ => false,
                         })
                     };
-                    Ok(overall_condition)
+                    // Bindings from sub-pattern are embedded in the condition; this arm returns no *new* top-level bindings.
+                    Ok((overall_condition, vec![]))
                 }
             }
         }
@@ -323,25 +329,30 @@ fn generate_match_conditions_and_bindings(
             };
 
             let lir_arg_ident = Ident::new("__unary_lir_arg", Span::call_site());
-            let lir_arg_path = quote!(#lir_arg_ident);
+            // Note: lir_arg_path is quote!(#lir_arg_ident), used as target_path in recursive call.
+            // When `ref #lir_arg_ident` binds (to &Expression), `*#lir_arg_ident` in sub-conditions will be the Expression.
 
-            let arg_condition = generate_match_conditions_and_bindings(
-                &lir_arg_path,
+            let (arg_sub_condition, arg_sub_bindings) = generate_match_conditions_and_bindings(
+                &quote!(#lir_arg_ident), // The target for this sub-match is the extracted LIR argument
                 &*pattern_arg, // Dereference Box and take reference
-                bindings,
                 lir_path,
                 ssa_path,
             )?;
-
+            
             let overall_condition = quote! {
                 (match *#target_path {
-                    #lir_path::Expression::Unary { op: #lir_op_token, arg: ref #lir_arg_ident } => {
-                        #arg_condition
+                    #lir_path::Expression::Unary { op: #lir_op_token, arg: ref #lir_arg_ident } => { // #lir_arg_ident is &Box<Expression>, ref makes it &Expression
+                        // Embed arg_sub_bindings and arg_sub_condition here
+                        {
+                            #(#arg_sub_bindings)*
+                            #arg_sub_condition
+                        }
                     }
                     _ => false,
                 })
             };
-            Ok(overall_condition)
+            // Bindings from sub-pattern are embedded; this arm returns no *new* top-level bindings.
+            Ok((overall_condition, vec![]))
         }
         PatternExpression::Binary {
             op: pattern_op,
@@ -373,21 +384,18 @@ fn generate_match_conditions_and_bindings(
             };
 
             let lir_lhs_ident = Ident::new("__binary_lir_lhs", Span::call_site());
-            let lir_lhs_path = quote!(#lir_lhs_ident);
             let lir_rhs_ident = Ident::new("__binary_lir_rhs", Span::call_site());
-            let lir_rhs_path = quote!(#lir_rhs_ident);
 
-            let lhs_condition = generate_match_conditions_and_bindings(
-                &lir_lhs_path,
+            // Recursively generate conditions for lhs and rhs
+            let (lhs_sub_condition, lhs_sub_bindings) = generate_match_conditions_and_bindings(
+                &quote!(#lir_lhs_ident),
                 &*pattern_lhs, // Dereference Box and take reference
-                bindings,
                 lir_path,
                 ssa_path,
             )?;
-            let rhs_condition = generate_match_conditions_and_bindings(
-                &lir_rhs_path,
+            let (rhs_sub_condition, rhs_sub_bindings) = generate_match_conditions_and_bindings(
+                &quote!(#lir_rhs_ident),
                 &*pattern_rhs, // Dereference Box and take reference
-                bindings,
                 lir_path,
                 ssa_path,
             )?;
@@ -395,12 +403,18 @@ fn generate_match_conditions_and_bindings(
             let overall_condition = quote! {
                 (match *#target_path {
                     #lir_path::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } => {
-                        (#lhs_condition && #rhs_condition)
+                        // Embed sub-bindings and sub-conditions here
+                        {
+                            #(#lhs_sub_bindings)*
+                            #(#rhs_sub_bindings)*
+                            (#lhs_sub_condition && #rhs_sub_condition)
+                        }
                     }
                     _ => false,
                 })
             };
-            Ok(overall_condition)
+            // Bindings from sub-patterns are embedded; this arm returns no *new* top-level bindings.
+            Ok((overall_condition, vec![]))
         }
     }
 }
@@ -417,30 +431,29 @@ impl MatchDslInput {
         let mut arm_results = Vec::new();
 
         for arm in &self.arms {
-            let mut bindings = Vec::new();
             let initial_target_path = quote!(#match_target_ident);
 
+            // generate_match_conditions_and_bindings returns (condition_code, arm_specific_bindings)
             match generate_match_conditions_and_bindings(
                 &initial_target_path,
                 &arm.pattern,
-                &mut bindings,
+                // REMOVED: &mut bindings, 
                 &lir_path,
-                &ssa_path, // Added ssa_path argument
+                &ssa_path,
             ) {
-                Ok(condition_code) => {
-                    // arm.body is now an Expr.
-                    // The guard is integrated into final_condition.
+                Ok((condition_code, arm_specific_bindings)) => { // Destructure the returned tuple
                     let arm_body_expr = &arm.body;
 
                     let final_condition = if let Some(guard_expr) = &arm.guard {
-                        quote!(#condition_code && (#guard_expr))
+                        // Combine the pattern's condition with the guard
+                        quote!((#condition_code) && (#guard_expr))
                     } else {
-                        condition_code
+                        condition_code // Just the pattern's condition
                     };
 
                     arm_results.push(quote! {
                         if #final_condition {
-                            #(#bindings)*
+                            #(#arm_specific_bindings)* // Use the bindings returned by the helper
                             // The body is an Expr, so it directly becomes the value of this branch
                             (#arm_body_expr)
                         }
