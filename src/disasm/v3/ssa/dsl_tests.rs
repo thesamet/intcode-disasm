@@ -210,15 +210,35 @@ mod tests {
         // Test basic patterns
         let reg = build_expr! { [R-3].5 };
         let num: Expression<SsaMemoryReference> = build_expr! { 123 };
-        let mut x = 0;
-        let match_input = match_dsl!(&reg,
-            _ => {x=5}
+        assert_eq!(
+            match_dsl!(&reg,
+                _ => 4
+            ),
+            4
         );
-        assert_eq!(x, 5);
 
-        let match_input = match_dsl!(&num,
-            123 => 9,
-            _ => 4
+        assert_eq!(
+            match_dsl!(&num,
+                123 => 123,
+                _ => 4,
+            ),
+            123,
+        );
+
+        assert_eq!(
+            match_dsl!(&reg,
+                123 => 123,
+                _ => 4,
+            ),
+            4,
+        );
+
+        assert_eq!(
+            match_dsl!(&reg,
+                ([R-3].5) => 26664,
+                _ => 4,
+            ),
+            35,
         );
 
         /*

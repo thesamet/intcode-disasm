@@ -8,7 +8,8 @@ use quote::quote; // Required for path generation in stubs
 
 // Imports from the dsl module for pattern parsing
 use crate::dsl::{
-    lir_path as dsl_lir_path, parse_expr_generic, PatternExpression, PatternParseStrategy,
+    lir_path as dsl_lir_path, parse_expr_generic, ssa_path as dsl_ssa_path, PatternExpression,
+    PatternParseStrategy,
 }; // Renamed lir_path to avoid conflict
 
 // Helper module for parsing tokens until a specific delimiter
@@ -81,7 +82,7 @@ pub struct MatchArmInput {
     // pub pattern_ts: TokenStream2, // The raw TokenStream for the pattern
     pub pattern: PatternExpression, // The parsed pattern AST
     pub guard: Option<Expr>,        // Optional if condition: if $var > 10
-    pub body: Block,
+    pub body: Expr,                 // Changed from Block to Expr
 }
 
 impl Parse for MatchArmInput {
@@ -108,8 +109,8 @@ impl Parse for MatchArmInput {
         // 3. Parse the `=>` token
         let _arrow_token: Token![=>] = input.parse()?;
 
-        // 4. Parse the body
-        let body: Block = input.parse()?;
+        // 4. Parse the body as an Expression
+        let body: Expr = input.parse()?;
 
         Ok(MatchArmInput {
             pattern,
@@ -171,6 +172,7 @@ fn generate_match_conditions_and_bindings(
     pattern: &PatternExpression,
     bindings: &mut Vec<TokenStream2>, // Accumulates `let` bindings
     lir_path: &TokenStream2,          // Path to LIR types (e.g., quote!(crate::disasm::v3::lir))
+    ssa_path: &TokenStream2,          // Path to SSA types (e.g., quote!(crate::disasm::v3::ssa))
 ) -> Result<TokenStream2> {
     // Returns the condition code for an `if` statement
     match pattern {
@@ -193,40 +195,212 @@ fn generate_match_conditions_and_bindings(
             Ok(condition)
         }
         PatternExpression::Bind(var_bind) => {
-            Err(syn::Error::new(
-                var_bind.ident.span(), // Use the span of the binding identifier
-                "PatternExpression::Bind not yet implemented in code generation",
-            ))
-        }
-        PatternExpression::Addressable(pattern_ssa) => {
-            // Attempt to get a reasonable span for the error
-            let error_span = match pattern_ssa {
-                crate::dsl::PatternSsaMemoryReference::Versioned(ve) => ve.offset.span(), // Span of the offset LitInt
-                crate::dsl::PatternSsaMemoryReference::Deref(_) => {
-                    // Fallback for Deref span, as inner PatternExpression doesn't directly carry a span easily
-                    Span::call_site()
+            let var_ident = &var_bind.ident;
+            match var_bind.bind_type {
+                crate::dsl::PatternBindType::Expression => {
+                    // Binds the current target_path directly.
+                    // The condition is true, as it matches any expression at this level.
+                    bindings.push(quote!(let #var_ident = (#target_path).clone();));
+                    Ok(quote!(true))
                 }
-            };
-            Err(syn::Error::new(
-                error_span,
-                "PatternExpression::Addressable not yet implemented",
-            ))
+                crate::dsl::PatternBindType::Constant => {
+                    // Target must be an LIR Constant expression.
+                    // The binding is pushed as a side-effect if the match succeeds.
+                    let condition = quote! {
+                        (match *#target_path {
+                            #lir_path::Expression::Constant(ref __val_for_binding) => {
+                                bindings.push(quote!(let #var_ident = *__val_for_binding;));
+                                true
+                            }
+                            _ => false,
+                        })
+                    };
+                    Ok(condition)
+                }
+                crate::dsl::PatternBindType::Addressable => {
+                    // Target must be an LIR Addressable expression.
+                    // The binding is pushed as a side-effect if the match succeeds.
+                    let condition = quote! {
+                        (match *#target_path {
+                            #lir_path::Expression::Addressable(ref __val_for_binding) => {
+                                // Assuming the addressable type `A` in `Expression<A>` is Clone.
+                                // For SsaMemoryReference, this should be fine.
+                                bindings.push(quote!(let #var_ident = __val_for_binding.clone();));
+                                true
+                            }
+                            _ => false,
+                        })
+                    };
+                    Ok(condition)
+                }
+            }
         }
-        PatternExpression::Unary { op: _, arg: _ } => {
-            Err(syn::Error::new(
-                Span::call_site(), // Placeholder: improve span, perhaps from op or arg if possible
-                "PatternExpression::Unary not yet implemented",
-            ))
+        PatternExpression::Addressable(pattern_ssa_ref) => {
+            match pattern_ssa_ref {
+                crate::dsl::PatternSsaMemoryReference::Versioned(pattern_ve) => {
+                    let pattern_offset_val: i128 =
+                        pattern_ve.offset.base10_parse().map_err(|e| {
+                            syn::Error::new(
+                                pattern_ve.offset.span(),
+                                format!("Invalid pattern offset: {}", e),
+                            )
+                        })?;
+                    let pattern_version_val: u64 =
+                        pattern_ve.version.base10_parse().map_err(|e| {
+                            syn::Error::new(
+                                pattern_ve.version.span(),
+                                format!("Invalid pattern version: {}", e),
+                            )
+                        })?;
+                    let pattern_sign_val = pattern_ve.sign;
+                    let pattern_is_relative_val = pattern_ve.is_relative;
+
+                    let condition = quote! {
+                        (match *#target_path {
+                            #lir_path::Expression::Addressable(ref ssa_ref) => {
+                                match ssa_ref {
+                                    #ssa_path::SsaMemoryReference::Versioned(ref lir_vmr) => {
+                                        let lir_version = lir_vmr.version as u64;
+                                        let version_match = #pattern_version_val == lir_version;
+
+                                        let kind_match = match (&lir_vmr.kind, #pattern_is_relative_val) {
+                                            (#ssa_path::types::VersionableMemoryKind::RelativeMemory(lir_rel_offset_signed_val), true) => {
+                                                let expected_lir_rel_offset_signed = #pattern_offset_val * #pattern_sign_val;
+                                                *lir_rel_offset_signed_val == expected_lir_rel_offset_signed
+                                            }
+                                            (#ssa_path::types::VersionableMemoryKind::Memory(lir_abs_offset_val), false) => {
+                                                (*lir_abs_offset_val == #pattern_offset_val as usize) && #pattern_sign_val == 1
+                                            }
+                                            _ => false,
+                                        };
+                                        version_match && kind_match
+                                    }
+                                    _ => false,
+                                }
+                            }
+                            _ => false,
+                        })
+                    };
+                    Ok(condition)
+                }
+                crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
+                    let lir_deref_inner_expr_ident =
+                        Ident::new("__addr_deref_lir_inner", Span::call_site());
+                    let lir_deref_inner_expr_path = quote!(#lir_deref_inner_expr_ident);
+
+                    let sub_condition = generate_match_conditions_and_bindings(
+                        &lir_deref_inner_expr_path,
+                        &*inner_pattern_expr, // Dereference Box and take reference
+                        bindings,
+                        lir_path,
+                        ssa_path,
+                    )?;
+
+                    let overall_condition = quote! {
+                        (match *#target_path {
+                            #lir_path::Expression::Addressable(ref ssa_ref) => {
+                                match ssa_ref {
+                                    #ssa_path::SsaMemoryReference::Deref(ref #lir_deref_inner_expr_ident) => {
+                                        #sub_condition
+                                    }
+                                    _ => false,
+                                }
+                            }
+                            _ => false,
+                        })
+                    };
+                    Ok(overall_condition)
+                }
+            }
+        }
+        PatternExpression::Unary {
+            op: pattern_op,
+            arg: pattern_arg,
+        } => {
+            let lir_op_token = match pattern_op {
+                crate::dsl::PatternUnaryOperator::Not => quote!(#lir_path::UnaryOperator::Not),
+                crate::dsl::PatternUnaryOperator::Minus => quote!(#lir_path::UnaryOperator::Minus),
+            };
+
+            let lir_arg_ident = Ident::new("__unary_lir_arg", Span::call_site());
+            let lir_arg_path = quote!(#lir_arg_ident);
+
+            let arg_condition = generate_match_conditions_and_bindings(
+                &lir_arg_path,
+                &*pattern_arg, // Dereference Box and take reference
+                bindings,
+                lir_path,
+                ssa_path,
+            )?;
+
+            let overall_condition = quote! {
+                (match *#target_path {
+                    #lir_path::Expression::Unary { op: #lir_op_token, arg: ref #lir_arg_ident } => {
+                        #arg_condition
+                    }
+                    _ => false,
+                })
+            };
+            Ok(overall_condition)
         }
         PatternExpression::Binary {
-            op: _,
-            lhs: _,
-            rhs: _,
+            op: pattern_op,
+            lhs: pattern_lhs,
+            rhs: pattern_rhs,
         } => {
-            Err(syn::Error::new(
-                Span::call_site(), // Placeholder: improve span
-                "PatternExpression::Binary not yet implemented",
-            ))
+            let lir_op_token = match pattern_op {
+                crate::dsl::PatternBinaryOperator::Add => quote!(#lir_path::BinaryOperator::Add),
+                crate::dsl::PatternBinaryOperator::Sub => quote!(#lir_path::BinaryOperator::Sub),
+                crate::dsl::PatternBinaryOperator::Mul => quote!(#lir_path::BinaryOperator::Mul),
+                crate::dsl::PatternBinaryOperator::LessThan => {
+                    quote!(#lir_path::BinaryOperator::LessThan)
+                }
+                crate::dsl::PatternBinaryOperator::LessThanOrEqual => {
+                    quote!(#lir_path::BinaryOperator::LessThanOrEqual)
+                }
+                crate::dsl::PatternBinaryOperator::GreaterThan => {
+                    quote!(#lir_path::BinaryOperator::GreaterThan)
+                }
+                crate::dsl::PatternBinaryOperator::GreaterThanOrEqual => {
+                    quote!(#lir_path::BinaryOperator::GreaterThanOrEqual)
+                }
+                crate::dsl::PatternBinaryOperator::Equals => {
+                    quote!(#lir_path::BinaryOperator::Equals)
+                }
+                crate::dsl::PatternBinaryOperator::NotEquals => {
+                    quote!(#lir_path::BinaryOperator::NotEquals)
+                }
+            };
+
+            let lir_lhs_ident = Ident::new("__binary_lir_lhs", Span::call_site());
+            let lir_lhs_path = quote!(#lir_lhs_ident);
+            let lir_rhs_ident = Ident::new("__binary_lir_rhs", Span::call_site());
+            let lir_rhs_path = quote!(#lir_rhs_ident);
+
+            let lhs_condition = generate_match_conditions_and_bindings(
+                &lir_lhs_path,
+                &*pattern_lhs, // Dereference Box and take reference
+                bindings,
+                lir_path,
+                ssa_path,
+            )?;
+            let rhs_condition = generate_match_conditions_and_bindings(
+                &lir_rhs_path,
+                &*pattern_rhs, // Dereference Box and take reference
+                bindings,
+                lir_path,
+                ssa_path,
+            )?;
+
+            let overall_condition = quote! {
+                (match *#target_path {
+                    #lir_path::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } => {
+                        (#lhs_condition && #rhs_condition)
+                    }
+                    _ => false,
+                })
+            };
+            Ok(overall_condition)
         }
     }
 }
@@ -238,6 +412,7 @@ impl MatchDslInput {
 
         // Get LIR path using the imported and possibly renamed dsl_lir_path
         let lir_path = crate::dsl::lir_path();
+        let ssa_path = crate::dsl::ssa_path(); // Added ssa_path
 
         let mut arm_results = Vec::new();
 
@@ -250,30 +425,13 @@ impl MatchDslInput {
                 &arm.pattern,
                 &mut bindings,
                 &lir_path,
+                &ssa_path, // Added ssa_path argument
             ) {
                 Ok(condition_code) => {
-                    let arm_body = &arm.body;
-                    let full_arm_body_code = if let Some(guard_expr) = &arm.guard {
-                        quote! {
-                            if #guard_expr {
-                                #arm_body
-                            } else {
-                                // If guard fails, this arm doesn't match.
-                                // To fit into an if/else if chain, this branch could do nothing
-                                // or we could structure the condition differently.
-                                // For now, the outer `if #condition_code` handles the main pattern match.
-                                // The guard is an additional condition *inside* the successful match.
-                                // So, if guard fails, the body is simply not executed.
-                                // This means the else branch for the guard is not strictly needed
-                                // if the guard is part of the main `if` condition.
-                                // Let's integrate guard into the main condition for now.
-                            }
-                        }
-                    } else {
-                        quote!(#arm_body)
-                    };
+                    // arm.body is now an Expr.
+                    // The guard is integrated into final_condition.
+                    let arm_body_expr = &arm.body;
 
-                    // Integrate guard into the main condition
                     let final_condition = if let Some(guard_expr) = &arm.guard {
                         quote!(#condition_code && (#guard_expr))
                     } else {
@@ -283,7 +441,8 @@ impl MatchDslInput {
                     arm_results.push(quote! {
                         if #final_condition {
                             #(#bindings)*
-                            #full_arm_body_code
+                            // The body is an Expr, so it directly becomes the value of this branch
+                            (#arm_body_expr)
                         }
                     });
                 }
@@ -309,15 +468,12 @@ impl MatchDslInput {
                     #chained_code else #next_arm_code
                 };
             }
-            // Add a final `else {}` to make it an expression and ensure it type-checks
-            // if the bodies don't all return or have the same type.
-            // User might need to ensure bodies are compatible or the last arm is a wildcard.
+            // Add a final `else` that panics for non-exhaustiveness.
+            // This makes the `if/else if` chain an expression.
             quote! {
                 #chained_code
                 else {
-                    // Default case if no arms match.
-                    // Could be panic!("non-exhaustive patterns in match_dsl!"), or just ().
-                    // For now, let it be an empty block, meaning it evaluates to ().
+                    panic!("match_dsl! patterns not exhaustive on target: {:?}", #match_target_ident);
                 }
             }
         };

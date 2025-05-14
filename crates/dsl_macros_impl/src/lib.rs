@@ -12,7 +12,8 @@ use match_dsl_parser::MatchDslInput; // Corrected import
 #[proc_macro]
 pub fn match_dsl(input: TokenStream) -> TokenStream {
     let parsed_input = parse_macro_input!(input as MatchDslInput); // Use corrected MatchDslInput
-    parsed_input.expanded().into()
+    let code = parsed_input.expanded().into();
+    code
 }
 
 #[proc_macro]
