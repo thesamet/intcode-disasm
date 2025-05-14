@@ -1,5 +1,5 @@
 // disasm/model_macros/macro/src/match_dsl_parser.rs
-use proc_macro2::{Ident, TokenStream as TokenStream2};
+use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use syn::parse::{Parse, ParseStream, Peek};
 use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 
@@ -7,7 +7,9 @@ use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 use quote::quote; // Required for path generation in stubs
 
 // Imports from the dsl module for pattern parsing
-use crate::dsl::{parse_expr_generic, PatternExpression, PatternParseStrategy};
+use crate::dsl::{
+    lir_path as dsl_lir_path, parse_expr_generic, PatternExpression, PatternParseStrategy,
+}; // Renamed lir_path to avoid conflict
 
 // Helper module for parsing tokens until a specific delimiter
 mod limited_scope_parser {
@@ -162,46 +164,172 @@ impl Parse for MatchDslInput {
         Ok(MatchDslInput { target_expr, arms })
     }
 }
+//
+// Helper function to generate matching conditions and bindings
+fn generate_match_conditions_and_bindings(
+    target_path: &TokenStream2, // Path to the current part of the target expression being matched
+    pattern: &PatternExpression,
+    bindings: &mut Vec<TokenStream2>, // Accumulates `let` bindings
+    lir_path: &TokenStream2,          // Path to LIR types (e.g., quote!(crate::disasm::v3::lir))
+) -> Result<TokenStream2> {
+    // Returns the condition code for an `if` statement
+    match pattern {
+        PatternExpression::Wildcard => {
+            // Wildcard always matches, condition is true. No bindings.
+            Ok(quote!(true))
+        }
+        PatternExpression::Constant(pattern_lit) => {
+            // Target must be an LIR Constant expression and its value must match pattern_lit.
+            // We expect target_path to be a reference (e.g., &lir::Expression), so we dereference it in the pattern match.
+            let condition = quote! {
+                (
+                    if let #lir_path::Expression::Constant(ref __matched_val) = *#target_path {
+                        *__matched_val == #pattern_lit
+                    } else {
+                        false
+                    }
+                )
+            };
+            Ok(condition)
+        }
+        PatternExpression::Bind(var_bind) => {
+            Err(syn::Error::new(
+                var_bind.ident.span(), // Use the span of the binding identifier
+                "PatternExpression::Bind not yet implemented in code generation",
+            ))
+        }
+        PatternExpression::Addressable(pattern_ssa) => {
+            // Attempt to get a reasonable span for the error
+            let error_span = match pattern_ssa {
+                crate::dsl::PatternSsaMemoryReference::Versioned(ve) => ve.offset.span(), // Span of the offset LitInt
+                crate::dsl::PatternSsaMemoryReference::Deref(_) => {
+                    // Fallback for Deref span, as inner PatternExpression doesn't directly carry a span easily
+                    Span::call_site()
+                }
+            };
+            Err(syn::Error::new(
+                error_span,
+                "PatternExpression::Addressable not yet implemented",
+            ))
+        }
+        PatternExpression::Unary { op: _, arg: _ } => {
+            Err(syn::Error::new(
+                Span::call_site(), // Placeholder: improve span, perhaps from op or arg if possible
+                "PatternExpression::Unary not yet implemented",
+            ))
+        }
+        PatternExpression::Binary {
+            op: _,
+            lhs: _,
+            rhs: _,
+        } => {
+            Err(syn::Error::new(
+                Span::call_site(), // Placeholder: improve span
+                "PatternExpression::Binary not yet implemented",
+            ))
+        }
+    }
+}
 
 impl MatchDslInput {
     pub fn expanded(&self) -> TokenStream2 {
-        // For debugging Phase 1:
-        // Output a textual representation of the parsed structure.
-        let target_expr_code = &self.target_expr;
-        let arms_count = self.arms.len();
-        let mut arm_debug_strings = Vec::new();
+        let target_expr_to_match = &self.target_expr;
+        let match_target_ident = Ident::new("__match_dsl_target", Span::call_site());
 
-        for (i, arm) in self.arms.iter().enumerate() {
-            // Use Debug formatting for PatternExpression (PatternExpression) as Display might not be implemented yet.
-            let pattern_str = format!("{:?}", arm.pattern);
-            // Using format! to build parts of the debug string
-            arm_debug_strings.push(format!("Arm {}: Pattern=\'{}\'", i, pattern_str));
+        // Get LIR path using the imported and possibly renamed dsl_lir_path
+        let lir_path = crate::dsl::lir_path();
+
+        let mut arm_results = Vec::new();
+
+        for arm in &self.arms {
+            let mut bindings = Vec::new();
+            let initial_target_path = quote!(#match_target_ident);
+
+            match generate_match_conditions_and_bindings(
+                &initial_target_path,
+                &arm.pattern,
+                &mut bindings,
+                &lir_path,
+            ) {
+                Ok(condition_code) => {
+                    let arm_body = &arm.body;
+                    let full_arm_body_code = if let Some(guard_expr) = &arm.guard {
+                        quote! {
+                            if #guard_expr {
+                                #arm_body
+                            } else {
+                                // If guard fails, this arm doesn't match.
+                                // To fit into an if/else if chain, this branch could do nothing
+                                // or we could structure the condition differently.
+                                // For now, the outer `if #condition_code` handles the main pattern match.
+                                // The guard is an additional condition *inside* the successful match.
+                                // So, if guard fails, the body is simply not executed.
+                                // This means the else branch for the guard is not strictly needed
+                                // if the guard is part of the main `if` condition.
+                                // Let's integrate guard into the main condition for now.
+                            }
+                        }
+                    } else {
+                        quote!(#arm_body)
+                    };
+
+                    // Integrate guard into the main condition
+                    let final_condition = if let Some(guard_expr) = &arm.guard {
+                        quote!(#condition_code && (#guard_expr))
+                    } else {
+                        condition_code
+                    };
+
+                    arm_results.push(quote! {
+                        if #final_condition {
+                            #(#bindings)*
+                            #full_arm_body_code
+                        }
+                    });
+                }
+                Err(e) => {
+                    // If generating conditions/bindings for an arm fails, propagate as compile error
+                    return e.to_compile_error().into();
+                }
+            }
         }
 
-        // Create a single string for all arm representations
-        let all_arms_debug_str = arm_debug_strings.join("\\\\n"); // Use \\\\n for newline in string literal
-
-        let expanded = quote! {
-            {
-                // This block is just for demonstrating the parser worked.
-                // It doesn't execute the match logic.
-                // Using a compile-time println via a const to ensure it appears during build.
-                const _: () = {
-                    // Note: eprintn! might be more visible during proc_macro compilation
-                    eprintln!(
-                        "match_dsl! Parsed:\\nTarget: {}\\nArms ({}): \\n{}",
-                        stringify!(#target_expr_code),
-                        #arms_count,
-                        #all_arms_debug_str
-                    );
+        let final_match_logic = if arm_results.is_empty() {
+            // This should be caught by the parser, but as a defensive measure:
+            syn::Error::new(
+                Span::call_site(),
+                "match_dsl! macro requires at least one arm.",
+            )
+            .to_compile_error()
+        } else {
+            let mut chained_code = arm_results[0].clone();
+            for i in 1..arm_results.len() {
+                let next_arm_code = &arm_results[i];
+                chained_code = quote! {
+                    #chained_code else #next_arm_code
                 };
-
-                // The actual match logic (if/else if chain) will be generated here in later phases.
-                // For now, the macro needs to evaluate to *something*. Let's return unit.
-                ()
+            }
+            // Add a final `else {}` to make it an expression and ensure it type-checks
+            // if the bodies don't all return or have the same type.
+            // User might need to ensure bodies are compatible or the last arm is a wildcard.
+            quote! {
+                #chained_code
+                else {
+                    // Default case if no arms match.
+                    // Could be panic!("non-exhaustive patterns in match_dsl!"), or just ().
+                    // For now, let it be an empty block, meaning it evaluates to ().
+                }
             }
         };
-        expanded.into() // Convert TokenStream2 back to proc_macro::TokenStream
+
+        let expanded_code = quote! {
+            {
+                let #match_target_ident = &#target_expr_to_match;
+                #final_match_logic
+            }
+        };
+
+        expanded_code.into()
     }
 }
 
@@ -478,5 +606,26 @@ mod tests {
             }
             _ => panic!("Expected Unary op pattern, got {:?}", arm.pattern),
         }
+    }
+
+    #[test]
+    fn test_generated_code_wildcard() {
+        let input_str = "my_var, _ => {println!(\"wildcard\");}"; // "ทำงาน" means "work" or "execute"
+        let parsed_dsl: MatchDslInput = syn::parse_str(input_str).unwrap();
+        let generated_ts = parsed_dsl.expanded();
+        assert!(!generated_ts.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_generated_code_constant() {
+        let input_str = "another_var, 123 => {println!(\"constant_123\");}";
+        let parsed_dsl: MatchDslInput = syn::parse_str(input_str).unwrap();
+        let generated_ts = parsed_dsl.expanded();
+        // println!("{}", generated_ts.to_string());
+        println!("{}", generated_ts.to_string()); // Optional: print to see generated code
+                                                  // Further assertions could try to parse generated_ts into a syn::File or syn::Block
+                                                  // and inspect its structure, but that's more advanced.
+                                                  // For now, ensuring it compiles and looks reasonable if printed is a good start.
+        assert!(!generated_ts.to_string().is_empty());
     }
 }

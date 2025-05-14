@@ -4,7 +4,7 @@ mod tests {
     use crate::disasm::v3::lir::Expression;
     use crate::disasm::v3::{common::formatting::ContextualPrettyPrint, lir::InstructionNode};
 
-    use crate::macros::{build_expr, build_instruction};
+    use crate::macros::{build_expr, build_instruction, match_dsl};
 
     use crate::disasm::v3::ssa::SsaMemoryReference;
 
@@ -204,4 +204,162 @@ mod tests {
         let expr: Expression<SsaMemoryReference> = build_expr! { -!5 };
         assert_eq!(expr.nocolor(), "-!5");
     }
+
+    #[test]
+    fn test_match_dsl_basic_patterns() {
+        // Test basic patterns
+        let reg = build_expr! { [R-3].5 };
+        let num: Expression<SsaMemoryReference> = build_expr! { 123 };
+        let mut x = 0;
+        let match_input = match_dsl!(&reg,
+            _ => {x=5}
+        );
+        assert_eq!(x, 5);
+
+        let match_input = match_dsl!(&num,
+            123 => {},
+        );
+
+        /*
+        let match_input = match_dsl! {
+            [R+1].5 => {}
+        };
+        // Assuming memory reference pretty prints the same way in patterns
+        assert_eq!(match_input.nocolor(), "[R+1]_5 => { ... }");
+
+        let match_input = match_dsl! {
+            *([R+7].0) => {}
+        };
+        // Assuming deref pretty prints the same way in patterns
+        assert_eq!(match_input.nocolor(), "*([R+7]_0) => { ... }");
+        */
+    }
+
+    /*
+    #[test]
+    fn test_match_dsl_bindings() {
+        // Test variable bindings
+        let match_input = match_dsl! {
+            $a:const => {}
+        };
+        assert_eq!(match_input.nocolor(), "$a:const => { ... }");
+
+        let match_input = match_dsl! {
+            $b:addr => {}
+        };
+        assert_eq!(match_input.nocolor(), "$b:addr => { ... }");
+
+        let match_input = match_dsl! {
+            $c:expr => {}
+        };
+        assert_eq!(match_input.nocolor(), "$c:expr => { ... }");
+
+        // Combinations with bindings
+        let match_input = match_dsl! {
+            [R+1].$a:const => {}
+        };
+        // Assuming pretty print for memory ref with binding
+        assert_eq!(match_input.nocolor(), "[R+1]_$a:const => { ... }");
+
+        let match_input = match_dsl! {
+            $_:const => {}
+        };
+        assert_eq!(match_input.nocolor(), "$_:const => { ... }");
+
+        let match_input = match_dsl! {
+            $_:addr => {}
+        };
+        assert_eq!(match_input.nocolor(), "$_:addr => { ... }");
+
+        let match_input = match_dsl! {
+            $_:expr => {}
+        };
+        assert_eq!(match_input.nocolor(), "$_:expr => { ... }");
+    }
+
+    #[test]
+    fn test_match_dsl_operators() {
+        // Test patterns with operators
+        let match_input = match_dsl! {
+            $a:const + $b:const => {}
+        };
+        assert_eq!(match_input.nocolor(), "$a:const + $b:const => { ... }");
+
+        let match_input = match_dsl! {
+            $c:expr * 123 => {}
+        };
+        assert_eq!(match_input.nocolor(), "$c:expr * 123 => { ... }");
+
+        let match_input = match_dsl! {
+            ([R+2].3 - $d:expr) + $_ => {}
+        };
+        // Assuming parenthesis are preserved when necessary based on precedence
+        assert_eq!(match_input.nocolor(), "([R+2]_3 - $d:expr) + $_ => { ... }");
+
+        let match_input = match_dsl! {
+            - $a:const => {}
+        };
+        assert_eq!(match_input.nocolor(), "-$a:const => { ... }");
+
+        let match_input = match_dsl! {
+            ! $b:expr => {}
+        };
+        assert_eq!(match_input.nocolor(), "!$b:expr => { ... }");
+
+        let match_input = match_dsl! {
+            * ($c:expr + 10) => {}
+        };
+        assert_eq!(match_input.nocolor(), "*($c:expr + 10) => { ... }");
+
+        let match_input = match_dsl! {
+           $a:const + - $b:const => {}
+        };
+        assert_eq!(match_input.nocolor(), "$a:const + -$b:const => { ... }");
+    }
+
+    #[test]
+    fn test_match_dsl_multiple_arms() {
+        // Test multiple arms
+        let match_input = match_dsl! {
+            123 => {},
+            [R+2].7 => {},
+            _ => {}
+        };
+        // Assuming arms are separated by comma and space in pretty print
+        assert_eq!(
+            match_input.nocolor(),
+            "123 => { ... }, [R+2]_7 => { ... }, _ => { ... }"
+        );
+
+        let match_input = match_dsl! {
+            $a:const + $b:const => {},
+            [R+1].$c:const => {},
+            *($_ + 5) => {}
+        };
+        assert_eq!(
+            match_input.nocolor(),
+            "$a:const + $b:const => { ... }, [R+1]_$c:const => { ... }, *($_ + 5) => { ... }"
+        );
+    }
+
+    #[test]
+    fn test_match_dsl_complex_patterns() {
+        // Test more complex nested patterns
+        let match_input = match_dsl! {
+            *($a:expr + 123) * ![R+1].$b:const => {}
+        };
+        assert_eq!(
+            match_input.nocolor(),
+            "*($a:expr + 123) * ![R+1]_$b:const => { ... }"
+        );
+
+        let match_input = match_dsl! {
+            ([R+5].$a:const - $_:addr) + *($b:expr * [R-2].7) => {}
+        };
+        assert_eq!(
+            match_input.nocolor(),
+            "([R+5]_$a:const - $_:addr) + *($b:expr * [R-2]_7) => { ... }"
+        );
+    }
+    */
 }
