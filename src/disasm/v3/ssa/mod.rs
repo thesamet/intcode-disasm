@@ -1,5 +1,4 @@
 pub mod converter;
-mod dsl_tests;
 pub mod result; // Make public
 pub mod types; // Make public // Make public
 

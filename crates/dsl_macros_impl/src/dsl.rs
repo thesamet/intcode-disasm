@@ -1,5 +1,6 @@
 extern crate proc_macro;
 use proc_macro2::TokenStream as TokenStream2;
+use proc_macro_crate::FoundCrate;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
@@ -38,12 +39,11 @@ pub enum PatternUnaryOperator {
     Minus,
 }
 
-pub fn lir_path() -> TokenStream2 {
-    quote!(crate::disasm::v3::lir)
-}
-
-pub fn ssa_path() -> TokenStream2 {
-    quote!(crate::disasm::v3::ssa)
+pub fn v3_path() -> TokenStream2 {
+    match proc_macro_crate::crate_name("disasm").expect("Could not find disasm crate") {
+        FoundCrate::Itself => quote!(crate::disasm::v3),
+        FoundCrate::Name(name) => quote!(disasm::disasm::v3),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,16 +102,16 @@ impl VersionedElement {
         let offset = &self.offset;
         let ver = &self.version;
         let sign = &self.sign;
-        let ssa = ssa_path();
+        let v3_path = v3_path();
         let kind = if self.is_relative {
-            quote!(#ssa::types::VersionableMemoryKind::RelativeMemory(#offset * #sign))
+            quote!(#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset * #sign))
         } else {
-            quote!(#ssa::types::VersionableMemoryKind::Memory(#offset))
+            quote!(#v3_path::ssa::types::VersionableMemoryKind::Memory(#offset))
         };
         quote! {
-            #ssa::SsaMemoryReference::Versioned(#ssa::VersionedMemoryReference::new(
+            #v3_path::ssa::SsaMemoryReference::Versioned(#v3_path::ssa::VersionedMemoryReference::new(
                 #kind,
-                crate::disasm::v3::FunctionId::new(0),
+                #v3_path::FunctionId::new(0),
                 #ver,
             ))
         }
@@ -205,9 +205,6 @@ pub trait ParseStrategy {
         rhs: Self::Output,
     ) -> Result<Self::Output>;
 
-    // Gets the LIR path (used by LIR strategy for quoting) - can return an empty quote for Pattern strategy
-    fn lir_path_token(&self) -> TokenStream2; // TODO: Maybe make this Option<TokenStream2> or part of LirStrategy only
-
     // Specific Unary Operators for this strategy
     fn get_unary_minus_op(&self) -> Self::UnaryOpType;
     fn get_unary_not_op(&self) -> Self::UnaryOpType;
@@ -235,9 +232,9 @@ impl ParseStrategy for LirParseStrategy {
         op_variant: Self::UnaryOpType,
         arg: Self::Output,
     ) -> Result<Self::Output> {
-        let cp = self.lir_path_token();
+        let cp = v3_path();
         Ok(quote! {
-            #cp::Expression::Unary {
+            #cp::lir::Expression::Unary {
                 op: #op_variant,
                 arg: Box::new(#arg)
             }
@@ -250,37 +247,34 @@ impl ParseStrategy for LirParseStrategy {
         lhs: Self::Output,
         rhs: Self::Output,
     ) -> Result<Self::Output> {
-        let cp = self.lir_path_token();
-        Ok(quote! { #cp::Expression::Binary {
+        let cp = v3_path();
+        Ok(quote! { #cp::lir::Expression::Binary {
             op: #op_variant,
             lhs: Box::new(#lhs),
             rhs: Box::new(#rhs)
         }})
     }
 
-    fn lir_path_token(&self) -> TokenStream2 {
-        lir_path() // Uses the existing lir_path() helper
-    }
-
     fn get_unary_minus_op(&self) -> Self::UnaryOpType {
-        let cp = self.lir_path_token();
-        quote!(#cp::UnaryOperator::Minus)
+        let cp = v3_path();
+        quote!(#cp::lir::UnaryOperator::Minus)
     }
     fn get_unary_not_op(&self) -> Self::UnaryOpType {
-        let cp = self.lir_path_token();
-        quote!(#cp::UnaryOperator::Not)
+        let cp = v3_path();
+        quote!(#cp::lir::UnaryOperator::Not)
     }
     fn get_binary_add_op(&self) -> Self::BinaryOpType {
-        let cp = self.lir_path_token();
-        quote!(#cp::BinaryOperator::Add)
+        let cp = v3_path();
+
+        quote!(#cp::lir::BinaryOperator::Add)
     }
     fn get_binary_sub_op(&self) -> Self::BinaryOpType {
-        let cp = self.lir_path_token();
-        quote!(#cp::BinaryOperator::Sub)
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::Sub)
     }
     fn get_binary_mul_op(&self) -> Self::BinaryOpType {
-        let cp = self.lir_path_token();
-        quote!(#cp::BinaryOperator::Mul)
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::Mul)
     }
 }
 
@@ -383,12 +377,6 @@ impl ParseStrategy for PatternParseStrategy {
         })
     }
 
-    fn lir_path_token(&self) -> TokenStream2 {
-        // Not used when constructing PatternExpression AST nodes directly.
-        // Could error out or return an empty quote if called.
-        quote!()
-    }
-
     fn get_unary_minus_op(&self) -> Self::UnaryOpType {
         PatternUnaryOperator::Minus
     }
@@ -482,11 +470,11 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
 }
 
 fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
-    let cp = lir_path(); // cp stands for crate_path, used for Expression variants
+    let cp = v3_path(); // cp stands for crate_path, used for Expression variants
     match parse_atom_internal(input)? {
         ParsedAtom::MemoryRef(tokens) => {
             // Wrap SsaMemoryReference in Expression::Addressable
-            Ok(quote! { #cp::Expression::Addressable(#tokens) })
+            Ok(quote! { #cp::lir::Expression::Addressable(#tokens) })
         }
         ParsedAtom::SubExpression(tokens) => {
             // Already an Expression (came from parenthesized expression), return as is
@@ -494,7 +482,7 @@ fn parse_atom(input: ParseStream) -> Result<TokenStream2> {
         }
         ParsedAtom::Constant(tokens) => {
             // Wrap literal in Expression::Constant
-            Ok(quote! { #cp::Expression::Constant(#tokens) })
+            Ok(quote! { #cp::lir::Expression::Constant(#tokens) })
         }
         ParsedAtom::ExternalVar(ident) => {
             // The ident is the Rust variable name. It's assumed to be in scope
@@ -586,14 +574,14 @@ impl Parse for FullExprParse {
 
 // --- Parser for SsaMemoryReference (LHS of assignment) ---
 fn parse_ssa_memory_reference(input: ParseStream) -> Result<TokenStream2> {
-    let ssa = ssa_path();
+    let v3_path = v3_path();
     if input.peek(Token![*]) && input.peek2(token::Paren) {
         let _star: Token![*] = input.parse()?;
         let content;
         syn::parenthesized!(content in input);
         let inner_expr_tokens = parse_lir_expr(&content)?; // Parse the inner expression as LIR
         Ok(quote! {
-            #ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
+            #v3_path::ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
         })
     } else if input.peek(token::Bracket) {
         let version_atom: VersionedElement = input.parse()?;
@@ -621,7 +609,7 @@ pub struct DslInstructionParse {
 
 impl DslInstructionParse {
     pub fn to_tokens(&self) -> TokenStream2 {
-        let lir = lir_path();
+        let v3_path = v3_path();
 
         let instruction_variant_tokens = match &self.kind {
             DslInstructionKind::Assign {
@@ -629,7 +617,7 @@ impl DslInstructionParse {
                 rhs_tokens,
             } => {
                 quote! {
-                    #lir::Instruction::Assign {
+                    #v3_path::lir::Instruction::Assign {
                         target: #lhs_tokens,
                         src: #rhs_tokens,
                         target_debug_marker: None,
@@ -638,14 +626,14 @@ impl DslInstructionParse {
             }
             DslInstructionKind::Output { expr_tokens } => {
                 quote! {
-                    #lir::Instruction::Output(#expr_tokens)
+                    #v3_path::lir::Instruction::Output(#expr_tokens)
                 }
             }
         };
 
         quote! {
-            #lir::InstructionNode {
-                id: crate::disasm::v3::InstructionId::new(0),
+            #v3_path::lir::InstructionNode {
+                id: #v3_path::lir::InstructionId::new(0),
                 kind: #instruction_variant_tokens,
             }
         }

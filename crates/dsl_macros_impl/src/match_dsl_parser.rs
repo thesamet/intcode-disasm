@@ -7,10 +7,7 @@ use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 use quote::quote; // Required for path generation in stubs
 
 // Imports from the dsl module for pattern parsing
-use crate::dsl::{
-    lir_path as dsl_lir_path, parse_expr_generic, ssa_path as dsl_ssa_path, PatternExpression,
-    PatternParseStrategy,
-}; // Renamed lir_path to avoid conflict
+use crate::dsl::{parse_expr_generic, v3_path, PatternExpression, PatternParseStrategy}; // Renamed v3_path to avoid conflict
 
 // Helper module for parsing tokens until a specific delimiter
 mod limited_scope_parser {
@@ -170,9 +167,7 @@ impl Parse for MatchDslInput {
 fn generate_match_conditions_and_bindings(
     target_path: &TokenStream2, // Path to the current part of the target expression being matched
     pattern: &PatternExpression,
-    // REMOVED: bindings: &mut Vec<TokenStream2>,
-    lir_path: &TokenStream2, // Path to LIR types (e.g., quote!(crate::disasm::v3::lir))
-    ssa_path: &TokenStream2, // Path to SSA types (e.g., quote!(crate::disasm::v3::ssa))
+    v3_path: &TokenStream2,
 ) -> Result<(TokenStream2, Vec<TokenStream2>)> {
     // CHANGED RETURN TYPE
     // Returns the condition code for an `if` statement, and a vec of `let` bindings
@@ -186,7 +181,7 @@ fn generate_match_conditions_and_bindings(
             // We expect target_path to be a reference (e.g., &lir::Expression), so we dereference it in the pattern match.
             let condition = quote! {
                 (
-                    if let #lir_path::Expression::Constant(ref __matched_val) = *#target_path {
+                    if let #v3_path::lir::Expression::Constant(ref __matched_val) = *#target_path {
                         *__matched_val == #pattern_lit
                     } else {
                         false
@@ -205,10 +200,10 @@ fn generate_match_conditions_and_bindings(
                 }
                 crate::dsl::PatternBindType::Constant => {
                     let condition =
-                        quote!(matches!(*#target_path, #lir_path::Expression::Constant(_)));
+                        quote!(matches!(*#target_path, #v3_path::lir::Expression::Constant(_)));
                     let generated_bindings = vec![quote! {
                         let #var_ident = match *#target_path {
-                            #lir_path::Expression::Constant(ref __val) => *__val,
+                            #v3_path::lir::Expression::Constant(ref __val) => *__val,
                             _ => unreachable!("pattern guard ensured this variant; an Expression::Constant was expected"),
                         };
                     }];
@@ -216,10 +211,10 @@ fn generate_match_conditions_and_bindings(
                 }
                 crate::dsl::PatternBindType::Addressable => {
                     let condition =
-                        quote!(matches!(*#target_path, #lir_path::Expression::Addressable(_)));
+                        quote!(matches!(*#target_path, #v3_path::lir::Expression::Addressable(_)));
                     let generated_bindings = vec![quote! {
                         let #var_ident = match *#target_path {
-                            #lir_path::Expression::Addressable(ref __val) => __val.clone(),
+                            #v3_path::lir::Expression::Addressable(ref __val) => __val.clone(),
                             _ => unreachable!("pattern guard ensured this variant; an Expression::Addressable was expected"),
                         };
                     }];
@@ -249,18 +244,18 @@ fn generate_match_conditions_and_bindings(
 
                     let condition = quote! {
                         (match *#target_path {
-                            #lir_path::Expression::Addressable(ref ssa_ref) => {
+                            #v3_path::lir::Expression::Addressable(ref ssa_ref) => {
                                 match ssa_ref {
-                                    #ssa_path::SsaMemoryReference::Versioned(ref lir_vmr) => {
+                                    #v3_path::ssa::SsaMemoryReference::Versioned(ref lir_vmr) => {
                                         let lir_version = lir_vmr.version as u64;
                                         let version_match = #pattern_version_val == lir_version;
 
                                         let kind_match = match (&lir_vmr.kind, #pattern_is_relative_val) {
-                                            (#ssa_path::types::VersionableMemoryKind::RelativeMemory(lir_rel_offset_signed_val), true) => {
+                                            (#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(lir_rel_offset_signed_val), true) => {
                                                 let expected_lir_rel_offset_signed = #pattern_offset_val * #pattern_sign_val;
                                                 *lir_rel_offset_signed_val == expected_lir_rel_offset_signed
                                             }
-                                            (#ssa_path::types::VersionableMemoryKind::Memory(lir_abs_offset_val), false) => {
+                                            (#v3_path::ssa::types::VersionableMemoryKind::Memory(lir_abs_offset_val), false) => {
                                                 (*lir_abs_offset_val as i128 == #pattern_offset_val) && #pattern_sign_val == 1
                                             }
                                             _ => false,
@@ -292,16 +287,14 @@ fn generate_match_conditions_and_bindings(
                     let (sub_condition, sub_bindings) = generate_match_conditions_and_bindings(
                         &inner_lir_expr_target_path, // Path to the inner LIR Expression
                         &*inner_pattern_expr, // Dereference Box and take reference for pattern
-                        // REMOVED: bindings,
-                        lir_path,
-                        ssa_path,
+                        v3_path,
                     )?;
 
                     let overall_condition = quote! {
                         (match *#target_path {
-                            #lir_path::Expression::Addressable(ref ssa_ref) => {
+                            #v3_path::lir::Expression::Addressable(ref ssa_ref) => {
                                 match ssa_ref {
-                                    #ssa_path::SsaMemoryReference::Deref(ref #lir_deref_inner_expr_ident) => { // #lir_deref_inner_expr_ident is Box<Expression>
+                                    #v3_path::ssa::SsaMemoryReference::Deref(ref #lir_deref_inner_expr_ident) => { // #lir_deref_inner_expr_ident is Box<Expression>
                                         // Embed sub_bindings and sub_condition here
                                         {
                                             #(#sub_bindings)*
@@ -324,8 +317,10 @@ fn generate_match_conditions_and_bindings(
             arg: pattern_arg,
         } => {
             let lir_op_token = match pattern_op {
-                crate::dsl::PatternUnaryOperator::Not => quote!(#lir_path::UnaryOperator::Not),
-                crate::dsl::PatternUnaryOperator::Minus => quote!(#lir_path::UnaryOperator::Minus),
+                crate::dsl::PatternUnaryOperator::Not => quote!(#v3_path::lir::UnaryOperator::Not),
+                crate::dsl::PatternUnaryOperator::Minus => {
+                    quote!(#v3_path::lir::UnaryOperator::Minus)
+                }
             };
 
             let lir_arg_ident = Ident::new("__unary_lir_arg", Span::call_site());
@@ -334,14 +329,13 @@ fn generate_match_conditions_and_bindings(
 
             let (arg_sub_condition, arg_sub_bindings) = generate_match_conditions_and_bindings(
                 &quote!(#lir_arg_ident), // The target for this sub-match is the extracted LIR argument
-                &*pattern_arg, // Dereference Box and take reference
-                lir_path,
-                ssa_path,
+                &*pattern_arg,           // Dereference Box and take reference
+                v3_path,
             )?;
-            
+
             let overall_condition = quote! {
                 (match *#target_path {
-                    #lir_path::Expression::Unary { op: #lir_op_token, arg: ref #lir_arg_ident } => { // #lir_arg_ident is &Box<Expression>, ref makes it &Expression
+                    #v3_path::lir::Expression::Unary { op: #lir_op_token, arg: ref #lir_arg_ident } => { // #lir_arg_ident is &Box<Expression>, ref makes it &Expression
                         // Embed arg_sub_bindings and arg_sub_condition here
                         {
                             #(#arg_sub_bindings)*
@@ -360,26 +354,32 @@ fn generate_match_conditions_and_bindings(
             rhs: pattern_rhs,
         } => {
             let lir_op_token = match pattern_op {
-                crate::dsl::PatternBinaryOperator::Add => quote!(#lir_path::BinaryOperator::Add),
-                crate::dsl::PatternBinaryOperator::Sub => quote!(#lir_path::BinaryOperator::Sub),
-                crate::dsl::PatternBinaryOperator::Mul => quote!(#lir_path::BinaryOperator::Mul),
+                crate::dsl::PatternBinaryOperator::Add => {
+                    quote!(#v3_path::lir::BinaryOperator::Add)
+                }
+                crate::dsl::PatternBinaryOperator::Sub => {
+                    quote!(#v3_path::lir::BinaryOperator::Sub)
+                }
+                crate::dsl::PatternBinaryOperator::Mul => {
+                    quote!(#v3_path::lir::BinaryOperator::Mul)
+                }
                 crate::dsl::PatternBinaryOperator::LessThan => {
-                    quote!(#lir_path::BinaryOperator::LessThan)
+                    quote!(#v3_path::BinaryOperator::LessThan)
                 }
                 crate::dsl::PatternBinaryOperator::LessThanOrEqual => {
-                    quote!(#lir_path::BinaryOperator::LessThanOrEqual)
+                    quote!(#v3_path::BinaryOperator::LessThanOrEqual)
                 }
                 crate::dsl::PatternBinaryOperator::GreaterThan => {
-                    quote!(#lir_path::BinaryOperator::GreaterThan)
+                    quote!(#v3_path::BinaryOperator::GreaterThan)
                 }
                 crate::dsl::PatternBinaryOperator::GreaterThanOrEqual => {
-                    quote!(#lir_path::BinaryOperator::GreaterThanOrEqual)
+                    quote!(#v3_path::BinaryOperator::GreaterThanOrEqual)
                 }
                 crate::dsl::PatternBinaryOperator::Equals => {
-                    quote!(#lir_path::BinaryOperator::Equals)
+                    quote!(#v3_path::BinaryOperator::Equals)
                 }
                 crate::dsl::PatternBinaryOperator::NotEquals => {
-                    quote!(#lir_path::BinaryOperator::NotEquals)
+                    quote!(#v3_path::BinaryOperator::NotEquals)
                 }
             };
 
@@ -390,19 +390,17 @@ fn generate_match_conditions_and_bindings(
             let (lhs_sub_condition, lhs_sub_bindings) = generate_match_conditions_and_bindings(
                 &quote!(#lir_lhs_ident),
                 &*pattern_lhs, // Dereference Box and take reference
-                lir_path,
-                ssa_path,
+                v3_path,
             )?;
             let (rhs_sub_condition, rhs_sub_bindings) = generate_match_conditions_and_bindings(
                 &quote!(#lir_rhs_ident),
                 &*pattern_rhs, // Dereference Box and take reference
-                lir_path,
-                ssa_path,
+                v3_path,
             )?;
 
             let overall_condition = quote! {
                 (match *#target_path {
-                    #lir_path::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } => {
+                    #v3_path::lir::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } => {
                         // Embed sub-bindings and sub-conditions here
                         {
                             #(#lhs_sub_bindings)*
@@ -424,9 +422,7 @@ impl MatchDslInput {
         let target_expr_to_match = &self.target_expr;
         let match_target_ident = Ident::new("__match_dsl_target", Span::call_site());
 
-        // Get LIR path using the imported and possibly renamed dsl_lir_path
-        let lir_path = crate::dsl::lir_path();
-        let ssa_path = crate::dsl::ssa_path(); // Added ssa_path
+        let v3_path = v3_path();
 
         let mut arm_results = Vec::new();
 
@@ -437,11 +433,11 @@ impl MatchDslInput {
             match generate_match_conditions_and_bindings(
                 &initial_target_path,
                 &arm.pattern,
-                // REMOVED: &mut bindings, 
-                &lir_path,
-                &ssa_path,
+                // REMOVED: &mut bindings,
+                &v3_path,
             ) {
-                Ok((condition_code, arm_specific_bindings)) => { // Destructure the returned tuple
+                Ok((condition_code, arm_specific_bindings)) => {
+                    // Destructure the returned tuple
                     let arm_body_expr = &arm.body;
 
                     let final_condition = if let Some(guard_expr) = &arm.guard {
