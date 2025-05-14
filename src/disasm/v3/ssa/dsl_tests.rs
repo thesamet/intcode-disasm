@@ -206,6 +206,40 @@ mod tests {
     }
 
     #[test]
+    fn test_deref() {
+        let expr_deref_const: Expression<SsaMemoryReference> = build_expr! { *(123) };
+        assert_eq!(expr_deref_const.nocolor(), "*(123)");
+        let expr_deref_mem: Expression<SsaMemoryReference> = build_expr! { *([R+5].1) };
+        assert_eq!(expr_deref_mem.nocolor(), "*([R+5]_1)");
+
+        let expr_deref_expr: Expression<SsaMemoryReference> = build_expr! { *([R+1].3 + 123) };
+        assert_eq!(expr_deref_expr.nocolor(), "*([R+1]_3 + 123)");
+
+        let expr_deref_expr_mem: Expression<SsaMemoryReference> =
+            build_expr! { *([R+1].3 + [R-2].2) };
+        assert_eq!(expr_deref_expr_mem.nocolor(), "*([R+1]_3 + [R-2]_2)");
+
+        assert_eq!(
+            build_expr! { *([R+1].3) + 123 }.nocolor(),
+            "*([R+1]_3) + 123"
+        );
+
+        assert_eq!(
+            build_expr! { 5 * *([R+1].3 + [R-2].2) }.nocolor(),
+            "5 * *(([R+1]_3 + [R-2]_2))"
+        );
+
+        // Deref address expressions
+        let expr_deref_addr_const: Expression<SsaMemoryReference> =
+            build_expr! { *([R+1].0 + 123) };
+        assert_eq!(expr_deref_addr_const.nocolor(), "*([R+1]_0 + 123)");
+
+        let expr_deref_addr_addr: Expression<SsaMemoryReference> =
+            build_expr! { *([R+1].0 + [R+2].0) };
+        assert_eq!(expr_deref_addr_addr.nocolor(), "*([R+1]_0 + [R+2]_0)");
+    }
+
+    #[test]
     fn test_match_dsl_basic_patterns() {
         // Test basic patterns
         let reg = build_expr! { [R-3].5 };
@@ -238,66 +272,195 @@ mod tests {
                 [R-3].5 => 26664,
                 _ => 4,
             ),
-            35,
+            26664,
         );
 
-        /*
-        let match_input = match_dsl! {
-            [R+1].5 => {}
-        };
-        // Assuming memory reference pretty prints the same way in patterns
-        assert_eq!(match_input.nocolor(), "[R+1]_5 => { ... }");
+        let deref = build_expr! { *([R+7].0) };
 
-        let match_input = match_dsl! {
-            *([R+7].0) => {}
-        };
-        // Assuming deref pretty prints the same way in patterns
-        assert_eq!(match_input.nocolor(), "*([R+7]_0) => { ... }");
+        assert_eq!(
+            match_dsl!(&deref,
+                *([R+7].0) => 51117,
+                _ => 14,
+            ),
+            51117
+        );
+
+        assert_eq!(
+            match_dsl!(&deref,
+                *([R+7].1) => 51117,
+                _ => 14,
+            ),
+            14
+        );
+    }
+
+    #[test]
+    fn test_match_dsl_bindings() {
+        // Test binding a constant
+        let const_expr: Expression<SsaMemoryReference> = build_expr! { 35549 };
+        let result_const = match_dsl!(&const_expr,
+            $a:const => {
+                // Assert the bound value is correct
+                assert_eq!(a, 35549);
+                1 // Return a value to indicate success
+            },
+            _ => {
+                // Should not reach here
+                assert!(false, "Did not match constant pattern");
+                0
+            }
+        );
+        assert_eq!(result_const, 1);
+
+        /*
+        // Test binding a memory reference (address)
+        let addr_expr: Expression<SsaMemoryReference> = build_expr! { [R+5].10 };
+        let result_addr = match_dsl!(&addr_expr,
+            $b:addr => {
+                // Assert the bound value is correct
+                assert_eq!($b.base().register().unwrap().offset(), 5);
+                assert_eq!($b.offset(), 10);
+                2 // Return a value
+            },
+            _ => {
+                assert!(false, "Did not match address pattern");
+                0
+            }
+        );
+        assert_eq!(result_addr, 2);
+
+        // Test binding a generic expression
+        let generic_expr: Expression<SsaMemoryReference> = build_expr! { 123 + 456 };
+        let result_expr = match_dsl!(&generic_expr,
+            $c:expr => {
+                // We pretty print and compare for a more robust check.
+                assert_eq!($c.nocolor(), "123 + 456");
+                3 // Return a value
+            },
+            _ => {
+                assert!(false, "Did not match expr pattern");
+                0
+            }
+        );
+        assert_eq!(result_expr, 3);
+
+        // Test binding a constant offset within a memory reference
+        let mem_ref_expr: Expression<SsaMemoryReference> = build_expr! { [R+1].5 };
+        let result_mem_offset = match_dsl!(&mem_ref_expr,
+            [R+1].$a:const => {
+                // Assert the bound value is correct
+                assert_eq!($a.value(), 5);
+                4 // Return a value
+            },
+             [R+1]._ => { // Add a fallback for the base if needed, though [R+1] is specific
+                 assert!(false, "Matched [R+1]._ instead of [R+1].$a:const");
+                 0
+             },
+            _ => {
+                assert!(false, "Did not match [R+1].$a:const pattern");
+                0
+            }
+        );
+        assert_eq!(result_mem_offset, 4);
+
+        // Test a pattern that should *not* match and fall through
+        let wrong_mem_ref_expr: Expression<SsaMemoryReference> = build_expr! { [R+2].10 };
+        let result_no_match = match_dsl!(&wrong_mem_ref_expr,
+            [R+1].$a:const => {
+                assert!(false, "Matched wrong [R+1].$a:const pattern");
+                0
+            },
+            _ => {
+                // This should match
+                5 // Return a value
+            }
+        );
+        assert_eq!(result_no_match, 5);
+
+        // Test matching with wildcards (no binding value to assert, just check the match)
+        let const_expr: Expression<SsaMemoryReference> = build_expr! { 456 };
+        let result_wildcard_const = match_dsl!(&const_expr,
+            $_:const => {
+                6
+            },
+            _ => {
+                assert!(false, "Did not match $_:const pattern");
+                0
+            }
+        );
+        assert_eq!(result_wildcard_const, 6);
+
+        let addr_expr: Expression<SsaMemoryReference> = build_expr! { [R-2].0 };
+        let result_wildcard_addr = match_dsl!(&addr_expr,
+            $_:addr => {
+                7
+            },
+            _ => {
+                assert!(false, "Did not match $_:addr pattern");
+                0
+            }
+        );
+        assert_eq!(result_wildcard_addr, 7);
+
+        let generic_expr: Expression<SsaMemoryReference> = build_expr! { [R+1].3 + 5 };
+        let result_wildcard_expr = match_dsl!(&generic_expr,
+            $_:expr => {
+                8
+            },
+            _ => {
+                assert!(false, "Did not match $_:expr pattern");
+                0
+            }
+        );
+        assert_eq!(result_wildcard_expr, 8);
+
+        // Test binding in a binary expression
+        let binary_expr: Expression<SsaMemoryReference> = build_expr! { 10 + [R+2].5 };
+        let result_binary_binding = match_dsl!(&binary_expr,
+             $a:const + $b:addr => {
+                 assert_eq!($a.value(), 10);
+                 assert_eq!($b.base().register().unwrap().offset(), 2);
+                 assert_eq!($b.offset(), 5);
+                 9
+             },
+             _ => {
+                 assert!(false, "Did not match $a:const + $b:addr pattern");
+                 0
+             }
+        );
+        assert_eq!(result_binary_binding, 9);
+
+        // Test binding in a unary expression
+        let unary_expr: Expression<SsaMemoryReference> = build_expr! { -100 };
+        let result_unary_binding = match_dsl!(&unary_expr,
+            -$a:const => {
+                 assert_eq!($a.value(), 100);
+                 10
+             },
+            _ => {
+                 assert!(false, "Did not match -$a:const pattern");
+                 0
+            }
+        );
+        assert_eq!(result_unary_binding, 10);
+
+        // Test binding in a deref expression
+        let deref_expr: Expression<SsaMemoryReference> = build_expr! { *([R+3].8 + 20) };
+        let result_deref_binding = match_dsl!(&deref_expr,
+            *($a:expr) => {
+                 assert_eq!($a.nocolor(), "[R+3]_8 + 20");
+                 11
+             },
+            _ => {
+                 assert!(false, "Did not match *($a:expr) pattern");
+                 0
+            }
+        );
+        assert_eq!(result_deref_binding, 11);
         */
     }
 
     /*
-    #[test]
-    fn test_match_dsl_bindings() {
-        // Test variable bindings
-        let match_input = match_dsl! {
-            $a:const => {}
-        };
-        assert_eq!(match_input.nocolor(), "$a:const => { ... }");
-
-        let match_input = match_dsl! {
-            $b:addr => {}
-        };
-        assert_eq!(match_input.nocolor(), "$b:addr => { ... }");
-
-        let match_input = match_dsl! {
-            $c:expr => {}
-        };
-        assert_eq!(match_input.nocolor(), "$c:expr => { ... }");
-
-        // Combinations with bindings
-        let match_input = match_dsl! {
-            [R+1].$a:const => {}
-        };
-        // Assuming pretty print for memory ref with binding
-        assert_eq!(match_input.nocolor(), "[R+1]_$a:const => { ... }");
-
-        let match_input = match_dsl! {
-            $_:const => {}
-        };
-        assert_eq!(match_input.nocolor(), "$_:const => { ... }");
-
-        let match_input = match_dsl! {
-            $_:addr => {}
-        };
-        assert_eq!(match_input.nocolor(), "$_:addr => { ... }");
-
-        let match_input = match_dsl! {
-            $_:expr => {}
-        };
-        assert_eq!(match_input.nocolor(), "$_:expr => { ... }");
-    }
-
     #[test]
     fn test_match_dsl_operators() {
         // Test patterns with operators

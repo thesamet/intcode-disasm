@@ -286,7 +286,7 @@ fn generate_match_conditions_and_bindings(
                 crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
                     let lir_deref_inner_expr_ident =
                         Ident::new("__addr_deref_lir_inner", Span::call_site());
-                    let lir_deref_inner_expr_path = quote!(#lir_deref_inner_expr_ident);
+                    let lir_deref_inner_expr_path = quote!(#lir_deref_inner_expr_ident.as_ref());
 
                     let sub_condition = generate_match_conditions_and_bindings(
                         &lir_deref_inner_expr_path,
