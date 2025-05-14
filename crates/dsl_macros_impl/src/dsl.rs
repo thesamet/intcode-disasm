@@ -174,6 +174,12 @@ pub enum PatternExpression {
 
 // End of AST for Pattern Matching
 
+// Custom keywords for parsing $var:type syntax
+mod kw {
+    syn::custom_keyword!(expr);
+    syn::custom_keyword!(addr);
+}
+
 // --- Generic Parsing Infrastructure ---
 
 // Trait to define the behavior for a specific parsing strategy (LIR or Pattern)
@@ -309,30 +315,28 @@ fn parse_pattern_ssa_memory_reference(input: ParseStream) -> Result<PatternSsaMe
 // This includes wildcards, bind variables, literals, memory patterns, and parenthesized patterns.
 fn parse_pattern_atom_internal(input: ParseStream) -> Result<PatternExpression> {
     let lookahead = input.lookahead1();
+
     if lookahead.peek(Token![$]) {
         // This is $var, $var:type
-        // parse_pattern_matching_atom now directly returns Result<PatternExpression>
-        parse_pattern_matching_atom(input)
-    } else if lookahead.peek(Ident) {
-        // Could be '_' or a named constant (if we decide to support them directly in patterns)
-        // For now, only '_' is a non-$ identifier atom.
-        let ident_fork = input.fork();
-        let ident: Ident = ident_fork.parse()?;
-        if ident == "_" {
-            input.parse::<Ident>()?; // Consume '_'
-            Ok(PatternExpression::Wildcard)
-        } else {
-            // Bare identifiers (other than '_') are not standard pattern atoms unless they are part of a memory reference
-            // or a literal (which is handled by LitInt).
-            // This error might need adjustment if named constants (not LitInt) become part of patterns.
-            Err(lookahead.error()) // More specific error might be needed here or handled by callers
-                                   // Err(input.error("Unexpected identifier in pattern atom. Expected '$var', '_', literal, memory pattern, or parenthesized pattern."))
-        }
-    } else if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
+        return parse_pattern_matching_atom(input);
+    }
+
+    // Check for wildcard '_' specifically *before* checking for general Ident.
+    // Token![_] is a specific token, distinct from a generic Ident for parsing purposes here.
+    if lookahead.peek(Token![_]) {
+        input.parse::<Token![_]>()?; // Consume '_'
+        return Ok(PatternExpression::Wildcard);
+    }
+
+    // If not '$' or '_', then check for other pattern atom forms.
+    // Order matters: `[...]` and `*(...)` should be checked before `LitInt` or `Ident` if there's ambiguity.
+    if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
         // This is for [R+X].Y or *(PatternExpression)
         let pattern_mem_ref = parse_pattern_ssa_memory_reference(input)?;
-        Ok(PatternExpression::Addressable(pattern_mem_ref))
-    } else if input.peek(token::Paren) {
+        return Ok(PatternExpression::Addressable(pattern_mem_ref));
+    }
+
+    if input.peek(token::Paren) {
         let content;
         syn::parenthesized!(content in input);
         // Recursively parse the inner expression as a pattern
@@ -423,35 +427,32 @@ fn parse_pattern_matching_atom(input: ParseStream) -> Result<PatternExpression> 
     let var_ident: Ident = input.parse()?; // Parse the identifier (e.g., 'e', 'a')
 
     // Check for optional type specifier (:expr, :addr, :const)
-    if input.peek(Token![:]) {
+    let final_bind_type = if input.peek(Token![:]) {
         let _colon_token: Token![:] = input.parse()?; // Consume ':'
-        let type_specifier: Ident = input.parse()?; // Parse the type specifier (e.g., 'expr', 'addr', 'const')
 
-        if type_specifier == "expr" {
-            Ok(PatternExpression::Bind(PatternBindVariable {
-                ident: var_ident,
-                bind_type: PatternBindType::Expression,
-            }))
-        } else if type_specifier == "addr" {
-            Ok(PatternExpression::Bind(PatternBindVariable {
-                ident: var_ident,
-                bind_type: PatternBindType::Addressable,
-            }))
-        } else if type_specifier == "const" {
-            Ok(PatternExpression::Bind(PatternBindVariable {
-                ident: var_ident,
-                bind_type: PatternBindType::Constant,
-            }))
+        // Parse the type specifier using custom keywords
+        if input.peek(kw::expr) {
+            input.parse::<kw::expr>()?; // Consume 'expr'
+            PatternBindType::Expression
+        } else if input.peek(kw::addr) {
+            input.parse::<kw::addr>()?; // Consume 'addr'
+            PatternBindType::Addressable
+        } else if input.peek(Token![const]) {
+            input.parse::<Token![const]>()?; // Consume 'const'
+            PatternBindType::Constant
         } else {
-            Err(input.error(format!("Unknown pattern matching atom type specifier: `{}`. Expected `expr`, `addr`, or `const`", type_specifier)))
+            // Error if none of the expected keywords are found
+            return Err(input.error("Expected type specifier `expr`, `addr`, or `const` after `:`"));
         }
     } else {
         // No type specifier, default is :expr
-        Ok(PatternExpression::Bind(PatternBindVariable {
-            ident: var_ident,
-            bind_type: PatternBindType::Expression,
-        }))
-    }
+        PatternBindType::Expression
+    };
+
+    Ok(PatternExpression::Bind(PatternBindVariable {
+        ident: var_ident,
+        bind_type: final_bind_type,
+    }))
 }
 
 fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {

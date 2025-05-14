@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 
 use crate::disasm::v3::control_flow::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
