@@ -305,13 +305,12 @@ mod tests {
 
     #[test]
     fn test_match_dsl_bindings() {
-        /*
         // Test binding a constant
         let const_expr: Expression<SsaMemoryReference> = build_expr! { 35549 };
         let result_const = match_dsl!(&const_expr,
             $a:const => {
                 // Assert the bound value is correct
-                assert_eq!(a, 35549);
+                assert_eq!(*a, 35549);
                 1 // Return a value to indicate success
             },
             _ => {
@@ -321,6 +320,16 @@ mod tests {
             }
         );
         assert_eq!(result_const, 1);
+
+        let result_const = match_dsl!(build_expr!(31275),
+            $a:const => {
+                a + 10
+            },
+            _ => {
+                0
+            }
+        );
+        assert_eq!(result_const, 31285);
 
         // Test binding a memory reference (address)
         let addr_expr: Expression<SsaMemoryReference> = build_expr! { [R+5].10 };
@@ -371,7 +380,7 @@ mod tests {
                 panic!("Did not match $x:const pattern");
             }
         );
-        assert_eq!(result_bind_const, 456i128);
+        assert_eq!(*result_bind_const, 456i128);
 
         // Test binding an addressable value (SsaMemoryReference)
         let addr_expr: Expression<SsaMemoryReference> = build_expr! { [R-2].0 };
@@ -396,9 +405,8 @@ mod tests {
             }
         );
         assert_eq!(result_bind_generic_str, "[R+1]_3 + 5");
-        */
+
         // Test binding in a binary expression
-        /*
         let binary_expr: Expression<SsaMemoryReference> = build_expr! { 10 + [R+2].5 };
         let (a, b) = match_dsl!(&binary_expr,
              $a:const + $b:addr => {
@@ -409,10 +417,9 @@ mod tests {
                  panic!("Did not match $a:const + $b:addr pattern");
              }
         );
-        assert_eq!(result_binary_binding_str, "const:10, addr:[R+2]_5");
-        */
+        assert_eq!(*a, 10);
+        assert_eq!(b, "[R+2]_5");
 
-        /*
         // Test binding in a unary expression
         let unary_expr: Expression<SsaMemoryReference> = build_expr! { -100 };
         let result_unary_binding_val = match_dsl!(&unary_expr,
@@ -423,7 +430,7 @@ mod tests {
                  panic!("Did not match -$a:const pattern");
             }
         );
-        assert_eq!(result_unary_binding_val, 100i128);
+        assert_eq!(*result_unary_binding_val, 100i128);
 
         // Test binding in a deref expression
         let deref_expr: Expression<SsaMemoryReference> = build_expr! { *([R+3].8 + 20) };
@@ -436,10 +443,10 @@ mod tests {
             }
         );
         assert_eq!(result_deref_binding_str, "[R+3]_8 + 20");
-        //
+
         // Test binding in a deref expression
         let deref_expr: Expression<SsaMemoryReference> = build_expr! { *([R+3].8 + 20) };
-        let result_deref_binding_str = match_dsl!(&deref_expr,
+        let a_bind = match_dsl!(&deref_expr,
             *([R+3].8 + $a:const) => {
                  a
              },
@@ -447,94 +454,98 @@ mod tests {
                  panic!("Did not match *($a:expr) pattern");
             }
         );
-        assert_eq!(a, 20);
-        */
+        assert_eq!(*a_bind, 20);
     }
 
-    /*
     #[test]
     fn test_match_dsl_operators() {
         // Test patterns with operators
-        let match_input = match_dsl! {
-            $a:const + $b:const => {}
-        };
-        assert_eq!(match_input.nocolor(), "$a:const + $b:const => { ... }");
+        let match_input = match_dsl!(build_expr!(33 + 45),
+            $a:const + $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
 
-        let match_input = match_dsl! {
-            $c:expr * 123 => {}
-        };
-        assert_eq!(match_input.nocolor(), "$c:expr * 123 => { ... }");
+        let expr = build_expr! { [R+2].3 * 123 };
+        let match_input = match_dsl!(&expr,
+            $c:expr * 123 => c.nocolor(),
+            _ =>  panic!("no match"),
+        );
+        assert_eq!(match_input, "[R+2]_3");
 
-        let match_input = match_dsl! {
-            ([R+2].3 - $d:expr) + $_ => {}
-        };
+        let expr = build_expr! { ([R+2].3 - [R+3].5) + [R+4].7 };
+        let match_input = match_dsl!(&expr,
+            ([R+2].3 - $d:expr) + _ => d.nocolor(),
+            _ =>  panic!("no match"),
+        );
         // Assuming parenthesis are preserved when necessary based on precedence
-        assert_eq!(match_input.nocolor(), "([R+2]_3 - $d:expr) + $_ => { ... }");
+        assert_eq!(match_input, "[R+3]_5");
 
-        let match_input = match_dsl! {
-            - $a:const => {}
-        };
-        assert_eq!(match_input.nocolor(), "-$a:const => { ... }");
+        let expr = build_expr! { -123 };
+        let match_input = match_dsl!(&expr,
+            - $a:const => *a,
+            _ =>  panic!("no match"),
+        );
+        assert_eq!(match_input, 123);
 
-        let match_input = match_dsl! {
-            ! $b:expr => {}
-        };
-        assert_eq!(match_input.nocolor(), "!$b:expr => { ... }");
+        let expr = build_expr! { ![R+3].5 };
+        let match_input = match_dsl!(&expr,
+            ! $b:expr => b.nocolor(),
+            _ =>  panic!("no match"),
+        );
+        assert_eq!(match_input, "[R+3]_5");
 
-        let match_input = match_dsl! {
-            * ($c:expr + 10) => {}
-        };
-        assert_eq!(match_input.nocolor(), "*($c:expr + 10) => { ... }");
+        let expr = build_expr! { *([R+2].3 + 10) };
+        let match_input = match_dsl!(&expr,
+            * ($c:expr) => c.nocolor(),
+            _ =>  panic!("no match"),
+        );
+        assert_eq!(match_input, "[R+2]_3 + 10");
 
-        let match_input = match_dsl! {
-           $a:const + - $b:const => {}
-        };
-        assert_eq!(match_input.nocolor(), "$a:const + -$b:const => { ... }");
+        let expr = build_expr! { 32 + -15 };
+        let match_input = match_dsl!(&expr,
+           $a:const + -$b:const => (*a, *b),
+           _ =>  panic!("no match"),
+        );
+        assert_eq!(match_input, (32, 15));
     }
 
     #[test]
     fn test_match_dsl_multiple_arms() {
         // Test multiple arms
-        let match_input = match_dsl! {
-            123 => {},
-            [R+2].7 => {},
-            _ => {}
-        };
-        // Assuming arms are separated by comma and space in pretty print
-        assert_eq!(
-            match_input.nocolor(),
-            "123 => { ... }, [R+2]_7 => { ... }, _ => { ... }"
+        let expr = build_expr! { 123 };
+        let match_input = match_dsl!(&expr,
+            123 => 1,
+            [R+2].7 => 2,
+            _ => 3,
         );
+        assert_eq!(match_input, 1);
 
-        let match_input = match_dsl! {
-            $a:const + $b:const => {},
-            [R+1].$c:const => {},
-            *($_ + 5) => {}
-        };
-        assert_eq!(
-            match_input.nocolor(),
-            "$a:const + $b:const => { ... }, [R+1]_$c:const => { ... }, *($_ + 5) => { ... }"
+        let expr = build_expr! { 10 + 20 };
+        let match_input = match_dsl!(&expr,
+            [R+1].17 => 1,
+            $a:const + $b:const => a+b,
+            *(_ + 5) => 3,
+            _ => 4,
         );
+        assert_eq!(match_input, 30);
     }
 
     #[test]
     fn test_match_dsl_complex_patterns() {
         // Test more complex nested patterns
-        let match_input = match_dsl! {
-            *($a:expr + 123) * ![R+1].$b:const => {}
-        };
-        assert_eq!(
-            match_input.nocolor(),
-            "*($a:expr + 123) * ![R+1]_$b:const => { ... }"
+        let expr = build_expr! { *([R+2].3 + 123) * ![R+1].5 };
+        let match_input = match_dsl!(&expr,
+            *($a:expr + 123) * !$b => (a.nocolor(), b.nocolor()),
+            _ => panic!("no match"),
         );
+        assert_eq!(match_input, ("[R+2]_3".to_string(), "[R+1]_5".to_string()));
 
-        let match_input = match_dsl! {
-            ([R+5].$a:const - $_:addr) + *($b:expr * [R-2].7) => {}
-        };
-        assert_eq!(
-            match_input.nocolor(),
-            "([R+5]_$a:const - $_:addr) + *($b:expr * [R-2]_7) => { ... }"
+        let expr = build_expr! { ([R+5].8 - [R+6].0) + *([R+7].2 * [R-2].7) };
+        let match_input = match_dsl!(&expr,
+            ($a - _) + *($b:expr * [R-2].7) => (a.nocolor(), b.nocolor()),
+            _ => panic!("no match"),
         );
+        assert_eq!(match_input, ("[R+5]_8".to_string(), "[R+7]_2".to_string()));
     }
-    */
 }

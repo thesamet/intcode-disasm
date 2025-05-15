@@ -1,14 +1,16 @@
 // disasm/model_macros/macro/src/match_dsl_parser.rs
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
-use syn::parse::{Parse, ParseStream, Peek};
-use syn::Type;
-use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
+use syn::parse::{Parse, ParseStream};
+use syn::{spanned::Spanned, Expr, Result, Token};
 
 // Assuming these provide the correct base paths
-use quote::{quote, ToTokens}; // Required for path generation in stubs
+use quote::quote; // Required for path generation in stubs
 
 // Imports from the dsl module for pattern parsing
-use crate::dsl::{parse_expr_generic, v3_path, PatternExpression, PatternParseStrategy}; // Renamed v3_path to avoid conflict
+use crate::dsl::{
+    parse_expr_generic, v3_path, PatternBindVariable, PatternExpression, PatternParseStrategy,
+    VersionedElement,
+}; // Renamed v3_path to avoid conflict
 
 // Helper module for parsing tokens until a specific delimiter
 mod limited_scope_parser {
@@ -178,6 +180,439 @@ struct GeneratedMatchArm {
 }
 
 // Helper function to generate matching conditions and bindings
+// Start of refactored section: Helper functions for generate_match_conditions_and_bindings
+
+// --- Path Helpers ---
+#[inline]
+fn _path_lir_expr(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::lir::Expression)
+}
+#[inline]
+fn _path_lir_expr_constant(v3_path: &TokenStream2) -> TokenStream2 {
+    let lir_expr = _path_lir_expr(v3_path);
+    quote!(#lir_expr::Constant)
+}
+#[inline]
+fn _path_lir_expr_addressable(v3_path: &TokenStream2) -> TokenStream2 {
+    let lir_expr = _path_lir_expr(v3_path);
+    quote!(#lir_expr::Addressable)
+}
+#[inline]
+fn _path_ssa_mem_ref(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::ssa::SsaMemoryReference)
+}
+#[inline]
+fn _path_ssa_mem_ref_versioned(v3_path: &TokenStream2) -> TokenStream2 {
+    let ssa_mem_ref = _path_ssa_mem_ref(v3_path);
+    quote!(#ssa_mem_ref::Versioned)
+}
+#[inline]
+fn _path_ssa_mem_ref_deref(v3_path: &TokenStream2) -> TokenStream2 {
+    let ssa_mem_ref = _path_ssa_mem_ref(v3_path);
+    quote!(#ssa_mem_ref::Deref)
+}
+#[inline]
+fn _path_ssa_types_versioned_mem_ref(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::ssa::types::VersionedMemoryReference)
+}
+#[inline]
+fn _path_ssa_types_versionable_mem_kind(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::ssa::types::VersionableMemoryKind)
+}
+#[inline]
+fn _path_lir_unary_op(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::lir::UnaryOperator)
+}
+#[inline]
+fn _path_lir_binary_op(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::lir::BinaryOperator) // Note: Original had #v3_path::BinaryOperator for some, correcting to #v3_path::lir::BinaryOperator
+}
+#[inline]
+fn _path_ssa_types_ssa_memory_reference(v3_path: &TokenStream2) -> TokenStream2 {
+    quote!(#v3_path::ssa::types::SsaMemoryReference)
+}
+#[inline]
+fn _path_lir_expr_unary(v3_path: &TokenStream2) -> TokenStream2 {
+    let lir_expr = _path_lir_expr(v3_path);
+    quote!(#lir_expr::Unary)
+}
+#[inline]
+fn _path_lir_expr_binary(v3_path: &TokenStream2) -> TokenStream2 {
+    let lir_expr = _path_lir_expr(v3_path);
+    quote!(#lir_expr::Binary)
+}
+
+// --- Quote Block Helpers ---
+fn _quote_constant_match_code(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_lit: &syn::LitInt,
+) -> TokenStream2 {
+    let lir_expr_constant_path = _path_lir_expr_constant(v3_path);
+    quote! {
+        let #lir_expr_constant_path(__matched_val) = #target_path else {
+            return None
+        };
+        if *__matched_val != #pattern_lit {
+            return None
+        }
+    }
+}
+
+fn _quote_bind_expression_code(bound_var: &Ident, target_path: &TokenStream2) -> TokenStream2 {
+    quote!(let #bound_var = &#target_path;)
+}
+
+fn _quote_bind_constant_code(
+    bound_var: &Ident,
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+) -> TokenStream2 {
+    let lir_expr_constant_path = _path_lir_expr_constant(v3_path);
+    quote! {
+        let #lir_expr_constant_path(ref #bound_var) = #target_path else {
+            return None
+        };
+    }
+}
+
+fn _quote_bind_addressable_code(
+    bound_var: &Ident,
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+) -> TokenStream2 {
+    let lir_expr_addressable_path = _path_lir_expr_addressable(v3_path);
+    quote! {
+        let #lir_expr_addressable_path(ref #bound_var) = #target_path else {
+            return None
+        };
+    }
+}
+
+fn _quote_versioned_match_code(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_ve: &VersionedElement,
+    pattern_offset_val: i128,
+    pattern_version_val: usize,
+) -> TokenStream2 {
+    let lir_expr_addressable_path = _path_lir_expr_addressable(v3_path);
+    let ssa_mem_ref_versioned_path = _path_ssa_mem_ref_versioned(v3_path);
+    let ssa_types_versioned_mem_ref_path = _path_ssa_types_versioned_mem_ref(v3_path);
+    let versionable_mem_kind_path = _path_ssa_types_versionable_mem_kind(v3_path);
+
+    if pattern_ve.is_relative {
+        let offset = pattern_ve.sign * pattern_offset_val;
+        quote! {
+            if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
+                kind: #versionable_mem_kind_path::RelativeMemory(#offset),
+                version: #pattern_version_val,
+                ..
+            }))) {
+                return None
+            }
+        }
+    } else {
+        let pattern_offset_val = pattern_offset_val as usize; // Shadow to usize for Memory kind
+        quote! {
+            if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
+                kind: #versionable_mem_kind_path::Memory(#pattern_offset_val),
+                version: #pattern_version_val,
+                ..
+            }))) {
+                return None
+            }
+        }
+    }
+}
+
+fn _quote_deref_match_code(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    lir_deref_inner_expr_ident: &Ident,
+    inner_code: Option<&TokenStream2>,
+) -> TokenStream2 {
+    let lir_expr_addressable_path = _path_lir_expr_addressable(v3_path);
+    let ssa_mem_ref_deref_path = _path_ssa_mem_ref_deref(v3_path);
+    quote! {
+        let #lir_expr_addressable_path(#ssa_mem_ref_deref_path(#lir_deref_inner_expr_ident)) = &#target_path else {
+            return None
+        };
+        #inner_code
+    }
+}
+
+fn _quote_unary_match_code(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    lir_op_token: &TokenStream2,
+    lir_inner_expr_ident: &Ident,
+    inner_code: Option<&TokenStream2>,
+) -> TokenStream2 {
+    let lir_expr_unary_path = _path_lir_expr_unary(v3_path);
+    quote! {
+        let #lir_expr_unary_path { op: #lir_op_token, arg: ref #lir_inner_expr_ident } = &#target_path else {
+            return None
+        };
+        #inner_code
+    }
+}
+
+fn _quote_binary_match_code(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    lir_op_token: &TokenStream2,
+    lir_lhs_ident: &Ident,
+    lir_rhs_ident: &Ident,
+    lhs_code: Option<&TokenStream2>,
+    rhs_code: Option<&TokenStream2>,
+) -> TokenStream2 {
+    let lir_expr_binary_path = _path_lir_expr_binary(v3_path);
+    quote! {
+        let #lir_expr_binary_path { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } = &#target_path else {
+            return None
+        };
+        #lhs_code
+        #rhs_code
+    }
+}
+
+// --- Arm Handler Helpers ---
+fn _handle_constant_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_lit: &syn::LitInt,
+) -> Result<Option<GeneratedMatchArm>> {
+    let match_bind_or_return = _quote_constant_match_code(target_path, v3_path, pattern_lit);
+    Ok(Some(GeneratedMatchArm {
+        bound_var: vec![],
+        match_bind_or_return,
+    }))
+}
+
+fn _handle_bind_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    var_bind: &PatternBindVariable,
+) -> Result<Option<GeneratedMatchArm>> {
+    let bound_var_ident = var_bind.ident.clone();
+    let (bound_var_type_code, match_bind_or_return) = match var_bind.bind_type {
+        crate::dsl::PatternBindType::Expression => {
+            let lir_expr_path = _path_lir_expr(v3_path);
+            let ssa_types_ssa_mem_ref_path = _path_ssa_types_ssa_memory_reference(v3_path);
+            (
+                quote!(#lir_expr_path<#ssa_types_ssa_mem_ref_path>),
+                _quote_bind_expression_code(&bound_var_ident, target_path),
+            )
+        }
+        crate::dsl::PatternBindType::Constant => (
+            quote!(i128),
+            _quote_bind_constant_code(&bound_var_ident, target_path, v3_path),
+        ),
+        crate::dsl::PatternBindType::Addressable => {
+            let ssa_types_ssa_mem_ref_path = _path_ssa_types_ssa_memory_reference(v3_path);
+            (
+                quote!(#ssa_types_ssa_mem_ref_path),
+                _quote_bind_addressable_code(&bound_var_ident, target_path, v3_path),
+            )
+        }
+    };
+
+    Ok(Some(GeneratedMatchArm {
+        bound_var: vec![(bound_var_ident, bound_var_type_code)],
+        match_bind_or_return,
+    }))
+}
+
+fn _handle_addressable_versioned_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_ve: &VersionedElement,
+) -> Result<Option<GeneratedMatchArm>> {
+    let pattern_offset_val: i128 = pattern_ve.offset.base10_parse().map_err(|e| {
+        syn::Error::new(
+            pattern_ve.offset.span(),
+            format!("Invalid pattern offset: {}", e),
+        )
+    })?;
+    let pattern_version_val: usize = pattern_ve.version.base10_parse().map_err(|e| {
+        syn::Error::new(
+            pattern_ve.version.span(),
+            format!("Invalid pattern version: {}", e),
+        )
+    })?;
+
+    let match_bind_or_return = _quote_versioned_match_code(
+        target_path,
+        v3_path,
+        pattern_ve,
+        pattern_offset_val,
+        pattern_version_val,
+    );
+    Ok(Some(GeneratedMatchArm {
+        bound_var: vec![],
+        match_bind_or_return,
+    }))
+}
+
+fn _handle_addressable_deref_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    inner_pattern_expr: &Box<PatternExpression>,
+) -> Result<Option<GeneratedMatchArm>> {
+    let lir_deref_inner_expr_ident = Ident::new(
+        &format!("__deref_inner_{}", generate_unique_number()),
+        Span::call_site(),
+    );
+    let inner_generated_arm = generate_match_conditions_and_bindings(
+        // Note: Recursive call to the main function
+        &quote!(#lir_deref_inner_expr_ident.as_ref()),
+        inner_pattern_expr.as_ref(),
+        v3_path,
+    )?;
+
+    let inner_code = inner_generated_arm
+        .as_ref()
+        .map(|i| &i.match_bind_or_return);
+    let match_bind_or_return = _quote_deref_match_code(
+        target_path,
+        v3_path,
+        &lir_deref_inner_expr_ident,
+        inner_code,
+    );
+
+    Ok(Some(GeneratedMatchArm {
+        bound_var: inner_generated_arm
+            .as_ref()
+            .map(|i| i.bound_var.clone())
+            .unwrap_or_default(),
+        match_bind_or_return,
+    }))
+}
+
+fn _handle_addressable_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_ssa_ref: &crate::dsl::PatternSsaMemoryReference,
+) -> Result<Option<GeneratedMatchArm>> {
+    match pattern_ssa_ref {
+        crate::dsl::PatternSsaMemoryReference::Versioned(pattern_ve) => {
+            _handle_addressable_versioned_pattern(target_path, v3_path, pattern_ve)
+        }
+        crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
+            _handle_addressable_deref_pattern(target_path, v3_path, inner_pattern_expr)
+        }
+    }
+}
+
+fn _handle_unary_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_op: &crate::dsl::PatternUnaryOperator,
+    pattern_arg: &Box<PatternExpression>,
+) -> Result<Option<GeneratedMatchArm>> {
+    let lir_unary_op_path = _path_lir_unary_op(v3_path);
+    let lir_op_token = match pattern_op {
+        crate::dsl::PatternUnaryOperator::Not => quote!(#lir_unary_op_path::Not),
+        crate::dsl::PatternUnaryOperator::Minus => quote!(#lir_unary_op_path::Minus),
+    };
+
+    let lir_inner_expr_ident = Ident::new(
+        &format!("__unary_inner_{}", generate_unique_number()),
+        Span::call_site(),
+    );
+    let inner_generated_arm = generate_match_conditions_and_bindings(
+        // Note: Recursive call
+        &quote!(#lir_inner_expr_ident.as_ref()),
+        pattern_arg.as_ref(),
+        v3_path,
+    )?;
+
+    let inner_code = inner_generated_arm
+        .as_ref()
+        .map(|i| &i.match_bind_or_return);
+    let match_bind_or_return = _quote_unary_match_code(
+        target_path,
+        v3_path,
+        &lir_op_token,
+        &lir_inner_expr_ident,
+        inner_code,
+    );
+
+    Ok(Some(GeneratedMatchArm {
+        bound_var: inner_generated_arm.map(|i| i.bound_var).unwrap_or_default(),
+        match_bind_or_return,
+    }))
+}
+
+fn _handle_binary_pattern(
+    target_path: &TokenStream2,
+    v3_path: &TokenStream2,
+    pattern_op: &crate::dsl::PatternBinaryOperator,
+    pattern_lhs: &Box<PatternExpression>,
+    pattern_rhs: &Box<PatternExpression>,
+) -> Result<Option<GeneratedMatchArm>> {
+    let lir_binary_op_path = _path_lir_binary_op(v3_path);
+    let lir_op_token = match pattern_op {
+        crate::dsl::PatternBinaryOperator::Add => quote!(#lir_binary_op_path::Add),
+        crate::dsl::PatternBinaryOperator::Sub => quote!(#lir_binary_op_path::Sub),
+        crate::dsl::PatternBinaryOperator::Mul => quote!(#lir_binary_op_path::Mul),
+        crate::dsl::PatternBinaryOperator::LessThan => quote!(#lir_binary_op_path::LessThan),
+        crate::dsl::PatternBinaryOperator::LessThanOrEqual => {
+            quote!(#lir_binary_op_path::LessThanOrEqual)
+        }
+        crate::dsl::PatternBinaryOperator::GreaterThan => quote!(#lir_binary_op_path::GreaterThan),
+        crate::dsl::PatternBinaryOperator::GreaterThanOrEqual => {
+            quote!(#lir_binary_op_path::GreaterThanOrEqual)
+        }
+        crate::dsl::PatternBinaryOperator::Equals => quote!(#lir_binary_op_path::Equals),
+        crate::dsl::PatternBinaryOperator::NotEquals => quote!(#lir_binary_op_path::NotEquals),
+    };
+
+    let lir_lhs_ident = Ident::new(
+        &format!("__binary_lir_lhs_{}", generate_unique_number()),
+        Span::call_site(),
+    );
+    let lir_rhs_ident = Ident::new(
+        &format!("__binary_lir_rhs_{}", generate_unique_number()),
+        Span::call_site(),
+    );
+
+    let lhs_generated = generate_match_conditions_and_bindings(
+        // Note: Recursive call
+        &quote!(#lir_lhs_ident.as_ref()),
+        pattern_lhs,
+        v3_path,
+    )?;
+    let rhs_generated = generate_match_conditions_and_bindings(
+        // Note: Recursive call
+        &quote!(#lir_rhs_ident.as_ref()),
+        pattern_rhs,
+        v3_path,
+    )?;
+
+    let lhs_code = lhs_generated.as_ref().map(|i| &i.match_bind_or_return);
+    let rhs_code = rhs_generated.as_ref().map(|i| &i.match_bind_or_return);
+
+    let match_bind_or_return = _quote_binary_match_code(
+        target_path,
+        v3_path,
+        &lir_op_token,
+        &lir_lhs_ident,
+        &lir_rhs_ident,
+        lhs_code,
+        rhs_code,
+    );
+
+    let mut bound_vars = lhs_generated.map(|i| i.bound_var).unwrap_or_default();
+    bound_vars.extend(rhs_generated.map(|i| i.bound_var).unwrap_or_default());
+
+    Ok(Some(GeneratedMatchArm {
+        bound_var: bound_vars,
+        match_bind_or_return,
+    }))
+}
+
 fn generate_match_conditions_and_bindings(
     target_path: &TokenStream2, // Path to the current part of the target expression being matched
     pattern: &PatternExpression,
@@ -186,230 +621,17 @@ fn generate_match_conditions_and_bindings(
     match pattern {
         PatternExpression::Wildcard => Ok(None), // nothing to generate
         PatternExpression::Constant(pattern_lit) => {
-            let match_bind_or_return = quote! {
-                let #v3_path::lir::Expression::Constant(__matched_val) = #target_path else {
-                    return None
-                };
-                if *__matched_val != #pattern_lit {
-                    return None
-                }
-            };
-            Ok(Some(GeneratedMatchArm {
-                bound_var: vec![],
-                match_bind_or_return,
-            }))
+            _handle_constant_pattern(target_path, v3_path, pattern_lit)
         }
-        PatternExpression::Bind(var_bind) => {
-            let bound_var = var_bind.ident.clone();
-            match var_bind.bind_type {
-                crate::dsl::PatternBindType::Expression => {
-                    let match_bind_or_return = quote!(let #bound_var = &#target_path;);
-                    Ok(Some(GeneratedMatchArm {
-                        bound_var: vec![(
-                            bound_var,
-                            quote!(#v3_path::lir::Expression<#v3_path::ssa::types::SsaMemoryReference>),
-                        )],
-                        match_bind_or_return,
-                    }))
-                }
-                crate::dsl::PatternBindType::Constant => {
-                    let match_bind_or_return = quote! {
-                        let #v3_path::lir::Expression::Constant(ref #bound_var) = #target_path else {
-                            return None
-                        };
-                    };
-                    Ok(Some(GeneratedMatchArm {
-                        bound_var: vec![(bound_var, quote!(i128))],
-                        match_bind_or_return,
-                    }))
-                }
-                crate::dsl::PatternBindType::Addressable => {
-                    let match_bind_or_return = quote! {
-                        let #v3_path::lir::Expression::Addressable(ref #bound_var) = #target_path else {
-                            return None
-                        };
-                    };
-                    Ok(Some(GeneratedMatchArm {
-                        bound_var: vec![(
-                            bound_var,
-                            quote!(#v3_path::ssa::types::SsaMemoryReference),
-                        )],
-                        match_bind_or_return,
-                    }))
-                }
-            }
+        PatternExpression::Bind(var_bind) => _handle_bind_pattern(target_path, v3_path, var_bind),
+        PatternExpression::Addressable(pattern_ssa_ref) => {
+            _handle_addressable_pattern(target_path, v3_path, pattern_ssa_ref)
         }
-        PatternExpression::Addressable(pattern_ssa_ref) => match pattern_ssa_ref {
-            crate::dsl::PatternSsaMemoryReference::Versioned(pattern_ve) => {
-                let pattern_offset_val: i128 = pattern_ve.offset.base10_parse().map_err(|e| {
-                    syn::Error::new(
-                        pattern_ve.offset.span(),
-                        format!("Invalid pattern offset: {}", e),
-                    )
-                })?;
-                let pattern_version_val: usize =
-                    pattern_ve.version.base10_parse().map_err(|e| {
-                        syn::Error::new(
-                            pattern_ve.version.span(),
-                            format!("Invalid pattern version: {}", e),
-                        )
-                    })?;
-                let pattern_sign_val = pattern_ve.sign;
-                let pattern_is_relative_val = pattern_ve.is_relative;
-                let match_bind_or_return = if pattern_is_relative_val {
-                    let offset = pattern_ve.sign * pattern_offset_val;
-                    quote! {
-                        if !matches!(#target_path, #v3_path::lir::Expression::Addressable(#v3_path::ssa::SsaMemoryReference::Versioned(#v3_path::ssa::types::VersionedMemoryReference {
-                            kind: #v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset),
-                            version: #pattern_version_val,
-                            ..
-                        }))) {
-                            return None
-                        }
-                    }
-                } else {
-                    let pattern_offset_val = pattern_offset_val as usize;
-                    quote! {
-                        if !
-
-                        matches!(#target_path, #v3_path::lir::Expression::Addressable(#v3_path::ssa::SsaMemoryReference::Versioned(#v3_path::ssa::types::VersionedMemoryReference {
-                            kind: #v3_path::ssa::types::VersionableMemoryKind::Memory(#pattern_offset_val),
-                            version: #pattern_version_val,
-                            ..
-                        }))) {
-                            return None
-                        }
-                    }
-                };
-                Ok(Some(GeneratedMatchArm {
-                    bound_var: vec![],
-                    match_bind_or_return,
-                }))
-            }
-            crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
-                let lir_deref_inner_expr_ident = Ident::new(
-                    &format!("__deref_inner_{}", generate_unique_number()),
-                    Span::call_site(),
-                );
-                let inner = generate_match_conditions_and_bindings(
-                    &quote!(#lir_deref_inner_expr_ident.as_ref()),
-                    inner_pattern_expr.as_ref(),
-                    v3_path,
-                )?;
-                let inner_code = inner.as_ref().map(|i| &i.match_bind_or_return);
-                let match_bind_or_return = quote! {
-                    let #v3_path::lir::Expression::Addressable(#v3_path::ssa::SsaMemoryReference::Deref(#lir_deref_inner_expr_ident)) = &#target_path else {
-                        return None
-                    };
-                    #inner_code
-                };
-                Ok(Some(GeneratedMatchArm {
-                    bound_var: inner
-                        .as_ref()
-                        .map(|i| i.bound_var.clone())
-                        .unwrap_or_default(),
-                    match_bind_or_return,
-                }))
-            }
-        },
-        PatternExpression::Unary {
-            op: pattern_op,
-            arg: pattern_arg,
-        } => {
-            let lir_op_token = match pattern_op {
-                crate::dsl::PatternUnaryOperator::Not => quote!(#v3_path::lir::UnaryOperator::Not),
-                crate::dsl::PatternUnaryOperator::Minus => {
-                    quote!(#v3_path::lir::UnaryOperator::Minus)
-                }
-            };
-            let lir_inner_expr_ident = Ident::new(
-                &format!("__unary_inner_{}", generate_unique_number()),
-                Span::call_site(),
-            );
-            let inner = generate_match_conditions_and_bindings(
-                &quote!(#lir_inner_expr_ident.as_ref()),
-                pattern_arg.as_ref(),
-                v3_path,
-            )?;
-            let inner_code = inner.as_ref().map(|i| &i.match_bind_or_return);
-            let match_bind_or_return = quote! {
-                let #v3_path::lir::Expression::Unary { op: #lir_op_token, arg: ref #lir_inner_expr_ident } = &#target_path else {
-                    return None
-                };
-                #inner_code
-            };
-            Ok(Some(GeneratedMatchArm {
-                bound_var: inner.map(|i| i.bound_var).unwrap_or_default(),
-                match_bind_or_return,
-            }))
+        PatternExpression::Unary { op, arg } => {
+            _handle_unary_pattern(target_path, v3_path, op, arg)
         }
-        PatternExpression::Binary {
-            op: pattern_op,
-            lhs: pattern_lhs,
-            rhs: pattern_rhs,
-        } => {
-            let lir_op_token = match pattern_op {
-                crate::dsl::PatternBinaryOperator::Add => {
-                    quote!(#v3_path::lir::BinaryOperator::Add)
-                }
-                crate::dsl::PatternBinaryOperator::Sub => {
-                    quote!(#v3_path::lir::BinaryOperator::Sub)
-                }
-                crate::dsl::PatternBinaryOperator::Mul => {
-                    quote!(#v3_path::lir::BinaryOperator::Mul)
-                }
-                crate::dsl::PatternBinaryOperator::LessThan => {
-                    quote!(#v3_path::BinaryOperator::LessThan)
-                }
-                crate::dsl::PatternBinaryOperator::LessThanOrEqual => {
-                    quote!(#v3_path::BinaryOperator::LessThanOrEqual)
-                }
-                crate::dsl::PatternBinaryOperator::GreaterThan => {
-                    quote!(#v3_path::BinaryOperator::GreaterThan)
-                }
-                crate::dsl::PatternBinaryOperator::GreaterThanOrEqual => {
-                    quote!(#v3_path::BinaryOperator::GreaterThanOrEqual)
-                }
-                crate::dsl::PatternBinaryOperator::Equals => {
-                    quote!(#v3_path::BinaryOperator::Equals)
-                }
-                crate::dsl::PatternBinaryOperator::NotEquals => {
-                    quote!(#v3_path::BinaryOperator::NotEquals)
-                }
-            };
-
-            let lir_lhs_ident = Ident::new("__binary_lir_lhs", Span::call_site());
-            let lir_rhs_ident = Ident::new("__binary_lir_rhs", Span::call_site());
-
-            // Recursively generate conditions for lhs and rhs
-            let lhs_generated = generate_match_conditions_and_bindings(
-                &quote!(#lir_lhs_ident.as_ref()),
-                &*pattern_lhs, // Dereference Box and take reference
-                v3_path,
-            )?;
-            let rhs_generated = generate_match_conditions_and_bindings(
-                &quote!(#lir_rhs_ident.as_ref()),
-                &*pattern_rhs, // Dereference Box and take reference
-                v3_path,
-            )?;
-
-            let lhs_code = lhs_generated.as_ref().map(|i| &i.match_bind_or_return);
-            let rhs_code = rhs_generated.as_ref().map(|i| &i.match_bind_or_return);
-
-            let match_bind_or_return = quote! {
-                let #v3_path::lir::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } = &#target_path else {
-                    return None
-                };
-                #lhs_code
-                #rhs_code
-            };
-            let mut bound_vars = lhs_generated.map(|i| i.bound_var).unwrap_or_default();
-            bound_vars.extend(rhs_generated.map(|i| i.bound_var).unwrap_or_default());
-
-            Ok(Some(GeneratedMatchArm {
-                bound_var: bound_vars,
-                match_bind_or_return,
-            }))
+        PatternExpression::Binary { op, lhs, rhs } => {
+            _handle_binary_pattern(target_path, v3_path, op, lhs, rhs)
         }
     }
 }
@@ -506,7 +728,6 @@ impl MatchDslInput {
                     };
                 }
             }
-            eprintln!("CHAINED CODE: {}", chained_code);
             chained_code = quote! {
                 #chained_code
                 else { panic!("match_dsl! patterns not exhaustive on target: {:?}", #match_target_ident) }
@@ -804,7 +1025,7 @@ mod tests {
 
     #[test]
     fn test_generated_code_wildcard() {
-        let input_str = "my_var, _ => {println!(\"wildcard\");}"; // "ทำงาน" means "work" or "execute"
+        let input_str = "my_var, _ => {println!(\"wildcard\");}";
         let parsed_dsl: MatchDslInput = syn::parse_str(input_str).unwrap();
         let generated_ts = parsed_dsl.expanded();
         assert!(!generated_ts.to_string().is_empty());
@@ -815,11 +1036,6 @@ mod tests {
         let input_str = "another_var, 123 => {println!(\"constant_123\");}";
         let parsed_dsl: MatchDslInput = syn::parse_str(input_str).unwrap();
         let generated_ts = parsed_dsl.expanded();
-        // println!("{}", generated_ts.to_string());
-        println!("{}", generated_ts.to_string()); // Optional: print to see generated code
-                                                  // Further assertions could try to parse generated_ts into a syn::File or syn::Block
-                                                  // and inspect its structure, but that's more advanced.
-                                                  // For now, ensuring it compiles and looks reasonable if printed is a good start.
         assert!(!generated_ts.to_string().is_empty());
     }
 }
