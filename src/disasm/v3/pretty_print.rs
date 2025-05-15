@@ -171,7 +171,7 @@ fn unary_op_precedence(_op: &UnaryOperator) -> u8 {
 fn line(s: &str, ctx: &FormattingContext) -> String {
     let clear_to_end_code = "\x1b[K";
     match ctx.colors() {
-        Some(colors) => format!("{}{}", s, clear_to_end_code)
+        Some(colors) => format!("{s}{clear_to_end_code}")
             .on_color(colors.bg_color)
             .to_string(),
         None => s.to_string(),
@@ -371,13 +371,13 @@ where
             // Instructions
         } else {
             for phi in &self.ssa().phi_functions {
-                let phi_line = format!("{}{}", indent_str, inner_indent_str,)
+                let phi_line = format!("{indent_str}{inner_indent_str}",)
                     + &phi.pretty_print_with_context(ctx);
                 lines.push(line(&phi_line, ctx));
             }
 
             if !self.ssa().phi_functions.is_empty() {
-                let blank_line = format!("{}{}", indent_str, inner_indent_str);
+                let blank_line = format!("{indent_str}{inner_indent_str}");
                 lines.push(line(&blank_line, ctx));
             }
         }
@@ -447,7 +447,7 @@ impl ContextualPrettyPrint for MemoryReference {
                     format!("{}{}", ctx.format("+", SemanticColor::Operator), offset)
                 } else {
                     // Format negative offset directly like -offset
-                    format!("{}", offset)
+                    format!("{offset}")
                 };
 
                 format!(
@@ -510,12 +510,12 @@ where
         );
 
         // Use the `line` helper for the signature line
-        lines.push(line(&format!("{}{}", indent_str, signature_content), ctx));
+        lines.push(line(&format!("{indent_str}{signature_content}"), ctx));
 
         // Use the `line` helper for callers_comment lines
         if !callers_comment.is_empty() {
             for comment_text in callers_comment.lines() {
-                let comment_line_content = format!("{}{}", indent_str, comment_text);
+                let comment_line_content = format!("{indent_str}{comment_text}");
                 lines.push(line(&comment_line_content, ctx));
             }
         }
@@ -538,7 +538,7 @@ where
         );
 
         // Use the `line` helper for the closing brace line
-        lines.push(line(&format!("{}{}", indent_str, close_line_content), ctx));
+        lines.push(line(&format!("{indent_str}{close_line_content}"), ctx));
 
         lines.join("\n")
     }
@@ -597,7 +597,7 @@ impl ContextualPrettyPrint for VersionedMemoryReference {
         format!(
             "{}_{}",
             mem_ref.pretty_print_with_context(ctx),
-            ctx.format(self.version, SemanticColor::Type).to_string()
+            ctx.format(self.version, SemanticColor::Type)
         )
     }
 }
