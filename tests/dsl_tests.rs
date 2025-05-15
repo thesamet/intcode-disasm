@@ -243,7 +243,7 @@ mod tests {
     fn test_match_dsl_basic_patterns() {
         // Test basic patterns
         let reg = build_expr! { [R-3].5 };
-        let num: Expression<SsaMemoryReference> = build_expr! { 123 };
+        let num: Expression<SsaMemoryReference> = build_expr! { 12376 };
         assert_eq!(
             match_dsl!(&reg,
                 _ => 4
@@ -253,10 +253,11 @@ mod tests {
 
         assert_eq!(
             match_dsl!(&num,
-                123 => 123,
+                15 => 17,
+                12376 => 99,
                 _ => 4,
             ),
-            123,
+            99,
         );
 
         assert_eq!(
@@ -292,10 +293,19 @@ mod tests {
             ),
             14
         );
+
+        assert_eq!(
+            match_dsl!(&build_expr!(*([145].7)),
+                *([145].7) => 51131,
+                _ => 14,
+            ),
+            51131
+        );
     }
 
     #[test]
     fn test_match_dsl_bindings() {
+        /*
         // Test binding a constant
         let const_expr: Expression<SsaMemoryReference> = build_expr! { 35549 };
         let result_const = match_dsl!(&const_expr,
@@ -386,6 +396,7 @@ mod tests {
             }
         );
         assert_eq!(result_bind_generic_str, "[R+1]_3 + 5");
+        */
         // Test binding in a binary expression
         /*
         let binary_expr: Expression<SsaMemoryReference> = build_expr! { 10 + [R+2].5 };

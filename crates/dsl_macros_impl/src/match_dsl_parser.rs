@@ -1,10 +1,11 @@
 // disasm/model_macros/macro/src/match_dsl_parser.rs
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2};
 use syn::parse::{Parse, ParseStream, Peek};
+use syn::Type;
 use syn::{spanned::Spanned, Block, Expr, LitInt, Result, Token};
 
 // Assuming these provide the correct base paths
-use quote::quote; // Required for path generation in stubs
+use quote::{quote, ToTokens}; // Required for path generation in stubs
 
 // Imports from the dsl module for pattern parsing
 use crate::dsl::{parse_expr_generic, v3_path, PatternExpression, PatternParseStrategy}; // Renamed v3_path to avoid conflict
@@ -162,156 +163,155 @@ impl Parse for MatchDslInput {
         Ok(MatchDslInput { target_expr, arms })
     }
 }
-//
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+// Helper function to generate a unique number
+fn generate_unique_number() -> usize {
+    UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+struct GeneratedMatchArm {
+    bound_var: Vec<(Ident, TokenStream2)>,
+    match_bind_or_return: TokenStream2,
+}
+
 // Helper function to generate matching conditions and bindings
 fn generate_match_conditions_and_bindings(
     target_path: &TokenStream2, // Path to the current part of the target expression being matched
     pattern: &PatternExpression,
     v3_path: &TokenStream2,
-) -> Result<(TokenStream2, Vec<TokenStream2>)> {
-    // CHANGED RETURN TYPE
-    // Returns the condition code for an `if` statement, and a vec of `let` bindings
+) -> Result<Option<GeneratedMatchArm>> {
     match pattern {
-        PatternExpression::Wildcard => {
-            // Wildcard always matches, condition is true. No bindings.
-            Ok((quote!(true), vec![]))
-        }
+        PatternExpression::Wildcard => Ok(None), // nothing to generate
         PatternExpression::Constant(pattern_lit) => {
-            // Target must be an LIR Constant expression and its value must match pattern_lit.
-            // We expect target_path to be a reference (e.g., &lir::Expression), so we dereference it in the pattern match.
-            let condition = quote! {
-                (
-                    if let #v3_path::lir::Expression::Constant(ref __matched_val) = *#target_path {
-                        *__matched_val == #pattern_lit
-                    } else {
-                        false
-                    }
-                )
+            let match_bind_or_return = quote! {
+                let #v3_path::lir::Expression::Constant(__matched_val) = #target_path else {
+                    return None
+                };
+                if *__matched_val != #pattern_lit {
+                    return None
+                }
             };
-            Ok((condition, vec![]))
+            Ok(Some(GeneratedMatchArm {
+                bound_var: vec![],
+                match_bind_or_return,
+            }))
         }
         PatternExpression::Bind(var_bind) => {
-            let var_ident = &var_bind.ident;
+            let bound_var = var_bind.ident.clone();
             match var_bind.bind_type {
                 crate::dsl::PatternBindType::Expression => {
-                    let condition = quote!(true);
-                    let generated_bindings = vec![quote!(let #var_ident = (#target_path).clone();)];
-                    Ok((condition, generated_bindings))
+                    let match_bind_or_return = quote!(let #bound_var = &#target_path;);
+                    Ok(Some(GeneratedMatchArm {
+                        bound_var: vec![(
+                            bound_var,
+                            quote!(#v3_path::lir::Expression<#v3_path::ssa::types::SsaMemoryReference>),
+                        )],
+                        match_bind_or_return,
+                    }))
                 }
                 crate::dsl::PatternBindType::Constant => {
-                    let condition =
-                        quote!(matches!(*#target_path, #v3_path::lir::Expression::Constant(_)));
-                    let generated_bindings = vec![quote! {
-                        let #var_ident = match *#target_path {
-                            #v3_path::lir::Expression::Constant(ref __val) => *__val,
-                            _ => unreachable!("pattern guard ensured this variant; an Expression::Constant was expected"),
+                    let match_bind_or_return = quote! {
+                        let #v3_path::lir::Expression::Constant(ref #bound_var) = #target_path else {
+                            return None
                         };
-                    }];
-                    Ok((condition, generated_bindings))
+                    };
+                    Ok(Some(GeneratedMatchArm {
+                        bound_var: vec![(bound_var, quote!(i128))],
+                        match_bind_or_return,
+                    }))
                 }
                 crate::dsl::PatternBindType::Addressable => {
-                    let condition =
-                        quote!(matches!(*#target_path, #v3_path::lir::Expression::Addressable(_)));
-                    let generated_bindings = vec![quote! {
-                        let #var_ident = match *#target_path {
-                            #v3_path::lir::Expression::Addressable(ref __val) => __val.clone(),
-                            _ => unreachable!("pattern guard ensured this variant; an Expression::Addressable was expected"),
+                    let match_bind_or_return = quote! {
+                        let #v3_path::lir::Expression::Addressable(ref #bound_var) = #target_path else {
+                            return None
                         };
-                    }];
-                    Ok((condition, generated_bindings))
+                    };
+                    Ok(Some(GeneratedMatchArm {
+                        bound_var: vec![(
+                            bound_var,
+                            quote!(#v3_path::ssa::types::SsaMemoryReference),
+                        )],
+                        match_bind_or_return,
+                    }))
                 }
             }
         }
-        PatternExpression::Addressable(pattern_ssa_ref) => {
-            match pattern_ssa_ref {
-                crate::dsl::PatternSsaMemoryReference::Versioned(pattern_ve) => {
-                    let pattern_offset_val: i128 =
-                        pattern_ve.offset.base10_parse().map_err(|e| {
-                            syn::Error::new(
-                                pattern_ve.offset.span(),
-                                format!("Invalid pattern offset: {}", e),
-                            )
-                        })?;
-                    let pattern_version_val: u64 =
-                        pattern_ve.version.base10_parse().map_err(|e| {
-                            syn::Error::new(
-                                pattern_ve.version.span(),
-                                format!("Invalid pattern version: {}", e),
-                            )
-                        })?;
-                    let pattern_sign_val = pattern_ve.sign;
-                    let pattern_is_relative_val = pattern_ve.is_relative;
+        PatternExpression::Addressable(pattern_ssa_ref) => match pattern_ssa_ref {
+            crate::dsl::PatternSsaMemoryReference::Versioned(pattern_ve) => {
+                let pattern_offset_val: i128 = pattern_ve.offset.base10_parse().map_err(|e| {
+                    syn::Error::new(
+                        pattern_ve.offset.span(),
+                        format!("Invalid pattern offset: {}", e),
+                    )
+                })?;
+                let pattern_version_val: usize =
+                    pattern_ve.version.base10_parse().map_err(|e| {
+                        syn::Error::new(
+                            pattern_ve.version.span(),
+                            format!("Invalid pattern version: {}", e),
+                        )
+                    })?;
+                let pattern_sign_val = pattern_ve.sign;
+                let pattern_is_relative_val = pattern_ve.is_relative;
+                let match_bind_or_return = if pattern_is_relative_val {
+                    let offset = pattern_ve.sign * pattern_offset_val;
+                    quote! {
+                        if !matches!(#target_path, #v3_path::lir::Expression::Addressable(#v3_path::ssa::SsaMemoryReference::Versioned(#v3_path::ssa::types::VersionedMemoryReference {
+                            kind: #v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset),
+                            version: #pattern_version_val,
+                            ..
+                        }))) {
+                            return None
+                        }
+                    }
+                } else {
+                    let pattern_offset_val = pattern_offset_val as usize;
+                    quote! {
+                        if !
 
-                    let condition = quote! {
-                        (match *#target_path {
-                            #v3_path::lir::Expression::Addressable(ref ssa_ref) => {
-                                match ssa_ref {
-                                    #v3_path::ssa::SsaMemoryReference::Versioned(ref lir_vmr) => {
-                                        let lir_version = lir_vmr.version as u64;
-                                        let version_match = #pattern_version_val == lir_version;
-
-                                        let kind_match = match (&lir_vmr.kind, #pattern_is_relative_val) {
-                                            (#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(lir_rel_offset_signed_val), true) => {
-                                                let expected_lir_rel_offset_signed = #pattern_offset_val * #pattern_sign_val;
-                                                *lir_rel_offset_signed_val == expected_lir_rel_offset_signed
-                                            }
-                                            (#v3_path::ssa::types::VersionableMemoryKind::Memory(lir_abs_offset_val), false) => {
-                                                (*lir_abs_offset_val as i128 == #pattern_offset_val) && #pattern_sign_val == 1
-                                            }
-                                            _ => false,
-                                        };
-                                        version_match && kind_match
-                                    }
-                                    _ => false,
-                                }
-                            }
-                            _ => false,
-                        })
-                    };
-                    Ok((condition, vec![])) // No bindings from Versioned structure itself
-                }
-                crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
-                    let lir_deref_inner_expr_ident =
-                        Ident::new("__addr_deref_lir_inner", Span::call_site());
-                    // Path to the dereferenced inner LIR expression.
-                    // The `ref #lir_deref_inner_expr_ident` in the match below binds to the Box<Expression>.
-                    // So, for the recursive call, the target_path should refer to the *content* of the Box.
-                    // A common way is to bind the content directly if possible or use `.as_ref()` if binding the Box.
-                    // Let's assume `ref #lir_deref_inner_expr_ident` binds `Box<Expression>`, so recursive target is `(*#lir_deref_inner_expr_ident).as_ref()`
-                    // Or, more simply, if we match `Deref(inner_expr_box)`, then `inner_expr_box` is the `Box`.
-                    // The path `ref #ident` will be `&Box<Expression>`.
-                    // The recursive call needs `&Expression`. So, `(*#ident).as_ref()` or similar.
-                    // Simpler: bind the inner expression directly.
-                    let inner_lir_expr_target_path = quote!(*#lir_deref_inner_expr_ident);
-
-                    let (sub_condition, sub_bindings) = generate_match_conditions_and_bindings(
-                        &inner_lir_expr_target_path, // Path to the inner LIR Expression
-                        &*inner_pattern_expr, // Dereference Box and take reference for pattern
-                        v3_path,
-                    )?;
-
-                    let overall_condition = quote! {
-                        (match *#target_path {
-                            #v3_path::lir::Expression::Addressable(ref ssa_ref) => {
-                                match ssa_ref {
-                                    #v3_path::ssa::SsaMemoryReference::Deref(ref #lir_deref_inner_expr_ident) => { // #lir_deref_inner_expr_ident is Box<Expression>
-                                        // Embed sub_bindings and sub_condition here
-                                        {
-                                            #(#sub_bindings)*
-                                            #sub_condition
-                                        }
-                                    }
-                                    _ => false,
-                                }
-                            }
-                            _ => false,
-                        })
-                    };
-                    // Bindings from sub-pattern are embedded in the condition; this arm returns no *new* top-level bindings.
-                    Ok((overall_condition, vec![]))
-                }
+                        matches!(#target_path, #v3_path::lir::Expression::Addressable(#v3_path::ssa::SsaMemoryReference::Versioned(#v3_path::ssa::types::VersionedMemoryReference {
+                            kind: #v3_path::ssa::types::VersionableMemoryKind::Memory(#pattern_offset_val),
+                            version: #pattern_version_val,
+                            ..
+                        }))) {
+                            return None
+                        }
+                    }
+                };
+                Ok(Some(GeneratedMatchArm {
+                    bound_var: vec![],
+                    match_bind_or_return,
+                }))
             }
-        }
+            crate::dsl::PatternSsaMemoryReference::Deref(inner_pattern_expr) => {
+                let lir_deref_inner_expr_ident = Ident::new(
+                    &format!("__deref_inner_{}", generate_unique_number()),
+                    Span::call_site(),
+                );
+                let inner = generate_match_conditions_and_bindings(
+                    &quote!(#lir_deref_inner_expr_ident.as_ref()),
+                    inner_pattern_expr.as_ref(),
+                    v3_path,
+                )?;
+                let inner_code = inner.as_ref().map(|i| &i.match_bind_or_return);
+                let match_bind_or_return = quote! {
+                    let #v3_path::lir::Expression::Addressable(#v3_path::ssa::SsaMemoryReference::Deref(#lir_deref_inner_expr_ident)) = &#target_path else {
+                        return None
+                    };
+                    #inner_code
+                };
+                Ok(Some(GeneratedMatchArm {
+                    bound_var: inner
+                        .as_ref()
+                        .map(|i| i.bound_var.clone())
+                        .unwrap_or_default(),
+                    match_bind_or_return,
+                }))
+            }
+        },
         PatternExpression::Unary {
             op: pattern_op,
             arg: pattern_arg,
@@ -322,31 +322,26 @@ fn generate_match_conditions_and_bindings(
                     quote!(#v3_path::lir::UnaryOperator::Minus)
                 }
             };
-
-            let lir_arg_ident = Ident::new("__unary_lir_arg", Span::call_site());
-            // Note: lir_arg_path is quote!(#lir_arg_ident), used as target_path in recursive call.
-            // When `ref #lir_arg_ident` binds (to &Expression), `*#lir_arg_ident` in sub-conditions will be the Expression.
-
-            let (arg_sub_condition, arg_sub_bindings) = generate_match_conditions_and_bindings(
-                &quote!(#lir_arg_ident), // The target for this sub-match is the extracted LIR argument
-                &*pattern_arg,           // Dereference Box and take reference
+            let lir_inner_expr_ident = Ident::new(
+                &format!("__unary_inner_{}", generate_unique_number()),
+                Span::call_site(),
+            );
+            let inner = generate_match_conditions_and_bindings(
+                &quote!(#lir_inner_expr_ident.as_ref()),
+                pattern_arg.as_ref(),
                 v3_path,
             )?;
-
-            let overall_condition = quote! {
-                (match *#target_path {
-                    #v3_path::lir::Expression::Unary { op: #lir_op_token, arg: ref #lir_arg_ident } => { // #lir_arg_ident is &Box<Expression>, ref makes it &Expression
-                        // Embed arg_sub_bindings and arg_sub_condition here
-                        {
-                            #(#arg_sub_bindings)*
-                            #arg_sub_condition
-                        }
-                    }
-                    _ => false,
-                })
+            let inner_code = inner.as_ref().map(|i| &i.match_bind_or_return);
+            let match_bind_or_return = quote! {
+                let #v3_path::lir::Expression::Unary { op: #lir_op_token, arg: ref #lir_inner_expr_ident } = &#target_path else {
+                    return None
+                };
+                #inner_code
             };
-            // Bindings from sub-pattern are embedded; this arm returns no *new* top-level bindings.
-            Ok((overall_condition, vec![]))
+            Ok(Some(GeneratedMatchArm {
+                bound_var: inner.map(|i| i.bound_var).unwrap_or_default(),
+                match_bind_or_return,
+            }))
         }
         PatternExpression::Binary {
             op: pattern_op,
@@ -387,32 +382,34 @@ fn generate_match_conditions_and_bindings(
             let lir_rhs_ident = Ident::new("__binary_lir_rhs", Span::call_site());
 
             // Recursively generate conditions for lhs and rhs
-            let (lhs_sub_condition, lhs_sub_bindings) = generate_match_conditions_and_bindings(
-                &quote!(#lir_lhs_ident),
+            let lhs_generated = generate_match_conditions_and_bindings(
+                &quote!(#lir_lhs_ident.as_ref()),
                 &*pattern_lhs, // Dereference Box and take reference
                 v3_path,
             )?;
-            let (rhs_sub_condition, rhs_sub_bindings) = generate_match_conditions_and_bindings(
-                &quote!(#lir_rhs_ident),
+            let rhs_generated = generate_match_conditions_and_bindings(
+                &quote!(#lir_rhs_ident.as_ref()),
                 &*pattern_rhs, // Dereference Box and take reference
                 v3_path,
             )?;
 
-            let overall_condition = quote! {
-                (match *#target_path {
-                    #v3_path::lir::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } => {
-                        // Embed sub-bindings and sub-conditions here
-                        {
-                            #(#lhs_sub_bindings)*
-                            #(#rhs_sub_bindings)*
-                            (#lhs_sub_condition && #rhs_sub_condition)
-                        }
-                    }
-                    _ => false,
-                })
+            let lhs_code = lhs_generated.as_ref().map(|i| &i.match_bind_or_return);
+            let rhs_code = rhs_generated.as_ref().map(|i| &i.match_bind_or_return);
+
+            let match_bind_or_return = quote! {
+                let #v3_path::lir::Expression::Binary { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } = &#target_path else {
+                    return None
+                };
+                #lhs_code
+                #rhs_code
             };
-            // Bindings from sub-patterns are embedded; this arm returns no *new* top-level bindings.
-            Ok((overall_condition, vec![]))
+            let mut bound_vars = lhs_generated.map(|i| i.bound_var).unwrap_or_default();
+            bound_vars.extend(rhs_generated.map(|i| i.bound_var).unwrap_or_default());
+
+            Ok(Some(GeneratedMatchArm {
+                bound_var: bound_vars,
+                match_bind_or_return,
+            }))
         }
     }
 }
@@ -424,34 +421,58 @@ impl MatchDslInput {
 
         let v3_path = v3_path();
 
+        let mut generated_functions = Vec::new();
         let mut arm_results = Vec::new();
 
         for arm in &self.arms {
-            let initial_target_path = quote!(#match_target_ident);
+            let func_name = Ident::new(
+                &format!("__dsl_match_{}", generate_unique_number()),
+                Span::call_site(),
+            );
+            let arm_body_expr = &arm.body;
 
-            // generate_match_conditions_and_bindings returns (condition_code, arm_specific_bindings)
-            match generate_match_conditions_and_bindings(
-                &initial_target_path,
-                &arm.pattern,
-                // REMOVED: &mut bindings,
-                &v3_path,
-            ) {
-                Ok((condition_code, arm_specific_bindings)) => {
-                    // Destructure the returned tuple
-                    let arm_body_expr = &arm.body;
+            match generate_match_conditions_and_bindings(&quote!(expr), &arm.pattern, &v3_path) {
+                Ok(Some(GeneratedMatchArm {
+                    bound_var,
+                    match_bind_or_return,
+                })) => {
+                    let types: Vec<_> = bound_var.iter().map(|(_, ty)| ty).collect();
+                    let vars: Vec<_> = bound_var.iter().map(|(var, _)| var).collect();
 
-                    let final_condition = if let Some(guard_expr) = &arm.guard {
-                        // Combine the pattern's condition with the guard
-                        quote!((#condition_code) && (#guard_expr))
+                    let guard_condition = if let Some(guard_expr) = &arm.guard {
+                        quote! { #guard_expr }
                     } else {
-                        condition_code // Just the pattern's condition
+                        quote! { true } // No guard, so always true
                     };
 
+                    // Create the matching function for this arm.
+                    generated_functions.push(quote! {
+                        fn #func_name(expr: &#v3_path::lir::Expression<#v3_path::ssa::types::SsaMemoryReference>) -> Option<(#(&#types),*)> {
+                            #match_bind_or_return
+                            if #guard_condition {
+                                Some((#(#vars),*))
+                            } else {
+                                None
+                            }
+                        }
+                    });
+
                     arm_results.push(quote! {
-                        if #final_condition {
-                            #(#arm_specific_bindings)* // Use the bindings returned by the helper
-                            // The body is an Expr, so it directly becomes the value of this branch
-                            (#arm_body_expr)
+                        if let Some((#(#vars),*)) = #func_name(&#match_target_ident) {
+                            #arm_body_expr
+                        }
+                    });
+                }
+                Ok(None) => {
+                    // Wildcard pattern, always matches.
+                    let guard_condition = if let Some(guard_expr) = &arm.guard {
+                        quote! { #guard_expr }
+                    } else {
+                        quote! { true } // No guard, so always true
+                    };
+                    arm_results.push(quote! {
+                        if #guard_condition {
+                            #arm_body_expr
                         }
                     });
                 }
@@ -470,25 +491,33 @@ impl MatchDslInput {
             )
             .to_compile_error()
         } else {
-            let mut chained_code = arm_results[0].clone();
-            for i in 1..arm_results.len() {
-                let next_arm_code = &arm_results[i];
-                chained_code = quote! {
-                    #chained_code else #next_arm_code
-                };
-            }
-            // Add a final `else` that panics for non-exhaustiveness.
-            // This makes the `if/else if` chain an expression.
-            quote! {
-                #chained_code
-                else {
-                    panic!("match_dsl! patterns not exhaustive on target: {:?}", #match_target_ident);
+            let mut chained_code = quote! {};
+            let mut first_arm = true;
+            for arm_result in arm_results {
+                if first_arm {
+                    chained_code = quote! {
+                        #arm_result
+                    };
+                    first_arm = false;
+                } else {
+                    chained_code = quote! {
+                        #chained_code
+                        else #arm_result
+                    };
                 }
             }
+            eprintln!("CHAINED CODE: {}", chained_code);
+            chained_code = quote! {
+                #chained_code
+                else { panic!("match_dsl! patterns not exhaustive on target: {:?}", #match_target_ident) }
+            };
+
+            chained_code
         };
 
         let expanded_code = quote! {
             {
+                #(#generated_functions)* // Define the matching functions.
                 let #match_target_ident = &#target_expr_to_match;
                 #final_match_logic
             }
