@@ -260,7 +260,7 @@ fn _quote_constant_match_code(
 }
 
 fn _quote_bind_expression_code(bound_var: &Ident, target_path: &TokenStream2) -> TokenStream2 {
-    quote!(let #bound_var = &#target_path;)
+    quote!(let #bound_var = #target_path;)
 }
 
 fn _quote_bind_constant_code(
@@ -335,7 +335,7 @@ fn _quote_deref_match_code(
     let lir_expr_addressable_path = _path_lir_expr_addressable(v3_path);
     let ssa_mem_ref_deref_path = _path_ssa_mem_ref_deref(v3_path);
     quote! {
-        let #lir_expr_addressable_path(#ssa_mem_ref_deref_path(#lir_deref_inner_expr_ident)) = &#target_path else {
+        let #lir_expr_addressable_path(#ssa_mem_ref_deref_path(#lir_deref_inner_expr_ident)) = #target_path else {
             return None
         };
         #inner_code
@@ -351,7 +351,7 @@ fn _quote_unary_match_code(
 ) -> TokenStream2 {
     let lir_expr_unary_path = _path_lir_expr_unary(v3_path);
     quote! {
-        let #lir_expr_unary_path { op: #lir_op_token, arg: ref #lir_inner_expr_ident } = &#target_path else {
+        let #lir_expr_unary_path { op: #lir_op_token, arg: ref #lir_inner_expr_ident } = #target_path else {
             return None
         };
         #inner_code
@@ -369,7 +369,7 @@ fn _quote_binary_match_code(
 ) -> TokenStream2 {
     let lir_expr_binary_path = _path_lir_expr_binary(v3_path);
     quote! {
-        let #lir_expr_binary_path { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } = &#target_path else {
+        let #lir_expr_binary_path { op: #lir_op_token, lhs: ref #lir_lhs_ident, rhs: ref #lir_rhs_ident } = #target_path else {
             return None
         };
         #lhs_code
@@ -637,114 +637,188 @@ fn generate_match_conditions_and_bindings(
 }
 
 impl MatchDslInput {
+    // Helper to create the arm-specific matching function (fn __dsl_match_XXX(...) -> Option<...>)
+    // This function is generated for each arm that is not a simple wildcard.
+    fn _create_arm_logic_fn(
+        fn_ident_for_arm: &Ident,
+        v3_path_token_stream: &TokenStream2,
+        generated_arm_details: &GeneratedMatchArm,
+        arm_input: &MatchArmInput, // Used for accessing the guard expression
+    ) -> TokenStream2 {
+        let GeneratedMatchArm {
+            bound_var,
+            match_bind_or_return,
+        } = generated_arm_details;
+
+        let types: Vec<_> = bound_var.iter().map(|(_, ty)| ty).collect();
+        let vars: Vec<_> = bound_var.iter().map(|(var, _)| var).collect();
+
+        let guard_condition = if let Some(guard_expr) = &arm_input.guard {
+            quote! { #guard_expr }
+        } else {
+            quote! { true } // Default to true if no guard is present
+        };
+
+        // Use existing path helpers to construct type paths
+        let ssa_mem_ref_type_path = _path_ssa_types_ssa_memory_reference(v3_path_token_stream);
+        let lir_expr_path = _path_lir_expr(v3_path_token_stream);
+
+        quote! {
+            // Allow too_many_arguments because the number of bound variables (`vars`)
+            // can be large, leading to a function signature with many tuple elements.
+            #[allow(clippy::too_many_arguments)]
+            fn #fn_ident_for_arm(expr: &#lir_expr_path<#ssa_mem_ref_type_path>) -> Option<(#(&#types),*)> {
+                #match_bind_or_return // Code to match the pattern and bind initial variables
+                if #guard_condition { // Then, check the guard
+                    Some((#(#vars),*)) // If guard passes, return bound variables
+                } else {
+                    None // Guard failed
+                }
+            }
+        }
+    }
+
+    // Helper to create the code that calls an arm-specific function and executes its body
+    // e.g., if let Some((vars,...)) = __dsl_match_arm_fn_XXX(&__match_dsl_target) { /* arm body */ }
+    fn _create_arm_fn_call_and_body(
+        fn_ident_for_arm: &Ident,
+        match_target_ident: &Ident, // The identifier for the expression being matched (e.g., `__match_dsl_target`)
+        generated_arm_details: &GeneratedMatchArm,
+        arm_input: &MatchArmInput, // Used for accessing the arm body expression
+    ) -> TokenStream2 {
+        let GeneratedMatchArm { bound_var, .. } = generated_arm_details;
+        let vars: Vec<_> = bound_var.iter().map(|(var, _)| var).collect();
+        let arm_body_expr = &arm_input.body;
+
+        quote! {
+            if let Some((#(#vars),*)) = #fn_ident_for_arm(#match_target_ident) {
+                #arm_body_expr
+            }
+        }
+    }
+
+    // Helper for wildcard arms (those with a `_` pattern)
+    // e.g., if guard_condition { /* arm body */ }
+    fn _create_wildcard_arm_logic(arm_input: &MatchArmInput) -> TokenStream2 {
+        let guard_condition = if let Some(guard_expr) = &arm_input.guard {
+            quote! { #guard_expr }
+        } else {
+            quote! { true } // Default to true if no guard
+        };
+        let arm_body_expr = &arm_input.body;
+        quote! {
+            if #guard_condition { // Only check guard, as pattern is wildcard
+                #arm_body_expr
+            }
+        }
+    }
+
+    // Helper to build the final if/else if/.../else { panic } chain
+    fn _build_final_match_structure(
+        arm_call_blocks: Vec<TokenStream2>, // Each block is an `if let ...` or `if guard ...`
+        match_target_ident: &Ident,
+    ) -> TokenStream2 {
+        if arm_call_blocks.is_empty() {
+            // This check is defensive. The parser should ensure at least one arm.
+            return syn::Error::new(
+                Span::call_site(),
+                "match_dsl! macro (internal check): requires at least one arm.",
+            )
+            .to_compile_error();
+        }
+
+        let mut chained_code = quote! {};
+        let mut is_first_arm_block = true;
+        for arm_call_block in arm_call_blocks {
+            if is_first_arm_block {
+                chained_code = quote! { #arm_call_block };
+                is_first_arm_block = false;
+            } else {
+                chained_code = quote! { #chained_code else #arm_call_block };
+            }
+        }
+
+        // Append the final `else { panic! }` for non-exhaustive matches.
+        quote! {
+            #chained_code
+            else {
+                panic!("match_dsl! patterns not exhaustive for target: {:?}", #match_target_ident);
+            }
+        }
+    }
+
     pub fn expanded(&self) -> TokenStream2 {
         let target_expr_to_match = &self.target_expr;
+        // This identifier will hold the expression being matched against.
         let match_target_ident = Ident::new("__match_dsl_target", Span::call_site());
 
-        let v3_path = v3_path();
+        // `v3_path()` is assumed to be a function in scope that returns the TokenStream2
+        // for the root path of LIR/SSA types (e.g., `crate::lir_paths_v3`).
+        let v3_path_token_stream = v3_path();
 
-        let mut generated_functions = Vec::new();
-        let mut arm_results = Vec::new();
+        let mut arm_helper_fns: Vec<TokenStream2> = Vec::new(); // Stores generated fn __dsl_match_arm_fn_XXX
+        let mut arm_call_blocks: Vec<TokenStream2> = Vec::new(); // Stores `if let ...` blocks
 
-        for arm in &self.arms {
-            let func_name = Ident::new(
-                &format!("__dsl_match_{}", generate_unique_number()),
-                Span::call_site(),
-            );
-            let arm_body_expr = &arm.body;
+        // The identifier `expr` is used as the parameter name within the generated helper functions
+        // (e.g., `fn __dsl_match_arm_fn_XXX(expr: &LirExpr) -> ...`).
+        let expr_param_in_helper_fn = quote!(expr);
 
-            match generate_match_conditions_and_bindings(&quote!(expr), &arm.pattern, &v3_path) {
-                Ok(Some(GeneratedMatchArm {
-                    bound_var,
-                    match_bind_or_return,
-                })) => {
-                    let types: Vec<_> = bound_var.iter().map(|(_, ty)| ty).collect();
-                    let vars: Vec<_> = bound_var.iter().map(|(var, _)| var).collect();
+        for arm_input in &self.arms {
+            match generate_match_conditions_and_bindings(
+                &expr_param_in_helper_fn, // Pass `expr` as the target for conditions inside helper
+                &arm_input.pattern,
+                &v3_path_token_stream,
+            ) {
+                Ok(Some(generated_arm_details)) => {
+                    // This arm has a non-wildcard pattern that requires a helper function.
+                    let fn_ident_for_arm = Ident::new(
+                        &format!("__dsl_match_arm_fn_{}", generate_unique_number()),
+                        Span::call_site(),
+                    );
 
-                    let guard_condition = if let Some(guard_expr) = &arm.guard {
-                        quote! { #guard_expr }
-                    } else {
-                        quote! { true } // No guard, so always true
-                    };
+                    let helper_fn_code = Self::_create_arm_logic_fn(
+                        &fn_ident_for_arm,
+                        &v3_path_token_stream,
+                        &generated_arm_details,
+                        arm_input,
+                    );
+                    arm_helper_fns.push(helper_fn_code);
 
-                    // Create the matching function for this arm.
-                    generated_functions.push(quote! {
-                        fn #func_name(expr: &#v3_path::lir::Expression<#v3_path::ssa::types::SsaMemoryReference>) -> Option<(#(&#types),*)> {
-                            #match_bind_or_return
-                            if #guard_condition {
-                                Some((#(#vars),*))
-                            } else {
-                                None
-                            }
-                        }
-                    });
-
-                    arm_results.push(quote! {
-                        if let Some((#(#vars),*)) = #func_name(&#match_target_ident) {
-                            #arm_body_expr
-                        }
-                    });
+                    let arm_call_code = Self::_create_arm_fn_call_and_body(
+                        &fn_ident_for_arm,
+                        &match_target_ident, // Call helper with the actual expression being matched
+                        &generated_arm_details,
+                        arm_input,
+                    );
+                    arm_call_blocks.push(arm_call_code);
                 }
                 Ok(None) => {
-                    // Wildcard pattern, always matches.
-                    let guard_condition = if let Some(guard_expr) = &arm.guard {
-                        quote! { #guard_expr }
-                    } else {
-                        quote! { true } // No guard, so always true
-                    };
-                    arm_results.push(quote! {
-                        if #guard_condition {
-                            #arm_body_expr
-                        }
-                    });
+                    // This arm is a wildcard `_ => ...`. No helper function needed, just guard + body.
+                    let wildcard_logic = Self::_create_wildcard_arm_logic(arm_input);
+                    arm_call_blocks.push(wildcard_logic);
                 }
                 Err(e) => {
-                    // If generating conditions/bindings for an arm fails, propagate as compile error
-                    return e.to_compile_error().into();
+                    // Propagate errors from arm generation as compile errors.
+                    return e.to_compile_error();
                 }
             }
         }
 
-        let final_match_logic = if arm_results.is_empty() {
-            // This should be caught by the parser, but as a defensive measure:
-            syn::Error::new(
-                Span::call_site(),
-                "match_dsl! macro requires at least one arm.",
-            )
-            .to_compile_error()
-        } else {
-            let mut chained_code = quote! {};
-            let mut first_arm = true;
-            for arm_result in arm_results {
-                if first_arm {
-                    chained_code = quote! {
-                        #arm_result
-                    };
-                    first_arm = false;
-                } else {
-                    chained_code = quote! {
-                        #chained_code
-                        else #arm_result
-                    };
-                }
-            }
-            chained_code = quote! {
-                #chained_code
-                else { panic!("match_dsl! patterns not exhaustive on target: {:?}", #match_target_ident) }
-            };
+        let final_match_logic =
+            Self::_build_final_match_structure(arm_call_blocks, &match_target_ident);
 
-            chained_code
-        };
+        // Assemble the final token stream.
+        quote! {
+            { // Outer block to scope the helper functions and `match_target_ident`.
+                #(#arm_helper_fns)* // Define all arm-specific helper functions.
 
-        let expanded_code = quote! {
-            {
-                #(#generated_functions)* // Define the matching functions.
+                // Assign the expression to be matched to our stable identifier.
                 let #match_target_ident = &#target_expr_to_match;
+
+                // The chain of if/else if calls to the helper functions.
                 #final_match_logic
             }
-        };
-
-        expanded_code.into()
+        }
     }
 }
 

@@ -58,7 +58,6 @@ impl FoldedSsaBuilder {
         function_view: FunctionView<FunctionCallAnalysisComplete>,
     ) -> HashMap<BlockId, FoldedSsaBlock> {
         let mut current = HashMap::new();
-        let callee_info = function_view.callee_info();
         for (_, block) in function_view.blocks() {
             current.insert(
                 block.block_id(),

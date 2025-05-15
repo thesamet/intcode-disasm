@@ -96,6 +96,28 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_comparison_operators() {
+        // Test patterns with binary comparison operators
+        let expr: Expression<SsaMemoryReference> = build_expr! { 33 == 45 };
+        assert_eq!(expr.nocolor(), "33 == 45");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { 33 != 45 };
+        assert_eq!(expr.nocolor(), "33 != 45");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { 33 > 45 };
+        assert_eq!(expr.nocolor(), "33 > 45");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { 33 < 45 };
+        assert_eq!(expr.nocolor(), "33 < 45");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { 33 >= 45 };
+        assert_eq!(expr.nocolor(), "33 >= 45");
+
+        let expr: Expression<SsaMemoryReference> = build_expr! { 33 <= 45 };
+        assert_eq!(expr.nocolor(), "33 <= 45");
+    }
+
+    #[test]
     fn test_assigmment() {
         assert_eq!(
             build_instruction! { [R+1].3 = 123 }.nocolor(),
@@ -508,6 +530,157 @@ mod tests {
            _ =>  panic!("no match"),
         );
         assert_eq!(match_input, (32, 15));
+    }
+
+    #[test]
+    fn test_match_dsl_binary_comparison_operators() {
+        // Test patterns with binary comparison operators
+        let expr = build_expr! { 33 == 45 };
+        let match_input = match_dsl!(&expr,
+            $a:const == $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
+
+        let expr = build_expr! { 33 != 45 };
+        let match_input = match_dsl!(&expr,
+            $a:const != $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
+
+        let expr = build_expr! { 33 > 45 };
+        let match_input = match_dsl!(&expr,
+            $a:const > $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
+
+        let expr = build_expr! { 33 < 45 };
+        let match_input = match_dsl!(&expr,
+            $a:const < $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
+
+        let expr = build_expr! { 33 >= 45 };
+        let match_input = match_dsl!(&expr,
+            $a:const >= $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
+
+        let expr = build_expr! { 33 <= 45 };
+        let match_input = match_dsl!(&expr,
+            $a:const <= $b:const => (*a, *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, 45));
+    }
+
+    #[test]
+    fn test_match_dsl_binary_comparison_operators_complex() {
+        // Test patterns with binary comparison operators and more complex expressions
+        let expr = build_expr! { [R+1].3 + 5 == 10 };
+        let match_input = match_dsl!(&expr,
+            $a:expr == $b:const => (a.nocolor(), *b),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, ("[R+1]_3 + 5".to_string(), 10));
+
+        let expr = build_expr! { 33 != [R+2].7 * 2 };
+        let match_input = match_dsl!(&expr,
+            $a:const != $b:expr => (*a, b.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, "[R+2]_7 * 2".to_string()));
+
+        let expr = build_expr! { [R+3].0 > 45 - 10 };
+        let match_input = match_dsl!(&expr,
+            $a:addr > $b:expr => (a.nocolor(), b.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, ("[R+3]_0".to_string(), "45 - 10".to_string()));
+
+        let expr = build_expr! { 33 < [R+4].2 + 1 };
+        let match_input = match_dsl!(&expr,
+            $a:const < $b:expr => (*a, b.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, (33, "[R+4]_2 + 1".to_string()));
+
+        let expr = build_expr! { [R+5].4 >= 45 * 3 };
+        let match_input = match_dsl!(&expr,
+            $a:expr >= $b:expr => (a.nocolor(), b.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, ("[R+5]_4".to_string(), "45 * 3".to_string()));
+
+        let expr = build_expr! { 33 * 2 <= [R+6].6 };
+        let match_input = match_dsl!(&expr,
+            $a:expr <= $b:addr => (a.nocolor(), b.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(match_input, ("33 * 2".to_string(), "[R+6]_6".to_string()));
+
+        let expr = build_expr! { *([R+1].1 + *([R+2].2)) > 100 - 50 };
+        let match_input = match_dsl!(&expr,
+            *($a:expr + *($b:addr)) > $c:expr => (a.nocolor(), b.nocolor(), c.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(
+            match_input,
+            (
+                "[R+1]_1".to_string(),
+                "[R+2]_2".to_string(),
+                "100 - 50".to_string()
+            )
+        );
+
+        let expr = build_expr! { !([R+3].3 * 5) <= -([R+4].4 + 10) };
+        let match_input = match_dsl!(&expr,
+            !($a:expr * $b:const) <= -($c:addr + $d:const) => (a.nocolor(), *b, c.nocolor(), *d),
+            _ => panic!("no match")
+        );
+        assert_eq!(
+            match_input,
+            ("[R+3]_3".to_string(), 5, "[R+4]_4".to_string(), 10)
+        );
+
+        let expr = build_expr! { 10 + *([R+5].5 - 7) == [R+6].6 };
+        let match_input = match_dsl!(&expr,
+            10 + *($a:addr - $b:const) == $c:addr => (a.nocolor(), *b, c.nocolor()),
+            _ => panic!("no match")
+        );
+        assert_eq!(
+            match_input,
+            ("[R+5]_5".to_string(), 7, "[R+6]_6".to_string())
+        );
+
+        let expr = build_expr! {*([R+7].7 + !([R+8].8)) >= 5 * ([R+9].9 - 2)};
+        let match_input = match_dsl!(&expr,
+            *($a:addr + !($b:addr)) >= 5 * ($c:addr - $d:const) => (a.nocolor(), b.nocolor(), c.nocolor(), *d),
+            _ => panic!("no match")
+        );
+        assert_eq!(
+            match_input,
+            (
+                "[R+7]_7".to_string(),
+                "[R+8]_8".to_string(),
+                "[R+9]_9".to_string(),
+                2
+            )
+        );
+
+        let expr = build_expr! { -*([R+10].10) < 15 + !([R+11].11 * 3) };
+        let match_input = match_dsl!(&expr,
+            -*($a:addr) < 15 + !($b:addr * $c:const) => (a.nocolor(), b.nocolor(), *c),
+            _ => panic!("no match")
+        );
+        assert_eq!(
+            match_input,
+            ("[R+10]_10".to_string(), "[R+11]_11".to_string(), 3)
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 extern crate proc_macro;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::FoundCrate;
 use quote::quote;
 use syn::{
@@ -42,7 +42,10 @@ pub enum PatternUnaryOperator {
 pub fn v3_path() -> TokenStream2 {
     match proc_macro_crate::crate_name("disasm").expect("Could not find disasm crate") {
         FoundCrate::Itself => quote!(crate::disasm::v3),
-        FoundCrate::Name(name) => quote!(disasm::disasm::v3),
+        FoundCrate::Name(name) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote!(#ident::disasm::v3)
+        }
     }
 }
 
@@ -116,14 +119,6 @@ impl VersionedElement {
             ))
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum PatternMatchingAtom {
-    Wildcard(),         // Represents '_'
-    Expression(Ident),  // Represents $e:expr, or just $e (expr is the default)
-    Addressable(Ident), // Represents $a:addr,  binds as a memory reference
-    Literal(Ident),     // Represents $a:const binds as a constant literal.
 }
 
 // AST for Pattern Matching
@@ -213,6 +208,12 @@ pub trait ParseStrategy {
     fn get_binary_add_op(&self) -> Self::BinaryOpType;
     fn get_binary_sub_op(&self) -> Self::BinaryOpType;
     fn get_binary_mul_op(&self) -> Self::BinaryOpType;
+    fn get_binary_less_than_op(&self) -> Self::BinaryOpType;
+    fn get_binary_less_than_or_equal_op(&self) -> Self::BinaryOpType;
+    fn get_binary_greater_than_op(&self) -> Self::BinaryOpType;
+    fn get_binary_greater_than_or_equal_op(&self) -> Self::BinaryOpType;
+    fn get_binary_equals_op(&self) -> Self::BinaryOpType;
+    fn get_binary_not_equals_op(&self) -> Self::BinaryOpType;
 }
 
 pub struct LirParseStrategy;
@@ -275,6 +276,30 @@ impl ParseStrategy for LirParseStrategy {
     fn get_binary_mul_op(&self) -> Self::BinaryOpType {
         let cp = v3_path();
         quote!(#cp::lir::BinaryOperator::Mul)
+    }
+    fn get_binary_less_than_op(&self) -> Self::BinaryOpType {
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::LessThan)
+    }
+    fn get_binary_less_than_or_equal_op(&self) -> Self::BinaryOpType {
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::LessThanOrEqual)
+    }
+    fn get_binary_greater_than_op(&self) -> Self::BinaryOpType {
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::GreaterThan)
+    }
+    fn get_binary_greater_than_or_equal_op(&self) -> Self::BinaryOpType {
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::GreaterThanOrEqual)
+    }
+    fn get_binary_equals_op(&self) -> Self::BinaryOpType {
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::Equals)
+    }
+    fn get_binary_not_equals_op(&self) -> Self::BinaryOpType {
+        let cp = v3_path();
+        quote!(#cp::lir::BinaryOperator::NotEquals)
     }
 }
 
@@ -391,6 +416,24 @@ impl ParseStrategy for PatternParseStrategy {
     }
     fn get_binary_mul_op(&self) -> Self::BinaryOpType {
         PatternBinaryOperator::Mul
+    }
+    fn get_binary_less_than_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::LessThan
+    }
+    fn get_binary_less_than_or_equal_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::LessThanOrEqual
+    }
+    fn get_binary_greater_than_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::GreaterThan
+    }
+    fn get_binary_greater_than_or_equal_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::GreaterThanOrEqual
+    }
+    fn get_binary_equals_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::Equals
+    }
+    fn get_binary_not_equals_op(&self) -> Self::BinaryOpType {
+        PatternBinaryOperator::NotEquals
     }
     // Note: PatternBinaryOperator has more variants (LessThan, Equals etc.)
     // If the generic parser needs to support them, corresponding get_binary_xxx_op methods would be needed.
@@ -547,11 +590,62 @@ fn parse_addition_subtraction_generic<S: ParseStrategy>(
     Ok(lhs)
 }
 
-// Generic Top-Level Expression Parser
-pub fn parse_expr_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
-    parse_addition_subtraction_generic(input, strategy)
+// Generic Comparison Parser
+fn parse_comparison_generic<S: ParseStrategy>(
+    input: ParseStream,
+    strategy: &S,
+) -> Result<S::Output> {
+    let mut lhs = parse_addition_subtraction_generic(input, strategy)?;
+    while input.peek(Token![<])
+        || input.peek(Token![<=])
+        || input.peek(Token![>])
+        || input.peek(Token![>=])
+    {
+        if input.peek(Token![<=]) {
+            let _op: Token![<=] = input.parse()?;
+            let rhs = parse_addition_subtraction_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_less_than_or_equal_op(), lhs, rhs)?;
+        } else if input.peek(Token![<]) {
+            let _op: Token![<] = input.parse()?;
+            let rhs = parse_addition_subtraction_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_less_than_op(), lhs, rhs)?;
+        } else if input.peek(Token![>=]) {
+            let _op: Token![>=] = input.parse()?;
+            let rhs = parse_addition_subtraction_generic(input, strategy)?;
+            lhs =
+                strategy.build_binary(strategy.get_binary_greater_than_or_equal_op(), lhs, rhs)?;
+        } else if input.peek(Token![>]) {
+            let _op: Token![>] = input.parse()?;
+            let rhs = parse_addition_subtraction_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_greater_than_op(), lhs, rhs)?;
+        }
+    }
+    Ok(lhs)
 }
 
+// Generic Equality Parser
+fn parse_equality_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+    let mut lhs = parse_comparison_generic(input, strategy)?;
+    while input.peek(Token![==]) || input.peek(Token![!=]) {
+        if input.peek(Token![==]) {
+            let _op: Token![==] = input.parse()?;
+            let rhs = parse_comparison_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_equals_op(), lhs, rhs)?;
+        } else if input.peek(Token![!=]) {
+            let _op: Token![!=] = input.parse()?;
+            let rhs = parse_comparison_generic(input, strategy)?;
+            lhs = strategy.build_binary(strategy.get_binary_not_equals_op(), lhs, rhs)?;
+        }
+    }
+    Ok(lhs)
+}
+
+// Generic Top-Level Expression Parser
+pub fn parse_expr_generic<S: ParseStrategy>(input: ParseStream, strategy: &S) -> Result<S::Output> {
+    parse_equality_generic(input, strategy)
+}
+
+// LIR Expression Parser (Specific instantiation of generic parser)
 // This function is now a specific instance of using the generic parser for LIR.
 // It's kept if direct LIR parsing is needed outside of FullExprParse, otherwise FullExprParse can call generic directly.
 pub fn parse_lir_expr(input: ParseStream) -> Result<TokenStream2> {
