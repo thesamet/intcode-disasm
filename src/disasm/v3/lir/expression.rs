@@ -1,6 +1,7 @@
 // Use LIR MemoryReference
 use std::fmt::Display;
 
+use crate::disasm::v3::common::fixed_point;
 use crate::macros::build_expr;
 
 use crate::match_expr;
@@ -142,6 +143,25 @@ impl<A> Expression<A> {
     where
         A: Clone,
     {
+        let mut current = self.clone();
+        let mut count = 0;
+
+        while let Some(next) = current.simplify_once() {
+            current = next;
+            count += 1;
+        }
+
+        if count == 0 {
+            None
+        } else {
+            Some(current)
+        }
+    }
+
+    fn simplify_once(&self) -> Option<Expression<A>>
+    where
+        A: Clone,
+    {
         match_expr!(self,
         binary BinaryOperator::Add { lhs, rhs } => {
             match_expr!(**lhs, const 0 => {
@@ -226,15 +246,15 @@ impl<A> Expression<A> {
                 match_expr!(**rhs, const 1 => {
                     return Some(lhs.as_ref().clone())
                 });
-                // x * -1 = -x
-                match_expr!(**rhs, const -1 => {
-                    let lhs_expr = lhs.as_ref().clone();
-                    return Some(build_expr!(-#lhs_expr));
-                });
                 // -1 * x = -x
                 match_expr!(**lhs, const -1 => {
                     let rhs_expr = rhs.as_ref().clone();
                     return Some(build_expr!(-#rhs_expr));
+                });
+                // x * -1 = -x
+                match_expr!(**rhs, const -1 => {
+                    let lhs_expr = lhs.as_ref().clone();
+                    return Some(build_expr!(-#lhs_expr));
                 });
                 let lhs_simplified = lhs.simplify();
                 let rhs_simplified = rhs.simplify();
@@ -250,8 +270,8 @@ impl<A> Expression<A> {
             unary UnaryOperator::Not { arg } => {
                 if let Expression::Binary { op, lhs, rhs } = arg.as_ref() {
                     if let Some(new_op) = op.logical_negate() {
-                        let lhs_expr = lhs.as_ref().clone();
-                        let rhs_expr = rhs.as_ref().clone();
+                        let lhs_expr = lhs.as_ref().simplify().unwrap_or_else(|| lhs.as_ref().clone());
+                        let rhs_expr = rhs.as_ref().simplify().unwrap_or_else(|| rhs.as_ref().clone());
                         // build_expr! does not support variable operators, construct directly
                         return Some(Expression::Binary {
                             op: new_op,
@@ -343,5 +363,230 @@ impl Display for UnaryOperator {
             UnaryOperator::Not => write!(f, "!"),
             UnaryOperator::Minus => write!(f, "-"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Expression;
+    use crate::{
+        disasm::v3::{common::formatting::ContextualPrettyPrint, ssa::SsaMemoryReference},
+        macros::build_expr,
+    };
+
+    macro_rules! assert_simplifies_to {
+        ($original:expr, $expected_str:expr) => {
+            let original: Expression<SsaMemoryReference> = $original;
+            let simplified = original.simplify().unwrap_or_else(|| {
+                panic!(
+                    "Expression {:?} was expected to simplify to '{}', but did not simplify.",
+                    original, $expected_str
+                )
+            });
+            assert_eq!(
+                simplified.nocolor(),
+                $expected_str,
+                "Simplified expression mismatch for original: {}",
+                original
+            );
+        };
+    }
+
+    fn assert_no_simplification(original: Expression<SsaMemoryReference>) {
+        assert_eq!(
+            original.simplify(),
+            None,
+            "Expression {:?} was expected not to simplify, but did.",
+            original
+        );
+    }
+
+    #[test]
+    fn test_simplify_add() {
+        // x + 0 = x
+        assert_simplifies_to!(build_expr! { 5 + 0 }, "5");
+        assert_simplifies_to!(build_expr! { [R+1].0 + 0 }, "[R+1]_0");
+
+        // 0 + x = x
+        assert_simplifies_to!(build_expr! { 0 + 5 }, "5");
+        assert_simplifies_to!(build_expr! { 0 + [R+1].0 }, "[R+1]_0");
+
+        // a + (-b_const) = a - b_const  (where b_const is positive, so -b_const is a negative const)
+        assert_simplifies_to!(build_expr! { 5 + -2 }, "5 - 2"); // 5 + Constant(-2) -> 5 - Constant(2)
+        assert_simplifies_to!(build_expr! { [R+1].0 + -2 }, "[R+1]_0 - 2");
+
+        // (-a_expr) + b_expr = b_expr - a_expr
+        assert_simplifies_to!(build_expr! { -[R+1].0 + [R+2].0 }, "[R+2]_0 - [R+1]_0");
+        assert_simplifies_to!(build_expr! { -5 + [R+2].0 }, "[R+2]_0 - 5"); // Unary(Minus, Constant(5)) + X -> X - Constant(5)
+
+        // a_expr + (-b_expr) = a_expr - b_expr
+        assert_simplifies_to!(build_expr! { [R+1].0 + -[R+2].0 }, "[R+1]_0 - [R+2]_0");
+        assert_simplifies_to!(build_expr! { 5 + -[R+2].0 }, "5 - [R+2]_0");
+
+        // Recursive simplification of operands
+        assert_simplifies_to!(build_expr! { ([R+1].0 + 0) + [R+2].0 }, "[R+1]_0 + [R+2]_0");
+        assert_simplifies_to!(build_expr! { [R+1].0 + (0 + [R+2].0) }, "[R+1]_0 + [R+2]_0");
+        assert_simplifies_to!(
+            build_expr! { ([R+1].0 + 0) + ([R+2].0 + 0) },
+            "[R+1]_0 + [R+2]_0"
+        );
+    }
+
+    #[test]
+    fn test_simplify_sub() {
+        // x - 0 = x
+        assert_simplifies_to!(build_expr! { 5 - 0 }, "5");
+        assert_simplifies_to!(build_expr! { [R+1].0 - 0 }, "[R+1]_0");
+
+        // 0 - x = -x
+        assert_simplifies_to!(build_expr! { 0 - 5 }, "-5");
+        assert_simplifies_to!(build_expr! { 0 - [R+1].0 }, "-[R+1]_0");
+
+        // x - (-y_const) = x + y_const (where y_const is positive)
+        assert_simplifies_to!(build_expr! { 5 - -2 }, "5 + 2"); // 5 - Constant(-2) -> 5 + Constant(2)
+        assert_simplifies_to!(build_expr! { [R+1].0 - -2 }, "[R+1]_0 + 2");
+
+        // x - (-y_expr) = x + y_expr
+        assert_simplifies_to!(build_expr! { [R+1].0 - -[R+2].0 }, "[R+1]_0 + [R+2]_0");
+        assert_simplifies_to!(build_expr! { 5 - -[R+2].0 }, "5 + [R+2]_0");
+
+        // Recursive simplification of operands
+        assert_simplifies_to!(build_expr! { ([R+1].0 - 0) - [R+2].0 }, "[R+1]_0 - [R+2]_0");
+        assert_simplifies_to!(build_expr! { [R+1].0 - (0 - [R+2].0) }, "[R+1]_0 + [R+2]_0"); // [R+1].0 - (-[R+2].0) -> [R+1].0 + [R+2].0
+        assert_simplifies_to!(
+            build_expr! { ([R+1].0 - 0) - ([R+2].0 - 0) },
+            "[R+1]_0 - [R+2]_0"
+        );
+    }
+
+    #[test]
+    fn test_simplify_mul() {
+        // x * 0 = 0
+        assert_simplifies_to!(build_expr! { 5 * 0 }, "0");
+        assert_simplifies_to!(build_expr! { [R+1].0 * 0 }, "0");
+
+        // 0 * x = 0
+        assert_simplifies_to!(build_expr! { 0 * 5 }, "0");
+        assert_simplifies_to!(build_expr! { 0 * [R+1].0 }, "0");
+
+        // x * 1 = x
+        assert_simplifies_to!(build_expr! { 5 * 1 }, "5");
+        assert_simplifies_to!(build_expr! { [R+1].0 * 1 }, "[R+1]_0");
+
+        // 1 * x = x
+        assert_simplifies_to!(build_expr! { 1 * 5 }, "5");
+        assert_simplifies_to!(build_expr! { 1 * [R+1].0 }, "[R+1]_0");
+
+        // x * -1 = -x
+        assert_simplifies_to!(build_expr! { 5 * -1 }, "-5");
+        assert_simplifies_to!(build_expr! { [R+1].0 * -1 }, "-[R+1]_0");
+
+        // -1 * x = -x
+        assert_simplifies_to!(build_expr! { -1 * 5 }, "-5"); // Constant(-1) * 5 -> -5
+        assert_simplifies_to!(build_expr! { -1 * [R+1].0 }, "-[R+1]_0");
+
+        // Recursive simplification of operands
+        assert_simplifies_to!(build_expr! { ([R+1].0 * 1) * [R+2].0 }, "[R+1]_0 * [R+2]_0");
+        assert_simplifies_to!(build_expr! { [R+1].0 * (1 * [R+2].0) }, "[R+1]_0 * [R+2]_0");
+        assert_simplifies_to!(
+            build_expr! { ([R+1].0 * 1) * ([R+2].0 * 1) },
+            "[R+1]_0 * [R+2]_0"
+        );
+    }
+
+    #[test]
+    fn test_simplify_not() {
+        // !(a < b)  -> a >= b
+        assert_simplifies_to!(build_expr! { !([R+1].0 < [R+2].0) }, "[R+1]_0 >= [R+2]_0");
+        // !(a <= b) -> a > b
+        assert_simplifies_to!(build_expr! { !([R+1].0 <= [R+2].0) }, "[R+1]_0 > [R+2]_0");
+        // !(a > b)  -> a <= b
+        assert_simplifies_to!(build_expr! { !([R+1].0 > [R+2].0) }, "[R+1]_0 <= [R+2]_0");
+        // !(a >= b) -> a < b
+        assert_simplifies_to!(build_expr! { !([R+1].0 >= [R+2].0) }, "[R+1]_0 < [R+2]_0");
+        // !(a == b) -> a != b
+        assert_simplifies_to!(build_expr! { !([R+1].0 == [R+2].0) }, "[R+1]_0 != [R+2]_0");
+        // !(a != b) -> a == b
+        assert_simplifies_to!(build_expr! { !([R+1].0 != [R+2].0) }, "[R+1]_0 == [R+2]_0");
+
+        // Negation of non-comparison binary op does not use logical_negate path, falls to recursive simplify
+        // !([R+1].0 + [R+2].0) has arg ([R+1].0 + [R+2].0) which doesn't simplify. So result is None.
+        assert_no_simplification(build_expr! { !([R+1].0 + [R+2].0) });
+
+        // Recursive simplification of arg if not a binary comparison that can be negated by rule
+        assert_simplifies_to!(build_expr! { !([R+1].0 + 0) }, "![R+1]_0"); // arg ([R+1].0+0) simplifies to [R+1].0
+        assert_simplifies_to!(build_expr! { !([R+1].0 * 1) }, "![R+1]_0"); // arg ([R+1].0*1) simplifies to [R+1].0
+        assert_simplifies_to!(build_expr! { !(0 + [R+1].0) }, "![R+1]_0"); // arg (0+[R+1].0) simplifies to [R+1].0
+
+        // Double negation: !!(cmp) -> cmp
+        // !!(A==B) -> !(A!=B) -> A==B
+        assert_simplifies_to!(build_expr! { !!([R+1].0 == [R+2].0) }, "[R+1]_0 == [R+2]_0");
+        assert_simplifies_to!(build_expr! { !!([R+1].0 < [R+2].0) }, "[R+1]_0 < [R+2]_0");
+
+        // Logical negation path does not simplify operands of the comparison itself
+        assert_simplifies_to!(
+            build_expr! { !(([R+1].0 + 0) < [R+2].0) },
+            "[R+1]_0 >= [R+2]_0"
+        );
+        assert_simplifies_to!(
+            build_expr! { !([R+1].0 < ([R+2].0 + 0)) },
+            "[R+1]_0 >= [R+2]_0"
+        );
+        assert_simplifies_to!(
+            build_expr! { !(([R+1].0 + 0) < ([R+2].0 + 0)) },
+            "[R+1]_0 >= [R+2]_0"
+        );
+    }
+
+    #[test]
+    fn test_no_simplification_cases() {
+        // Basic expressions that don't match any rule
+        assert_no_simplification(build_expr! { 1 + 2 });
+        assert_no_simplification(build_expr! { [R+1].0 + [R+2].0 });
+        assert_no_simplification(build_expr! { [R+1].0 - [R+2].0 }); // e.g. not X-0 or 0-X
+        assert_no_simplification(build_expr! { [R+1].0 * [R+2].0 }); // e.g. not *0, *1, *-1
+        assert_no_simplification(build_expr! { [R+1].0 * 2 });
+
+        // Unary minus itself (not as part of add/sub)
+        assert_no_simplification(build_expr! { -[R+1].0 });
+        // Unary minus where argument can be simplified, but Unary Minus itself has no top-level rule
+        // This behavior is specific to current implementation: no recursive simplify for UnaryOp::Minus arg.
+        assert_no_simplification(build_expr! { -([R+1].0 + 0) });
+
+        // Unary not where arg cannot be simplified further and is not a comparison covered by logical_negate
+        assert_no_simplification(build_expr! { ![R+1].0 });
+        assert_no_simplification(build_expr! { !([R+1].0 + [R+2].0) }); // Arg ([R+1].0 + [R+2].0) is not a comparison and doesn't simplify
+
+        // Comparisons themselves don't simplify
+        assert_no_simplification(build_expr! {[R+1].0 < [R+2].0});
+        // Operands of comparison don't simplify if the comparison itself is not simplified
+        assert_no_simplification(build_expr! {([R+1].0 + 0) < [R+2].0});
+    }
+
+    #[test]
+    fn test_complex_recursive_simplifications() {
+        // (x+0) + (y-0) -> x+y
+        assert_simplifies_to!(
+            build_expr! { ([R+1].0 + 0) + ([R+2].0 - 0) },
+            "[R+1]_0 + [R+2]_0"
+        );
+        // (x*1) - (y*0) -> x - 0 -> x
+        assert_simplifies_to!(build_expr! { ([R+1].0 * 1) - ([R+2].0 * 0) }, "[R+1]_0");
+        // (0 + x) * (1 * y) -> x * y
+        assert_simplifies_to!(
+            build_expr! { (0 + [R+1].0) * (1 * [R+2].0) },
+            "[R+1]_0 * [R+2]_0"
+        );
+
+        assert_simplifies_to!(
+            build_expr! { !(([R+1].0 + 0) == ([R+2].0 * 1)) },
+            "[R+1]_0 != [R+2]_0"
+        );
+
+        // Add involving subtraction simplification: (a + 0) + (0 - b) -> a + (-b) -> a - b
+        assert_simplifies_to!(
+            build_expr! { ([R+1].0 + 0) + (0 - [R+2].0) },
+            "[R+1]_0 - [R+2]_0"
+        );
     }
 }
