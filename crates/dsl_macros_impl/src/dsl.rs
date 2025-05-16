@@ -50,11 +50,16 @@ pub fn v3_path() -> TokenStream2 {
 }
 
 #[derive(Debug, Clone)]
+pub enum VersionedElementKind {
+    Absolute(LitInt),
+    Relative { sign: i128, offset: LitInt },
+    Pointer(LitInt),
+}
+
+#[derive(Debug, Clone)]
 pub struct VersionedElement {
-    pub sign: i128,
-    pub offset: LitInt,
+    pub kind: VersionedElementKind,
     pub version: LitInt,
-    pub is_relative: bool,
 }
 
 impl Parse for VersionedElement {
@@ -62,55 +67,63 @@ impl Parse for VersionedElement {
         let content;
         syn::bracketed!(content in input);
         let first_ident_result = content.parse::<Ident>();
-        let (sign, offset, is_relative) = match first_ident_result {
+
+        let kind = match first_ident_result {
             Ok(first) if first == "R" => {
+                // Parse relative memory reference [R+/-offset]
                 let sign: i128 = content
                     .parse::<token::Plus>()
                     .map(|_| 1)
                     .or_else(|_| content.parse::<token::Minus>().map(|_| -1))
                     .map_err(|_| content.error("Expected `+` or `-` sign"))?;
                 let offset = content.parse::<LitInt>()?;
-                (sign, offset, true)
+                VersionedElementKind::Relative { sign, offset }
+            }
+            Ok(first) if first == "P" => {
+                // Parse pointer reference [P<id>]
+                let id = content.parse::<LitInt>()?;
+                VersionedElementKind::Pointer(id)
             }
             _ => {
+                // Parse absolute memory reference [<addr>]
                 let offset_result = content.parse::<LitInt>();
                 match offset_result {
-                    Ok(offset) => (1, offset, false),
+                    Ok(offset) => VersionedElementKind::Absolute(offset),
                     Err(_) => {
                         let first = first_ident_result?;
-                        let offset = first
-                            .to_string()
-                            .parse::<i128>()
-                            .map_err(|_| content.error("Expected `R` or a number"))?;
-                        let offset =
-                            LitInt::new(&offset.to_string(), proc_macro2::Span::call_site());
-                        (1, offset, false)
+                        return Err(content.error(format!("Expected `R`, `P`, or a number, got {}", first)));
                     }
                 }
             }
         };
+
         let _dot: token::Dot = input.parse()?;
         let version: LitInt = input.parse()?;
+
         Ok(VersionedElement {
-            sign,
-            offset,
+            kind,
             version,
-            is_relative,
         })
     }
 }
 
 impl VersionedElement {
     pub fn to_expr_tokens(&self) -> TokenStream2 {
-        let offset = &self.offset;
         let ver = &self.version;
-        let sign = &self.sign;
         let v3_path = v3_path();
-        let kind = if self.is_relative {
-            quote!(#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset * #sign))
-        } else {
-            quote!(#v3_path::ssa::types::VersionableMemoryKind::Memory(#offset))
+
+        let kind = match &self.kind {
+            VersionedElementKind::Absolute(offset) => {
+                quote!(#v3_path::ssa::types::VersionableMemoryKind::Memory(#offset))
+            }
+            VersionedElementKind::Relative { sign, offset } => {
+                quote!(#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset * #sign))
+            }
+            VersionedElementKind::Pointer(id) => {
+                quote!(#v3_path::ssa::types::VersionableMemoryKind::Pointer(#v3_path::PointerId::new(#id)))
+            }
         };
+
         quote! {
             #v3_path::ssa::SsaMemoryReference::Versioned(#v3_path::ssa::VersionedMemoryReference::new(
                 #kind,

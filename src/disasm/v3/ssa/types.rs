@@ -170,7 +170,7 @@ impl std::fmt::Display for VersionableMemoryKind {
                 write!(f, "[R+{offset}]")
             }
             VersionableMemoryKind::RelativeMemory(offset) => write!(f, "[R{offset}]"),
-            VersionableMemoryKind::Pointer(pointer_id) => write!(f, "ptr{}", pointer_id.index()),
+            VersionableMemoryKind::Pointer(pointer_id) => write!(f, "[P{}]", pointer_id.index()),
         }
     }
 }

@@ -301,26 +301,41 @@ fn _quote_versioned_match_code(
     let ssa_types_versioned_mem_ref_path = _path_ssa_types_versioned_mem_ref(v3_path);
     let versionable_mem_kind_path = _path_ssa_types_versionable_mem_kind(v3_path);
 
-    if pattern_ve.is_relative {
-        let offset = pattern_ve.sign * pattern_offset_val;
-        quote! {
-            if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
-                kind: #versionable_mem_kind_path::RelativeMemory(#offset),
-                version: #pattern_version_val,
-                ..
-            }))) {
-                return None
+    match &pattern_ve.kind {
+        crate::dsl::VersionedElementKind::Relative { sign, .. } => {
+            let offset = sign * pattern_offset_val;
+            quote! {
+                if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
+                    kind: #versionable_mem_kind_path::RelativeMemory(#offset),
+                    version: #pattern_version_val,
+                    ..
+                }))) {
+                    return None
+                }
             }
         }
-    } else {
-        let pattern_offset_val = pattern_offset_val as usize; // Shadow to usize for Memory kind
-        quote! {
-            if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
-                kind: #versionable_mem_kind_path::Memory(#pattern_offset_val),
-                version: #pattern_version_val,
-                ..
-            }))) {
-                return None
+        crate::dsl::VersionedElementKind::Absolute(_) => {
+            let pattern_offset_val = pattern_offset_val as usize; // Shadow to usize for Memory kind
+            quote! {
+                if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
+                    kind: #versionable_mem_kind_path::Memory(#pattern_offset_val),
+                    version: #pattern_version_val,
+                    ..
+                }))) {
+                    return None
+                }
+            }
+        }
+        crate::dsl::VersionedElementKind::Pointer(_) => {
+            let pattern_offset_val = pattern_offset_val as usize; // Shadow to usize for PointerId
+            quote! {
+                if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
+                    kind: #versionable_mem_kind_path::Pointer(#v3_path::PointerId::new(#pattern_offset_val)),
+                    version: #pattern_version_val,
+                    ..
+                }))) {
+                    return None
+                }
             }
         }
     }
@@ -429,12 +444,28 @@ fn _handle_addressable_versioned_pattern(
     v3_path: &TokenStream2,
     pattern_ve: &VersionedElement,
 ) -> Result<Option<GeneratedMatchArm>> {
-    let pattern_offset_val: i128 = pattern_ve.offset.base10_parse().map_err(|e| {
-        syn::Error::new(
-            pattern_ve.offset.span(),
-            format!("Invalid pattern offset: {}", e),
-        )
-    })?;
+    // Extract the offset value based on the kind
+    let pattern_offset_val: i128 = match &pattern_ve.kind {
+        crate::dsl::VersionedElementKind::Absolute(offset) => offset.base10_parse().map_err(|e| {
+            syn::Error::new(
+                offset.span(),
+                format!("Invalid pattern offset: {}", e),
+            )
+        })?,
+        crate::dsl::VersionedElementKind::Relative { offset, .. } => offset.base10_parse().map_err(|e| {
+            syn::Error::new(
+                offset.span(),
+                format!("Invalid pattern offset: {}", e),
+            )
+        })?,
+        crate::dsl::VersionedElementKind::Pointer(id) => id.base10_parse().map_err(|e| {
+            syn::Error::new(
+                id.span(),
+                format!("Invalid pointer ID: {}", e),
+            )
+        })?,
+    };
+
     let pattern_version_val: usize = pattern_ve.version.base10_parse().map_err(|e| {
         syn::Error::new(
             pattern_ve.version.span(),
@@ -831,7 +862,7 @@ mod tests {
         VersionedElement,
     }; // Import AST components from dsl
     use proc_macro2::Span;
-    use syn::{parse_quote, LitInt};
+    use syn::{parse_quote, LitInt, Block};
 
     // Helper to create a simple block for test bodies
     fn test_body() -> Block {
@@ -1012,11 +1043,16 @@ mod tests {
         let arm = result.unwrap();
         match arm.pattern {
             PatternExpression::Addressable(PatternSsaMemoryReference::Versioned(ve)) => {
-                // Can check ve.sign, ve.offset, ve.version if LitInt had an easy way to get value
+                // Can check ve.kind and ve.version if LitInt had an easy way to get value
                 // For now, this structural match is good.
-                assert_eq!(ve.offset.base10_digits(), "123");
+                match &ve.kind {
+                    crate::dsl::VersionedElementKind::Relative { offset, sign } => {
+                        assert_eq!(offset.base10_digits(), "123");
+                        assert_eq!(*sign, 1);
+                    }
+                    _ => panic!("Expected Relative kind, got {:?}", ve.kind),
+                }
                 assert_eq!(ve.version.base10_digits(), "45");
-                assert!(ve.is_relative);
             }
             _ => panic!("Expected Versioned Element, got {:?}", arm.pattern),
         }

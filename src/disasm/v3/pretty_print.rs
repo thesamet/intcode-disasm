@@ -468,11 +468,13 @@ impl ContextualPrettyPrint for MemoryReference {
                 )
             }
             MemoryReference::Pointer(addr) => {
-                // Use ctx.format for 'p' and the address
+                // Format pointers as [P{addr}]
                 format!(
-                    "{}{}",
-                    ctx.format("p", SemanticColor::Variable), // Format 'p'
-                    ctx.format(addr, SemanticColor::Variable)  // Format the address
+                    "{}{}{}{}",
+                    ctx.fmt_open_bracket(),  // Helper for '['
+                    ctx.format("P", SemanticColor::Variable), // Format 'P'
+                    ctx.format(addr.index(), SemanticColor::Variable),  // Format the address
+                    ctx.fmt_close_bracket()  // Helper for ']'
                 )
             }
             MemoryReference::Deref(expr) => {

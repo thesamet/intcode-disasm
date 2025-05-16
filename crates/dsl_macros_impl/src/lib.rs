@@ -34,21 +34,34 @@ use match_dsl_parser::MatchDslInput; // Corrected import
 /// ```
 ///
 /// ### 2. Memory References
-/// Memory references are specified using a bracketed notation `[R +/- offset].version` or `[absolute_address].version`.
+/// Memory references are specified using a bracketed notation with three possible forms:
+///
 /// - **Register-relative**: `[R+/-offset].version`
-///   - `R` is is the "relative memory" register, (like a stack or frame pointer).
+///   - `R` is the "relative memory" register (like a stack or frame pointer).
 ///   - `+offset` or `-offset` specifies the offset from this base.
 ///   - `.version` is a numerical version, often for SSA (Static Single Assignment) form.
 ///   ```rust
 ///   // let mem_ref_reg_rel_pos = build_expr! { [R+2].7 }; // Pretty prints to "[R+2]_7"
 ///   // let mem_ref_reg_rel_neg = build_expr! { [R-3].5 }; // Pretty prints to "[R-3]_5"
 ///   ```
+///
 /// - **Absolute Address**: `[address].version`
 ///   - `address` is a numerical constant representing a memory address.
 ///   - `.version` is the SSA version.
 ///   ```rust
 ///   // let mem_ref_abs = build_expr! { [155].7 }; // Pretty prints to "[155]_7"
 ///   ```
+///
+/// - **Pointer**: `[P id].version`
+///   - `P` indicates this is a pointer reference.
+///   - `id` is a numerical identifier for the pointer.
+///   - `.version` is the SSA version.
+///   ```rust
+///   // let ptr_ref = build_expr! { [P 123].8 }; // Pretty prints to "[P123]_8"
+///   ```
+///
+/// All three memory reference types can be used interchangeably in expressions and support
+/// the same operations (arithmetic, comparison, dereferencing, etc.).
 ///
 /// ### 3. Binary Operators
 /// Standard arithmetic and comparison operators are supported.
@@ -194,6 +207,9 @@ pub fn memref(input: TokenStream) -> TokenStream {
 /// // assert_eq!(match_dsl!(&deref_expr, *([R+7].0) => 2, _ => 0), 2);
 /// ```
 ///
+/// Note: While literal patterns work for integers and simple memory references, for pointer patterns
+/// it's recommended to use binding patterns (described below) for more reliable matching.
+///
 /// ### 2. Bindings
 /// Bind parts of the matched expression to variables. These variables are then available in the arm's expression.
 /// - `$name:const`: Binds an integer constant. `name` will be of type `&i128`.
@@ -202,9 +218,14 @@ pub fn memref(input: TokenStream) -> TokenStream {
 ///   // match_dsl!(&const_expr, $a:const => assert_eq!(*a, 35549), _ => panic!());
 ///   ```
 /// - `$name:addr`: Binds a memory reference. `name` will be of type `SsaMemoryReference`.
+///   This works for all memory reference types (relative, absolute, and pointer).
 ///   ```rust
 ///   // let addr_expr = build_expr! { [R+5].10 };
 ///   // match_dsl!(&addr_expr, $b:addr => assert_eq!(b.nocolor(), "[R+5]_10"), _ => panic!());
+///   //
+///   // // Binding pointer references
+///   // let ptr_expr = build_expr! { [P 123].8 };
+///   // match_dsl!(&ptr_expr, $p:addr => assert_eq!(p.nocolor(), "[P123]_8"), _ => panic!());
 ///   ```
 /// - `$name:expr` or simply `$name`: Binds a sub-expression. `name` will be of type `Expression<SsaMemoryReference>`.
 ///   ```rust
@@ -279,6 +300,18 @@ pub fn memref(input: TokenStream) -> TokenStream {
 /// // );
 /// // assert_eq!(a_str, "[R+2]_3");
 /// // assert_eq!(b_str, "[R+1]_5");
+/// ```
+///
+/// Pointer references can be used in complex patterns as well:
+///
+/// ```rust
+/// // let ptr_expr = build_expr! { [P 123].8 * 5 + *([P 456].9) };
+/// // let (ptr_id, deref_ptr) = match_dsl!(&ptr_expr,
+/// //     $p:addr * 5 + *($d:addr) => (p.nocolor(), d.nocolor()),
+/// //     _ => panic!("no match")
+/// // );
+/// // assert_eq!(ptr_id, "[P123]_8");
+/// // assert_eq!(deref_ptr, "[P456]_9");
 /// ```
 ///
 /// ### 6. Multiple Arms and Fallthrough

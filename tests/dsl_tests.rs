@@ -721,4 +721,135 @@ mod tests {
         );
         assert_eq!(match_input, ("[R+5]_8".to_string(), "[R+7]_2".to_string()));
     }
+
+    #[test]
+    fn test_pointer_syntax() {
+        // Basic pointer syntax
+        let ptr_expr = build_expr! { [P 123].8 };
+        assert_eq!(ptr_expr.nocolor(), "[P123]_8");
+
+        // Pointer in complex expressions
+        let complex_expr = build_expr! { [P 123].8 + [R+5].3 };
+        assert_eq!(complex_expr.nocolor(), "[P123]_8 + [R+5]_3");
+
+        // Multiple pointers in expressions
+        let multi_ptr_expr = build_expr! { [P 123].8 + [P 456].9 };
+        assert_eq!(multi_ptr_expr.nocolor(), "[P123]_8 + [P456]_9");
+
+        // Pointer with arithmetic operations
+        let ptr_arith_expr = build_expr! { [P 123].8 * 4 };
+        assert_eq!(ptr_arith_expr.nocolor(), "[P123]_8 * 4");
+
+        // Pointer with comparison operations
+        let ptr_cmp_expr = build_expr! { [P 123].8 == [P 456].9 };
+        assert_eq!(ptr_cmp_expr.nocolor(), "[P123]_8 == [P456]_9");
+
+        // Pointer with unary operations
+        let ptr_unary_expr = build_expr! { -[P 123].8 };
+        assert_eq!(ptr_unary_expr.nocolor(), "-[P123]_8");
+
+        // Dereferencing pointers
+        let deref_expr = build_expr! { *([P 123].8) };
+        assert_eq!(deref_expr.nocolor(), "*([P123]_8)");
+
+        // Nested dereferencing of pointers
+        let nested_deref_expr = build_expr! { *(*([P 123].8)) };
+        assert_eq!(nested_deref_expr.nocolor(), "*(*([P123]_8))");
+
+        // Dereferencing with arithmetic
+        let deref_arith_expr = build_expr! { *([P 123].8) + 10 };
+        assert_eq!(deref_arith_expr.nocolor(), "*([P123]_8) + 10");
+
+        // Pointers in assignments
+        let assign_instr = build_instruction! { [P 123].8 = 456 };
+        assert_eq!(assign_instr.nocolor(), "[P123]_8 = 456");
+
+        // Pointer-to-pointer assignments
+        let ptr_to_ptr_assign = build_instruction! { [P 123].8 = [P 456].9 };
+        assert_eq!(ptr_to_ptr_assign.nocolor(), "[P123]_8 = [P456]_9");
+
+        // Assigning dereferenced pointer
+        let deref_assign = build_instruction! { [R+1].3 = *([P 123].8) };
+        assert_eq!(deref_assign.nocolor(), "[R+1]_3 = *([P123]_8)");
+
+        // Assigning to dereferenced pointer
+        let assign_to_deref = build_instruction! { *([P 123].8) = [R+1].3 };
+        assert_eq!(assign_to_deref.nocolor(), "*([P123]_8) = [R+1]_3");
+    }
+
+    #[test]
+    fn test_match_dsl_with_pointers() {
+        // Binding pointer expressions with $p:addr
+        let ptr_expr = build_expr! { [P 123].8 };
+
+        // Use pattern binding instead of literal pattern
+        let result = match_dsl!(&ptr_expr,
+            $p:addr => {
+                // Verify we can access the bound pointer
+                assert_eq!(p.nocolor(), "[P123]_8");
+                p.nocolor().to_string()
+            },
+            _ => "no match".to_string()
+        );
+        assert_eq!(result, "[P123]_8");
+
+        // Complex expressions with pointers
+        let complex_expr = build_expr! { [P 123].8 + [R+5].3 };
+        let (p, r) = match_dsl!(&complex_expr,
+            $p:addr + $r:addr => (p.nocolor().to_string(), r.nocolor().to_string()),
+            _ => ("no match".to_string(), "no match".to_string())
+        );
+        assert_eq!(p, "[P123]_8");
+        assert_eq!(r, "[R+5]_3");
+
+        // Matching dereferenced pointers
+        let deref_expr = build_expr! { *([P 123].8) };
+        let inner_ptr = match_dsl!(&deref_expr,
+            *($inner:addr) => inner.nocolor().to_string(),
+            _ => "no match".to_string()
+        );
+        assert_eq!(inner_ptr, "[P123]_8");
+
+        // Matching pointers in binary operations
+        let binary_expr = build_expr! { [P 123].8 * 5 };
+        let (ptr, val) = match_dsl!(&binary_expr,
+            $ptr:addr * $val:const => (ptr.nocolor().to_string(), *val),
+            _ => ("no match".to_string(), 0i128)
+        );
+        assert_eq!(ptr, "[P123]_8");
+        assert_eq!(val, 5i128);
+
+        // Matching pointers in comparison operations
+        let cmp_expr = build_expr! { [P 123].8 == [P 456].9 };
+        let (left, right) = match_dsl!(&cmp_expr,
+            $left:addr == $right:addr => (left.nocolor().to_string(), right.nocolor().to_string()),
+            _ => ("no match".to_string(), "no match".to_string())
+        );
+        assert_eq!(left, "[P123]_8");
+        assert_eq!(right, "[P456]_9");
+
+        // Matching pointers with unary operations
+        let unary_expr = build_expr! { -[P 123].8 };
+        let ptr = match_dsl!(&unary_expr,
+            -$ptr:addr => ptr.nocolor().to_string(),
+            _ => "no match".to_string()
+        );
+        assert_eq!(ptr, "[P123]_8");
+
+        // Matching nested pointer expressions
+        let nested_expr = build_expr! { *(*([P 123].8)) };
+        let inner_ptr = match_dsl!(&nested_expr,
+            *(*($ptr:addr)) => ptr.nocolor().to_string(),
+            _ => "no match".to_string()
+        );
+        assert_eq!(inner_ptr, "[P123]_8");
+
+        // Matching with wildcard and pointer
+        let mixed_expr = build_expr! { [P 123].8 + 42 };
+        let ptr = match_dsl!(&mixed_expr,
+            $ptr:addr + _ => ptr.nocolor().to_string(),
+            _ => "no match".to_string()
+        );
+        assert_eq!(ptr, "[P123]_8");
+    }
 }
