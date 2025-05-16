@@ -5,7 +5,7 @@ use itertools::Itertools;
 use super::result::{FoldedSsaBlock, FoldedSsaResult};
 use crate::disasm::v3::common::fixed_point_mut;
 use crate::disasm::v3::control_flow::FunctionView;
-use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNode is needed for transformation logic
+use crate::disasm::v3::lir::{Expression, Instruction, MemoryReferenceInfo}; // Assuming InstructionNode is needed for transformation logic
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
@@ -110,6 +110,10 @@ impl FoldedSsaBuilder {
                 }
             }
             for (var, (var_def_block_id, var_def_instruction_id, expr)) in &defs {
+                if var.is_pointer() {
+                    let r = reads.get(var).cloned().unwrap_or_default();
+                    println!("Reads for {var}: {r:?}");
+                }
                 let Some(&(use_block, use_instruction)) =
                     reads.get(var).and_then(|v| v.iter().exactly_one().ok())
                 else {
@@ -146,7 +150,9 @@ impl FoldedSsaBuilder {
                             }
                         }
                         SsaMemoryReference::Deref(e) => {
-                            e.flat_map(&mut |s| update_read_args(var, expr, s))
+                            Expression::Addressable(SsaMemoryReference::Deref(Box::new(
+                                e.flat_map(&mut |s| update_read_args(var, expr, s)),
+                            )))
                         }
                     }
                 }

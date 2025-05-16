@@ -6,6 +6,8 @@ use dsl_macros_impl::match_dsl;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::macros::build_expr;
 
+use super::ReadAddressExtractor;
+
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum Expression<A> {
@@ -50,13 +52,19 @@ impl<A> Expression<A> {
     /// // For an expression like: mem[5] + mem[3]
     /// // This would return references to memory locations 5 and 3
     /// ```
-    pub fn collect_read_addresses(&self) -> Vec<&A> {
+    pub fn collect_read_addresses(&self) -> Vec<&A>
+    where
+        A: ReadAddressExtractor,
+    {
         let mut out = vec![];
         let mut queue = vec![self];
         while let Some(expr) = queue.pop() {
             match expr {
                 Expression::Constant(_) => {}
-                Expression::Addressable(a) => out.push(a),
+                Expression::Addressable(a) => {
+                    out.push(a);
+                    out.extend(&a.extract_read_addresses());
+                }
                 Expression::Binary { lhs, rhs, .. } => {
                     queue.push(lhs);
                     queue.push(rhs);

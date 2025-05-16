@@ -1,11 +1,11 @@
-
 // Use v3 types
 use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types here
 use crate::disasm::v3::id_types::{BlockId, FunctionId}; // Added InstructionId
 use crate::disasm::v3::lir::{
     Expression,
     InstructionNode,
-    MemoryReference, // Use LIR types
+    MemoryReference,
+    ReadAddressExtractor, // Use LIR types
 };
 use crate::disasm::v3::model::{Model, ModelState};
 
@@ -88,7 +88,7 @@ where
 
 impl<T> NextKind<T>
 where
-    T: Clone + PartialEq + Eq + std::hash::Hash,
+    T: Clone + PartialEq + Eq + std::hash::Hash + ReadAddressExtractor,
 {
     pub fn map<F, S>(&self, map: &mut F) -> NextKind<S>
     where
