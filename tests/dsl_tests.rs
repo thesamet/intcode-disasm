@@ -345,7 +345,7 @@ mod tests {
 
         let result_const = match_dsl!(build_expr!(31275),
             $a:const => {
-                a + 10
+                *a + 10
             },
             _ => {
                 0
@@ -396,7 +396,7 @@ mod tests {
         let const_expr: Expression<SsaMemoryReference> = build_expr! { 456 };
         let result_bind_const = match_dsl!(&const_expr,
             $x:const => {
-                x // Return the bound i128 value
+                x // Return the bound &i128 value
             },
             _ => {
                 panic!("Did not match $x:const pattern");
@@ -446,7 +446,7 @@ mod tests {
         let unary_expr: Expression<SsaMemoryReference> = build_expr! { -100 };
         let result_unary_binding_val = match_dsl!(&unary_expr,
             -$a:const => {
-                 a // Return the bound constant
+                 a // Return the bound &i128 constant
              },
             _ => {
                  panic!("Did not match -$a:const pattern");
