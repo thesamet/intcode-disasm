@@ -234,11 +234,11 @@ impl Expression<SsaMemoryReference> {
             1 * $rhs:expr => {
                 Some(rhs.clone()) // 1 * x = x
             },
-            $lhs:expr * -1 => {
+            $lhs:expr * $_x:const if *_x == -1 => {
                 let lhs_expr = lhs.clone();
                 Some(build_expr!(-#lhs_expr)) // x * -1 = -x
             },
-            -1 * $rhs:expr => {
+            $_x:const * $rhs:expr if *_x == -1 => {
                 let rhs_expr = rhs.clone();
                 Some(build_expr!(-#rhs_expr)) // -1 * x = -x
             },
@@ -310,7 +310,13 @@ impl Expression<SsaMemoryReference> {
             !$arg:expr => {
                 arg.simplify().map(|simplified_arg| build_expr!(!#simplified_arg))
             },
-            _ => None
+            -$x: const => {
+                // Unary not of a const goes to a constant -x.
+                Some(Expression::Constant(-*x))
+            },
+            _ => {
+                None
+            }
         )
     }
 }
@@ -398,7 +404,9 @@ impl Display for UnaryOperator {
 mod tests {
     use super::Expression;
     use crate::{
-        disasm::v3::{common::formatting::ContextualPrettyPrint, ssa::SsaMemoryReference},
+        disasm::v3::{
+            common::formatting::ContextualPrettyPrint, ssa::SsaMemoryReference, FunctionId,
+        },
         macros::build_expr,
     };
 
@@ -616,5 +624,13 @@ mod tests {
             build_expr! { ([R+1].0 + 0) + (0 - [R+2].0) },
             "[R+1]_0 - [R+2]_0"
         );
+
+        // Confirm it matches even when we change the function id.
+        let mut part = build_expr! { [R-1].1 };
+        if let Expression::Addressable(SsaMemoryReference::Versioned(ref mut t)) = part {
+            t.function_id = FunctionId::new(5010);
+        }
+
+        assert_simplifies_to!(build_expr! { ([R-7].2 + -1 * #part) }, "[R-7]_2 - [R-1]_1");
     }
 }

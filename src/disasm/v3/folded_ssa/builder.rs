@@ -9,7 +9,7 @@ use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNo
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
-use crate::disasm::v3::{BlockId, InstructionId};
+use crate::disasm::v3::BlockId;
 // For InstructionNode<SsaMemoryReference>
 use crate::disasm::Error;
 
@@ -74,18 +74,12 @@ impl FoldedSsaBuilder {
             let mut instructions_changed = false;
             for (_, block) in current.iter_mut() {
                 for instruction in block.instructions.iter_mut() {
-                    *instruction = instruction.map_expr(|e| {
-                        if instruction.id == InstructionId::new(386) {
-                            println!("Before: {e:?}");
+                    *instruction = instruction.map_expr(|e| match e.simplify() {
+                        Some(e) => {
+                            instructions_changed = true;
+                            e
                         }
-
-                        match e.simplify() {
-                            Some(e) => {
-                                instructions_changed = true;
-                                e
-                            }
-                            None => e.clone(),
-                        }
+                        None => e.clone(),
                     });
                 }
             }
