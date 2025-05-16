@@ -6,7 +6,7 @@ mod match_dsl_parser;
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
 
-use dsl::{DslInstructionParse, FullExprParse, PatternSsaMemoryReference, SsaMemoryReferenceParse};
+use dsl::{DslInstructionParse, FullExprParse, SsaMemoryReferenceParse};
 use match_dsl_parser::MatchDslInput; // Corrected import
 
 /// # `build_expr!` Macro Documentation

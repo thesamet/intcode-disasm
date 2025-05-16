@@ -431,7 +431,7 @@ impl DataFlowAnalyzer {
                 .iter()
                 .filter(|(mem_ref, _)| {
                     // Include positive stack offsets (return values) and global memory references
-                    mem_ref.as_stack_relative().map_or(false, |offset| offset > 0) ||
+                    mem_ref.as_stack_relative().is_some_and(|offset| offset > 0) ||
                     mem_ref.is_global()
                 })
                 .map(|(mem_ref, instr_id)| (mem_ref.clone(), *instr_id))

@@ -440,8 +440,7 @@ mod tests {
         assert_eq!(
             original.simplify(),
             None,
-            "Expression {:?} was expected not to simplify, but did.",
-            original
+            "Expression {original:?} was expected not to simplify, but did."
         );
     }
 

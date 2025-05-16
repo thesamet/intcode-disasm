@@ -8,48 +8,19 @@ use crate::disasm::v3::lir::Expression;
 use crate::disasm::v3::model::SsaComplete;
 use crate::disasm::v3::pretty_print::pretty_print_ssa;
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
-use crate::disasm::v3::PointerId;
-use crate::disasm::v3::{BlockId, FunctionId};
+use crate::disasm::v3::{BlockId};
 // Keep v2 dispatching
 
 use dsl_macros_impl::memref;
 use itertools::Itertools;
 use pretty_assertions::assert_eq;
 
-// Define SSA macros for creating expected SsaOperand values with Variable kinds
-macro_rules! ssa_var_rel {
-    ($offset:expr, $version:expr) => {
-        SsaMemoryReference::Versioned(VersionedMemoryReference {
-            kind: VersionableMemoryKind::RelativeMemory($offset),
-            function_id: FunctionId::from(0),
-            version: $version,
-        })
-    };
-}
-
-macro_rules! ssa_var_pointer {
-    ($addr:expr, $version:expr) => {
-        SsaMemoryReference::Versioned(VersionedMemoryReference {
-            kind: VersionableMemoryKind::Pointer(PointerId::from($addr)),
-            function_id: FunctionId::from(0),
-            version: $version,
-        })
-    };
-}
-
-// Note: Deref versioning needs careful thought. This macro assumes address_version 0 for simplicity.
-macro_rules! ssa_var_deref {
-    ($addr:expr, $addr_ver: expr) => {
-        // Added addr_ver
-        SsaMemoryReference::Deref(Box::new(Expression::Addressable(
-            SsaMemoryReference::Versioned(VersionedMemoryReference {
-                kind: VersionableMemoryKind::Pointer(PointerId::from($addr)),
-                function_id: FunctionId::from(0),
-                version: $addr_ver,
-            }),
-        )))
-    };
-}
+// The memref! macro is used for creating memory references in the DSL syntax
+// Examples:
+// - Register-relative: memref!([R+2].7) or memref!([R-3].5)
+// - Absolute address: memref!([155].7)
+// - Pointer: memref!([P 123].8)
+// - Dereferenced pointer: memref!(*([P 123].8))
 
 // Helper to find an Addressable marked with a specific char within an Expression<SsaMemoryReference>
 fn find_addressable_under_marker(
@@ -465,11 +436,11 @@ fn test_basic_versioning() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(3, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(2, 1));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(2, 2));
-    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(3, 1));
-    assert_marker_at_main!(ctx, 'e', ssa_var_rel!(4, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R+3].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R+2].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R+2].2));
+    assert_marker_at_main!(ctx, 'd', memref!([R+3].1));
+    assert_marker_at_main!(ctx, 'e', memref!([R+4].1));
 }
 
 #[test]
@@ -487,10 +458,10 @@ fn test_creates_phi_on_same_block_loop() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 2));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 3));
-    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-2, 3));
+    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R-2].2));
+    assert_marker_at_main!(ctx, 'c', memref!([R-2].3));
+    assert_marker_at_main!(ctx, 'd', memref!([R-2].3));
 }
 
 #[test]
@@ -511,10 +482,10 @@ fn test_creates_phi_on_multi_block_loop() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 2));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 3));
-    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-2, 3));
+    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R-2].2));
+    assert_marker_at_main!(ctx, 'c', memref!([R-2].3));
+    assert_marker_at_main!(ctx, 'd', memref!([R-2].3));
 }
 
 #[test]
@@ -533,10 +504,10 @@ fn test_deref_versioning() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(23, 2));
-    assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(23, 3));
-    assert_marker_at_main!(ctx, 'c', ssa_var_deref!(23, 3));
-    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(1, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([P 23].2));
+    assert_marker_at_main!(ctx, 'b', memref!([P 23].3));
+    assert_marker_at_main!(ctx, 'c', memref!(*([P 23].3)));
+    assert_marker_at_main!(ctx, 'd', memref!([R+1].1));
 }
 
 #[test]
@@ -551,8 +522,8 @@ fn test_deref_read_after_write() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(9, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_deref!(9, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([P 9].1));
+    assert_marker_at_main!(ctx, 'b', memref!(*([P 9].1)));
 }
 
 #[test]
@@ -570,9 +541,9 @@ fn test_deref_read_after_cond_write() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_pointer!(16, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_pointer!(16, 2));
-    assert_marker_at_main!(ctx, 'c', ssa_var_deref!(16, 3));
+    assert_marker_at_main!(ctx, 'a', memref!([P 16].1));
+    assert_marker_at_main!(ctx, 'b', memref!([P 16].2));
+    assert_marker_at_main!(ctx, 'c', memref!(*([P 16].3)));
 }
 
 #[test]
@@ -586,8 +557,8 @@ fn test_incr_write_after_read() {
                 "#,
     )
     .unwrap();
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-1, 0));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-1, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R-1].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R-1].1));
 }
 
 #[test]
@@ -623,24 +594,24 @@ fn test_function_calls_and_loop() {
     pretty_print_ssa(&ctx.model); // Removed pretty print
 
     // Initial assignments before loop
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 1));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-5, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R-3].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R-5].1));
 
     // Inside loop header - Phi versions
-    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-3, 2));
-    assert_marker_at_main!(ctx, 'e', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'f', ssa_var_rel!(-5, 1));
-    assert_marker_at_main!(ctx, 'g', ssa_var_rel!(-3, 2));
-    assert_marker_at_main!(ctx, 'h', ssa_var_rel!(-3, 2));
-    assert_marker_at_main!(ctx, 'i', ssa_var_rel!(-2, 1));
+    assert_marker_at_main!(ctx, 'd', memref!([R-3].2));
+    assert_marker_at_main!(ctx, 'e', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'f', memref!([R-5].1));
+    assert_marker_at_main!(ctx, 'g', memref!([R-3].2));
+    assert_marker_at_main!(ctx, 'h', memref!([R-3].2));
+    assert_marker_at_main!(ctx, 'i', memref!([R-2].1));
 
     // After function call return
-    assert_marker_at_main!(ctx, 'j', ssa_var_rel!(1, 2));
+    assert_marker_at_main!(ctx, 'j', memref!([R+1].2));
 
     // Inside loop body (after call)
-    assert_marker_at_main!(ctx, 'k', ssa_var_rel!(-3, 2));
-    assert_marker_at_main!(ctx, 'l', ssa_var_rel!(-3, 3));
+    assert_marker_at_main!(ctx, 'k', memref!([R-3].2));
+    assert_marker_at_main!(ctx, 'l', memref!([R-3].3));
 }
 
 #[test]
@@ -740,9 +711,9 @@ fn test_versioning_with_if() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R-4].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R-4].0));
+    assert_marker_at_main!(ctx, 'c', memref!([R-4].1));
 }
 
 #[test]
@@ -765,9 +736,9 @@ fn test_if_convergence_versioning() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-4, 0));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-4, 0));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-4, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R-4].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R-4].0));
+    assert_marker_at_main!(ctx, 'c', memref!([R-4].1));
 }
 
 #[test]
@@ -798,9 +769,9 @@ fn test_if_convergence_versioning_with_phi() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 0));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(-2, 2));
+    assert_marker_at_main!(ctx, 'a', memref!([R-2].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R-2].2));
 }
 
 #[test]
@@ -825,9 +796,9 @@ fn function_call_with_arg_that_is_branched() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(1, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(1, 2));
-    assert_marker_at_main!(ctx, 'c', ssa_var_rel!(1, 4));
+    assert_marker_at_main!(ctx, 'a', memref!([R+1].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R+1].2));
+    assert_marker_at_main!(ctx, 'c', memref!([R+1].4));
 
     // Check the merge block has a phi function for [R+1] using the v3 model views
     let main_func_view = ctx.main_function();
@@ -859,8 +830,8 @@ fn increment_on_add_after_mul() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-3, 1));
-    assert_marker_at_main!(ctx, 'b', ssa_var_rel!(-3, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R-3].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R-3].1));
 }
 
 #[test]
@@ -879,9 +850,9 @@ fn version_correct_following_a_conditional_jump() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', ssa_var_rel!(-2, 1));
-    assert_marker_at_main!(ctx, 'd', ssa_var_rel!(-2, 2));
-    assert_marker_at_main!(ctx, 'e', ssa_var_rel!(-2, 1));
+    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'd', memref!([R-2].2));
+    assert_marker_at_main!(ctx, 'e', memref!([R-2].1));
     assert!(!ctx
         .main_function()
         .block(&BlockId::from(17))
