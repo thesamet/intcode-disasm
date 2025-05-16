@@ -494,7 +494,7 @@ fn parse_atom_internal(input: ParseStream) -> Result<ParsedAtom> {
         Ok(ParsedAtom::ExternalVar(var_ident))
     } else if (input.peek(Token![*]) && input.peek2(token::Paren)) || input.peek(token::Bracket) {
         // Delegate to parse_ssa_memory_reference for *(expr) or [...]
-        let ssa_mem_ref_tokens = parse_ssa_memory_reference(input)?;
+        let ssa_mem_ref_tokens = SsaMemoryReferenceParse::parse(input)?.0;
         Ok(ParsedAtom::MemoryRef(ssa_mem_ref_tokens))
     } else if input.peek(token::Paren) {
         let content;
@@ -666,26 +666,29 @@ impl Parse for FullExprParse {
     }
 }
 
-// --- Parser for SsaMemoryReference (LHS of assignment) ---
-fn parse_ssa_memory_reference(input: ParseStream) -> Result<TokenStream2> {
-    let v3_path = v3_path();
-    if input.peek(Token![*]) && input.peek2(token::Paren) {
-        let _star: Token![*] = input.parse()?;
-        let content;
-        syn::parenthesized!(content in input);
-        let inner_expr_tokens = parse_lir_expr(&content)?; // Parse the inner expression as LIR
-        Ok(quote! {
-            #v3_path::ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
-        })
-    } else if input.peek(token::Bracket) {
-        let version_atom: VersionedElement = input.parse()?;
-        Ok(version_atom.to_expr_tokens())
-    } else {
-        Err(input
-            .error("Expected an assignable memory location: '[base].version' or '*(expression)'"))
+pub struct SsaMemoryReferenceParse(pub TokenStream2);
+
+impl Parse for SsaMemoryReferenceParse {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let v3_path = v3_path();
+        if input.peek(Token![*]) && input.peek2(token::Paren) {
+            let _star: Token![*] = input.parse()?;
+            let content;
+            syn::parenthesized!(content in input);
+            let inner_expr_tokens = parse_lir_expr(&content)?; // Parse the inner expression as LIR
+            Ok(SsaMemoryReferenceParse(quote! {
+                #v3_path::ssa::SsaMemoryReference::Deref(Box::new(#inner_expr_tokens))
+            }))
+        } else if input.peek(token::Bracket) {
+            let version_atom: VersionedElement = input.parse()?;
+            Ok(SsaMemoryReferenceParse(version_atom.to_expr_tokens()))
+        } else {
+            Err(input.error(
+                "Expected an assignable memory location: '[base].version' or '*(expression)'",
+            ))
+        }
     }
 }
-
 // --- Instruction Parsing Logic ---
 pub enum DslInstructionKind {
     Assign {
@@ -751,7 +754,7 @@ impl Parse for DslInstructionParse {
             }
         }
 
-        let lhs_tokens = parse_ssa_memory_reference(input)?;
+        let lhs_tokens = SsaMemoryReferenceParse::parse(input)?.0;
         if input.peek(Token![=]) {
             let _eq_token: Token![=] = input.parse()?;
             let rhs_tokens = parse_lir_expr(input)?; // Parse the RHS as LIR

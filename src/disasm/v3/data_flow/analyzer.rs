@@ -225,7 +225,7 @@ impl DataFlowAnalyzer {
                 // definitions flow forward.
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
-                    current_defs_out.retain(|d| !d.kind.is_outgoing_parameter());
+                    current_defs_out.retain(|d| !d.kind.is_outgoing_parameter() && !d.kind.is_global());
                     // This matches v2 behavior
                 }
 
@@ -421,40 +421,54 @@ impl DataFlowAnalyzer {
     /// `return_values_accessed` field in the `CallSiteInfo` of the calling block.
     fn update_call_site_info(&self, function: &Function, df_result: &mut DataFlowResult) {
         for block_id in function.all_block_ids() {
-            // Find usages of positive stack offsets ([R+n]) that occur *before* any definition within this block.
-            // These represent potential reads of function return values.
+            // Find usages of memory references (both stack-relative and global) that occur *before* any definition within this block.
+            // These represent potential reads of function return values or global memory affected by the function call.
             let block_flow = df_result.blocks.get(block_id).unwrap();
-            let return_usages_in_block = df_result.blocks[block_id]
+
+            // Collect memory references used before definition in this block
+            let memory_usages = df_result.blocks[block_id]
                 .use_before_def
                 .iter()
-                .filter_map(|(mem_ref, instr_id)| {
-                    mem_ref
-                        .as_stack_relative()
-                        .map(|offset| (offset, *instr_id))
+                .filter(|(mem_ref, _)| {
+                    // Include positive stack offsets (return values) and global memory references
+                    mem_ref.as_stack_relative().map_or(false, |offset| offset > 0) ||
+                    mem_ref.is_global()
                 })
-                .filter(|&(offset, _)| offset > 0) // Only positive offsets are return values
-                .collect_vec(); // Collect as Vec<(i128, InstructionId)>
+                .map(|(mem_ref, instr_id)| (mem_ref.clone(), *instr_id))
+                .collect_vec(); // Collect as Vec<(MemoryReference, InstructionId)>
 
             // If we found any such usages...
-            if !return_usages_in_block.is_empty() {
-                // We expect these return values to come from exactly one preceding function call.
-                // The `function_returns_in` set for this block should contain that single call origin.
-                assert_eq!(block_flow.function_returns_in.len(), 1);
-                let func_call_origin = block_flow.function_returns_in.iter().next().unwrap();
-                let calling_block_id = func_call_origin.calling_block;
+            if !memory_usages.is_empty() {
+                // These values should come from a preceding function call.
+                // The `function_returns_in` set for this block should contain the call origin.
+                if block_flow.function_returns_in.len() == 1 {
+                    let func_call_origin = block_flow.function_returns_in.iter().next().unwrap();
+                    let calling_block_id = func_call_origin.calling_block;
 
-                // Now, get the DataFlowBlock for the *calling* block and update its CallSiteInfo.
-                let calling_block_flow = df_result.blocks.get_mut(&calling_block_id).unwrap();
+                    // Now, get the DataFlowBlock for the *calling* block and update its CallSiteInfo.
+                    let calling_block_flow = df_result.blocks.get_mut(&calling_block_id).unwrap();
 
-                // Add the identified return value usages to the `return_values_accessed` map.
-                debug!(
-                    "Update call site info for block {:?}: added return usages {:?}",
-                    calling_block_id, return_usages_in_block
-                );
-                let return_values_accessed = calling_block_flow
-                    .return_values_accessed
-                    .get_or_insert_default();
-                return_values_accessed.extend(return_usages_in_block);
+                    // Add the identified memory usages to the `return_values_accessed` map.
+                    debug!(
+                        "Update call site info for block {:?}: added memory usages {:?}",
+                        calling_block_id, memory_usages
+                    );
+                    let return_values_accessed = calling_block_flow
+                        .return_values_accessed
+                        .get_or_insert_default();
+
+                    // Insert each memory usage into the map
+                    for (mem_ref, instr_id) in memory_usages {
+                        return_values_accessed.insert(mem_ref, instr_id);
+                    }
+                } else {
+                    // If there's no function call origin, these memory usages might be from other sources
+                    // For now, we'll just log this case
+                    debug!(
+                        "Block {:?} has memory usages but no single function call origin: {:?}",
+                        block_id, memory_usages
+                    );
+                }
             }
         }
     }

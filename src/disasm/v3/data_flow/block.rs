@@ -46,8 +46,10 @@ pub struct DataFlowBlock {
     // function_returns_in
     pub function_returns_out: HashSet<FunctionCall<MemoryReference>>,
 
-    // Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
-    pub return_values_accessed: Option<HashMap<i128, InstructionId>>, // Use imported InstructionId
+    /// Set only on nodes which have next == NextKind::FunctionCall, and provides information on this callsite.
+    /// Maps memory references (both stack-relative and global) that are accessed after the function call
+    /// to the instruction IDs that access them.
+    pub return_values_accessed: Option<HashMap<MemoryReference, InstructionId>>, // Use imported InstructionId
 }
 
 add_block_view_when!(DataFlow, data_flow);

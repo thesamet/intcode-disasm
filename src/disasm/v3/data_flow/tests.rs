@@ -445,10 +445,10 @@ mod tests {
         let defs_in21_kinds: HashSet<_> =
             flow21.defs_in.iter().map(|def| def.kind.clone()).collect();
 
-        // Should contain [100] but not [R+1] or [R+2] which are killed by the call
+        // Should not contain [100], [R+1] or [R+2] which are killed by the call
         assert!(
-            defs_in21_kinds.contains(&MemoryReference::Global(100)),
-            "DefsIn @ B21 should contain [100]"
+            !defs_in21_kinds.contains(&MemoryReference::Global(100)),
+            "DefsIn @ B21 should not contain [100]"
         );
         assert!(
             !defs_in21_kinds.contains(&MemoryReference::StackRelative(1)),
@@ -489,11 +489,11 @@ mod tests {
 
         // Should have return values accessed for [R+1] and [R+2]
         assert!(
-            return_values_accessed.contains_key(&1),
+            return_values_accessed.contains_key(&MemoryReference::StackRelative(1)),
             "Call site should record [R+1] as accessed"
         );
         assert!(
-            return_values_accessed.contains_key(&2),
+            return_values_accessed.contains_key(&MemoryReference::StackRelative(2)),
             "Call site should record [R+2] as accessed"
         );
 
@@ -810,7 +810,7 @@ mod tests {
                 .return_values_accessed
                 .as_ref()
                 .unwrap()
-                .contains_key(&1),
+                .contains_key(&MemoryReference::StackRelative(1)),
             "Call site info for block 30 should record access to [R+1]"
         );
 
@@ -918,5 +918,47 @@ mod tests {
             .data_flow()
             .live_in
             .contains_key(&MemoryReference::StackRelative(-1)));
+    }
+
+    #[test]
+    fn test_function_call_global_memory_access() {
+        let model = setup_and_analyze(
+            r#"
+            ; main @ 0
+            R += 3          ; 0
+            [100] = 50      ; 2  ; Def A: [100]=50 (@0, i2)
+            [R] = @ret      ; 6  ; Setup return addr
+            goto @callee    ; 10 ; Call callee
+            ret:                ; block @ 13
+            output [100]    ; 13 ; Use global memory after function call
+            R -= 3          ; 15 ; Return block starts
+            goto [R]        ; 17
+
+            ; callee @ 20
+            callee:
+            R += 2          ; 20
+            [200] = 42      ; 22 ; Write to global memory
+            R -= 2          ; 26
+            goto [R]        ; 28
+            "#,
+        );
+
+        let block0_id = BlockId::from(0); // main entry + call setup
+        let _block13_id = BlockId::from(13); // main return block
+
+        let flow0 = get_flow(&model, block0_id);
+
+        // Check Call Site Info (Block 0)
+        assert!(
+            flow0.return_values_accessed.is_some(),
+            "Call site info should be present in block 0"
+        );
+        let return_values_accessed = flow0.return_values_accessed.as_ref().unwrap();
+
+        // Should have global memory [100] accessed
+        assert!(
+            return_values_accessed.contains_key(&MemoryReference::Global(100)),
+            "Call site should record [100] as accessed global memory"
+        );
     }
 }

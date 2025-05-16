@@ -8,7 +8,7 @@ use crate::disasm::{
         control_flow::FunctionView,
         data_flow::OriginationPoint,
         function_call::result::{CallSiteInfo, CalleeInfo},
-        lir::{memory_reference::MemoryReferenceInfo, Expression, ReadAddressExtractor},
+        lir::{memory_reference::MemoryReferenceInfo, Expression, MemoryReference, ReadAddressExtractor},
         model::{FunctionCallAnalysisComplete, Model, SsaComplete},
         ssa::{types::VersionableMemoryKind, SsaMemoryReference, VersionedMemoryReference},
         FunctionId, InstructionId, NextKind,
@@ -126,41 +126,47 @@ impl FunctionCallAnalyzer {
                         }
                     }
 
-                    // Find Return Reads (first reads of [R+n] in return block)
-                    let return_values_accessed: &HashMap<i128, InstructionId> = function
+                    // Find Return Reads (first reads of memory references in return block)
+                    let return_values_accessed: &HashMap<MemoryReference, InstructionId> = function
                         .block(&call.calling_block)
                         .data_flow()
                         .return_values_accessed
                         .as_ref()
                         .unwrap();
 
-                    for (offset, instr_id) in return_values_accessed {
-                        let instr = function
-                            .blocks()
-                            .find_map(|(_, b)| {
-                                b.ssa().instructions.iter().find(|i| i.id == *instr_id)
-                            })
-                            .unwrap();
-                        // Manually extract reads like in find_lowest_version_of
-                        let mut reads_in_instr: Vec<&SsaMemoryReference> = Vec::new();
-                        if let Some(target) = instr.kind.get_write_address() {
-                            reads_in_instr.extend(target.extract_read_addresses());
-                        }
-                        reads_in_instr.extend(
-                            instr
-                                .kind
-                                .collect_source_expressions()
-                                .iter()
-                                .flat_map(|expr| expr.collect_read_addresses()),
-                        );
+                    for (mem_ref, instr_id) in return_values_accessed {
+                        // Extract the offset if it's a stack-relative memory reference
+                        if let Some(offset) = mem_ref.as_stack_relative() {
+                            let instr = function
+                                .blocks()
+                                .find_map(|(_, b)| {
+                                    b.ssa().instructions.iter().find(|i| i.id == *instr_id)
+                                })
+                                .unwrap();
+                            // Manually extract reads like in find_lowest_version_of
+                            let mut reads_in_instr: Vec<&SsaMemoryReference> = Vec::new();
+                            if let Some(target) = instr.kind.get_write_address() {
+                                reads_in_instr.extend(target.extract_read_addresses());
+                            }
+                            reads_in_instr.extend(
+                                instr
+                                    .kind
+                                    .collect_source_expressions()
+                                    .iter()
+                                    .flat_map(|expr| expr.collect_read_addresses()),
+                            );
 
-                        let read_var = *reads_in_instr
-                            .iter()
-                            // Dereference r once here
-                            .filter_map(|r| (*r).as_versioned())
-                            .find(|r| r.as_stack_relative() == Some(*offset))
-                            .expect("Could not find read variable for return value");
-                        return_reads.entry(*offset).or_insert(read_var);
+                            let stack_offset = offset; // Create a local variable to avoid scope issues
+                            let read_var = *reads_in_instr
+                                .iter()
+                                // Dereference r once here
+                                .filter_map(|r| (*r).as_versioned())
+                                .find(|r| r.as_stack_relative() == Some(stack_offset))
+                                .expect("Could not find read variable for return value");
+                            return_reads.entry(stack_offset).or_insert(read_var);
+                        }
+                        // Handle global memory references if needed
+                        // For now, we're only handling stack-relative memory references
                     }
                     let (parameter_map, return_map) =
                         if let Some(target_function_id) = target_function_id {

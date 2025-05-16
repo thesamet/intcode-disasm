@@ -330,8 +330,18 @@ impl<'a> SSAConversionState<'a> {
                 };
                 let return_block_phis = phi_placements.entry(fc.return_block).or_default();
 
-                for &ret_var_offset in ret_values.keys() {
-                    let kind = VersionableMemoryKind::RelativeMemory(ret_var_offset);
+                for mem_ref in ret_values.keys() {
+                    // Handle different types of memory references
+                    let kind = if let Some(offset) = mem_ref.as_stack_relative() {
+                        // Stack-relative memory reference
+                        VersionableMemoryKind::RelativeMemory(offset)
+                    } else if let Some(addr) = mem_ref.as_global() {
+                        // Global memory reference
+                        VersionableMemoryKind::Memory(addr)
+                    } else {
+                        // Skip other types of memory references for now
+                        continue;
+                    };
 
                     // Skip if we already have a phi function for this kind
                     if return_block_phis.iter().any(|phi| phi.result.kind == kind) {
@@ -401,7 +411,7 @@ impl<'a> SSAConversionState<'a> {
                 })
                 .map(|rva| {
                     rva.keys()
-                        .map(|offset| MemoryReference::StackRelative(*offset))
+                        .cloned()  // Clone the MemoryReference directly
                         .collect_vec()
                 })
                 .unwrap_or_default();

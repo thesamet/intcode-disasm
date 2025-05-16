@@ -12,6 +12,7 @@ use crate::disasm::v3::PointerId;
 use crate::disasm::v3::{BlockId, FunctionId};
 // Keep v2 dispatching
 
+use dsl_macros_impl::memref;
 use itertools::Itertools;
 use pretty_assertions::assert_eq;
 
@@ -887,4 +888,93 @@ fn version_correct_following_a_conditional_jump() {
         .ssa()
         .start_state
         .has_version_for(&VersionableMemoryKind::RelativeMemory(1)));
+}
+
+#[test]
+fn create_phis_if_reads_after_call() {
+    let ctx = SsaComplete::test_context(
+        r#"
+                R += 3
+                'a [2145] = 12
+                'b [R+1] = 5
+                'c [R-1] = 9
+                [R] = @ret
+                goto 2777
+            ret:
+                if ![R-2] goto @end
+                output('d [2145])
+                output('e [R+1])
+                output('f [R-1])
+            end:
+                halt
+            "#,
+    )
+    .unwrap();
+    println!("{}", pretty_print_ssa(&ctx.model));
+    assert_marker_at_main!(ctx, 'a', memref!([2145].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R + 1].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 1].1));
+    assert_marker_at_main!(ctx, 'd', memref!([2145].2));
+    assert_marker_at_main!(ctx, 'e', memref!([R + 1].2));
+    assert_marker_at_main!(ctx, 'f', memref!([R - 1].1));
+}
+
+#[test]
+fn create_phis_if_conditional_read_after_call() {
+    let ctx = SsaComplete::test_context(
+        r#"
+                R += 10
+                'a [2524] = 1
+                'b [R+1] = 5
+                [R] = @ret
+                goto 2777
+            ret:
+                if ![R-2] goto @end
+                if [R-1] goto @end
+                'c [2524] = 0
+                'd [R+1] = 7
+            end:
+                [R-4] = 'e [2524]
+                [R-3] = 'f [R+1]
+                halt
+            "#,
+    )
+    .unwrap();
+    println!("{}", pretty_print_ssa(&ctx.model));
+    println!(
+        "{:?}",
+        ctx.main_function()
+            .block(&BlockId::from(0))
+            .data_flow()
+            .return_values_accessed
+    );
+    assert_marker_at_main!(ctx, 'a', memref!([2524].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R + 1].1));
+    assert_marker_at_main!(ctx, 'c', memref!([2524].3));
+    assert_marker_at_main!(ctx, 'd', memref!([R + 1].3));
+    assert_marker_at_main!(ctx, 'e', memref!([2524].4));
+    assert_marker_at_main!(ctx, 'f', memref!([R + 1].4));
+}
+
+#[test]
+fn does_not_create_phis_if_return_values_ignored() {
+    let ctx = SsaComplete::test_context(
+        r#"
+                R += 10
+                'a [2524] = 1
+                'b [R+1] = 5
+                [R] = @ret
+                goto 2777
+            ret:
+                'c [2524] = 0
+                'd [R+1] = 7
+                halt
+            "#,
+    )
+    .unwrap();
+    println!("{}", pretty_print_ssa(&ctx.model));
+    assert_marker_at_main!(ctx, 'a', memref!([2524].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R + 1].1));
+    assert_marker_at_main!(ctx, 'c', memref!([2524].2));
+    assert_marker_at_main!(ctx, 'd', memref!([R + 1].2));
 }
