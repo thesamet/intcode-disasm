@@ -3,11 +3,8 @@ use std::fmt::Display;
 
 use dsl_macros_impl::match_dsl;
 
-use crate::disasm::v3::common::fixed_point;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::macros::build_expr;
-
-use crate::match_expr;
 
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
