@@ -1,7 +1,10 @@
 // Use LIR MemoryReference
 use std::fmt::Display;
 
+use dsl_macros_impl::match_dsl;
+
 use crate::disasm::v3::common::fixed_point;
+use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::macros::build_expr;
 
 use crate::match_expr;
@@ -138,11 +141,10 @@ impl<A> Expression<A> {
             _ => None,
         }
     }
+}
 
-    pub fn simplify(&self) -> Option<Expression<A>>
-    where
-        A: Clone,
-    {
+impl Expression<SsaMemoryReference> {
+    pub fn simplify(&self) -> Option<Self> {
         let mut current = self.clone();
         let mut count = 0;
 
@@ -158,132 +160,161 @@ impl<A> Expression<A> {
         }
     }
 
-    fn simplify_once(&self) -> Option<Expression<A>>
-    where
-        A: Clone,
-    {
-        match_expr!(self,
-        binary BinaryOperator::Add { lhs, rhs } => {
-            match_expr!(**lhs, const 0 => {
-                return Some(rhs.as_ref().clone()); // x + 0 == x (lhs is 0, so rhs is result)
-            });
-            match_expr!(**rhs, const 0 => {
-                return Some(lhs.as_ref().clone()); // 0 + x == x (rhs is 0, so lhs is result)
-            });
-            match_expr!(**rhs, const x if x < 0 => {
-                let lhs_expr = lhs.as_ref().clone();
-                let neg_x_expr = Expression::Constant(-x); // -x is positive here
-                return Some(build_expr!(#lhs_expr - #neg_x_expr)); // a + (-b) == a - b
-            });
-            match_expr!(lhs.as_ref(), unary UnaryOperator::Minus {arg} => {
+    fn simplify_once(&self) -> Option<Expression<SsaMemoryReference>> {
+        match_dsl!(self,
+            $lhs:expr + 0 => {
+                Some(lhs.clone()) // x + 0 == x
+            },
+            0 + $rhs:expr => {
+                Some(rhs.clone()) // 0 + x == x
+            },
+            $lhs:expr + $rhs:const if rhs < &0 => {
+                let lhs_expr = lhs.clone();
+                let neg_x_expr = Expression::Constant(-*rhs); // -x is positive here
+                Some(build_expr!(#lhs_expr - #neg_x_expr)) // a + (-b) == a - b
+            },
+            -$arg:expr + $rhs:expr => {
                 // (-a) + b == b - a
-                let rhs_expr = rhs.as_ref().clone();
-                let arg_expr = arg.as_ref().clone();
-                return Some(build_expr!(#rhs_expr - #arg_expr));
-            });
-            match_expr!(rhs.as_ref(), unary UnaryOperator::Minus {arg} => {
+                let rhs_expr = rhs.clone();
+                let arg_expr = arg.clone();
+                Some(build_expr!(#rhs_expr - #arg_expr))
+            },
+            $lhs:expr + -$arg:expr => {
                 // a + (-b) == a - b
-                let lhs_expr = lhs.as_ref().clone();
-                let arg_expr = arg.as_ref().clone();
-                return Some(build_expr!(#lhs_expr - #arg_expr));
-            });
-            let lhs_simplified = lhs.simplify();
-            let rhs_simplified = rhs.simplify();
-            if lhs_simplified.is_some() || rhs_simplified.is_some() {
-                let final_lhs = lhs_simplified.unwrap_or_else(|| lhs.as_ref().clone());
-                let final_rhs = rhs_simplified.unwrap_or_else(|| rhs.as_ref().clone());
-                return Some(build_expr!(#final_lhs + #final_rhs));
-            }
-            return None
-        });
-        match_expr!(self,
-        binary BinaryOperator::Sub { lhs, rhs } => {
-            // lhs - 0 = lhs
-            match_expr!(**rhs, const 0 => {
-                return Some(lhs.as_ref().clone())
-            });
-            // 0 - rhs = -rhs
-            match_expr!(**lhs, const 0 => {
-                let rhs_expr = rhs.as_ref().clone();
-                return Some(build_expr!(-#rhs_expr));
-            });
-            // lhs - (-x) = lhs + x
-            match_expr!(**rhs, const x if x < 0 => {
-                let lhs_expr = lhs.as_ref().clone();
-                let neg_x_expr = Expression::Constant(-x); // -x is positive here
-                return Some(build_expr!(#lhs_expr + #neg_x_expr));
-            });
-            // lhs - (-arg) = lhs + arg
-            match_expr!(rhs.as_ref(), unary UnaryOperator::Minus { arg }=> {
-                let lhs_expr = lhs.as_ref().clone();
-                let arg_expr = arg.as_ref().clone();
-                return Some(build_expr!(#lhs_expr + #arg_expr));
-            });
-            let lhs_simplified = lhs.simplify();
-            let rhs_simplified = rhs.simplify();
-            if lhs_simplified.is_some() || rhs_simplified.is_some() {
-                let final_lhs = lhs_simplified.unwrap_or_else(|| lhs.as_ref().clone());
-                let final_rhs = rhs_simplified.unwrap_or_else(|| rhs.as_ref().clone());
-                return Some(build_expr!(#final_lhs - #final_rhs));
-            }
-            return None
-        });
-        match_expr!(self,
-            binary BinaryOperator::Mul { lhs, rhs } => {
-                // x * 0 = 0
-                match_expr!(**lhs, const 0 => {
-                    return Some(lhs.as_ref().clone()) // return Constant(0) from lhs
-                });
-                // 0 * x = 0
-                match_expr!(**rhs, const 0 => {
-                    return Some(rhs.as_ref().clone()) // return Constant(0) from rhs
-                });
-                // x * 1 = x
-                match_expr!(**lhs, const 1 => {
-                    return Some(rhs.as_ref().clone())
-                });
-                // 1 * x = x
-                match_expr!(**rhs, const 1 => {
-                    return Some(lhs.as_ref().clone())
-                });
-                // -1 * x = -x
-                match_expr!(**lhs, const -1 => {
-                    let rhs_expr = rhs.as_ref().clone();
-                    return Some(build_expr!(-#rhs_expr));
-                });
-                // x * -1 = -x
-                match_expr!(**rhs, const -1 => {
-                    let lhs_expr = lhs.as_ref().clone();
-                    return Some(build_expr!(-#lhs_expr));
-                });
+                let lhs_expr = lhs.clone();
+                let arg_expr = arg.clone();
+                Some(build_expr!(#lhs_expr - #arg_expr))
+            },
+            $lhs:expr + $rhs:expr => {
                 let lhs_simplified = lhs.simplify();
                 let rhs_simplified = rhs.simplify();
                 if lhs_simplified.is_some() || rhs_simplified.is_some() {
-                    let final_lhs = lhs_simplified.unwrap_or_else(|| lhs.as_ref().clone());
-                    let final_rhs = rhs_simplified.unwrap_or_else(|| rhs.as_ref().clone());
-                    return Some(build_expr!(#final_lhs * #final_rhs));
+                    let final_lhs = lhs_simplified.unwrap_or_else(|| lhs.clone());
+                    let final_rhs = rhs_simplified.unwrap_or_else(|| rhs.clone());
+                    Some(build_expr!(#final_lhs + #final_rhs))
+                } else {
+                    None
                 }
-                return None;
-            }
-        );
-        match_expr!(self,
-            unary UnaryOperator::Not { arg } => {
-                if let Expression::Binary { op, lhs, rhs } = arg.as_ref() {
-                    if let Some(new_op) = op.logical_negate() {
-                        let lhs_expr = lhs.as_ref().simplify().unwrap_or_else(|| lhs.as_ref().clone());
-                        let rhs_expr = rhs.as_ref().simplify().unwrap_or_else(|| rhs.as_ref().clone());
-                        // build_expr! does not support variable operators, construct directly
-                        return Some(Expression::Binary {
-                            op: new_op,
-                            lhs: Box::new(lhs_expr),
-                            rhs: Box::new(rhs_expr),
-                        });
-                    }
+            },
+            $lhs:expr - 0 => {
+                Some(lhs.clone()) // lhs - 0 = lhs
+            },
+            0 - $rhs:expr => {
+                let rhs_expr = rhs.clone();
+                Some(build_expr!(-#rhs_expr)) // 0 - rhs = -rhs
+            },
+            $lhs:expr - $rhs:const if rhs < &0 => {
+                let lhs_expr = lhs.clone();
+                let neg_x_expr = Expression::Constant(-*rhs); // -x is positive here
+                Some(build_expr!(#lhs_expr + #neg_x_expr)) // lhs - (-x) = lhs + x
+            },
+            $lhs:expr - -$arg:expr => {
+                // lhs - (-arg) = lhs + arg
+                let lhs_expr = lhs.clone();
+                let arg_expr = arg.clone();
+                Some(build_expr!(#lhs_expr + #arg_expr))
+            },
+            $lhs:expr - $rhs:expr => {
+                let lhs_simplified = lhs.simplify();
+                let rhs_simplified = rhs.simplify();
+                if lhs_simplified.is_some() || rhs_simplified.is_some() {
+                    let final_lhs = lhs_simplified.unwrap_or_else(|| lhs.clone());
+                    let final_rhs = rhs_simplified.unwrap_or_else(|| rhs.clone());
+                    Some(build_expr!(#final_lhs - #final_rhs))
+                } else {
+                    None
                 }
-                return arg.simplify().map(|simplified_arg| build_expr!(!#simplified_arg));
-            }
-        );
-        None
+            },
+            _ * 0 => {
+                Some(build_expr! {0 })
+            },
+            0 * _ => {
+                Some(build_expr! {0 })
+            },
+            $lhs:expr * 1 => {
+                Some(lhs.clone()) // x * 1 = x
+            },
+            1 * $rhs:expr => {
+                Some(rhs.clone()) // 1 * x = x
+            },
+            $lhs:expr * -1 => {
+                let lhs_expr = lhs.clone();
+                Some(build_expr!(-#lhs_expr)) // x * -1 = -x
+            },
+            -1 * $rhs:expr => {
+                let rhs_expr = rhs.clone();
+                Some(build_expr!(-#rhs_expr)) // -1 * x = -x
+            },
+            $lhs:expr * $rhs:expr => {
+                let lhs_simplified = lhs.simplify();
+                let rhs_simplified = rhs.simplify();
+                if lhs_simplified.is_some() || rhs_simplified.is_some() {
+                    let final_lhs = lhs_simplified.unwrap_or_else(|| lhs.clone());
+                    let final_rhs = rhs_simplified.unwrap_or_else(|| rhs.clone());
+                    Some(build_expr!(#final_lhs * #final_rhs))
+                } else {
+                    None
+                }
+            },
+            !($lhs:expr < $rhs:expr) => {
+                let lhs_expr = lhs.simplify().unwrap_or_else(|| lhs.clone());
+                let rhs_expr = rhs.simplify().unwrap_or_else(|| rhs.clone());
+                Some(Expression::Binary {
+                    op: BinaryOperator::GreaterThanOrEqual,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs_expr),
+                })
+            },
+            !($lhs:expr <= $rhs:expr) => {
+                let lhs_expr = lhs.simplify().unwrap_or_else(|| lhs.clone());
+                let rhs_expr = rhs.simplify().unwrap_or_else(|| rhs.clone());
+                Some(Expression::Binary {
+                    op: BinaryOperator::GreaterThan,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs_expr),
+                })
+            },
+            !($lhs:expr > $rhs:expr) => {
+                let lhs_expr = lhs.simplify().unwrap_or_else(|| lhs.clone());
+                let rhs_expr = rhs.simplify().unwrap_or_else(|| rhs.clone());
+                Some(Expression::Binary {
+                    op: BinaryOperator::LessThanOrEqual,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs_expr),
+                })
+            },
+            !($lhs:expr >= $rhs:expr) => {
+                let lhs_expr = lhs.simplify().unwrap_or_else(|| lhs.clone());
+                let rhs_expr = rhs.simplify().unwrap_or_else(|| rhs.clone());
+                Some(Expression::Binary {
+                    op: BinaryOperator::LessThan,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs_expr),
+                })
+            },
+            !($lhs:expr == $rhs:expr) => {
+                let lhs_expr = lhs.simplify().unwrap_or_else(|| lhs.clone());
+                let rhs_expr = rhs.simplify().unwrap_or_else(|| rhs.clone());
+                Some(Expression::Binary {
+                    op: BinaryOperator::NotEquals,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs_expr),
+                })
+            },
+            !($lhs:expr != $rhs:expr) => {
+                let lhs_expr = lhs.simplify().unwrap_or_else(|| lhs.clone());
+                let rhs_expr = rhs.simplify().unwrap_or_else(|| rhs.clone());
+                Some(Expression::Binary {
+                    op: BinaryOperator::Equals,
+                    lhs: Box::new(lhs_expr),
+                    rhs: Box::new(rhs_expr),
+                })
+            },
+            !$arg:expr => {
+                arg.simplify().map(|simplified_arg| build_expr!(!#simplified_arg))
+            },
+            _ => None
+        )
     }
 }
 
