@@ -1,6 +1,12 @@
-use std::collections::HashSet;
+use crate::disasm::v3::{
+    define_id_type, lir::Expression, ssa::SsaMemoryReference, FunctionId, InstructionId,
+};
+
+define_id_type!(TypeVarId);
 
 /// Represents the possible types in our type system
+use std::fmt;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
     /// Nothing type (bottom of the lattice, subtype of all types)
@@ -31,6 +37,72 @@ pub enum Type {
     GLB(Box<Type>, Box<Type>),
     /// Symbolic representation of the Least Upper Bound of two types.
     LUB(Box<Type>, Box<Type>),
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Nothing => write!(f, "Nothing"),
+            Type::Int => write!(f, "Int"),
+            Type::Bool => write!(f, "Bool"),
+            Type::Char => write!(f, "Char"),
+            Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
+            Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
+            Type::TypeVar(id) => write!(f, "TypeVar({})", id),
+            Type::Tuple(elements) => {
+                let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
+                write!(f, "Tuple({})", elements_str.join(", "))
+            }
+            Type::Truthy => write!(f, "Truthy"),
+            Type::Any => write!(f, "Any"),
+            Type::GLB(t1, t2) => write!(f, "GLB({}, {})", t1, t2),
+            Type::LUB(t1, t2) => write!(f, "LUB({}, {})", t1, t2),
+        }
+    }
+}
+
+/// Represents the different kinds of type variables we can have.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeVarKind {
+    /// A constant value.
+    Const(i128),
+    /// The variable is linked to a memory reference.
+    MemoryReference(SsaMemoryReference),
+    /// An expression with an unknown type.
+    Expression(Expression<SsaMemoryReference>),
+    /// The arguments to a function.
+    FunctionArgs,
+    /// The return type of a function.
+    FunctionReturn,
+}
+
+impl fmt::Display for TypeVarKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeVarKind::Const(v) => write!(f, "Const({})", v),
+            TypeVarKind::MemoryReference(memref) => write!(f, "{}", memref),
+            TypeVarKind::Expression(expr) => write!(f, "{}", expr),
+            TypeVarKind::FunctionArgs => write!(f, "FunctionArgs"),
+            TypeVarKind::FunctionReturn => write!(f, "FunctionReturn"),
+        }
+    }
+}
+
+/// Stores information about the origin of a type variable.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeVarNode {
+    /// What kind of type variable is this?
+    pub kind: TypeVarKind,
+    /// What instruction ID introduced this type variable?
+    pub instruction_id: InstructionId,
+    /// What function ID contains this type variable?
+    pub function_id: FunctionId,
+}
+
+impl fmt::Display for TypeVarNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.kind)
+    }
 }
 
 impl Type {
@@ -190,8 +262,6 @@ impl Type {
         }
 
         match (t1, t2) {
-            (Type::Pointer(_), Type::Bool) => Some(Type::Truthy),
-            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => Some(Type::Int),
             (Type::Char, Type::Bool) | (Type::Bool, Type::Char) => Some(Type::Truthy), // Ensure this case returns Truthy
 
             (Type::Pointer(p1), Type::Pointer(p2)) => {
@@ -224,7 +294,7 @@ impl Type {
                 }
                 Some(Type::Tuple(res_vec))
             }
-
+            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => Some(Type::Truthy),
             (Type::Pointer(_), Type::Function { .. })
             | (Type::Function { .. }, Type::Pointer(_)) => Some(Type::Pointer(Box::new(Type::Any))),
             (Type::Char, Type::Pointer(_)) | (Type::Pointer(_), Type::Char) => Some(Type::Int),
@@ -245,15 +315,6 @@ impl Type {
             _ => Some(Type::Any),
         }
     }
-}
-
-/// Represents the bounds for a type variable
-#[derive(Debug, Clone)]
-pub struct TypeBounds {
-    /// Lower bounds (types that are subtypes of this variable)
-    pub lower_bounds: HashSet<Type>,
-    /// Upper bounds (types that are supertypes of this variable)
-    pub upper_bounds: HashSet<Type>,
 }
 
 #[cfg(test)]

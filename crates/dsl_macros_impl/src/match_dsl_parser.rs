@@ -446,24 +446,19 @@ fn _handle_addressable_versioned_pattern(
 ) -> Result<Option<GeneratedMatchArm>> {
     // Extract the offset value based on the kind
     let pattern_offset_val: i128 = match &pattern_ve.kind {
-        crate::dsl::VersionedElementKind::Absolute(offset) => offset.base10_parse().map_err(|e| {
-            syn::Error::new(
-                offset.span(),
-                format!("Invalid pattern offset: {}", e),
-            )
-        })?,
-        crate::dsl::VersionedElementKind::Relative { offset, .. } => offset.base10_parse().map_err(|e| {
-            syn::Error::new(
-                offset.span(),
-                format!("Invalid pattern offset: {}", e),
-            )
-        })?,
-        crate::dsl::VersionedElementKind::Pointer(id) => id.base10_parse().map_err(|e| {
-            syn::Error::new(
-                id.span(),
-                format!("Invalid pointer ID: {}", e),
-            )
-        })?,
+        crate::dsl::VersionedElementKind::Absolute(offset) => {
+            offset.base10_parse().map_err(|e| {
+                syn::Error::new(offset.span(), format!("Invalid pattern offset: {}", e))
+            })?
+        }
+        crate::dsl::VersionedElementKind::Relative { offset, .. } => {
+            offset.base10_parse().map_err(|e| {
+                syn::Error::new(offset.span(), format!("Invalid pattern offset: {}", e))
+            })?
+        }
+        crate::dsl::VersionedElementKind::Pointer(id) => id
+            .base10_parse()
+            .map_err(|e| syn::Error::new(id.span(), format!("Invalid pointer ID: {}", e)))?,
     };
 
     let pattern_version_val: usize = pattern_ve.version.base10_parse().map_err(|e| {
@@ -859,17 +854,8 @@ mod tests {
     use crate::dsl::{PatternBinaryOperator, PatternUnaryOperator}; // DSL specific operators
     use crate::dsl::{
         PatternBindType, PatternBindVariable, PatternExpression, PatternSsaMemoryReference,
-        VersionedElement,
-    }; // Import AST components from dsl
-    use proc_macro2::Span;
-    use syn::{parse_quote, LitInt, Block};
-
-    // Helper to create a simple block for test bodies
-    fn test_body() -> Block {
-        parse_quote!({
-            // Test body
-        })
-    }
+    };
+    use syn::{parse_quote, Block};
 
     #[test]
     fn test_parse_match_arm_simple_pattern() {
