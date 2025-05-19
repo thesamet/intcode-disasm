@@ -9,8 +9,10 @@ use super::{
     model::{
         ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
         FunctionCallAnalysisComplete, ImageScannerComplete, Model, SsaComplete,
+        TypeInferenceComplete,
     },
     ssa::SsaConverter,
+    type_inference::Solver,
 };
 
 pub fn binary_to_scanned_image(binary: Vec<i128>) -> Result<Model<ImageScannerComplete>, Error> {
@@ -44,3 +46,9 @@ pub fn binary_to_folded_ssa(binary: Vec<i128>) -> Result<Model<FoldedSsaComplete
     let model = binary_to_function_calls(binary)?;
     FoldedSsaBuilder::run(model)
 }
+
+pub fn binary_to_type_inference(binary: Vec<i128>) -> Result<Model<TypeInferenceComplete>, Error> {
+    let model = binary_to_folded_ssa(binary)?;
+    Solver::run(model)
+}
+
