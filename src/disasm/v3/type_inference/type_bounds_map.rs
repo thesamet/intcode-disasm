@@ -75,7 +75,7 @@ impl InferenceAlgorithmState {
     pub fn add_type_var(&mut self, tv_id: TypeVarId, node_info: TypeVarNode) {
         if !self.type_var_states.contains_key(&tv_id) {
             self.type_var_states.insert(
-                tv_id.clone(),
+                tv_id,
                 TypeVarState {
                     node_info,
                     lower_bound: Type::Nothing,

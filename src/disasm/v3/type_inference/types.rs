@@ -68,7 +68,7 @@ pub enum TypeVarKind {
     Const(i128),
     /// The variable is linked to a memory reference.
     MemoryReference(SsaMemoryReference),
-    /// An expression with an unknown type.
+    /// An expression with an unknown type. This variant stores the expression itself for debugging and linking.
     Expression(Expression<SsaMemoryReference>),
     /// The arguments to a function.
     FunctionArgs,
@@ -313,6 +313,38 @@ impl Type {
             | (_, Type::LUB(_, _)) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
 
             _ => Some(Type::Any),
+        }
+    }
+
+    /// Collects all TypeVarIds involved in this type, including nested ones.
+    ///
+    /// # Arguments
+    /// * `type_vars`: A mutable HashSet to which discovered TypeVarIds will be added.
+    pub fn collect_involved_type_vars(&self, type_vars: &mut std::collections::HashSet<super::type_bounds_map::TypeVarId>) {
+        match self {
+            Type::TypeVar(id) => {
+                type_vars.insert(*id);
+            }
+            Type::Pointer(inner_type) => {
+                inner_type.collect_involved_type_vars(type_vars);
+            }
+            Type::Function { params, returns } => {
+                params.collect_involved_type_vars(type_vars);
+                returns.collect_involved_type_vars(type_vars);
+            }
+            Type::Tuple(elements) => {
+                for element_type in elements {
+                    element_type.collect_involved_type_vars(type_vars);
+                }
+            }
+            Type::GLB(t1, t2) | Type::LUB(t1, t2) => {
+                t1.collect_involved_type_vars(type_vars);
+                t2.collect_involved_type_vars(type_vars);
+            }
+            // Primitive types and Any/Nothing/Truthy don't contain TypeVars directly
+            Type::Nothing | Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::Any => {
+                // No nested type vars
+            }
         }
     }
 }
