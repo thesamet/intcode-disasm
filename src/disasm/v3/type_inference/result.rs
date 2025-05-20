@@ -2,10 +2,15 @@
 
 use std::collections::HashMap;
 
+use itertools::Itertools;
+use log::debug;
+
+use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::disasm::v3::FunctionId;
 
-use super::types::{Type, TypeVarId};
+use super::type_bounds_map::TypeVarRegistry;
+use super::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
 use super::TypeVarState;
 
 /// Stores inferred type information for a single function.
@@ -33,7 +38,8 @@ impl Default for FunctionTypeInfo {
 /// Result of the type inference analysis.
 #[derive(Debug, Clone, Default)]
 pub struct TypeInferenceResult {
-    pub type_vars: HashMap<TypeVarId, TypeVarState>,
+    pub type_var_states: HashMap<TypeVarId, TypeVarState>,
+    pub type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
     pub debug_markers: HashMap<char, TypeVarId>,
 }
 
@@ -41,5 +47,72 @@ impl TypeInferenceResult {
     /// Create a new empty type inference result.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn get_marker_type(&self, marker: char) -> Option<Type> {
+        self.debug_markers
+            .get(&marker)
+            .and_then(|id| match self.type_var_states.get(id).unwrap() {
+                TypeVarState::Bounds {
+                    lower_bound,
+                    upper_bound,
+                } => {
+                    debug!(
+                        "Type of marker {} has not converged: [{}, {}]",
+                        marker,
+                        lower_bound.display_with(self),
+                        upper_bound.display_with(self)
+                    );
+                    None
+                }
+                TypeVarState::Converged(ty) => Some(ty.clone()),
+            })
+    }
+
+    pub fn get_all_inferred_types(&self) -> Vec<(TypeVarKind, Type)> {
+        self.type_var_states
+            .iter()
+            .filter_map(|(id, state)| {
+                if let TypeVarState::Converged(ty) = state {
+                    Some((
+                        self.type_var_nodes.get(id).unwrap().kind.clone(),
+                        ty.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn print_all_type_bounds(&self) {
+        for (id, state) in self.type_var_states.iter().sorted_by_key(|(id, _)| *id) {
+            match state {
+                TypeVarState::Bounds {
+                    lower_bound,
+                    upper_bound,
+                } => {
+                    println!(
+                        "{:?<50} ∈ [{:<20}, {:<20}]", // Restored original format string
+                        id.display_with(self),
+                        lower_bound.display_with(self),
+                        upper_bound.display_with(self)
+                    );
+                }
+                TypeVarState::Converged(ty) => {
+                    println!(
+                        "{:?<50} == {:<20}",
+                        id.display_with(self),
+                        ty.display_with(self)
+                    );
+                }
+            }
+        }
+    }
+}
+
+impl TypeVarRegistry for TypeInferenceResult {
+    fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode> {
+        self.type_var_nodes.get(tv_id)
     }
 }

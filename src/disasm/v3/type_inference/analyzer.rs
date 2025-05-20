@@ -1,6 +1,8 @@
 // disasm/src/disasm/v3/type_inference/analyzer.rs
 
-use crate::disasm::v3::lir::Expression;
+use log::trace;
+
+use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
@@ -124,6 +126,7 @@ impl TypeInferenceAnalyzer {
         state: &mut InferenceAlgorithmState,
         store: &mut ConstraintStore,
     ) {
+        trace!("Generating constraints for model");
         for (function_id, f) in model.functions() {
             for (_block_id, ssa_block_content) in f.blocks() {
                 // blocks is BTreeMap<BlockId, SsaBlock>
@@ -183,13 +186,16 @@ impl TypeInferenceAnalyzer {
             );
             let incoming_type = Type::TypeVar(incoming_tv_id);
 
-            store.add_constraint(Constraint::new(
-                incoming_type,
-                dest_type.clone(),
-                function_id,
-                phi_origin_instruction_id,
-                ConstraintReason::PhiNodeOperand,
-            ));
+            store.add_constraint(
+                Constraint::new(
+                    incoming_type,
+                    dest_type.clone(),
+                    function_id,
+                    phi_origin_instruction_id,
+                    ConstraintReason::PhiNodeOperand,
+                ),
+                &state,
+            );
         }
     }
 
@@ -201,6 +207,7 @@ impl TypeInferenceAnalyzer {
         store: &mut ConstraintStore,
     ) {
         let instruction_id = instruction_node.id;
+        trace!("Processing instruction {:?}", instruction_id);
 
         match &instruction_node.kind {
             crate::disasm::v3::lir::Instruction::Assign { target, src, .. } => {
@@ -217,13 +224,26 @@ impl TypeInferenceAnalyzer {
                         );
                         let target_type = Type::TypeVar(target_tv_id);
 
-                        store.add_constraint(Constraint::new(
-                            src_type,
-                            target_type,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::Assignment,
-                        ));
+                        store.add_constraint(
+                            Constraint::new(
+                                src_type.clone(),
+                                target_type.clone(),
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::Assignment,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                target_type,
+                                src_type,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::Assignment,
+                            ),
+                            state,
+                        );
                     }
                     SsaMemoryReference::Deref(ptr_expr_target) => {
                         let ptr_addr_type = self.process_expression(
@@ -233,13 +253,26 @@ impl TypeInferenceAnalyzer {
                             state,
                             store,
                         );
-                        store.add_constraint(Constraint::new(
-                            ptr_addr_type,
-                            Type::Pointer(Box::new(src_type.clone())),
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::AssignmentToDereferenceTarget,
-                        ));
+                        store.add_constraint(
+                            Constraint::new(
+                                ptr_addr_type.clone(),
+                                Type::Pointer(Box::new(src_type.clone())),
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::AssignmentToDereferenceTarget,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                Type::Pointer(Box::new(src_type.clone())),
+                                ptr_addr_type,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::AssignmentToDereferenceTarget,
+                            ),
+                            state,
+                        );
                     }
                 }
             }
@@ -268,13 +301,16 @@ impl TypeInferenceAnalyzer {
                 let const_type = Type::TypeVar(tv_id);
 
                 // Need a new ConstraintReason::LiteralInteger
-                store.add_constraint(Constraint::new(
-                    const_type.clone(),
-                    Type::Int,
-                    function_id,
-                    instruction_id,
-                    ConstraintReason::LiteralInteger,
-                ));
+                store.add_constraint(
+                    Constraint::new(
+                        const_type.clone(),
+                        Type::Int,
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::LiteralInteger,
+                    ),
+                    state,
+                );
                 // If val is 0 or 1, could add specific constraints for Bool/Truthy
                 // E.g., ConstraintReason::LiteralBoolean, ConstraintReason::LiteralTruthy
                 const_type
@@ -306,13 +342,16 @@ impl TypeInferenceAnalyzer {
                     );
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
-                    store.add_constraint(Constraint::new(
-                        ptr_addr_type,
-                        Type::Pointer(Box::new(pointee_type.clone())),
-                        function_id,
-                        instruction_id,
-                        ConstraintReason::DereferenceRequiresPointer,
-                    ));
+                    store.add_constraint(
+                        Constraint::new(
+                            ptr_addr_type,
+                            Type::Pointer(Box::new(pointee_type.clone())),
+                            function_id,
+                            instruction_id,
+                            ConstraintReason::DereferenceRequiresPointer,
+                        ),
+                        state,
+                    );
                     pointee_type
                 }
             },
@@ -327,57 +366,135 @@ impl TypeInferenceAnalyzer {
 
                 match op {
                     crate::disasm::v3::lir::expression::BinaryOperator::Add
-                    | crate::disasm::v3::lir::expression::BinaryOperator::Mul
                     | crate::disasm::v3::lir::expression::BinaryOperator::Sub => {
+                        store.add_unclassified_add_expression(
+                            expr.clone(),
+                            lhs_type.clone(),
+                            rhs_type.clone(),
+                            result_type.clone(),
+                        );
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        store.add_constraint(Constraint::new(
-                            lhs_type,
-                            Type::Int,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::ArithmeticLHS,
-                        ));
-                        store.add_constraint(Constraint::new(
-                            rhs_type,
-                            Type::Int,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::ArithmeticRHS,
-                        ));
-                        store.add_constraint(Constraint::new(
-                            result_type.clone(),
-                            Type::Int,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::ArithmeticResult,
-                        ));
+                        store.add_constraint(
+                            Constraint::new(
+                                lhs_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ArithmeticLHS,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                rhs_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ArithmeticRHS,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                result_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ArithmeticResult,
+                            ),
+                            state,
+                        );
                     }
-                    crate::disasm::v3::lir::expression::BinaryOperator::LessThan // Add other comparison ops
-                    | crate::disasm::v3::lir::expression::BinaryOperator::Equals => {
-                        // Need ConstraintReason::ComparisonLHS, ComparisonRHS, ComparisonResult
-                        store.add_constraint(Constraint::new(
-                            lhs_type,
-                            Type::Int, // Assuming comparison is between Ints for now
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::ComparisonLHS,
-                        ));
-                        store.add_constraint(Constraint::new(
-                            rhs_type,
-                            Type::Int, // Assuming comparison is between Ints for now
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::ComparisonRHS,
-                        ));
-                        store.add_constraint(Constraint::new(
-                            result_type.clone(),
-                            Type::Bool,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::ComparisonResult,
-                        ));
+                    crate::disasm::v3::lir::expression::BinaryOperator::Mul => {
+                        // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
+                        store.add_equality_constraint(
+                            Constraint::new(
+                                lhs_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ArithmeticLHS,
+                            ),
+                            state,
+                        );
+                        store.add_equality_constraint(
+                            Constraint::new(
+                                rhs_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ArithmeticRHS,
+                            ),
+                            state,
+                        );
+                        store.add_equality_constraint(
+                            Constraint::new(
+                                result_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ArithmeticResult,
+                            ),
+                            state,
+                        );
+                    }
+                    BinaryOperator::GreaterThan
+                    | BinaryOperator::LessThan
+                    | BinaryOperator::Equals
+                    | BinaryOperator::NotEquals
+                    | BinaryOperator::LessThanOrEqual
+                    | BinaryOperator::GreaterThanOrEqual => {
+                        store.add_constraint(
+                            Constraint::new(
+                                result_type.clone(),
+                                Type::Bool,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ComparisonResult,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                Type::Bool,
+                                result_type.clone(),
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ComparisonResult,
+                            ),
+                            state,
+                        );
                     }
                     _ => { /* Handle other binary ops or add a general case */ }
+                }
+                match op {
+                    BinaryOperator::LessThan
+                    | BinaryOperator::GreaterThan
+                    | BinaryOperator::LessThanOrEqual
+                    | BinaryOperator::GreaterThanOrEqual => {
+                        // Need ConstraintReason::ComparisonLHS, ComparisonRHS, ComparisonResult
+                        store.add_equality_constraint(
+                            Constraint::new(
+                                lhs_type,
+                                Type::Int, // Assuming comparison is between Ints for now
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ComparisonLHS,
+                            ),
+                            state,
+                        );
+                        store.add_equality_constraint(
+                            Constraint::new(
+                                rhs_type,
+                                Type::Int, // Assuming comparison is between Ints for now
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::ComparisonRHS,
+                            ),
+                            state,
+                        );
+                    }
+                    _ => {}
                 }
                 result_type
             }
@@ -391,36 +508,48 @@ impl TypeInferenceAnalyzer {
                 match op {
                     crate::disasm::v3::lir::expression::UnaryOperator::Not => {
                         // Need ConstraintReason::NotOperand, NotResult
-                        store.add_constraint(Constraint::new(
-                            arg_type,
-                            Type::Truthy, // Operand of NOT must be Truthy
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::NotOperand,
-                        ));
-                        store.add_constraint(Constraint::new(
-                            result_type.clone(),
-                            Type::Bool, // Result of NOT is Bool
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::NotResult,
-                        ));
+                        store.add_constraint(
+                            Constraint::new(
+                                arg_type,
+                                Type::Truthy, // Operand of NOT must be Truthy
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::NotOperand,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                result_type.clone(),
+                                Type::Bool, // Result of NOT is Bool
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::NotResult,
+                            ),
+                            state,
+                        );
                     }
                     crate::disasm::v3::lir::expression::UnaryOperator::Minus => {
-                        store.add_constraint(Constraint::new(
-                            arg_type,
-                            Type::Int,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::UnaryMinusOperand,
-                        ));
-                        store.add_constraint(Constraint::new(
-                            result_type.clone(),
-                            Type::Int,
-                            function_id,
-                            instruction_id,
-                            ConstraintReason::UnaryMinusResult,
-                        ));
+                        store.add_constraint(
+                            Constraint::new(
+                                arg_type,
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::UnaryMinusOperand,
+                            ),
+                            state,
+                        );
+                        store.add_constraint(
+                            Constraint::new(
+                                result_type.clone(),
+                                Type::Int,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::UnaryMinusResult,
+                            ),
+                            state,
+                        );
                     }
                 }
                 result_type
@@ -429,13 +558,16 @@ impl TypeInferenceAnalyzer {
                 let tv_id = self.make_expression_type_var(function_id, instruction_id, expr, state);
                 let input_type = Type::TypeVar(tv_id);
                 // Need ConstraintReason::InputSourceType
-                store.add_constraint(Constraint::new(
-                    input_type.clone(),
-                    Type::Char, // Assuming input is Char by default
-                    function_id,
-                    instruction_id,
-                    ConstraintReason::InputSourceType,
-                ));
+                store.add_constraint(
+                    Constraint::new(
+                        input_type.clone(),
+                        Type::Char, // Assuming input is Char by default
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::InputSourceType,
+                    ),
+                    state,
+                );
                 input_type
             }
             Expression::DebugMarker(marker, inner_expr) => {

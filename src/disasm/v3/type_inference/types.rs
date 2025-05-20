@@ -1,11 +1,40 @@
 use crate::disasm::v3::{
-    define_id_type, lir::Expression, ssa::SsaMemoryReference, FunctionId, InstructionId,
+    define_id_type,
+    lir::Expression,
+    ssa::{SsaMemoryReference, VersionedMemoryReference},
+    FunctionId, InstructionId,
 };
 
 define_id_type!(TypeVarId);
 
+impl TypeVarId {
+    pub fn display_with<'a>(
+        &self,
+        registry: &'a (impl TypeVarRegistry + Sized),
+    ) -> DisplayableTypeVarId<'a> {
+        DisplayableTypeVarId {
+            id: *self,
+            registry,
+        }
+    }
+}
+
+pub struct DisplayableTypeVarId<'a> {
+    id: TypeVarId,
+    registry: &'a dyn TypeVarRegistry,
+}
+
+impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = &self.registry.get_type_var_node(&self.id).unwrap().kind;
+        write!(f, "{kind}")
+    }
+}
+
 /// Represents the possible types in our type system
 use std::fmt;
+
+use super::type_bounds_map::TypeVarRegistry;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
@@ -76,12 +105,48 @@ pub enum TypeVarKind {
     FunctionReturn,
 }
 
+impl TypeVarKind {
+    pub fn as_memory_reference(&self) -> Option<&SsaMemoryReference> {
+        match self {
+            TypeVarKind::MemoryReference(memref) => Some(memref),
+            _ => None,
+        }
+    }
+
+    pub fn as_versioned_memory(&self) -> Option<&VersionedMemoryReference> {
+        match self {
+            TypeVarKind::MemoryReference(memref) => memref.as_versioned(),
+            _ => None,
+        }
+    }
+
+    pub fn as_const(&self) -> Option<&i128> {
+        match self {
+            TypeVarKind::Const(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_expression(&self) -> Option<&Expression<SsaMemoryReference>> {
+        match self {
+            TypeVarKind::Expression(expr) => Some(expr),
+            _ => None,
+        }
+    }
+
+    pub fn as_function_args(&self) -> Option<()> {
+        match self {
+            TypeVarKind::FunctionArgs => Some(()),
+            _ => None,
+        }
+    }
+}
 impl fmt::Display for TypeVarKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TypeVarKind::Const(v) => write!(f, "Const({})", v),
             TypeVarKind::MemoryReference(memref) => write!(f, "{}", memref),
-            TypeVarKind::Expression(expr) => write!(f, "{}", expr),
+            TypeVarKind::Expression(expr) => write!(f, "T({})", expr),
             TypeVarKind::FunctionArgs => write!(f, "FunctionArgs"),
             TypeVarKind::FunctionReturn => write!(f, "FunctionReturn"),
         }
@@ -161,15 +226,42 @@ impl Type {
             }
 
             (_, Type::GLB(ga, gb)) => self.is_subtype_of(ga) && self.is_subtype_of(gb),
-            (Type::GLB(s_ga, s_gb), _) => s_ga.is_subtype_of(other) && s_gb.is_subtype_of(other),
-
             (_, Type::LUB(la, lb)) => self.is_subtype_of(la) || self.is_subtype_of(lb),
-            (Type::LUB(s_la, s_lb), _) => s_la.is_subtype_of(other) && s_lb.is_subtype_of(other),
 
             (Type::TypeVar(_), _) => false,
             (_, Type::TypeVar(_)) => false,
 
             _ => false,
+        }
+    }
+
+    /// Applies a mapping function to all TypeVarIds within the type.
+    pub fn map<F>(&self, var_mapper: &mut F) -> Type
+    where
+        F: FnMut(&TypeVarId) -> Type,
+    {
+        match self {
+            Type::TypeVar(id) => var_mapper(id),
+            Type::Tuple(elements) => {
+                Type::Tuple(elements.iter().map(|e| e.map(var_mapper)).collect())
+            }
+            Type::Function { params, returns } => Type::Function {
+                params: Box::new(params.map(var_mapper)),
+                returns: Box::new(returns.map(var_mapper)),
+            },
+            Type::GLB(t1, t2) => {
+                Type::GLB(Box::new(t1.map(var_mapper)), Box::new(t2.map(var_mapper)))
+            }
+            Type::LUB(t1, t2) => {
+                Type::LUB(Box::new(t1.map(var_mapper)), Box::new(t2.map(var_mapper)))
+            }
+            Type::Nothing => Type::Nothing,
+            Type::Int => Type::Int,
+            Type::Bool => Type::Bool,
+            Type::Char => Type::Char,
+            Type::Pointer(pointee) => Type::Pointer(Box::new(pointee.map(var_mapper))),
+            Type::Truthy => Type::Truthy,
+            Type::Any => Type::Any,
         }
     }
 
@@ -237,15 +329,43 @@ impl Type {
                 }
                 Some(Type::Tuple(res_vec))
             }
-
-            (Type::TypeVar(_), _)
-            | (_, Type::TypeVar(_))
-            | (Type::GLB(_, _), _)
-            | (_, Type::GLB(_, _))
-            | (Type::LUB(_, _), _)
-            | (_, Type::LUB(_, _)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (Type::GLB(ga, gb), _) if **ga == *t2 || **gb == *t2 => {
+                Some(Type::GLB(ga.clone(), gb.clone()))
+            }
+            (_, Type::GLB(ga, gb)) if **ga == *t1 || **gb == *t1 => {
+                Some(Type::GLB(ga.clone(), gb.clone()))
+            }
+            (_, Type::TypeVar(_)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (Type::TypeVar(_), _) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (Type::GLB(_, _), _) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (_, Type::GLB(_, _)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (Type::LUB(_, _), _) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (_, Type::LUB(_, _)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
 
             _ => Some(Type::Nothing),
+        }
+    }
+
+    pub fn display_with<'a, 'b, F>(&'a self, registry: &'b F) -> DisplayableType<'a, 'b, F>
+    where
+        F: TypeVarRegistry,
+    {
+        DisplayableType { ty: self, registry }
+    }
+
+    pub fn pointer(pointee: Type) -> Type {
+        Type::Pointer(Box::new(pointee))
+    }
+
+    pub fn tuple(elements: &[Type]) -> Type {
+        Type::Tuple(elements.to_vec())
+    }
+
+    pub fn function(params_type: Type, returns_type: Type) -> Type {
+        // Renamed args to params_type
+        Type::Function {
+            params: Box::new(params_type),
+            returns: Box::new(returns_type),
         }
     }
 
@@ -304,10 +424,14 @@ impl Type {
             (Type::Bool, Type::Function { .. }) | (Type::Function { .. }, Type::Bool) => {
                 Some(Type::Int)
             }
+            (Type::LUB(ga, gb), _) if **ga == *t2 || **gb == *t2 => {
+                Some(Type::LUB(ga.clone(), gb.clone()))
+            }
+            (_, Type::LUB(ga, gb)) if **ga == *t1 || **gb == *t1 => {
+                Some(Type::LUB(ga.clone(), gb.clone()))
+            }
 
-            (Type::TypeVar(_), _)
-            | (_, Type::TypeVar(_))
-            | (Type::GLB(_, _), _)
+            (Type::GLB(_, _), _)
             | (_, Type::GLB(_, _))
             | (Type::LUB(_, _), _)
             | (_, Type::LUB(_, _)) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
@@ -345,6 +469,64 @@ impl Type {
             Type::Nothing | Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::Any => {
                 // No nested type vars
             }
+        }
+    }
+
+    pub fn function_pointer_type(args: &[Type], returns: &[Type]) -> Type {
+        // Represent function pointers directly as Function signatures
+        Type::Function {
+            params: Box::new(Type::Tuple(args.to_vec())),
+            returns: Box::new(Type::Tuple(returns.to_vec())),
+        }
+    }
+}
+
+pub struct DisplayableType<'a, 'b, F>
+where
+    F: TypeVarRegistry,
+{
+    ty: &'a Type,
+    registry: &'b F,
+}
+
+impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.ty {
+            Type::TypeVar(id) => write!(f, "{}", id.display_with(self.registry)),
+            Type::Tuple(elements) => {
+                let elements_str: Vec<String> = elements
+                    .iter()
+                    .map(|e| e.display_with(self.registry).to_string())
+                    .collect();
+                write!(f, "Tuple({})", elements_str.join(", "))
+            }
+            Type::Function { params, returns } => {
+                write!(
+                    f,
+                    "Function<{} -> {}>",
+                    params.display_with(self.registry),
+                    returns.display_with(self.registry)
+                )
+            }
+            Type::GLB(t1, t2) => write!(
+                f,
+                "GLB({}, {})",
+                t1.display_with(self.registry),
+                t2.display_with(self.registry)
+            ),
+            Type::LUB(t1, t2) => write!(
+                f,
+                "LUB({}, {})",
+                t1.display_with(self.registry),
+                t2.display_with(self.registry)
+            ),
+            Type::Nothing => write!(f, "Nothing"),
+            Type::Int => write!(f, "Int"),
+            Type::Bool => write!(f, "Bool"),
+            Type::Char => write!(f, "Char"),
+            Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee.display_with(self.registry)),
+            Type::Truthy => write!(f, "Truthy"),
+            Type::Any => write!(f, "Any"),
         }
     }
 }

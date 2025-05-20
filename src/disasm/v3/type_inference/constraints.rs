@@ -1,8 +1,20 @@
 // disasm/src/disasm/v3/type_inference/constraints.rs
 
-use super::types::{Type, TypeVarId};
-use crate::disasm::v3::{FunctionId, InstructionId};
-use std::collections::{HashMap, HashSet}; // Assuming types.rs is in the parent module (type_inference)
+use log::trace;
+
+use super::{
+    types::{Type, TypeVarId},
+    InferenceAlgorithmState,
+};
+
+use crate::disasm::v3::{
+    lir::Expression, ssa::SsaMemoryReference, type_inference::type_bounds_map::TypeVarRegistry,
+    FunctionId, InstructionId,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+}; // Assuming types.rs is in the parent module (type_inference)
 
 /// A unique identifier for a constraint within a ConstraintStore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,6 +92,46 @@ impl Constraint {
             reason,
         }
     }
+
+    pub fn display_with<'a, 'b, F>(&'a self, registry: &'b F) -> DisplayableConstraint<'a, 'b, F>
+    where
+        F: TypeVarRegistry,
+    {
+        DisplayableConstraint {
+            constraint: self,
+            registry,
+        }
+    }
+}
+
+pub struct DisplayableConstraint<'a, 'b, F>
+where
+    F: TypeVarRegistry,
+{
+    constraint: &'a Constraint,
+    registry: &'b F,
+}
+
+impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableConstraint<'a, 'b, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} <: {}  (from {} at {}, reason: {:?})",
+            self.constraint.sub_type.display_with(self.registry),
+            self.constraint.super_type.display_with(self.registry),
+            self.constraint.origin_function_id,
+            self.constraint.origin_instruction_id,
+            self.constraint.reason
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct UnclasifiedArithmeticExpresction {
+    expression: Expression<SsaMemoryReference>,
+    lhs_type: Type,
+    rhs_type: Type,
+    result_type: Type,
 }
 
 /// A store for collecting and managing type constraints.
@@ -89,6 +141,7 @@ impl Constraint {
 pub struct ConstraintStore {
     /// Stores the actual unique Constraint objects. The index in this Vec acts as the ConstraintId.
     constraints: Vec<Constraint>,
+    unclassified_add_expressions: Vec<UnclasifiedArithmeticExpresction>,
     /// Maps a Constraint (by value) to its unique ConstraintId for quick uniqueness checks.
     constraint_to_id: HashMap<Constraint, ConstraintId>,
     /// Auxiliary index for efficient lookup of ConstraintIds involving a specific TypeVarId.
@@ -99,6 +152,7 @@ impl ConstraintStore {
     pub fn new() -> Self {
         ConstraintStore {
             constraints: Vec::new(),
+            unclassified_add_expressions: Vec::new(),
             constraint_to_id: HashMap::new(),
             type_var_constraints: HashMap::new(),
         }
@@ -107,7 +161,11 @@ impl ConstraintStore {
     /// Adds a new constraint to the store if it's not already present.
     /// Returns the ConstraintId of the added or existing constraint, and a boolean
     /// indicating if the constraint was newly added (true if new, false if existing).
-    pub fn add_constraint(&mut self, constraint: Constraint) -> (ConstraintId, bool) {
+    pub fn add_constraint(
+        &mut self,
+        constraint: Constraint,
+        state: &InferenceAlgorithmState,
+    ) -> (ConstraintId, bool) {
         if let Some(existing_id) = self.constraint_to_id.get(&constraint) {
             return (*existing_id, false); // Constraint already exists
         }
@@ -134,7 +192,36 @@ impl ConstraintStore {
                 .or_default()
                 .insert(new_id);
         }
+        trace!("Added constraint {}", constraint.display_with(state));
         (new_id, true)
+    }
+
+    pub fn add_equality_constraint(
+        &mut self,
+        constraint: Constraint,
+        state: &InferenceAlgorithmState,
+    ) -> bool {
+        let mut reversed = constraint.clone();
+        std::mem::swap(&mut reversed.sub_type, &mut reversed.super_type);
+        let add1 = self.add_constraint(constraint, state).1;
+        let add2 = self.add_constraint(reversed, state).1;
+        add1 || add2
+    }
+
+    pub fn add_unclassified_add_expression(
+        &mut self,
+        expression: Expression<SsaMemoryReference>,
+        lhs_type: Type,
+        rhs_type: Type,
+        result_type: Type,
+    ) {
+        self.unclassified_add_expressions
+            .push(UnclasifiedArithmeticExpresction {
+                expression,
+                lhs_type,
+                rhs_type,
+                result_type,
+            });
     }
 
     /// Gets a reference to a Constraint by its ConstraintId.
@@ -148,6 +235,20 @@ impl ConstraintStore {
         tv_id: &TypeVarId,
     ) -> Option<&HashSet<ConstraintId>> {
         self.type_var_constraints.get(tv_id)
+    }
+
+    pub fn iter_unclassified_add_expressions(
+        &self,
+    ) -> impl Iterator<Item = &UnclasifiedArithmeticExpresction> {
+        self.unclassified_add_expressions.iter()
+    }
+
+    pub fn remove_unclassified_add_expressions(
+        &mut self,
+        expression: &UnclasifiedArithmeticExpresction,
+    ) {
+        self.unclassified_add_expressions
+            .retain(|e| e != expression);
     }
 
     /// Provides an iterator over all unique constraints (as &Constraint) in the store.
@@ -187,21 +288,22 @@ mod tests {
     #[test]
     fn test_add_constraint_uniqueness_and_id() {
         let mut store = ConstraintStore::new();
+        let state = InferenceAlgorithmState::new();
 
         let c1_val = make_test_constraint(Int, Any, ConstraintReason::Assignment);
         let c2_val = make_test_constraint(Int, Any, ConstraintReason::Assignment); // Identical to c1
         let c3_val = make_test_constraint(Bool, Int, ConstraintReason::Assignment);
 
-        let (id1, added1) = store.add_constraint(c1_val.clone());
+        let (id1, added1) = store.add_constraint(c1_val.clone(), &state);
         assert!(added1, "Adding c1 should succeed");
         assert_eq!(store.len(), 1);
 
-        let (id2, added2) = store.add_constraint(c2_val.clone());
+        let (id2, added2) = store.add_constraint(c2_val.clone(), &state);
         assert!(!added2, "Adding c2 (duplicate) should not report as new");
         assert_eq!(id1, id2, "IDs for identical constraints should be the same");
         assert_eq!(store.len(), 1);
 
-        let (id3, added3) = store.add_constraint(c3_val.clone());
+        let (id3, added3) = store.add_constraint(c3_val.clone(), &state);
         assert!(added3, "Adding c3 should succeed");
         assert_ne!(id1, id3, "ID for c3 should be different from c1");
         assert_eq!(store.len(), 2);
@@ -213,6 +315,7 @@ mod tests {
     #[test]
     fn test_get_constraints_involving_type_var_with_ids() {
         let mut store = ConstraintStore::new();
+        let state = InferenceAlgorithmState::new();
 
         let tv1_id_val: TypeVarId = TypeVarId::new(1);
         let tv2_id_val: TypeVarId = TypeVarId::new(2);
@@ -265,18 +368,18 @@ mod tests {
         );
 
         // Add constraints and get their IDs
-        let (id_c_tv1_int, _) = store.add_constraint(c_tv1_int.clone());
-        let (id_c_bool_tv1, _) = store.add_constraint(c_bool_tv1.clone());
-        let (id_c_tv2_tv1, _) = store.add_constraint(c_tv2_tv1.clone());
-        let (id_c_tv2_tv3, _) = store.add_constraint(c_tv2_tv3.clone());
-        store.add_constraint(c_no_tv.clone()); // ID not explicitly tracked for this test
-        let (id_c_ptr_tv1_ptr_tv2, _) = store.add_constraint(c_ptr_tv1_ptr_tv2.clone());
+        let (id_c_tv1_int, _) = store.add_constraint(c_tv1_int.clone(), &state);
+        let (id_c_bool_tv1, _) = store.add_constraint(c_bool_tv1.clone(), &state);
+        let (id_c_tv2_tv1, _) = store.add_constraint(c_tv2_tv1.clone(), &state);
+        let (id_c_tv2_tv3, _) = store.add_constraint(c_tv2_tv3.clone(), &state);
+        store.add_constraint(c_no_tv.clone(), &state); // ID not explicitly tracked for this test
+        let (id_c_ptr_tv1_ptr_tv2, _) = store.add_constraint(c_ptr_tv1_ptr_tv2.clone(), &state);
         let (id_c_tuple_tv3_int_tuple_tv4_any, _) =
-            store.add_constraint(c_tuple_tv3_int_tuple_tv4_any.clone());
+            store.add_constraint(c_tuple_tv3_int_tuple_tv4_any.clone(), &state);
         let (id_c_func_tv1_tv2_func_tv3_tv4, _) =
-            store.add_constraint(c_func_tv1_tv2_func_tv3_tv4.clone());
-        let (id_c_glb_tv1_int_tv2, _) = store.add_constraint(c_glb_tv1_int_tv2.clone());
-        let (id_c_tv3_lub_tv4_bool, _) = store.add_constraint(c_tv3_lub_tv4_bool.clone());
+            store.add_constraint(c_func_tv1_tv2_func_tv3_tv4.clone(), &state);
+        let (id_c_glb_tv1_int_tv2, _) = store.add_constraint(c_glb_tv1_int_tv2.clone(), &state);
+        let (id_c_tv3_lub_tv4_bool, _) = store.add_constraint(c_tv3_lub_tv4_bool.clone(), &state);
 
         assert_eq!(store.len(), 10);
 
@@ -331,21 +434,22 @@ mod tests {
     #[test]
     fn test_iteration_and_len_with_ids() {
         let mut store = ConstraintStore::new();
+        let state = InferenceAlgorithmState::new();
         assert!(store.is_empty());
         assert_eq!(store.len(), 0);
 
         let c1 = make_test_constraint(Int, Any, ConstraintReason::Assignment);
         let c2 = make_test_constraint(Bool, Int, ConstraintReason::Assignment);
 
-        let (id1, _) = store.add_constraint(c1.clone());
+        let (id1, _) = store.add_constraint(c1.clone(), &state);
         assert!(!store.is_empty());
         assert_eq!(store.len(), 1);
 
-        let (id2, _) = store.add_constraint(c2.clone());
+        let (id2, _) = store.add_constraint(c2.clone(), &state);
         assert_eq!(store.len(), 2);
 
         // Add duplicate of c1
-        let (id1_dup, added_dup) = store.add_constraint(c1.clone());
+        let (id1_dup, added_dup) = store.add_constraint(c1.clone(), &state);
         assert!(!added_dup);
         assert_eq!(id1_dup, id1);
         assert_eq!(store.len(), 2); // Length should not change

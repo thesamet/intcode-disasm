@@ -8,7 +8,7 @@ use super::{
         model::{
             ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
             FunctionCallAnalysisComplete, HasControlFlowGraphResult, ImageScannerComplete, Model,
-            ModelState, SsaComplete,
+            ModelState, SsaComplete, TypeInferenceComplete,
         },
         FunctionId,
     },
@@ -46,6 +46,7 @@ pub trait TestContextBuilder<S: ModelState> {
 
 impl TestContextBuilder<ImageScannerComplete> for ImageScannerComplete {
     fn test_context(asm: &str) -> Result<TestContext<ImageScannerComplete>, Error> {
+        init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_scanned_image(binary)?;
         Ok(TestContext { model })
@@ -54,6 +55,7 @@ impl TestContextBuilder<ImageScannerComplete> for ImageScannerComplete {
 
 impl TestContextBuilder<ControlFlowGraphComplete> for ControlFlowGraphComplete {
     fn test_context(asm: &str) -> Result<TestContext<ControlFlowGraphComplete>, Error> {
+        init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_cfg(binary)?;
         Ok(TestContext { model })
@@ -62,6 +64,7 @@ impl TestContextBuilder<ControlFlowGraphComplete> for ControlFlowGraphComplete {
 
 impl TestContextBuilder<DataFlowComplete> for DataFlowComplete {
     fn test_context(asm: &str) -> Result<TestContext<DataFlowComplete>, Error> {
+        init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_data_flow(binary)?;
         Ok(TestContext { model })
@@ -70,6 +73,7 @@ impl TestContextBuilder<DataFlowComplete> for DataFlowComplete {
 
 impl TestContextBuilder<SsaComplete> for SsaComplete {
     fn test_context(asm: &str) -> Result<TestContext<SsaComplete>, Error> {
+        init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_ssa(binary)?;
         Ok(TestContext { model })
@@ -78,6 +82,7 @@ impl TestContextBuilder<SsaComplete> for SsaComplete {
 
 impl TestContextBuilder<FunctionCallAnalysisComplete> for FunctionCallAnalysisComplete {
     fn test_context(asm: &str) -> Result<TestContext<FunctionCallAnalysisComplete>, Error> {
+        init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_function_calls(binary)?;
         Ok(TestContext { model })
@@ -86,8 +91,18 @@ impl TestContextBuilder<FunctionCallAnalysisComplete> for FunctionCallAnalysisCo
 
 impl TestContextBuilder<FoldedSsaComplete> for FoldedSsaComplete {
     fn test_context(asm: &str) -> Result<TestContext<FoldedSsaComplete>, Error> {
+        init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_folded_ssa(binary)?;
+        Ok(TestContext { model })
+    }
+}
+
+impl TestContextBuilder<TypeInferenceComplete> for TypeInferenceComplete {
+    fn test_context(asm: &str) -> Result<TestContext<TypeInferenceComplete>, Error> {
+        init_logging();
+        let binary = parser::compile(asm);
+        let model = analysis::binary_to_type_inference(binary)?;
         Ok(TestContext { model })
     }
 }
