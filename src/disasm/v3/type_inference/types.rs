@@ -25,7 +25,7 @@ pub enum Type {
         returns: Box<Type>, // Should be Type::Tuple
     },
     /// Type variable used during inference
-    TypeVar(usize),
+    TypeVar(TypeVarId),
     /// Tuple type (for function arguments and returns)
     Tuple(Vec<Type>),
     // A marker type representing anything that can be used as a condition.
@@ -320,7 +320,7 @@ impl Type {
     ///
     /// # Arguments
     /// * `type_vars`: A mutable HashSet to which discovered TypeVarIds will be added.
-    pub fn collect_involved_type_vars(&self, type_vars: &mut std::collections::HashSet<super::type_bounds_map::TypeVarId>) {
+    pub fn collect_involved_type_vars(&self, type_vars: &mut std::collections::HashSet<TypeVarId>) {
         match self {
             Type::TypeVar(id) => {
                 type_vars.insert(*id);

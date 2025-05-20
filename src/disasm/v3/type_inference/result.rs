@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::disasm::v3::FunctionId;
 
-use super::types::Type;
+use super::types::{Type, TypeVarId};
+use super::TypeVarState;
 
 /// Stores inferred type information for a single function.
 #[derive(Debug, Clone)]
@@ -32,8 +33,8 @@ impl Default for FunctionTypeInfo {
 /// Result of the type inference analysis.
 #[derive(Debug, Clone, Default)]
 pub struct TypeInferenceResult {
-    /// Maps function IDs to their inferred types.
-    pub function_types: HashMap<FunctionId, FunctionTypeInfo>,
+    pub type_vars: HashMap<TypeVarId, TypeVarState>,
+    pub debug_markers: HashMap<char, TypeVarId>,
 }
 
 impl TypeInferenceResult {

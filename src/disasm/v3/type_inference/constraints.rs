@@ -1,9 +1,8 @@
 // disasm/src/disasm/v3/type_inference/constraints.rs
 
-use std::collections::{HashMap, HashSet};
+use super::types::{Type, TypeVarId};
 use crate::disasm::v3::{FunctionId, InstructionId};
-use super::types::Type; // Assuming types.rs is in the parent module (type_inference)
-use super::type_bounds_map::TypeVarId; // Assuming TypeVarId is defined in type_bounds_map.rs
+use std::collections::{HashMap, HashSet}; // Assuming types.rs is in the parent module (type_inference)
 
 /// A unique identifier for a constraint within a ConstraintStore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -13,46 +12,46 @@ pub struct ConstraintId(usize);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstraintReason {
     // General
-    Assignment,                     // target = src  => type(src) <: type(target)
-    TypeVariableSubstitution,       // TypeVar(X) used where TypeVar(Y) is expected, etc.
-    PhiNodeOperand,                 // Incoming value to a PHI node: type(incoming) <: type(phi_dest)
+    Assignment,               // target = src  => type(src) <: type(target)
+    TypeVariableSubstitution, // TypeVar(X) used where TypeVar(Y) is expected, etc.
+    PhiNodeOperand,           // Incoming value to a PHI node: type(incoming) <: type(phi_dest)
 
     // Literals
-    LiteralInteger,                 // A literal number implies Int type, e.g. `5` => TypeVar(N) <: Int
-    LiteralBoolean,                 // A literal boolean (true/false, or 0/1 if distinguished) => TypeVar(N) <: Bool
+    LiteralInteger, // A literal number implies Int type, e.g. `5` => TypeVar(N) <: Int
+    LiteralBoolean, // A literal boolean (true/false, or 0/1 if distinguished) => TypeVar(N) <: Bool
     // LiteralTruthy might be derived via Bool <: Truthy, so not strictly needed here.
 
     // Control Flow
-    IfConditionOperand,             // `if cond ...` => type(cond) <: Truthy
+    IfConditionOperand, // `if cond ...` => type(cond) <: Truthy
 
     // Function Calls & Returns
-    FunctionCallImpliesFunctionType,// `f(...)` => type(f) <: Function { params: FreshTV, returns: FreshTV }
+    FunctionCallImpliesFunctionType, // `f(...)` => type(f) <: Function { params: FreshTV, returns: FreshTV }
     FunctionCallArgument(usize /* argument index */), // type(actual_arg_i) <: type(formal_param_i)
-    ReturnStatement,                // `return expr;` => type(expr) <: function_return_type
+    ReturnStatement,                 // `return expr;` => type(expr) <: function_return_type
 
     // Pointer Operations
-    DereferenceRequiresPointer,     // `*ptr_expr` (read context) => type(ptr_expr) <: Pointer(FreshTV for pointee)
-    AssignmentToDereferenceTarget,  // `*ptr_expr = src` => type(ptr_expr) <: Pointer(type(src))
+    DereferenceRequiresPointer, // `*ptr_expr` (read context) => type(ptr_expr) <: Pointer(FreshTV for pointee)
+    AssignmentToDereferenceTarget, // `*ptr_expr = src` => type(ptr_expr) <: Pointer(type(src))
 
     // Arithmetic Operations (e.g. +, -, *)
-    ArithmeticLHS,                  // `lhs + rhs` => type(lhs) <: Int
-    ArithmeticRHS,                  // `lhs + rhs` => type(rhs) <: Int
-    ArithmeticResult,               // `expr_result = lhs + rhs` => type(expr_result) <: Int
+    ArithmeticLHS,    // `lhs + rhs` => type(lhs) <: Int
+    ArithmeticRHS,    // `lhs + rhs` => type(rhs) <: Int
+    ArithmeticResult, // `expr_result = lhs + rhs` => type(expr_result) <: Int
 
     // Comparison Operations (e.g. <, ==) - often operands are Ints, result is Bool
-    ComparisonLHS,                  // `lhs < rhs` => type(lhs) <: Int (or other comparable type)
-    ComparisonRHS,                  // `lhs < rhs` => type(rhs) <: Int (or other comparable type)
-    ComparisonResult,               // `expr_result = lhs < rhs` => type(expr_result) <: Bool
+    ComparisonLHS,    // `lhs < rhs` => type(lhs) <: Int (or other comparable type)
+    ComparisonRHS,    // `lhs < rhs` => type(rhs) <: Int (or other comparable type)
+    ComparisonResult, // `expr_result = lhs < rhs` => type(expr_result) <: Bool
 
     // Unary Operations
-    NotOperand,                     // `!operand` => type(operand) <: Truthy
-    NotResult,                      // `expr_result = !operand` => type(expr_result) <: Bool
-    UnaryMinusOperand,              // `-operand` => type(operand) <: Int
-    UnaryMinusResult,               // `expr_result = -operand` => type(expr_result) <: Int
+    NotOperand,        // `!operand` => type(operand) <: Truthy
+    NotResult,         // `expr_result = !operand` => type(expr_result) <: Bool
+    UnaryMinusOperand, // `-operand` => type(operand) <: Int
+    UnaryMinusResult,  // `expr_result = -operand` => type(expr_result) <: Int
 
     // Input/Output
-    InputSourceType,                // `input x` => type(x) <: Char (or chosen input type)
-    OutputValueType,                // `output x` => type(x) <: Int (or Char, if outputting characters)
+    InputSourceType, // `input x` => type(x) <: Char (or chosen input type)
+    OutputValueType, // `output x` => type(x) <: Int (or Char, if outputting characters)
 }
 
 /// Represents a subtype constraint: `sub_type <: super_type`.
@@ -122,8 +121,12 @@ impl ConstraintStore {
 
         // Update the TypeVar index
         let mut involved_ids = HashSet::new();
-        constraint.sub_type.collect_involved_type_vars(&mut involved_ids);
-        constraint.super_type.collect_involved_type_vars(&mut involved_ids);
+        constraint
+            .sub_type
+            .collect_involved_type_vars(&mut involved_ids);
+        constraint
+            .super_type
+            .collect_involved_type_vars(&mut involved_ids);
 
         for tv_id in involved_ids {
             self.type_var_constraints
@@ -140,7 +143,10 @@ impl ConstraintStore {
     }
 
     /// Gets a reference to the set of ConstraintIds involving a specific TypeVarId.
-    pub fn get_constraints_involving_type_var(&self, tv_id: &TypeVarId) -> Option<&HashSet<ConstraintId>> {
+    pub fn get_constraints_involving_type_var(
+        &self,
+        tv_id: &TypeVarId,
+    ) -> Option<&HashSet<ConstraintId>> {
         self.type_var_constraints.get(tv_id)
     }
 
@@ -153,7 +159,6 @@ impl ConstraintStore {
     pub fn iter_ids(&self) -> impl Iterator<Item = ConstraintId> + '_ {
         (0..self.constraints.len()).map(ConstraintId)
     }
-    
 
     /// Gets the total number of unique constraints in the store.
     pub fn len(&self) -> usize {
@@ -171,7 +176,9 @@ mod tests {
     use super::*;
     use crate::disasm::v3::{FunctionId, InstructionId};
     // Ensure Type and its variants needed for tests are correctly imported
-    use super::super::types::Type::{self, Any, Bool, Int, Pointer, TypeVar, GLB, LUB, Function, Tuple};
+    use super::super::types::Type::{
+        self, Any, Bool, Function, Int, Pointer, Tuple, TypeVar, GLB, LUB,
+    };
 
     fn make_test_constraint(sub: Type, sup: Type, reason: ConstraintReason) -> Constraint {
         Constraint::new(sub, sup, FunctionId::new(0), InstructionId::new(0), reason)
@@ -207,11 +214,10 @@ mod tests {
     fn test_get_constraints_involving_type_var_with_ids() {
         let mut store = ConstraintStore::new();
 
-        let tv1_id_val: TypeVarId = 1;
-        let tv2_id_val: TypeVarId = 2;
-        let tv3_id_val: TypeVarId = 3;
-        let tv4_id_val: TypeVarId = 4;
-
+        let tv1_id_val: TypeVarId = TypeVarId::new(1);
+        let tv2_id_val: TypeVarId = TypeVarId::new(2);
+        let tv3_id_val: TypeVarId = TypeVarId::new(3);
+        let tv4_id_val: TypeVarId = TypeVarId::new(4);
 
         let tv1 = TypeVar(tv1_id_val);
         let tv2 = TypeVar(tv2_id_val);
@@ -220,19 +226,43 @@ mod tests {
 
         // Constraints
         let c_tv1_int = make_test_constraint(tv1.clone(), Int, ConstraintReason::Assignment);
-        let c_bool_tv1 = make_test_constraint(Bool, tv1.clone(), ConstraintReason::Assignment);    
-        let c_tv2_tv1 = make_test_constraint(tv2.clone(), tv1.clone(), ConstraintReason::Assignment); 
-        let c_tv2_tv3 = make_test_constraint(tv2.clone(), tv3.clone(), ConstraintReason::Assignment); 
-        let c_no_tv = make_test_constraint(Int, Any, ConstraintReason::Assignment);        
-        let c_ptr_tv1_ptr_tv2 = make_test_constraint(Pointer(Box::new(tv1.clone())), Pointer(Box::new(tv2.clone())), ConstraintReason::Assignment);
-        let c_tuple_tv3_int_tuple_tv4_any = make_test_constraint(Tuple(vec![tv3.clone(), Int]), Tuple(vec![tv4.clone(), Any]), ConstraintReason::Assignment);
+        let c_bool_tv1 = make_test_constraint(Bool, tv1.clone(), ConstraintReason::Assignment);
+        let c_tv2_tv1 =
+            make_test_constraint(tv2.clone(), tv1.clone(), ConstraintReason::Assignment);
+        let c_tv2_tv3 =
+            make_test_constraint(tv2.clone(), tv3.clone(), ConstraintReason::Assignment);
+        let c_no_tv = make_test_constraint(Int, Any, ConstraintReason::Assignment);
+        let c_ptr_tv1_ptr_tv2 = make_test_constraint(
+            Pointer(Box::new(tv1.clone())),
+            Pointer(Box::new(tv2.clone())),
+            ConstraintReason::Assignment,
+        );
+        let c_tuple_tv3_int_tuple_tv4_any = make_test_constraint(
+            Tuple(vec![tv3.clone(), Int]),
+            Tuple(vec![tv4.clone(), Any]),
+            ConstraintReason::Assignment,
+        );
         let c_func_tv1_tv2_func_tv3_tv4 = make_test_constraint(
-            Function { params: Box::new(Tuple(vec![tv1.clone()])), returns: Box::new(Pointer(Box::new(tv2.clone()))) },
-            Function { params: Box::new(Tuple(vec![tv3.clone()])), returns: Box::new(Pointer(Box::new(tv4.clone()))) },
+            Function {
+                params: Box::new(Tuple(vec![tv1.clone()])),
+                returns: Box::new(Pointer(Box::new(tv2.clone()))),
+            },
+            Function {
+                params: Box::new(Tuple(vec![tv3.clone()])),
+                returns: Box::new(Pointer(Box::new(tv4.clone()))),
+            },
             ConstraintReason::FunctionCallImpliesFunctionType,
         );
-        let c_glb_tv1_int_tv2 = make_test_constraint(GLB(Box::new(tv1.clone()), Box::new(Int)), tv2.clone(), ConstraintReason::TypeVariableSubstitution);
-        let c_tv3_lub_tv4_bool = make_test_constraint(tv3.clone(), LUB(Box::new(tv4.clone()), Box::new(Bool)), ConstraintReason::TypeVariableSubstitution);
+        let c_glb_tv1_int_tv2 = make_test_constraint(
+            GLB(Box::new(tv1.clone()), Box::new(Int)),
+            tv2.clone(),
+            ConstraintReason::TypeVariableSubstitution,
+        );
+        let c_tv3_lub_tv4_bool = make_test_constraint(
+            tv3.clone(),
+            LUB(Box::new(tv4.clone()), Box::new(Bool)),
+            ConstraintReason::TypeVariableSubstitution,
+        );
 
         // Add constraints and get their IDs
         let (id_c_tv1_int, _) = store.add_constraint(c_tv1_int.clone());
@@ -241,15 +271,19 @@ mod tests {
         let (id_c_tv2_tv3, _) = store.add_constraint(c_tv2_tv3.clone());
         store.add_constraint(c_no_tv.clone()); // ID not explicitly tracked for this test
         let (id_c_ptr_tv1_ptr_tv2, _) = store.add_constraint(c_ptr_tv1_ptr_tv2.clone());
-        let (id_c_tuple_tv3_int_tuple_tv4_any, _) = store.add_constraint(c_tuple_tv3_int_tuple_tv4_any.clone());
-        let (id_c_func_tv1_tv2_func_tv3_tv4, _) = store.add_constraint(c_func_tv1_tv2_func_tv3_tv4.clone());
+        let (id_c_tuple_tv3_int_tuple_tv4_any, _) =
+            store.add_constraint(c_tuple_tv3_int_tuple_tv4_any.clone());
+        let (id_c_func_tv1_tv2_func_tv3_tv4, _) =
+            store.add_constraint(c_func_tv1_tv2_func_tv3_tv4.clone());
         let (id_c_glb_tv1_int_tv2, _) = store.add_constraint(c_glb_tv1_int_tv2.clone());
         let (id_c_tv3_lub_tv4_bool, _) = store.add_constraint(c_tv3_lub_tv4_bool.clone());
 
         assert_eq!(store.len(), 10);
 
         // Check tv1_id_val
-        let constr_ids_tv1 = store.get_constraints_involving_type_var(&tv1_id_val).expect("Should find constraint IDs for tv1");
+        let constr_ids_tv1 = store
+            .get_constraints_involving_type_var(&tv1_id_val)
+            .expect("Should find constraint IDs for tv1");
         assert_eq!(constr_ids_tv1.len(), 6, "tv1 involved count mismatch");
         assert!(constr_ids_tv1.contains(&id_c_tv1_int));
         assert!(constr_ids_tv1.contains(&id_c_bool_tv1));
@@ -259,16 +293,20 @@ mod tests {
         assert!(constr_ids_tv1.contains(&id_c_glb_tv1_int_tv2));
 
         // Check tv2_id_val
-        let constr_ids_tv2 = store.get_constraints_involving_type_var(&tv2_id_val).expect("Should find constraint IDs for tv2");
+        let constr_ids_tv2 = store
+            .get_constraints_involving_type_var(&tv2_id_val)
+            .expect("Should find constraint IDs for tv2");
         assert_eq!(constr_ids_tv2.len(), 5, "tv2 involved count mismatch");
         assert!(constr_ids_tv2.contains(&id_c_tv2_tv1));
         assert!(constr_ids_tv2.contains(&id_c_tv2_tv3));
         assert!(constr_ids_tv2.contains(&id_c_ptr_tv1_ptr_tv2));
         assert!(constr_ids_tv2.contains(&id_c_func_tv1_tv2_func_tv3_tv4));
         assert!(constr_ids_tv2.contains(&id_c_glb_tv1_int_tv2));
-        
+
         // Check tv3_id_val
-        let constr_ids_tv3 = store.get_constraints_involving_type_var(&tv3_id_val).expect("Should find constraint IDs for tv3");
+        let constr_ids_tv3 = store
+            .get_constraints_involving_type_var(&tv3_id_val)
+            .expect("Should find constraint IDs for tv3");
         assert_eq!(constr_ids_tv3.len(), 4, "tv3 involved count mismatch");
         assert!(constr_ids_tv3.contains(&id_c_tv2_tv3));
         assert!(constr_ids_tv3.contains(&id_c_tuple_tv3_int_tuple_tv4_any));
@@ -276,16 +314,20 @@ mod tests {
         assert!(constr_ids_tv3.contains(&id_c_tv3_lub_tv4_bool));
 
         // Check tv4_id_val
-        let constr_ids_tv4 = store.get_constraints_involving_type_var(&tv4_id_val).expect("Should find constraint IDs for tv4");
+        let constr_ids_tv4 = store
+            .get_constraints_involving_type_var(&tv4_id_val)
+            .expect("Should find constraint IDs for tv4");
         assert_eq!(constr_ids_tv4.len(), 3, "tv4 involved count mismatch");
         assert!(constr_ids_tv4.contains(&id_c_tuple_tv3_int_tuple_tv4_any));
         assert!(constr_ids_tv4.contains(&id_c_func_tv1_tv2_func_tv3_tv4));
         assert!(constr_ids_tv4.contains(&id_c_tv3_lub_tv4_bool));
 
         // Check a TypeVarId not in any constraint
-        assert!(store.get_constraints_involving_type_var(&99).is_none());
+        assert!(store
+            .get_constraints_involving_type_var(&TypeVarId::new(99))
+            .is_none());
     }
-    
+
     #[test]
     fn test_iteration_and_len_with_ids() {
         let mut store = ConstraintStore::new();
@@ -294,14 +336,14 @@ mod tests {
 
         let c1 = make_test_constraint(Int, Any, ConstraintReason::Assignment);
         let c2 = make_test_constraint(Bool, Int, ConstraintReason::Assignment);
-        
+
         let (id1, _) = store.add_constraint(c1.clone());
         assert!(!store.is_empty());
         assert_eq!(store.len(), 1);
 
         let (id2, _) = store.add_constraint(c2.clone());
         assert_eq!(store.len(), 2);
-        
+
         // Add duplicate of c1
         let (id1_dup, added_dup) = store.add_constraint(c1.clone());
         assert!(!added_dup);
@@ -313,8 +355,12 @@ mod tests {
         let mut found_c2 = false;
         for constraint_ref in store.iter() {
             count += 1;
-            if *constraint_ref == c1 { found_c1 = true; }
-            if *constraint_ref == c2 { found_c2 = true; }
+            if *constraint_ref == c1 {
+                found_c1 = true;
+            }
+            if *constraint_ref == c2 {
+                found_c2 = true;
+            }
         }
         assert_eq!(count, 2);
         assert!(found_c1);
@@ -325,10 +371,14 @@ mod tests {
         let mut found_id2 = false;
         let mut ids_from_iter = HashSet::new();
         for id_val in store.iter_ids() {
-            id_count +=1;
+            id_count += 1;
             ids_from_iter.insert(id_val);
-            if id_val == id1 { found_id1 = true; }
-            if id_val == id2 { found_id2 = true; }
+            if id_val == id1 {
+                found_id1 = true;
+            }
+            if id_val == id2 {
+                found_id2 = true;
+            }
         }
         assert_eq!(id_count, 2);
         assert!(found_id1);

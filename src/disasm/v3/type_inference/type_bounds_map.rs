@@ -2,23 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-// Assuming TypeVarId is usize for now. If it's a custom struct,
-// it needs to be defined (e.g., in types.rs or here) and must derive/impl
-// Clone, Debug, PartialEq, Eq, and Hash.
-// Example:
-// use super::types::TypeVarId; // If TypeVarId is defined in types.rs
-// Or:
-// #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-// pub struct TypeVarId { /* fields */ }
-pub type TypeVarId = usize; // TODO: Replace with your actual TypeVarId definition if different
-
 use log::trace;
 
 // Import necessary types from your existing types.rs file.
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
 // and types.rs exposes these publicly or they are accessible via `crate::...`
-use super::types::{Type, TypeVarNode}; // Use `super::` if types.rs is in the parent directory (type_inference)
-                                       // TypeVarKind is imported separately in the tests module if needed.
+use super::types::{Type, TypeVarId, TypeVarNode}; // Use `super::` if types.rs is in the parent directory (type_inference)
+                                                  // TypeVarKind is imported separately in the tests module if needed.
 
 /// Holds the data associated with a single TypeVarId.
 /// It includes the TypeVarNode information and its current best bounds.
@@ -93,15 +83,10 @@ impl InferenceAlgorithmState {
     ///
     /// Panics if the new lower bound is not a subtype of the current upper bound,
     /// as this indicates an inconsistency in the type lattice or constraints.
-    pub fn update_lower_bound(
-        &mut self,
-        tv_id: TypeVarId,
-        new_lower_constraint: &Type,
-        node_info_fn: impl FnOnce() -> TypeVarNode,
-    ) -> bool {
-        self.ensure_type_var_exists(tv_id.clone(), node_info_fn);
-
-        let state = self.type_var_states.get(&tv_id).unwrap(); // Should exist due to ensure_type_var_exists
+    pub fn update_lower_bound(&mut self, tv_id: &TypeVarId, new_lower_constraint: &Type) -> bool {
+        let Some(state) = self.type_var_states.get(tv_id) else {
+            panic!("TypeVarId {:?} not found", tv_id);
+        };
 
         // The new best lower bound is the LUB of the current one and the new constraint.
         let new_best_lower_opt = Type::lub(&state.lower_bound, new_lower_constraint);
@@ -132,7 +117,7 @@ impl InferenceAlgorithmState {
                 );
                 let state = self.type_var_states.get_mut(&tv_id).unwrap(); // Should exist due to ensure_type_var_exists
                 state.lower_bound = new_best_lower;
-                self.updated_type_vars.insert(tv_id);
+                self.updated_type_vars.insert(*tv_id);
                 return true;
             }
         }
@@ -154,15 +139,10 @@ impl InferenceAlgorithmState {
     ///
     /// Panics if the current lower bound is not a subtype of the new upper bound,
     /// as this indicates an inconsistency.
-    pub fn update_upper_bound(
-        &mut self,
-        tv_id: TypeVarId,
-        new_upper_constraint: &Type,
-        node_info_fn: impl FnOnce() -> TypeVarNode,
-    ) -> bool {
-        self.ensure_type_var_exists(tv_id.clone(), node_info_fn);
-
-        let state = self.type_var_states.get(&tv_id).unwrap();
+    pub fn update_upper_bound(&mut self, tv_id: &TypeVarId, new_upper_constraint: &Type) -> bool {
+        let Some(state) = self.type_var_states.get(tv_id) else {
+            panic!("TypeVarId {:?} not found", tv_id);
+        };
 
         // The new best upper bound is the GLB of the current one and the new constraint.
         let new_best_upper_opt = Type::glb(&state.upper_bound, new_upper_constraint);
@@ -189,11 +169,15 @@ impl InferenceAlgorithmState {
                 );
                 let state = self.type_var_states.get_mut(&tv_id).unwrap();
                 state.upper_bound = new_best_upper;
-                self.updated_type_vars.insert(tv_id);
+                self.updated_type_vars.insert(*tv_id);
                 return true;
             }
         }
         false
+    }
+
+    pub fn has_type_var(&self, tv_id: &TypeVarId) -> bool {
+        self.type_var_states.contains_key(tv_id)
     }
 
     /// Retrieves the current lower and upper bounds for a given TypeVarId.
@@ -259,17 +243,18 @@ mod tests {
     #[test]
     fn test_add_and_get_bounds() {
         let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = 1;
-        let node1_info_fn = || {
+        let tv1_id: TypeVarId = TypeVarId::new(1);
+        state.add_type_var(
+            tv1_id,
             make_node(
                 TypeVarKind::Expression(build_expr!(10)),
                 InstructionId::new(10),
                 FunctionId::new(1),
-            )
-        };
+            ),
+        );
 
         assert!(state.get_bounds(&tv1_id).is_none());
-        state.update_lower_bound(tv1_id, &Type::Int, node1_info_fn);
+        state.update_lower_bound(&tv1_id, &Type::Int);
 
         let (lower, upper) = state.get_bounds(&tv1_id).expect("tv1 should exist");
         // These assertions depend on Type::Nothing.lub(&Type::Int) resulting in Type::Int
@@ -289,30 +274,33 @@ mod tests {
     #[test]
     fn test_bound_updates_and_tracking() {
         let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = 1;
-        let tv2_id: TypeVarId = 2;
+        let tv1_id: TypeVarId = TypeVarId::new(1);
+        let tv2_id: TypeVarId = TypeVarId::new(2);
 
-        let node1_fn = || {
+        state.add_type_var(
+            tv1_id,
             make_node(
                 TypeVarKind::Expression(build_expr!(1)),
                 InstructionId::new(1),
                 FunctionId::new(0),
-            )
-        };
-        let node2_fn = || {
+            ),
+        );
+
+        state.add_type_var(
+            tv2_id,
             make_node(
                 TypeVarKind::Expression(build_expr!(2)),
                 InstructionId::new(2),
                 FunctionId::new(0),
-            )
-        }; // Changed MemoryReference to Expression for simplicity
+            ),
+        );
 
         // Initial updates
-        assert!(state.update_lower_bound(tv1_id, &Type::Int, node1_fn));
-        assert!(state.update_upper_bound(tv1_id, &Type::Int, node1_fn)); // Any.glb(Int) = Int
+        assert!(state.update_lower_bound(&tv1_id, &Type::Int));
+        assert!(state.update_upper_bound(&tv1_id, &Type::Int)); // Any.glb(Int) = Int
 
-        assert!(state.update_lower_bound(tv2_id, &Type::Bool, node2_fn));
-        assert!(state.update_upper_bound(tv2_id, &Type::Truthy, node2_fn)); // Any.glb(Truthy) = Truthy
+        assert!(state.update_lower_bound(&tv2_id, &Type::Bool));
+        assert!(state.update_upper_bound(&tv2_id, &Type::Truthy)); // Any.glb(Truthy) = Truthy
 
         let updated = state.take_updated_vars();
         assert_eq!(updated.len(), 2);
@@ -323,11 +311,11 @@ mod tests {
         assert!(state.take_updated_vars().is_empty());
 
         // No change update
-        assert!(!state.update_lower_bound(tv1_id, &Type::Int, node1_fn)); // Int.lub(Int) = Int, no change
+        assert!(!state.update_lower_bound(&tv1_id, &Type::Int)); // Int.lub(Int) = Int, no change
         assert!(state.take_updated_vars().is_empty()); // Still empty
 
         // Change update again (assuming Bool <: Truthy, so glb(Truthy, Bool) = Bool)
-        assert!(state.update_upper_bound(tv2_id, &Type::Bool, node2_fn));
+        assert!(state.update_upper_bound(&tv2_id, &Type::Bool));
         let updated_again = state.take_updated_vars();
         assert_eq!(updated_again.len(), 1);
         assert!(updated_again.contains(&tv2_id));
@@ -339,7 +327,7 @@ mod tests {
     #[should_panic(expected = "New lower bound Int is not a subtype of current upper bound Bool")]
     fn test_consistency_panic_lower_bound() {
         let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = 1;
+        let tv1_id: TypeVarId = TypeVarId::new(1);
         let node1_fn = || {
             make_node(
                 TypeVarKind::Expression(build_expr!(1)),
@@ -348,38 +336,39 @@ mod tests {
             )
         };
 
-        state.update_upper_bound(tv1_id, &Type::Bool, node1_fn); // Upper bound is Bool
+        state.update_upper_bound(&tv1_id, &Type::Bool); // Upper bound is Bool
         state.take_updated_vars();
 
         // Attempt to set lower to Int. This should panic if Int is not a subtype of Bool.
         // (Requires Type::Int.is_subtype_of(&Type::Bool) to be false)
-        state.update_lower_bound(tv1_id, &Type::Int, node1_fn);
+        state.update_lower_bound(&tv1_id, &Type::Int);
     }
 
     #[test]
     #[should_panic(expected = "Current lower bound Int is not a subtype of new upper bound Bool")]
     fn test_consistency_panic_upper_bound() {
         let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = 1;
-        let node1_fn = || {
+        let tv1_id: TypeVarId = TypeVarId::new(1);
+        state.add_type_var(
+            tv1_id,
             make_node(
                 TypeVarKind::Expression(build_expr!(15)),
                 InstructionId::new(1),
                 FunctionId::new(0),
-            )
-        };
+            ),
+        );
 
-        state.update_lower_bound(tv1_id, &Type::Int, node1_fn); // Lower bound is Int
+        state.update_lower_bound(&tv1_id, &Type::Int); // Lower bound is Int
         state.take_updated_vars();
 
         // Attempt to set upper to Bool. This should panic if Int is not a subtype of Bool.
-        state.update_upper_bound(tv1_id, &Type::Bool, node1_fn);
+        state.update_upper_bound(&tv1_id, &Type::Bool);
     }
 
     #[test]
     fn test_add_type_var_explicitly() {
         let mut state = InferenceAlgorithmState::new();
-        let tv_id: TypeVarId = 5;
+        let tv_id: TypeVarId = TypeVarId::new(5);
         let node_info = make_node(
             TypeVarKind::Expression(build_expr!(34)),
             InstructionId::new(50),

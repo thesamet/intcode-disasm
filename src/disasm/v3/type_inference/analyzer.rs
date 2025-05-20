@@ -9,8 +9,8 @@ use crate::disasm::v3::lir::InstructionNode; // Assuming this is generic over Ss
 use crate::disasm::v3::{FunctionId, InstructionId};
 
 use super::constraints::{Constraint, ConstraintReason, ConstraintStore};
-use super::type_bounds_map::{InferenceAlgorithmState, TypeVarId};
-use super::types::{Type, TypeVarKind};
+use super::type_bounds_map::InferenceAlgorithmState;
+use super::types::{Type, TypeVarId, TypeVarKind};
 // TypeVarNode is defined in types.rs and re-exported by the parent module.
 use super::types::TypeVarNode;
 
@@ -37,7 +37,7 @@ impl TypeInferenceAnalyzer {
     fn fresh_type_var_id(&mut self) -> TypeVarId {
         let id = self.next_type_var_id_counter;
         self.next_type_var_id_counter += 1;
-        id // Assuming TypeVarId = usize
+        TypeVarId::new(id)
     }
 
     /// Gets or creates a TypeVar for a VersionedMemoryReference within a specific function.
