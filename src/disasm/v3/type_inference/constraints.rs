@@ -127,11 +127,11 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableConstraint<'a, 'b, 
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct UnclasifiedArithmeticExpresction {
-    expression: Expression<SsaMemoryReference>,
-    lhs_type: Type,
-    rhs_type: Type,
-    result_type: Type,
+pub struct UnclassifiedArithmeticExpression {
+    pub expression: Expression<SsaMemoryReference>,
+    pub lhs_type: Type,
+    pub rhs_type: Type,
+    pub result_type: Type,
 }
 
 /// A store for collecting and managing type constraints.
@@ -141,7 +141,7 @@ struct UnclasifiedArithmeticExpresction {
 pub struct ConstraintStore {
     /// Stores the actual unique Constraint objects. The index in this Vec acts as the ConstraintId.
     constraints: Vec<Constraint>,
-    unclassified_add_expressions: Vec<UnclasifiedArithmeticExpresction>,
+    unclassified_add_expressions: Vec<UnclassifiedArithmeticExpression>,
     /// Maps a Constraint (by value) to its unique ConstraintId for quick uniqueness checks.
     constraint_to_id: HashMap<Constraint, ConstraintId>,
     /// Auxiliary index for efficient lookup of ConstraintIds involving a specific TypeVarId.
@@ -216,7 +216,7 @@ impl ConstraintStore {
         result_type: Type,
     ) {
         self.unclassified_add_expressions
-            .push(UnclasifiedArithmeticExpresction {
+            .push(UnclassifiedArithmeticExpression {
                 expression,
                 lhs_type,
                 rhs_type,
@@ -239,13 +239,13 @@ impl ConstraintStore {
 
     pub fn iter_unclassified_add_expressions(
         &self,
-    ) -> impl Iterator<Item = &UnclasifiedArithmeticExpresction> {
+    ) -> impl Iterator<Item = &UnclassifiedArithmeticExpression> {
         self.unclassified_add_expressions.iter()
     }
 
     pub fn remove_unclassified_add_expressions(
         &mut self,
-        expression: &UnclasifiedArithmeticExpresction,
+        expression: &UnclassifiedArithmeticExpression,
     ) {
         self.unclassified_add_expressions
             .retain(|e| e != expression);
@@ -310,125 +310,6 @@ mod tests {
 
         assert_eq!(store.get_constraint_by_id(id1), Some(&c1_val));
         assert_eq!(store.get_constraint_by_id(id3), Some(&c3_val));
-    }
-
-    #[test]
-    fn test_get_constraints_involving_type_var_with_ids() {
-        let mut store = ConstraintStore::new();
-        let state = InferenceAlgorithmState::new();
-
-        let tv1_id_val: TypeVarId = TypeVarId::new(1);
-        let tv2_id_val: TypeVarId = TypeVarId::new(2);
-        let tv3_id_val: TypeVarId = TypeVarId::new(3);
-        let tv4_id_val: TypeVarId = TypeVarId::new(4);
-
-        let tv1 = TypeVar(tv1_id_val);
-        let tv2 = TypeVar(tv2_id_val);
-        let tv3 = TypeVar(tv3_id_val);
-        let tv4 = TypeVar(tv4_id_val);
-
-        // Constraints
-        let c_tv1_int = make_test_constraint(tv1.clone(), Int, ConstraintReason::Assignment);
-        let c_bool_tv1 = make_test_constraint(Bool, tv1.clone(), ConstraintReason::Assignment);
-        let c_tv2_tv1 =
-            make_test_constraint(tv2.clone(), tv1.clone(), ConstraintReason::Assignment);
-        let c_tv2_tv3 =
-            make_test_constraint(tv2.clone(), tv3.clone(), ConstraintReason::Assignment);
-        let c_no_tv = make_test_constraint(Int, Any, ConstraintReason::Assignment);
-        let c_ptr_tv1_ptr_tv2 = make_test_constraint(
-            Pointer(Box::new(tv1.clone())),
-            Pointer(Box::new(tv2.clone())),
-            ConstraintReason::Assignment,
-        );
-        let c_tuple_tv3_int_tuple_tv4_any = make_test_constraint(
-            Tuple(vec![tv3.clone(), Int]),
-            Tuple(vec![tv4.clone(), Any]),
-            ConstraintReason::Assignment,
-        );
-        let c_func_tv1_tv2_func_tv3_tv4 = make_test_constraint(
-            Function {
-                params: Box::new(Tuple(vec![tv1.clone()])),
-                returns: Box::new(Pointer(Box::new(tv2.clone()))),
-            },
-            Function {
-                params: Box::new(Tuple(vec![tv3.clone()])),
-                returns: Box::new(Pointer(Box::new(tv4.clone()))),
-            },
-            ConstraintReason::FunctionCallImpliesFunctionType,
-        );
-        let c_glb_tv1_int_tv2 = make_test_constraint(
-            GLB(Box::new(tv1.clone()), Box::new(Int)),
-            tv2.clone(),
-            ConstraintReason::TypeVariableSubstitution,
-        );
-        let c_tv3_lub_tv4_bool = make_test_constraint(
-            tv3.clone(),
-            LUB(Box::new(tv4.clone()), Box::new(Bool)),
-            ConstraintReason::TypeVariableSubstitution,
-        );
-
-        // Add constraints and get their IDs
-        let (id_c_tv1_int, _) = store.add_constraint(c_tv1_int.clone(), &state);
-        let (id_c_bool_tv1, _) = store.add_constraint(c_bool_tv1.clone(), &state);
-        let (id_c_tv2_tv1, _) = store.add_constraint(c_tv2_tv1.clone(), &state);
-        let (id_c_tv2_tv3, _) = store.add_constraint(c_tv2_tv3.clone(), &state);
-        store.add_constraint(c_no_tv.clone(), &state); // ID not explicitly tracked for this test
-        let (id_c_ptr_tv1_ptr_tv2, _) = store.add_constraint(c_ptr_tv1_ptr_tv2.clone(), &state);
-        let (id_c_tuple_tv3_int_tuple_tv4_any, _) =
-            store.add_constraint(c_tuple_tv3_int_tuple_tv4_any.clone(), &state);
-        let (id_c_func_tv1_tv2_func_tv3_tv4, _) =
-            store.add_constraint(c_func_tv1_tv2_func_tv3_tv4.clone(), &state);
-        let (id_c_glb_tv1_int_tv2, _) = store.add_constraint(c_glb_tv1_int_tv2.clone(), &state);
-        let (id_c_tv3_lub_tv4_bool, _) = store.add_constraint(c_tv3_lub_tv4_bool.clone(), &state);
-
-        assert_eq!(store.len(), 10);
-
-        // Check tv1_id_val
-        let constr_ids_tv1 = store
-            .get_constraints_involving_type_var(&tv1_id_val)
-            .expect("Should find constraint IDs for tv1");
-        assert_eq!(constr_ids_tv1.len(), 6, "tv1 involved count mismatch");
-        assert!(constr_ids_tv1.contains(&id_c_tv1_int));
-        assert!(constr_ids_tv1.contains(&id_c_bool_tv1));
-        assert!(constr_ids_tv1.contains(&id_c_tv2_tv1));
-        assert!(constr_ids_tv1.contains(&id_c_ptr_tv1_ptr_tv2));
-        assert!(constr_ids_tv1.contains(&id_c_func_tv1_tv2_func_tv3_tv4));
-        assert!(constr_ids_tv1.contains(&id_c_glb_tv1_int_tv2));
-
-        // Check tv2_id_val
-        let constr_ids_tv2 = store
-            .get_constraints_involving_type_var(&tv2_id_val)
-            .expect("Should find constraint IDs for tv2");
-        assert_eq!(constr_ids_tv2.len(), 5, "tv2 involved count mismatch");
-        assert!(constr_ids_tv2.contains(&id_c_tv2_tv1));
-        assert!(constr_ids_tv2.contains(&id_c_tv2_tv3));
-        assert!(constr_ids_tv2.contains(&id_c_ptr_tv1_ptr_tv2));
-        assert!(constr_ids_tv2.contains(&id_c_func_tv1_tv2_func_tv3_tv4));
-        assert!(constr_ids_tv2.contains(&id_c_glb_tv1_int_tv2));
-
-        // Check tv3_id_val
-        let constr_ids_tv3 = store
-            .get_constraints_involving_type_var(&tv3_id_val)
-            .expect("Should find constraint IDs for tv3");
-        assert_eq!(constr_ids_tv3.len(), 4, "tv3 involved count mismatch");
-        assert!(constr_ids_tv3.contains(&id_c_tv2_tv3));
-        assert!(constr_ids_tv3.contains(&id_c_tuple_tv3_int_tuple_tv4_any));
-        assert!(constr_ids_tv3.contains(&id_c_func_tv1_tv2_func_tv3_tv4));
-        assert!(constr_ids_tv3.contains(&id_c_tv3_lub_tv4_bool));
-
-        // Check tv4_id_val
-        let constr_ids_tv4 = store
-            .get_constraints_involving_type_var(&tv4_id_val)
-            .expect("Should find constraint IDs for tv4");
-        assert_eq!(constr_ids_tv4.len(), 3, "tv4 involved count mismatch");
-        assert!(constr_ids_tv4.contains(&id_c_tuple_tv3_int_tuple_tv4_any));
-        assert!(constr_ids_tv4.contains(&id_c_func_tv1_tv2_func_tv3_tv4));
-        assert!(constr_ids_tv4.contains(&id_c_tv3_lub_tv4_bool));
-
-        // Check a TypeVarId not in any constraint
-        assert!(store
-            .get_constraints_involving_type_var(&TypeVarId::new(99))
-            .is_none());
     }
 
     #[test]

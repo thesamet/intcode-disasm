@@ -1,3 +1,5 @@
+use log::trace;
+
 use crate::disasm::v3::{
     define_id_type,
     lir::Expression,
@@ -17,6 +19,10 @@ impl TypeVarId {
             registry,
         }
     }
+
+    pub fn to_type(&self) -> Type {
+        Type::TypeVar(*self)
+    }
 }
 
 pub struct DisplayableTypeVarId<'a> {
@@ -26,7 +32,11 @@ pub struct DisplayableTypeVarId<'a> {
 
 impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind = &self.registry.get_type_var_node(&self.id).unwrap().kind;
+        let kind = &self
+            .registry
+            .get_type_var_node(&self.id)
+            .unwrap_or_else(|| panic!("TypeVarId {} not found", self.id))
+            .kind;
         write!(f, "{kind}")
     }
 }
@@ -68,109 +78,22 @@ pub enum Type {
     LUB(Box<Type>, Box<Type>),
 }
 
-impl fmt::Display for Type {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Type::Nothing => write!(f, "Nothing"),
-            Type::Int => write!(f, "Int"),
-            Type::Bool => write!(f, "Bool"),
-            Type::Char => write!(f, "Char"),
-            Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
-            Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
-            Type::TypeVar(id) => write!(f, "TypeVar({})", id),
-            Type::Tuple(elements) => {
-                let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
-                write!(f, "Tuple({})", elements_str.join(", "))
-            }
-            Type::Truthy => write!(f, "Truthy"),
-            Type::Any => write!(f, "Any"),
-            Type::GLB(t1, t2) => write!(f, "GLB({}, {})", t1, t2),
-            Type::LUB(t1, t2) => write!(f, "LUB({}, {})", t1, t2),
-        }
-    }
-}
-
-/// Represents the different kinds of type variables we can have.
-#[derive(Clone, Debug, PartialEq)]
-pub enum TypeVarKind {
-    /// A constant value.
-    Const(i128),
-    /// The variable is linked to a memory reference.
-    MemoryReference(SsaMemoryReference),
-    /// An expression with an unknown type. This variant stores the expression itself for debugging and linking.
-    Expression(Expression<SsaMemoryReference>),
-    /// The arguments to a function.
-    FunctionArgs,
-    /// The return type of a function.
-    FunctionReturn,
-}
-
-impl TypeVarKind {
-    pub fn as_memory_reference(&self) -> Option<&SsaMemoryReference> {
-        match self {
-            TypeVarKind::MemoryReference(memref) => Some(memref),
-            _ => None,
-        }
-    }
-
-    pub fn as_versioned_memory(&self) -> Option<&VersionedMemoryReference> {
-        match self {
-            TypeVarKind::MemoryReference(memref) => memref.as_versioned(),
-            _ => None,
-        }
-    }
-
-    pub fn as_const(&self) -> Option<&i128> {
-        match self {
-            TypeVarKind::Const(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_expression(&self) -> Option<&Expression<SsaMemoryReference>> {
-        match self {
-            TypeVarKind::Expression(expr) => Some(expr),
-            _ => None,
-        }
-    }
-
-    pub fn as_function_args(&self) -> Option<()> {
-        match self {
-            TypeVarKind::FunctionArgs => Some(()),
-            _ => None,
-        }
-    }
-}
-impl fmt::Display for TypeVarKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TypeVarKind::Const(v) => write!(f, "Const({})", v),
-            TypeVarKind::MemoryReference(memref) => write!(f, "{}", memref),
-            TypeVarKind::Expression(expr) => write!(f, "T({})", expr),
-            TypeVarKind::FunctionArgs => write!(f, "FunctionArgs"),
-            TypeVarKind::FunctionReturn => write!(f, "FunctionReturn"),
-        }
-    }
-}
-
-/// Stores information about the origin of a type variable.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TypeVarNode {
-    /// What kind of type variable is this?
-    pub kind: TypeVarKind,
-    /// What instruction ID introduced this type variable?
-    pub instruction_id: InstructionId,
-    /// What function ID contains this type variable?
-    pub function_id: FunctionId,
-}
-
-impl fmt::Display for TypeVarNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind)
-    }
-}
-
 impl Type {
+    pub fn is_concrete_type(&self) -> bool {
+        match self {
+            Type::Int | Type::Bool | Type::Char => true,
+            Type::Any | Type::Nothing | Type::Truthy => false,
+            Type::Pointer(pointee) => pointee.is_concrete_type(),
+            Type::Function { params, returns } => {
+                params.is_concrete_type() && returns.is_concrete_type()
+            }
+            Type::Tuple(elements) => elements.iter().all(|e| e.is_concrete_type()),
+            Type::GLB(t1, t2) => t1.is_concrete_type() && t2.is_concrete_type(),
+            Type::LUB(t1, t2) => t1.is_concrete_type() && t2.is_concrete_type(),
+            Type::TypeVar(_) => false,
+        }
+    }
+
     /// Checks if `self` is a subtype of `other` (self <: other).
     pub fn is_subtype_of(&self, other: &Type) -> bool {
         if self == other {
@@ -381,7 +304,7 @@ impl Type {
             return Some(Type::Any);
         }
 
-        match (t1, t2) {
+        let p = match (t1, t2) {
             (Type::Char, Type::Bool) | (Type::Bool, Type::Char) => Some(Type::Truthy), // Ensure this case returns Truthy
 
             (Type::Pointer(p1), Type::Pointer(p2)) => {
@@ -430,6 +353,8 @@ impl Type {
             (_, Type::LUB(ga, gb)) if **ga == *t1 || **gb == *t1 => {
                 Some(Type::LUB(ga.clone(), gb.clone()))
             }
+            (_, Type::TypeVar(_)) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            (Type::TypeVar(_), _) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
 
             (Type::GLB(_, _), _)
             | (_, Type::GLB(_, _))
@@ -437,7 +362,9 @@ impl Type {
             | (_, Type::LUB(_, _)) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
 
             _ => Some(Type::Any),
-        }
+        };
+        trace!("LUB of {} {} is {}", t1, t2, p.clone().unwrap());
+        p
     }
 
     /// Collects all TypeVarIds involved in this type, including nested ones.
@@ -478,6 +405,109 @@ impl Type {
             params: Box::new(Type::Tuple(args.to_vec())),
             returns: Box::new(Type::Tuple(returns.to_vec())),
         }
+    }
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Nothing => write!(f, "Nothing"),
+            Type::Int => write!(f, "Int"),
+            Type::Bool => write!(f, "Bool"),
+            Type::Char => write!(f, "Char"),
+            Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
+            Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
+            Type::TypeVar(id) => write!(f, "TypeVar({})", id),
+            Type::Tuple(elements) => {
+                let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
+                write!(f, "Tuple({})", elements_str.join(", "))
+            }
+            Type::Truthy => write!(f, "Truthy"),
+            Type::Any => write!(f, "Any"),
+            Type::GLB(t1, t2) => write!(f, "GLB({}, {})", t1, t2),
+            Type::LUB(t1, t2) => write!(f, "LUB({}, {})", t1, t2),
+        }
+    }
+}
+
+/// Represents the different kinds of type variables we can have.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeVarKind {
+    /// A constant value.
+    Const(i128),
+    /// The variable is linked to a memory reference.
+    MemoryReference(SsaMemoryReference),
+    /// An expression with an unknown type. This variant stores the expression itself for debugging and linking.
+    Expression(Expression<SsaMemoryReference>),
+    /// The arguments to a function.
+    FunctionArgs,
+    /// The return type of a function.
+    FunctionReturn,
+}
+
+impl TypeVarKind {
+    pub fn as_memory_reference(&self) -> Option<&SsaMemoryReference> {
+        match self {
+            TypeVarKind::MemoryReference(memref) => Some(memref),
+            _ => None,
+        }
+    }
+
+    pub fn as_versioned_memory(&self) -> Option<&VersionedMemoryReference> {
+        match self {
+            TypeVarKind::MemoryReference(memref) => memref.as_versioned(),
+            _ => None,
+        }
+    }
+
+    pub fn as_const(&self) -> Option<&i128> {
+        match self {
+            TypeVarKind::Const(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_expression(&self) -> Option<&Expression<SsaMemoryReference>> {
+        match self {
+            TypeVarKind::Expression(expr) => Some(expr),
+            _ => None,
+        }
+    }
+
+    pub fn as_function_args(&self) -> Option<()> {
+        match self {
+            TypeVarKind::FunctionArgs => Some(()),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for TypeVarKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeVarKind::Const(v) => write!(f, "Const({})", v),
+            TypeVarKind::MemoryReference(memref) => write!(f, "{}", memref),
+            TypeVarKind::Expression(expr) => write!(f, "T({})", expr),
+            TypeVarKind::FunctionArgs => write!(f, "FunctionArgs"),
+            TypeVarKind::FunctionReturn => write!(f, "FunctionReturn"),
+        }
+    }
+}
+
+/// Stores information about the origin of a type variable.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeVarNode {
+    /// What kind of type variable is this?
+    pub kind: TypeVarKind,
+    /// What instruction ID introduced this type variable?
+    pub instruction_id: InstructionId,
+    /// What function ID contains this type variable?
+    pub function_id: FunctionId,
+}
+
+impl fmt::Display for TypeVarNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.kind)
     }
 }
 

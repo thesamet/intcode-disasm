@@ -50,9 +50,8 @@ impl TypeInferenceResult {
     }
 
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {
-        self.debug_markers
-            .get(&marker)
-            .and_then(|id| match self.type_var_states.get(id).unwrap() {
+        self.debug_markers.get(&marker).and_then(|typ| {
+            match self.type_var_states.get(typ).unwrap() {
                 TypeVarState::Bounds {
                     lower_bound,
                     upper_bound,
@@ -66,7 +65,8 @@ impl TypeInferenceResult {
                     None
                 }
                 TypeVarState::Converged(ty) => Some(ty.clone()),
-            })
+            }
+        })
     }
 
     pub fn get_all_inferred_types(&self) -> Vec<(TypeVarKind, Type)> {

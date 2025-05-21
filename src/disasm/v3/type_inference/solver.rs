@@ -1,13 +1,22 @@
 //! Type inference solver implementation.
 
+use itertools::Itertools;
+
+use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::analyzer::TypeInferenceAnalyzer;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
+use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::{Constraint, ConstraintStore, InferenceAlgorithmState, Type};
+use super::constraints::UnclassifiedArithmeticExpression;
+use super::type_bounds_map::ChangeReason;
+use super::types::TypeVarId;
+use super::{
+    Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState, Type, TypeVarState,
+};
 
 /// Solver for type inference.
 ///
@@ -64,35 +73,45 @@ impl Solver {
     fn solve(mut self) -> Result<Model<TypeInferenceComplete>, Error> {
         // 1. Initialize Analyzer, State, and Store
         let mut analyzer = TypeInferenceAnalyzer::new();
+        let mut markers = HashMap::new();
 
-        analyzer.generate_constraints(&self.model, &mut self.state, &mut self.store);
+        analyzer.generate_constraints(&self.model, &mut self.state, &mut self.store, &mut markers);
 
         let initial_constraints: VecDeque<Constraint> = self.store.iter().cloned().collect();
         //
+        let mut iteration_count = 0;
         loop {
             let mut worklist: VecDeque<Constraint> =
                 initial_constraints.clone().into_iter().collect();
+            iteration_count += 1;
+            if iteration_count == 10 {
+                panic!("Too many iterations");
+            }
 
-            let mut iteration_count = 0;
             let mut changed = false;
 
             while let Some(constraint) = worklist.pop_front() {
-                iteration_count += 1;
-
                 changed |= self.apply_constraint(&constraint);
             }
 
             let mut to_remove = HashSet::new();
-
-            for unclassified in self.store.iter_unclassified_add_expressions() {
-                if self.try_classify_add_expression(unclassified) {
+            let e = self
+                .store
+                .iter_unclassified_add_expressions()
+                .cloned()
+                .collect_vec();
+            for unclassified in e {
+                if self.try_classify_add_expression(&unclassified) {
                     to_remove.insert(unclassified.clone());
                 }
             }
             changed |= !to_remove.is_empty();
 
-            for constraint in to_remove {
-                self.store.remove(&constraint);
+            for expr in to_remove {
+                self.store.remove_unclassified_add_expressions(&expr);
+            }
+            if !changed {
+                changed |= self.refine_concrete_types();
             }
 
             if !changed {
@@ -111,6 +130,7 @@ impl Solver {
             .iter_all_type_states()
             .map(|(id, state)| (*id, state.clone()))
             .collect();
+        result.debug_markers = markers;
 
         // 9. Finalize the result and embed it into a new model state.
         Ok(self.model.with_type_inference_result(result))
@@ -121,21 +141,112 @@ impl Solver {
         let sub_type = self.state.resolve_type(&constraint.sub_type);
         let super_type = self.state.resolve_type(&constraint.super_type);
         if let Type::TypeVar(tv_id) = &sub_type {
-            changed |= self
-                .state
-                .update_upper_bound(tv_id, &super_type, constraint);
+            changed |= self.state.update_upper_bound(
+                tv_id,
+                &super_type,
+                ChangeReason::Constraint(constraint.clone()),
+            );
         }
         if let Type::TypeVar(tv_id) = &super_type {
-            changed |= self.state.update_lower_bound(tv_id, &sub_type, constraint);
+            changed |= self.state.update_lower_bound(
+                tv_id,
+                &sub_type,
+                ChangeReason::Constraint(constraint.clone()),
+            );
         }
         changed
     }
 
-    fn try_classify_add_expression(&mut self, unclassified: &UnclasifiedArithmeticExpresction) -> bool {
+    fn try_classify_add_expression(
+        &mut self,
+        unclassified: &UnclassifiedArithmeticExpression,
+    ) -> bool {
         let mut changed = false;
-        let lhs_type = self.state.resolve_type(&unclassified.lhs_type);
-        let rhs_type = self.state.resolve_type(&unclassified.rhs_type);
-        let result_type = self.state.resolve_type(&unclassified.result_type);
+        let Expression::Binary { lhs, rhs, op } = &unclassified.expression else {
+            panic!("Expected BinaryOp expression");
+        };
+        if op != &BinaryOperator::Add && op != &BinaryOperator::Sub {
+            panic!("Expected Add or Sub operator");
+        }
+        let Type::TypeVar(op1_type_var) = unclassified.lhs_type else {
+            panic!("Expected TypeVar for lhs type");
+        };
+        let Type::TypeVar(op2_type_var) = unclassified.rhs_type else {
+            panic!("Expected TypeVar for rhs type");
+        };
+        let Type::TypeVar(res_type_var) = unclassified.result_type else {
+            panic!("Expected TypeVar for result type");
+        };
+        let (op1_lower, op1_upper) = self.state.get_bounds(&op1_type_var).unwrap();
+        let (op2_lower, op2_upper) = self.state.get_bounds(&op2_type_var).unwrap();
+        let (res_lower, res_upper) = self.state.get_bounds(&res_type_var).unwrap();
+        let is_op1_int = matches!(op1_lower, Type::Int);
+        let is_op2_int = matches!(op2_lower, Type::Int);
+        let is_result_int = matches!(res_lower, Type::Int);
+        let is_op1_pointer = matches!(op1_upper, Type::Pointer(_));
+        let is_op2_pointer = matches!(op2_upper, Type::Pointer(_));
+        let is_result_pointer = matches!(res_upper, Type::Pointer(_));
+        let is_result_char = matches!(res_lower, Type::Char);
+        if is_op1_int && is_op2_int {
+            self.store.add_constraint(
+                Constraint::new(
+                    unclassified.result_type.clone(),
+                    Type::Int,
+                    FunctionId::new(0),
+                    InstructionId::new(0),
+                    ConstraintReason::ArithmeticResult,
+                ),
+                &self.state,
+            );
+            // Both operands are ints, result is int
+            return true;
+        }
+        false
+    }
 
-        if let Type::TypeVar(lhs_tv_id) = &
+    fn refine_concrete_types(&mut self) -> bool {
+        let type_states: Vec<(TypeVarId, TypeVarState)> = self
+            .state
+            .iter_all_type_states()
+            .map(|(id, state)| (*id, state.clone()))
+            .collect();
+
+        for (tv_id, var) in type_states {
+            if let TypeVarState::Bounds {
+                lower_bound,
+                upper_bound,
+            } = var
+            {
+                if lower_bound == Type::Nothing && upper_bound.is_concrete_type() {
+                    self.state.update_lower_bound(
+                        &tv_id,
+                        &upper_bound,
+                        ChangeReason::ConcreteTypeRefinement,
+                    );
+                    return true;
+                }
+                if upper_bound == Type::Any && lower_bound.is_concrete_type() {
+                    self.state.update_upper_bound(
+                        &tv_id,
+                        &lower_bound,
+                        ChangeReason::ConcreteTypeRefinement,
+                    );
+                    return true;
+                }
+                if lower_bound == Type::Nothing && upper_bound == Type::Truthy {
+                    self.state.update_upper_bound(
+                        &tv_id,
+                        &Type::Bool,
+                        ChangeReason::ConcreteTypeRefinement,
+                    );
+                    self.state.update_lower_bound(
+                        &tv_id,
+                        &Type::Bool,
+                        ChangeReason::ConcreteTypeRefinement,
+                    );
+                }
+            }
+        }
+        false
+    }
 }

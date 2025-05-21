@@ -2,7 +2,8 @@
 
 use log::trace;
 
-use crate::disasm::v3::lir::{BinaryOperator, Expression};
+use crate::disasm;
+use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
@@ -23,8 +24,6 @@ pub struct TypeInferenceAnalyzer {
     // Maps a (FunctionId, VersionedMemoryReference) to a TypeVarId.
     // This ensures that each unique versioned memory reference gets one TypeVar.
     vmr_to_type_var: HashMap<VersionedMemoryReference, TypeVarId>,
-
-    markers: HashMap<char, Type>,
 }
 
 impl TypeInferenceAnalyzer {
@@ -32,7 +31,6 @@ impl TypeInferenceAnalyzer {
         TypeInferenceAnalyzer {
             next_type_var_id_counter: 0,
             vmr_to_type_var: HashMap::new(),
-            markers: HashMap::new(),
         }
     }
 
@@ -125,6 +123,7 @@ impl TypeInferenceAnalyzer {
         model: &Model<FoldedSsaComplete>,
         state: &mut InferenceAlgorithmState,
         store: &mut ConstraintStore,
+        markers: &mut HashMap<char, TypeVarId>,
     ) {
         trace!("Generating constraints for model");
         for (function_id, f) in model.functions() {
@@ -153,6 +152,7 @@ impl TypeInferenceAnalyzer {
                         function_id,
                         state,
                         store,
+                        markers,
                     );
                 }
             }
@@ -205,14 +205,29 @@ impl TypeInferenceAnalyzer {
         function_id: FunctionId,
         state: &mut InferenceAlgorithmState,
         store: &mut ConstraintStore,
+        markers: &mut HashMap<char, TypeVarId>,
     ) {
         let instruction_id = instruction_node.id;
-        trace!("Processing instruction {:?}", instruction_id);
+        trace!(
+            "Generating constraints for instruction {}: {}",
+            instruction_id,
+            instruction_node
+        );
 
         match &instruction_node.kind {
-            crate::disasm::v3::lir::Instruction::Assign { target, src, .. } => {
-                let src_type =
-                    self.process_expression(&src, function_id, instruction_id, state, store);
+            Instruction::Assign {
+                target,
+                src,
+                target_debug_marker,
+            } => {
+                let src_type = self.process_expression(
+                    &src,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                );
 
                 match target {
                     SsaMemoryReference::Versioned(vmr_target) => {
@@ -224,9 +239,9 @@ impl TypeInferenceAnalyzer {
                         );
                         let target_type = Type::TypeVar(target_tv_id);
 
-                        store.add_constraint(
+                        store.add_equality_constraint(
                             Constraint::new(
-                                src_type.clone(),
+                                Type::TypeVar(src_type),
                                 target_type.clone(),
                                 function_id,
                                 instruction_id,
@@ -234,16 +249,9 @@ impl TypeInferenceAnalyzer {
                             ),
                             state,
                         );
-                        store.add_constraint(
-                            Constraint::new(
-                                target_type,
-                                src_type,
-                                function_id,
-                                instruction_id,
-                                ConstraintReason::Assignment,
-                            ),
-                            state,
-                        );
+                        if let Some(debug_marker) = target_debug_marker {
+                            markers.insert(*debug_marker, target_tv_id);
+                        }
                     }
                     SsaMemoryReference::Deref(ptr_expr_target) => {
                         let ptr_addr_type = self.process_expression(
@@ -252,21 +260,12 @@ impl TypeInferenceAnalyzer {
                             instruction_id,
                             state,
                             store,
+                            markers,
                         );
-                        store.add_constraint(
+                        store.add_equality_constraint(
                             Constraint::new(
-                                ptr_addr_type.clone(),
-                                Type::Pointer(Box::new(src_type.clone())),
-                                function_id,
-                                instruction_id,
-                                ConstraintReason::AssignmentToDereferenceTarget,
-                            ),
-                            state,
-                        );
-                        store.add_constraint(
-                            Constraint::new(
-                                Type::Pointer(Box::new(src_type.clone())),
-                                ptr_addr_type,
+                                Type::TypeVar(ptr_addr_type),
+                                Type::Pointer(Box::new(Type::TypeVar(src_type))),
                                 function_id,
                                 instruction_id,
                                 ConstraintReason::AssignmentToDereferenceTarget,
@@ -276,6 +275,86 @@ impl TypeInferenceAnalyzer {
                     }
                 }
             }
+            Instruction::If { cond, .. } => {
+                let cond_type = self.process_expression(
+                    cond,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                );
+                store.add_constraint(
+                    Constraint::new(
+                        cond_type.to_type(),
+                        Type::Truthy,
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::IfConditionOperand,
+                    ),
+                    state,
+                );
+            }
+            Instruction::Output(expr) => {
+                let expr_type = self.process_expression(
+                    expr,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                );
+                store.add_equality_constraint(
+                    Constraint::new(
+                        expr_type.to_type(),
+                        Type::Char,
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::OutputValueType,
+                    ),
+                    state,
+                );
+            }
+            Instruction::Call {
+                addr,
+                args,
+                return_to,
+            } => {
+                let addr_var_id = self.process_expression(
+                    addr,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                );
+                let args_id = self.fresh_type_var_id();
+                let rets_id = self.fresh_type_var_id();
+                let args_node_info = TypeVarNode {
+                    kind: TypeVarKind::FunctionArgs,
+                    instruction_id,
+                    function_id,
+                };
+                let rets_node_info = TypeVarNode {
+                    kind: TypeVarKind::FunctionReturn,
+                    instruction_id,
+                    function_id,
+                };
+                state.add_type_var(args_id, args_node_info);
+                state.add_type_var(rets_id, rets_node_info);
+                let fp = Type::function(args_id.to_type(), rets_id.to_type());
+                store.add_equality_constraint(
+                    Constraint {
+                        sub_type: addr_var_id.to_type(),
+                        super_type: fp,
+                        origin_function_id: function_id,
+                        origin_instruction_id: instruction_id,
+                        reason: ConstraintReason::FunctionCallImpliesFunctionType,
+                    },
+                    state,
+                );
+            }
+
             // TODO: Handle If, Call, Output, Return for SsaMemoryReference
             // Example for If:
             // crate::disasm::v3::lir::Instruction::If { cond, .. } => {
@@ -294,7 +373,8 @@ impl TypeInferenceAnalyzer {
         instruction_id: InstructionId,
         state: &mut InferenceAlgorithmState,
         store: &mut ConstraintStore,
-    ) -> Type {
+        markers: &mut HashMap<char, TypeVarId>,
+    ) -> TypeVarId {
         match expr {
             Expression::Constant(val) => {
                 let tv_id = self.make_const_type_var(function_id, instruction_id, *val, state);
@@ -313,7 +393,7 @@ impl TypeInferenceAnalyzer {
                 );
                 // If val is 0 or 1, could add specific constraints for Bool/Truthy
                 // E.g., ConstraintReason::LiteralBoolean, ConstraintReason::LiteralTruthy
-                const_type
+                tv_id
             }
             Expression::Addressable(ssa_ref) => match ssa_ref {
                 SsaMemoryReference::Versioned(vmr) => {
@@ -323,15 +403,16 @@ impl TypeInferenceAnalyzer {
                         instruction_id,
                         state,
                     );
-                    Type::TypeVar(tv_id)
+                    tv_id
                 }
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
-                    let ptr_addr_type = self.process_expression(
+                    let ptr_addr_type_var_id = self.process_expression(
                         inner_ptr_expr,
                         function_id,
                         instruction_id,
                         state,
                         store,
+                        markers,
                     );
 
                     let pointee_tv_id = self.make_expression_type_var(
@@ -344,7 +425,7 @@ impl TypeInferenceAnalyzer {
 
                     store.add_constraint(
                         Constraint::new(
-                            ptr_addr_type,
+                            Type::TypeVar(ptr_addr_type_var_id),
                             Type::Pointer(Box::new(pointee_type.clone())),
                             function_id,
                             instruction_id,
@@ -352,21 +433,33 @@ impl TypeInferenceAnalyzer {
                         ),
                         state,
                     );
-                    pointee_type
+                    pointee_tv_id
                 }
             },
             Expression::Binary { op, lhs, rhs } => {
-                let lhs_type =
-                    self.process_expression(lhs, function_id, instruction_id, state, store);
-                let rhs_type =
-                    self.process_expression(rhs, function_id, instruction_id, state, store);
+                let lhs_type = Type::TypeVar(self.process_expression(
+                    lhs,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                ));
+                let rhs_type = Type::TypeVar(self.process_expression(
+                    rhs,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                ));
                 let result_tv_id =
                     self.make_expression_type_var(function_id, instruction_id, expr, state);
                 let result_type = Type::TypeVar(result_tv_id);
 
                 match op {
-                    crate::disasm::v3::lir::expression::BinaryOperator::Add
-                    | crate::disasm::v3::lir::expression::BinaryOperator::Sub => {
+                    disasm::v3::lir::expression::BinaryOperator::Add
+                    | disasm::v3::lir::expression::BinaryOperator::Sub => {
                         store.add_unclassified_add_expression(
                             expr.clone(),
                             lhs_type.clone(),
@@ -405,7 +498,7 @@ impl TypeInferenceAnalyzer {
                             state,
                         );
                     }
-                    crate::disasm::v3::lir::expression::BinaryOperator::Mul => {
+                    disasm::v3::lir::expression::BinaryOperator::Mul => {
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
                         store.add_equality_constraint(
                             Constraint::new(
@@ -465,7 +558,6 @@ impl TypeInferenceAnalyzer {
                             state,
                         );
                     }
-                    _ => { /* Handle other binary ops or add a general case */ }
                 }
                 match op {
                     BinaryOperator::LessThan
@@ -496,21 +588,27 @@ impl TypeInferenceAnalyzer {
                     }
                     _ => {}
                 }
-                result_type
+                result_tv_id
             }
             Expression::Unary { op, arg } => {
-                let arg_type =
-                    self.process_expression(arg, function_id, instruction_id, state, store);
+                let arg_type = self.process_expression(
+                    arg,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                );
                 let result_tv_id =
                     self.make_expression_type_var(function_id, instruction_id, expr, state);
                 let result_type = Type::TypeVar(result_tv_id);
 
                 match op {
-                    crate::disasm::v3::lir::expression::UnaryOperator::Not => {
+                    disasm::v3::lir::expression::UnaryOperator::Not => {
                         // Need ConstraintReason::NotOperand, NotResult
                         store.add_constraint(
                             Constraint::new(
-                                arg_type,
+                                Type::TypeVar(arg_type),
                                 Type::Truthy, // Operand of NOT must be Truthy
                                 function_id,
                                 instruction_id,
@@ -529,10 +627,10 @@ impl TypeInferenceAnalyzer {
                             state,
                         );
                     }
-                    crate::disasm::v3::lir::expression::UnaryOperator::Minus => {
+                    disasm::v3::lir::expression::UnaryOperator::Minus => {
                         store.add_constraint(
                             Constraint::new(
-                                arg_type,
+                                Type::TypeVar(arg_type),
                                 Type::Int,
                                 function_id,
                                 instruction_id,
@@ -552,7 +650,7 @@ impl TypeInferenceAnalyzer {
                         );
                     }
                 }
-                result_type
+                result_tv_id
             }
             Expression::Input() => {
                 let tv_id = self.make_expression_type_var(function_id, instruction_id, expr, state);
@@ -560,7 +658,7 @@ impl TypeInferenceAnalyzer {
                 // Need ConstraintReason::InputSourceType
                 store.add_constraint(
                     Constraint::new(
-                        input_type.clone(),
+                        input_type,
                         Type::Char, // Assuming input is Char by default
                         function_id,
                         instruction_id,
@@ -568,12 +666,18 @@ impl TypeInferenceAnalyzer {
                     ),
                     state,
                 );
-                input_type
+                tv_id
             }
             Expression::DebugMarker(marker, inner_expr) => {
-                let expr_type =
-                    self.process_expression(inner_expr, function_id, instruction_id, state, store);
-                self.markers.insert(*marker, expr_type.clone());
+                let expr_type = self.process_expression(
+                    inner_expr,
+                    function_id,
+                    instruction_id,
+                    state,
+                    store,
+                    markers,
+                );
+                markers.insert(*marker, expr_type);
                 expr_type
             }
         }

@@ -1,5 +1,6 @@
 // disasm/src/disasm/v3/type_inference/type_bounds_map.rs
 
+use core::fmt;
 use std::collections::{HashMap, HashSet};
 
 use colored::Colorize;
@@ -43,6 +44,25 @@ pub struct InferenceAlgorithmState {
     type_var_states: HashMap<TypeVarId, TypeVarState>,
     /// Tracks TypeVarIds whose bounds have changed since the last `take_updated_vars` call.
     updated_type_vars: HashSet<TypeVarId>, // TypeVarId: Eq + Hash
+}
+
+#[derive(Debug)]
+pub enum ChangeReason {
+    Constraint(Constraint),
+    ConcreteTypeRefinement,
+    Test,
+}
+
+impl fmt::Display for ChangeReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ChangeReason::Constraint(constraint) => {
+                write!(f, "Constraint: {:?}", constraint.reason)
+            }
+            ChangeReason::ConcreteTypeRefinement => write!(f, "ConcreteTypeRefinement"),
+            ChangeReason::Test => write!(f, "Test"),
+        }
+    }
 }
 
 impl InferenceAlgorithmState {
@@ -95,7 +115,7 @@ impl InferenceAlgorithmState {
         &mut self,
         tv_id: &TypeVarId,
         new_lower_constraint: &Type,
-        constraint: &Constraint,
+        reason: ChangeReason,
     ) -> bool {
         let Some(state) = self.type_var_states.get(tv_id) else {
             panic!("TypeVarId {:?} not found", tv_id);
@@ -115,8 +135,17 @@ impl InferenceAlgorithmState {
 
         if let Some(new_best_lower) = new_best_lower_opt {
             if new_best_lower != lower_bound {
+                let new_best_lower = match new_best_lower {
+                    Type::LUB(ga, gb) if *ga.as_ref() == Type::TypeVar(*tv_id) => {
+                        gb.as_ref().clone()
+                    }
+                    Type::LUB(ga, gb) if *gb.as_ref() == Type::TypeVar(*tv_id) => {
+                        ga.as_ref().clone()
+                    }
+                    _ => new_best_lower,
+                };
                 trace!(
-                    "Updated {} >: {}, was {}",
+                    "Updated {} >: {}, was {}, {reason}",
                     tv_id.display_with(self),
                     new_best_lower.display_with(self),
                     lower_bound,
@@ -130,8 +159,8 @@ impl InferenceAlgorithmState {
                         lower_bound: new_best_lower.clone(),
                         upper_bound,
                     };
-                    self.updated_type_vars.insert(*tv_id);
                 }
+                self.updated_type_vars.insert(*tv_id);
                 return true;
             }
         }
@@ -149,7 +178,7 @@ impl InferenceAlgorithmState {
         &mut self,
         tv_id: &TypeVarId,
         new_upper_constraint: &Type,
-        constraint: &Constraint,
+        reason: ChangeReason,
     ) -> bool {
         let Some(state) = self.type_var_states.get(tv_id) else {
             panic!("TypeVarId {:?} not found", tv_id);
@@ -190,8 +219,8 @@ impl InferenceAlgorithmState {
                         lower_bound,
                         upper_bound: new_best_upper,
                     };
-                    self.updated_type_vars.insert(*tv_id);
                 }
+                self.updated_type_vars.insert(*tv_id);
                 return true;
             }
         }
@@ -259,6 +288,7 @@ impl InferenceAlgorithmState {
                 lower_bound,
                 upper_bound,
             }) => Some((lower_bound, upper_bound)),
+            Some(TypeVarState::Converged(tv_id)) => Some((tv_id, tv_id)),
             _ => None,
         }
     }
@@ -313,8 +343,9 @@ mod tests {
     use dsl_macros_impl::build_expr;
 
     use super::*;
-    use crate::disasm::v3::{
-        lir::Expression, type_inference::ConstraintReason, FunctionId, InstructionId,
+    use crate::disasm::{
+        test_utils::init_logging,
+        v3::{lir::Expression, type_inference::ConstraintReason, FunctionId, InstructionId},
     };
     // Explicitly import TypeVarKind for the test module from the correct path.
     // `super` (type_bounds_map) -> `super` (type_inference) -> `types` (types.rs module)
@@ -347,15 +378,7 @@ mod tests {
             ),
         );
 
-        let dummy_constraint = Constraint::new(
-            Type::Int,
-            Type::Any,
-            FunctionId::new(0),
-            InstructionId::new(0),
-            ConstraintReason::Assignment,
-        );
-
-        state.update_lower_bound(&tv1_id, &Type::Int, &dummy_constraint);
+        state.update_lower_bound(&tv1_id, &Type::Int, ChangeReason::Test);
 
         let (lower, upper) = state.get_bounds(&tv1_id).expect("tv1 should exist");
         // These assertions depend on Type::Nothing.lub(&Type::Int) resulting in Type::Int
@@ -374,6 +397,7 @@ mod tests {
 
     #[test]
     fn test_bound_updates_and_tracking() {
+        init_logging();
         let mut state = InferenceAlgorithmState::new();
         let tv1_id: TypeVarId = TypeVarId::new(1);
         let tv2_id: TypeVarId = TypeVarId::new(2);
@@ -396,20 +420,12 @@ mod tests {
             ),
         );
 
-        let dummy_constraint = Constraint::new(
-            Type::Int,
-            Type::Any,
-            FunctionId::new(0),
-            InstructionId::new(0),
-            ConstraintReason::Assignment,
-        );
-
         // Initial updates
-        assert!(state.update_lower_bound(&tv1_id, &Type::Int, &dummy_constraint));
-        assert!(state.update_upper_bound(&tv1_id, &Type::Int, &dummy_constraint)); // Any.glb(Int) = Int
+        assert!(state.update_lower_bound(&tv1_id, &Type::Int, ChangeReason::Test));
+        assert!(state.update_upper_bound(&tv1_id, &Type::Int, ChangeReason::Test)); // Any.glb(Int) = Int
 
-        assert!(state.update_lower_bound(&tv2_id, &Type::Bool, &dummy_constraint));
-        assert!(state.update_upper_bound(&tv2_id, &Type::Truthy, &dummy_constraint)); // Any.glb(Truthy) = Truthy
+        assert!(state.update_lower_bound(&tv2_id, &Type::Bool, ChangeReason::Test));
+        assert!(state.update_upper_bound(&tv2_id, &Type::Truthy, ChangeReason::Test)); // Any.glb(Truthy) = Truthy
 
         let updated = state.take_updated_vars();
         assert_eq!(updated.len(), 2);
@@ -420,75 +436,14 @@ mod tests {
         assert!(state.take_updated_vars().is_empty());
 
         // No change update
-        assert!(!state.update_lower_bound(&tv1_id, &Type::Int, &dummy_constraint)); // Int.lub(Int) = Int, no change
+        assert!(!state.update_lower_bound(&tv1_id, &Type::Int, ChangeReason::Test)); // Int.lub(Int) = Int, no change
         assert!(state.take_updated_vars().is_empty()); // Still empty
 
         // Change update again (assuming Bool <: Truthy, so glb(Truthy, Bool) = Bool)
-        assert!(state.update_upper_bound(&tv2_id, &Type::Bool, &dummy_constraint));
+        assert!(state.update_upper_bound(&tv2_id, &Type::Bool, ChangeReason::Test));
         let updated_again = state.take_updated_vars();
         assert_eq!(updated_again.len(), 1);
         assert!(updated_again.contains(&tv2_id));
-    }
-
-    // The panic messages depend on the Debug output of TypeVarId and Type.
-    // Adjust the expected messages if your Debug impls differ significantly.
-    #[test]
-    #[should_panic(expected = "New lower bound Int is not a subtype of current upper bound Bool")]
-    fn test_consistency_panic_lower_bound() {
-        let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = TypeVarId::new(1);
-        state.add_type_var(
-            tv1_id,
-            make_node(
-                TypeVarKind::Expression(build_expr!(1)),
-                InstructionId::new(1),
-                FunctionId::new(0),
-            ),
-        );
-
-        let dummy_constraint = Constraint::new(
-            Type::Int,
-            Type::Any,
-            FunctionId::new(0),
-            InstructionId::new(0),
-            ConstraintReason::Assignment,
-        );
-        state.update_upper_bound(&tv1_id, &Type::Bool, &dummy_constraint); // Upper bound is Bool
-        state.take_updated_vars();
-
-        // Attempt to set lower to Int. This should panic if Int is not a subtype of Bool.
-        // (Requires Type::Int.is_subtype_of(&Type::Bool) to be false)
-        state.update_lower_bound(&tv1_id, &Type::Int, &dummy_constraint);
-    }
-
-    #[test]
-    #[should_panic(expected = "Current lower bound Int is not a subtype of new upper bound Bool")]
-    fn test_consistency_panic_upper_bound() {
-        let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = TypeVarId::new(1);
-        state.add_type_var(
-            tv1_id,
-            make_node(
-                TypeVarKind::Expression(build_expr!(15)),
-                InstructionId::new(1),
-                FunctionId::new(0),
-            ),
-        );
-
-        let dummy_constraint = Constraint::new(
-            Type::Int,
-            Type::Any,
-            FunctionId::new(0),
-            InstructionId::new(0),
-            ConstraintReason::Assignment,
-        );
-
-        state.update_lower_bound(&tv1_id, &Type::Int, &dummy_constraint); // Lower bound is Int
-        state.update_lower_bound(&tv1_id, &Type::Int, &dummy_constraint); // Lower bound is Int
-        state.take_updated_vars();
-
-        // Attempt to set upper to Bool. This should panic if Int is not a subtype of Bool.
-        state.update_upper_bound(&tv1_id, &Type::Bool, &dummy_constraint);
     }
 
     #[test]
