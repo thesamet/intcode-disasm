@@ -6,7 +6,6 @@ use log::{debug, trace};
 
 use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
-use crate::disasm::v3::type_inference::analyzer::TypeInferenceAnalyzer;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
@@ -17,7 +16,8 @@ use super::constraints::UnclassifiedArithmeticExpression;
 use super::type_bounds_map::ChangeReason;
 use super::types::TypeVarId;
 use super::{
-    Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState, Type, TypeVarState,
+    generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
+    Type, TypeVarState,
 };
 
 /// Solver for type inference.
@@ -74,10 +74,9 @@ impl Solver {
     /// A `Result` containing the model with type inference complete, or an `Error`.
     fn solve(mut self) -> Result<Model<TypeInferenceComplete>, Error> {
         // 1. Initialize Analyzer, State, and Store
-        let mut analyzer = TypeInferenceAnalyzer::new();
         let mut markers = HashMap::new();
-
-        analyzer.generate_constraints(&self.model, &mut self.state, &mut self.store, &mut markers);
+        let mut analyzer =
+            generate_constraints(&self.model, &mut self.state, &mut self.store, &mut markers);
 
         //
         let mut iteration_count = 0;
