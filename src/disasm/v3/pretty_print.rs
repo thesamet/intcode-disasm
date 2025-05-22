@@ -248,6 +248,7 @@ fn format_signature<S: ModelState + 'static>(
     match_type!(function.model, {
         &Model<FunctionCallAnalysisComplete> as m => format_signature(m, function, ctx),
         &Model<FoldedSsaComplete> as m => format_signature(m, function, ctx),
+        &Model<TypeInferenceComplete> as m =>  format_signature(m, function, ctx),
         _ => "".to_string(),
     })
 }
