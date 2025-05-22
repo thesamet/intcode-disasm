@@ -415,15 +415,11 @@ impl TypeInferenceAnalyzer {
                         markers,
                     );
 
-                    let pointee_tv_id = self.make_expression_type_var(
-                        function_id,
-                        instruction_id,
-                        inner_ptr_expr.as_ref(),
-                        state,
-                    );
+                    let pointee_tv_id =
+                        self.make_expression_type_var(function_id, instruction_id, expr, state);
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
-                    store.add_constraint(
+                    store.add_equality_constraint(
                         Constraint::new(
                             Type::TypeVar(ptr_addr_type_var_id),
                             Type::Pointer(Box::new(pointee_type.clone())),

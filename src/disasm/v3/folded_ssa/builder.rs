@@ -91,9 +91,14 @@ impl FoldedSsaBuilder {
                     if let Instruction::Assign {
                         target: SsaMemoryReference::Versioned(mr),
                         src,
-                        ..
+                        target_debug_marker,
                     } = &instruction.kind
                     {
+                        let src = match target_debug_marker {
+                            Some(marker) => Expression::DebugMarker(*marker, Box::new(src.clone())),
+                            None => src.clone(),
+                        };
+
                         defs.insert(*mr, (*block_id, instruction.id, src.clone()));
                     };
                     for r in instruction
@@ -112,14 +117,12 @@ impl FoldedSsaBuilder {
             for (var, (var_def_block_id, var_def_instruction_id, expr)) in &defs {
                 if var.is_pointer() {
                     let r = reads.get(var).cloned().unwrap_or_default();
-                    println!("Reads for {var}: {r:?}");
                 }
                 let Some(&(use_block, use_instruction)) =
                     reads.get(var).and_then(|v| v.iter().exactly_one().ok())
                 else {
                     continue;
                 };
-                println!("Removing {var_def_instruction_id} from {var_def_block_id} to be replaced with {expr}");
 
                 current
                     .get_mut(var_def_block_id)
@@ -127,7 +130,6 @@ impl FoldedSsaBuilder {
                     .instructions
                     .retain(|i| i.id != *var_def_instruction_id);
 
-                println!("Looking for use block {use_block:?} and instruction {use_instruction:?} to update {var}");
                 let use_instruction = current
                     .get_mut(&use_block)
                     .unwrap()
@@ -172,20 +174,6 @@ impl FoldedSsaBuilder {
                         )),
                     }
                 }
-
-                /*
-                *use_instruction = use_instruction.flat_map_rw(
-                    &mut (),
-                    |_, x| {
-                        if x.as_versioned() == Some(var) {
-                            expr.clone()
-                        } else {
-                            Expression::Addressable(x.clone())
-                        }
-                    },
-                    |_, x| x.clone(),
-                );
-                */
 
                 *use_instruction = use_instruction.flat_map_rw(
                     &mut (),

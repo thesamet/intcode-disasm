@@ -46,9 +46,16 @@ pub enum ConstraintReason {
     AssignmentToDereferenceTarget, // `*ptr_expr = src` => type(ptr_expr) <: Pointer(type(src))
 
     // Arithmetic Operations (e.g. +, -, *)
-    ArithmeticLHS,    // `lhs + rhs` => type(lhs) <: Int
-    ArithmeticRHS,    // `lhs + rhs` => type(rhs) <: Int
-    ArithmeticResult, // `expr_result = lhs + rhs` => type(expr_result) <: Int
+    ArithmeticLHS,                 // `lhs + rhs` => type(lhs) <: Int
+    ArithmeticRHS,                 // `lhs + rhs` => type(rhs) <: Int
+    ArithmeticResult,              // `expr_result = lhs + rhs` => type(expr_result) <: Int
+    ArithmeticOp1IntOrOp2Int,      // Operation with either operand being an integer
+    ArithmeticOp1Pointer,          // Operation with first operand being a pointer
+    ArithmeticOp2Pointer,          // Operation with second operand being a pointer
+    ArithmeticResultCharOrInt,     // Arithmetic result is either a char or an integer
+    ArithmeticResultOp1IntOp2Int,  // Arithmetic result of int and int
+    ArithmeticResultPointerOp1Int, // Arithmetic result of pointer and int
+    ArithmeticResultPointerOp2Int, // Arithmetic result of pointer and int
 
     // Comparison Operations (e.g. <, ==) - often operands are Ints, result is Bool
     ComparisonLHS,    // `lhs < rhs` => type(lhs) <: Int (or other comparable type)

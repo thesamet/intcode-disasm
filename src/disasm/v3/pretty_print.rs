@@ -6,7 +6,9 @@ use itertools::Itertools;
 
 use crate::derive_display;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
-use crate::disasm::v3::model::{FoldedSsaComplete, HasFunctionCallAnalysisResult};
+use crate::disasm::v3::model::{
+    FoldedSsaComplete, HasFunctionCallAnalysisResult, TypeInferenceComplete,
+};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
     common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
@@ -50,7 +52,8 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
                 let debug_marker = match target_debug_marker {
                     Some(marker) => {
                         format!(
-                            "{} ",
+                            "{}{} ",
+                            ctx.format("'", SemanticColor::LowPrio),
                             ctx.format(marker.to_string(), SemanticColor::LowPrio)
                         )
                     }
@@ -335,6 +338,12 @@ where
     S: HasSsaResult,
 {
     castaway::match_type!(block.model, {
+        &Model<TypeInferenceComplete> as m =>
+            &m
+                .function(&block.containing_function_id())
+                .block(&block.block_id())
+                .folded_ssa()
+                .instructions,
         &Model<FoldedSsaComplete> as m =>
             &m
                 .function(&block.containing_function_id())
@@ -471,10 +480,10 @@ impl ContextualPrettyPrint for MemoryReference {
                 // Format pointers as [P{addr}]
                 format!(
                     "{}{}{}{}",
-                    ctx.fmt_open_bracket(),  // Helper for '['
+                    ctx.fmt_open_bracket(),                   // Helper for '['
                     ctx.format("P", SemanticColor::Variable), // Format 'P'
-                    ctx.format(addr.index(), SemanticColor::Variable),  // Format the address
-                    ctx.fmt_close_bracket()  // Helper for ']'
+                    ctx.format(addr.index(), SemanticColor::Variable), // Format the address
+                    ctx.fmt_close_bracket()                   // Helper for ']'
                 )
             }
             MemoryReference::Deref(expr) => {

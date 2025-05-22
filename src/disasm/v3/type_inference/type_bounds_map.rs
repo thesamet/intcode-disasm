@@ -17,13 +17,48 @@ use super::{
 
 /// Holds the data associated with a single TypeVarId.
 /// It includes the TypeVarNode information and its current best bounds.
-#[derive(Clone, Debug)] // Requires Type and TypeVarNode to be Clone and Debug
+#[derive(Clone, Debug, PartialEq, Eq)] // Requires Type and TypeVarNode to be Clone and Debug
 pub enum TypeVarState {
     Bounds {
         lower_bound: Type,
         upper_bound: Type,
     },
     Converged(Type),
+}
+
+impl TypeVarState {
+    pub fn display_with<'a, F>(&'a self, registry: &'a F) -> DisplayableTypeVarState<'a, F> {
+        DisplayableTypeVarState {
+            state: self,
+            registry,
+        }
+    }
+}
+
+pub struct DisplayableTypeVarState<'a, F> {
+    state: &'a TypeVarState,
+    registry: &'a F,
+}
+
+impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableTypeVarState<'a, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.state {
+            TypeVarState::Bounds {
+                lower_bound,
+                upper_bound,
+            } => {
+                write!(
+                    f,
+                    "[{}, {}]",
+                    lower_bound.display_with(self.registry),
+                    upper_bound.display_with(self.registry)
+                )
+            }
+            TypeVarState::Converged(typ) => {
+                write!(f, "{}", typ.display_with(self.registry))
+            }
+        }
+    }
 }
 
 pub trait TypeVarRegistry {
@@ -44,13 +79,50 @@ pub struct InferenceAlgorithmState {
     type_var_states: HashMap<TypeVarId, TypeVarState>,
     /// Tracks TypeVarIds whose bounds have changed since the last `take_updated_vars` call.
     updated_type_vars: HashSet<TypeVarId>, // TypeVarId: Eq + Hash
+    pub change_log: Vec<ChangeLogEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ChangeReason {
     Constraint(Constraint),
     ConcreteTypeRefinement,
+    ConvergenceOf(TypeVarId),
     Test,
+}
+
+pub struct DisplayableChangeReason<'a, F> {
+    reason: &'a ChangeReason,
+    registry: &'a F,
+}
+
+impl<'a> ChangeReason {
+    pub fn display_with<F>(&'a self, registry: &'a F) -> DisplayableChangeReason<'a, F> {
+        DisplayableChangeReason {
+            reason: self,
+            registry,
+        }
+    }
+}
+
+impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableChangeReason<'a, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.reason {
+            ChangeReason::Constraint(constraint) => {
+                write!(f, "Constraint: {}", constraint.display_with(self.registry))
+            }
+            ChangeReason::ConcreteTypeRefinement => write!(f, "ConcreteTypeRefinement"),
+            ChangeReason::ConvergenceOf(tv_id) => {
+                write!(f, "ConvergenceOf({})", tv_id.display_with(self.registry))
+            }
+            ChangeReason::Test => write!(f, "Test"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BoundDirection {
+    Lower,
+    Upper,
 }
 
 impl fmt::Display for ChangeReason {
@@ -59,18 +131,123 @@ impl fmt::Display for ChangeReason {
             ChangeReason::Constraint(constraint) => {
                 write!(f, "Constraint: {:?}", constraint.reason)
             }
+            ChangeReason::ConvergenceOf(id) => {
+                write!(f, "ConvergenceOf({})", id)
+            }
             ChangeReason::ConcreteTypeRefinement => write!(f, "ConcreteTypeRefinement"),
             ChangeReason::Test => write!(f, "Test"),
         }
     }
 }
 
+pub struct ChangeLogEntry {
+    pub tv_id: TypeVarId,
+    pub state: TypeVarState,
+    pub reason: ChangeReason,
+}
+
 impl InferenceAlgorithmState {
+    fn update_bound_internal(
+        &mut self,
+        tv_id: &TypeVarId,
+        new_bound: &Type,
+        direction: BoundDirection,
+        reason: ChangeReason,
+    ) -> bool {
+        let Some(state) = self.type_var_states.get(tv_id) else {
+            panic!("TypeVarId {:?} not found", tv_id);
+        };
+        let TypeVarState::Bounds {
+            lower_bound: initial_lower_bound_in_state, // From state, potentially unresolved
+            upper_bound: initial_upper_bound_in_state, // From state, potentially unresolved
+        } = state
+        else {
+            return false; // Already converged or not in Bounds state
+        };
+
+        // Resolve current bounds from the state once at the beginning
+        let resolved_current_lower_bound = self.resolve_type(initial_lower_bound_in_state);
+        let resolved_current_upper_bound = self.resolve_type(initial_upper_bound_in_state);
+        // We resolve the bound here (even if it's been resolved by the caller, since the value of resolve_type)
+        // might change during applicatino of a constraint.
+        let new_bound = self.resolve_type(new_bound);
+
+        // Determine which bound is being updated and what its current effective (resolved) value is,
+        // and what the other effective (resolved) bound is.
+        // Also, calculate the new potential bound using LUB for lower or GLB for upper.
+        let (mut new_lower_bound, mut new_upper_bound) = match direction {
+            BoundDirection::Lower => {
+                let new_val = Type::lub(&resolved_current_lower_bound, &new_bound);
+                let new_val = new_val.remove_references_from_glb_lub(tv_id);
+                (new_val, resolved_current_upper_bound.clone())
+            }
+            BoundDirection::Upper => {
+                let new_val = Type::glb(&resolved_current_upper_bound, &new_bound)
+                    .remove_references_from_glb_lub(tv_id);
+                (resolved_current_lower_bound.clone(), new_val)
+            }
+        };
+
+        // Prevent type point to itself.
+        if new_upper_bound == tv_id.to_type() {
+            new_upper_bound = resolved_current_upper_bound;
+        }
+        if new_lower_bound == tv_id.to_type() {
+            new_lower_bound = resolved_current_lower_bound;
+        }
+
+        if new_lower_bound == new_upper_bound && new_lower_bound != tv_id.to_type() {
+            self.handle_convergence(tv_id, new_lower_bound.clone(), &reason);
+            self.updated_type_vars.insert(*tv_id);
+            return true;
+        } else {
+            let mut changed = false;
+            if new_lower_bound != *initial_lower_bound_in_state {
+                trace!(
+                    "Updated {} >: {}, was {}, reason: {}",
+                    tv_id.display_with(self),
+                    new_lower_bound.display_with(self),
+                    initial_lower_bound_in_state.display_with(self),
+                    reason
+                );
+                self.updated_type_vars.insert(*tv_id);
+                changed = true;
+            }
+            if new_upper_bound != *initial_upper_bound_in_state {
+                trace!(
+                    "Updated {} <: {}, was {}, reason: {}",
+                    tv_id.display_with(self),
+                    new_upper_bound.display_with(self),
+                    initial_upper_bound_in_state.display_with(self),
+                    reason
+                );
+                self.updated_type_vars.insert(*tv_id);
+                changed = true;
+            }
+            if changed {
+                let state_to_update = self.type_var_states.get_mut(tv_id).unwrap();
+                *state_to_update = TypeVarState::Bounds {
+                    lower_bound: new_lower_bound,
+                    upper_bound: new_upper_bound,
+                };
+                self.change_log.push(ChangeLogEntry {
+                    tv_id: *tv_id,
+                    state: state_to_update.clone(),
+                    reason,
+                });
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn new() -> Self {
         InferenceAlgorithmState {
             type_var_states: HashMap::new(),
             type_var_nodes: HashMap::new(),
             updated_type_vars: HashSet::new(),
+            change_log: Vec::new(),
         }
     }
 
@@ -117,54 +294,7 @@ impl InferenceAlgorithmState {
         new_lower_constraint: &Type,
         reason: ChangeReason,
     ) -> bool {
-        let Some(state) = self.type_var_states.get(tv_id) else {
-            panic!("TypeVarId {:?} not found", tv_id);
-        };
-        let TypeVarState::Bounds {
-            lower_bound,
-            upper_bound,
-        } = state
-        else {
-            return false;
-        };
-
-        let upper_bound = self.resolve_type(upper_bound);
-        let lower_bound = self.resolve_type(lower_bound);
-        // The new best lower bound is the lub of the current one and the new constraint.
-        let new_best_lower_opt = Type::lub(&lower_bound, new_lower_constraint);
-
-        if let Some(new_best_lower) = new_best_lower_opt {
-            if new_best_lower != lower_bound {
-                let new_best_lower = match new_best_lower {
-                    Type::LUB(ga, gb) if *ga.as_ref() == Type::TypeVar(*tv_id) => {
-                        gb.as_ref().clone()
-                    }
-                    Type::LUB(ga, gb) if *gb.as_ref() == Type::TypeVar(*tv_id) => {
-                        ga.as_ref().clone()
-                    }
-                    _ => new_best_lower,
-                };
-                trace!(
-                    "Updated {} >: {}, was {}, {reason}",
-                    tv_id.display_with(self),
-                    new_best_lower.display_with(self),
-                    lower_bound,
-                );
-                if new_best_lower == upper_bound {
-                    self.handle_convergence(tv_id, new_best_lower);
-                } else {
-                    let upper_bound = upper_bound.clone();
-                    let state = self.type_var_states.get_mut(&tv_id).unwrap();
-                    *state = TypeVarState::Bounds {
-                        lower_bound: new_best_lower.clone(),
-                        upper_bound,
-                    };
-                }
-                self.updated_type_vars.insert(*tv_id);
-                return true;
-            }
-        }
-        false
+        self.update_bound_internal(tv_id, new_lower_constraint, BoundDirection::Lower, reason)
     }
 
     /// Updates the upper bound for a given TypeVarId.
@@ -180,54 +310,15 @@ impl InferenceAlgorithmState {
         new_upper_constraint: &Type,
         reason: ChangeReason,
     ) -> bool {
-        let Some(state) = self.type_var_states.get(tv_id) else {
-            panic!("TypeVarId {:?} not found", tv_id);
-        };
-        let TypeVarState::Bounds {
-            lower_bound,
-            upper_bound,
-        } = state
-        else {
-            return false;
-        };
-
-        let upper_bound = self.resolve_type(upper_bound);
-        let lower_bound = self.resolve_type(lower_bound);
-
-        // The new best upper bound is the glb of the current one and the new constraint.
-        let new_best_upper_opt = Type::glb(&upper_bound, new_upper_constraint);
-
-        if let Some(new_best_upper) = new_best_upper_opt {
-            let new_best_upper = match new_best_upper {
-                Type::GLB(ga, gb) if *ga.as_ref() == Type::TypeVar(*tv_id) => gb.as_ref().clone(),
-                Type::GLB(ga, gb) if *gb.as_ref() == Type::TypeVar(*tv_id) => ga.as_ref().clone(),
-                _ => new_best_upper,
-            };
-            if new_best_upper != upper_bound {
-                trace!(
-                    "Updated {} <: {}, was {}",
-                    tv_id.display_with(self),
-                    new_best_upper.display_with(self),
-                    upper_bound.display_with(self),
-                );
-                if new_best_upper == lower_bound {
-                    self.handle_convergence(tv_id, new_best_upper);
-                } else {
-                    let lower_bound = lower_bound.clone();
-                    let state = self.type_var_states.get_mut(&tv_id).unwrap();
-                    *state = TypeVarState::Bounds {
-                        lower_bound,
-                        upper_bound: new_best_upper,
-                    };
-                }
-                self.updated_type_vars.insert(*tv_id);
-                return true;
-            }
-        }
-        false
+        self.update_bound_internal(tv_id, new_upper_constraint, BoundDirection::Upper, reason)
     }
 
-    pub fn handle_convergence(&mut self, tv_id: &TypeVarId, new_value: Type) {
+    pub fn handle_convergence(
+        &mut self,
+        tv_id: &TypeVarId,
+        new_value: Type,
+        reason: &ChangeReason,
+    ) {
         let state = self.type_var_states.remove(tv_id).unwrap();
         let TypeVarState::Bounds {
             lower_bound,
@@ -244,13 +335,19 @@ impl InferenceAlgorithmState {
             );
         }
         let msg = format!(
-            "CONVERGENCE: {} == {}",
+            "CONVERGENCE: {} ==> {}    Reason: {}",
             tv_id.display_with(self),
-            new_value.display_with(self)
+            new_value.display_with(self),
+            reason.display_with(self)
         );
         trace!("{}", msg.green());
         self.type_var_states
             .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
+        self.change_log.push(ChangeLogEntry {
+            tv_id: *tv_id,
+            state: TypeVarState::Converged(new_value.clone()),
+            reason: ChangeReason::ConvergenceOf(*tv_id),
+        });
         let mut tvs = HashMap::new();
         for (id, state) in self.type_var_states.iter() {
             match state {
@@ -267,9 +364,23 @@ impl InferenceAlgorithmState {
                             upper_bound,
                         },
                     );
+                    if tvs[id] != self.type_var_states[id] {
+                        self.change_log.push(ChangeLogEntry {
+                            tv_id: *id,
+                            state: tvs[id].clone(),
+                            reason: ChangeReason::ConvergenceOf(*tv_id),
+                        });
+                    }
                 }
                 TypeVarState::Converged(t) => {
                     tvs.insert(*id, TypeVarState::Converged(self.resolve_type(t)));
+                    if tvs[id] != self.type_var_states[id] {
+                        self.change_log.push(ChangeLogEntry {
+                            tv_id: *id,
+                            state: tvs[id].clone(),
+                            reason: ChangeReason::ConvergenceOf(*tv_id),
+                        });
+                    }
                 }
             }
         }

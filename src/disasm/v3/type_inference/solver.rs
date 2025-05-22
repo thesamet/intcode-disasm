@@ -1,6 +1,8 @@
 //! Type inference solver implementation.
 
+use colored::Colorize;
 use itertools::Itertools;
+use log::{debug, trace};
 
 use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
@@ -77,14 +79,12 @@ impl Solver {
 
         analyzer.generate_constraints(&self.model, &mut self.state, &mut self.store, &mut markers);
 
-        let initial_constraints: VecDeque<Constraint> = self.store.iter().cloned().collect();
         //
         let mut iteration_count = 0;
         loop {
-            let mut worklist: VecDeque<Constraint> =
-                initial_constraints.clone().into_iter().collect();
+            let mut worklist: VecDeque<Constraint> = self.store.iter().cloned().collect();
             iteration_count += 1;
-            if iteration_count == 10 {
+            if iteration_count >= 30 {
                 panic!("Too many iterations");
             }
 
@@ -107,9 +107,9 @@ impl Solver {
             }
             changed |= !to_remove.is_empty();
 
-            for expr in to_remove {
-                self.store.remove_unclassified_add_expressions(&expr);
-            }
+            // for expr in to_remove {
+            //     self.store.remove_unclassified_add_expressions(&expr);
+            // }
             if !changed {
                 changed |= self.refine_concrete_types();
             }
@@ -131,6 +131,14 @@ impl Solver {
             .map(|(id, state)| (*id, state.clone()))
             .collect();
         result.debug_markers = markers;
+        for entry in self.state.change_log.iter() {
+            debug!(
+                "{}: updated to {}  reason: {}",
+                entry.tv_id.display_with(&self.state),
+                entry.state.display_with(&self.state),
+                entry.reason.display_with(&self.state)
+            );
+        }
 
         // 9. Finalize the result and embed it into a new model state.
         Ok(self.model.with_type_inference_result(result))
@@ -143,16 +151,26 @@ impl Solver {
         if let Type::TypeVar(tv_id) = &sub_type {
             changed |= self.state.update_upper_bound(
                 tv_id,
-                &super_type,
+                &constraint.super_type,
                 ChangeReason::Constraint(constraint.clone()),
             );
         }
         if let Type::TypeVar(tv_id) = &super_type {
             changed |= self.state.update_lower_bound(
                 tv_id,
-                &sub_type,
+                &constraint.sub_type,
                 ChangeReason::Constraint(constraint.clone()),
             );
+        }
+        match (&sub_type, &super_type) {
+            (Type::TypeVar(tv_id), Type::TypeVar(tv_id2)) if tv_id == tv_id2 => {
+                changed |= self.state.update_lower_bound(
+                    tv_id,
+                    &sub_type,
+                    ChangeReason::Constraint(constraint.clone()),
+                );
+            }
+            _ => {}
         }
         changed
     }
@@ -177,9 +195,20 @@ impl Solver {
         let Type::TypeVar(res_type_var) = unclassified.result_type else {
             panic!("Expected TypeVar for result type");
         };
-        let (op1_lower, op1_upper) = self.state.get_bounds(&op1_type_var).unwrap();
-        let (op2_lower, op2_upper) = self.state.get_bounds(&op2_type_var).unwrap();
-        let (res_lower, res_upper) = self.state.get_bounds(&res_type_var).unwrap();
+        let (op1_lower_unresolved, op1_upper_unresolved) =
+            self.state.get_bounds(&op1_type_var).unwrap();
+        let (op2_lower_unresolved, op2_upper_unresolved) =
+            self.state.get_bounds(&op2_type_var).unwrap();
+        let (res_lower_unresolved, res_upper_unresolved) =
+            self.state.get_bounds(&res_type_var).unwrap();
+
+        let op1_lower = self.state.resolve_type(&op1_lower_unresolved);
+        let op1_upper = self.state.resolve_type(&op1_upper_unresolved);
+        let op2_lower = self.state.resolve_type(&op2_lower_unresolved);
+        let op2_upper = self.state.resolve_type(&op2_upper_unresolved);
+        let res_lower = self.state.resolve_type(&res_lower_unresolved);
+        let res_upper = self.state.resolve_type(&res_upper_unresolved);
+
         let is_op1_int = matches!(op1_lower, Type::Int);
         let is_op2_int = matches!(op2_lower, Type::Int);
         let is_result_int = matches!(res_lower, Type::Int);
@@ -187,24 +216,102 @@ impl Solver {
         let is_op2_pointer = matches!(op2_upper, Type::Pointer(_));
         let is_result_pointer = matches!(res_upper, Type::Pointer(_));
         let is_result_char = matches!(res_lower, Type::Char);
-        if is_op1_int && is_op2_int {
-            self.store.add_constraint(
+        let mut changed = false;
+
+        let mut add_constraint = |sub_type: Type, super_type: Type, reason: ConstraintReason| {
+            let (_, is_new) = self.store.add_constraint(
                 Constraint::new(
-                    unclassified.result_type.clone(),
-                    Type::Int,
+                    sub_type,
+                    super_type,
                     FunctionId::new(0),
                     InstructionId::new(0),
-                    ConstraintReason::ArithmeticResult,
+                    reason,
                 ),
                 &self.state,
             );
-            // Both operands are ints, result is int
-            return true;
+            changed |= is_new;
+        };
+
+        if is_op1_int && is_op2_int {
+            add_constraint(
+                unclassified.result_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticResultOp1IntOp2Int,
+            );
         }
-        false
+        if is_result_char || is_result_int {
+            add_constraint(
+                unclassified.lhs_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticResultCharOrInt,
+            );
+            add_constraint(
+                unclassified.rhs_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticResultCharOrInt,
+            );
+        }
+        if is_op1_pointer {
+            add_constraint(
+                unclassified.rhs_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticOp1Pointer,
+            );
+            add_constraint(
+                unclassified.lhs_type.clone(),
+                unclassified.result_type.clone(),
+                ConstraintReason::ArithmeticOp1Pointer,
+            );
+            add_constraint(
+                unclassified.result_type.clone(),
+                unclassified.lhs_type.clone(),
+                ConstraintReason::ArithmeticOp1Pointer,
+            );
+        }
+        if is_op2_pointer {
+            add_constraint(
+                unclassified.lhs_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticOp2Pointer,
+            );
+            add_constraint(
+                unclassified.rhs_type.clone(),
+                unclassified.result_type.clone(),
+                ConstraintReason::ArithmeticOp2Pointer,
+            );
+            add_constraint(
+                unclassified.result_type.clone(),
+                unclassified.rhs_type.clone(),
+                ConstraintReason::ArithmeticOp2Pointer,
+            );
+        }
+        if is_result_pointer && is_op1_int {
+            add_constraint(
+                unclassified.rhs_type.clone(),
+                unclassified.result_type.clone(),
+                ConstraintReason::ArithmeticResultPointerOp1Int,
+            );
+        }
+        if is_result_pointer && is_op2_int {
+            add_constraint(
+                unclassified.lhs_type.clone(),
+                unclassified.result_type.clone(),
+                ConstraintReason::ArithmeticResultPointerOp2Int,
+            );
+        }
+        if is_op1_int || is_op2_int {
+            add_constraint(
+                unclassified.result_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticOp1IntOrOp2Int,
+            );
+        }
+
+        changed
     }
 
     fn refine_concrete_types(&mut self) -> bool {
+        trace!("{}", "Refining concrete types".red());
         let type_states: Vec<(TypeVarId, TypeVarState)> = self
             .state
             .iter_all_type_states()

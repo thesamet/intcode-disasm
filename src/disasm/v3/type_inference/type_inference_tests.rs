@@ -434,7 +434,6 @@ f1:
         assert_marker_is_function_pointer!(ctx, 'a');
     }
 
-    #[ignore]
     #[test]
     fn test_link_function_return_type_single() {
         // This test also happens to use the same constant (65) for multiple variables
@@ -473,7 +472,6 @@ f1:
         assert_marker_type!(ctx, 'f', Type::Bool);
     }
 
-    #[ignore]
     #[test]
     fn test_reconcile_truthy_with_pointer_across_functions() {
         let ctx = TypeInferenceComplete::test_context(
@@ -512,7 +510,6 @@ f1:
         // [R+1] <: Truthy
     }
 
-    #[ignore]
     #[test]
     fn test_signatures_for_indirect_calls() {
         let ctx = TypeInferenceComplete::test_context(
@@ -585,7 +582,6 @@ f1:
         assert_marker_type!(ctx, 'm', Type::Int);
     }
 
-    #[ignore]
     #[test]
     fn test_function_pointers_different_args() {
         let ctx = TypeInferenceComplete::test_context(
@@ -667,7 +663,6 @@ f1:
         assert_marker_type!(ctx, 'q', Type::pointer(Type::Char));
     }
 
-    #[ignore]
     #[test]
     fn test_pointer_arithmetic_case2() {
         let ctx = TypeInferenceComplete::test_context(
@@ -698,7 +693,6 @@ f1:
         assert_marker_type!(ctx, 'r', Type::pointer(Type::Char));
     }
 
-    #[ignore]
     #[test]
     fn test_pointer_arithmetic_case3() {
         let ctx = TypeInferenceComplete::test_context(
@@ -766,7 +760,6 @@ f1:
         assert_marker_type!(ctx, 'o', Type::Char);
     }
 
-    #[ignore]
     #[test]
     fn test_pointer_arithmetic_case5() {
         let ctx = TypeInferenceComplete::test_context(
@@ -807,7 +800,6 @@ f1:
         assert_marker_type!(ctx, 'p', Type::Char); // Dereferenced result
     }
 
-    #[ignore]
     #[test]
     fn test_pointer_arithmetic_case6() {
         let ctx = TypeInferenceComplete::test_context(
@@ -876,7 +868,6 @@ f1:
         assert_marker_type!(ctx, 'd', Type::Int);
     }
 
-    #[ignore]
     #[test]
     fn test_infers_func_types_based_on_main_usage() {
         let assembly = r#"

@@ -72,12 +72,23 @@ pub enum Type {
     /// Any type (top of the lattice, supertype of all types)
     Any,
 
-    /// Symbolic representation of the Greatest Lower Bound of two types.
-    GLB(Box<Type>, Box<Type>),
-    /// Symbolic representation of the Least Upper Bound of two types.
-    LUB(Box<Type>, Box<Type>),
+    /// Symbolic representation of the Greatest Lower Bound of other types.
+    GLB(Vec<Type>),
+    /// Symbolic representation of the Least Upper Bound of other types.
+    LUB(Vec<Type>),
 }
 
+enum YesNoMaybe {
+    Yes,
+    No,
+    Maybe,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CanonicalFormOperation {
+    GLB,
+    LUB,
+}
 impl Type {
     pub fn is_concrete_type(&self) -> bool {
         match self {
@@ -88,8 +99,8 @@ impl Type {
                 params.is_concrete_type() && returns.is_concrete_type()
             }
             Type::Tuple(elements) => elements.iter().all(|e| e.is_concrete_type()),
-            Type::GLB(t1, t2) => t1.is_concrete_type() && t2.is_concrete_type(),
-            Type::LUB(t1, t2) => t1.is_concrete_type() && t2.is_concrete_type(),
+            Type::GLB(types) => types.iter().all(|t| t.is_concrete_type()),
+            Type::LUB(types) => types.iter().all(|t| t.is_concrete_type()),
             Type::TypeVar(_) => false,
         }
     }
@@ -147,10 +158,10 @@ impl Type {
                         .enumerate()
                         .all(|(i, t2_elem)| v1[i].is_subtype_of(t2_elem))
             }
-
-            (_, Type::GLB(ga, gb)) => self.is_subtype_of(ga) && self.is_subtype_of(gb),
-            (_, Type::LUB(la, lb)) => self.is_subtype_of(la) || self.is_subtype_of(lb),
-
+            (_, Type::GLB(types)) => types.iter().all(|t| self.is_subtype_of(t)),
+            (Type::GLB(types), _) => types.iter().any(|t| t.is_subtype_of(other)), // this condition is sufficient but not necessary: other could be a type between glb and ga, or between glb and gb.
+            (Type::LUB(types), _) => types.iter().all(|t| t.is_subtype_of(other)),
+            (_, Type::LUB(types)) => types.iter().any(|t| self.is_subtype_of(t)), // this condition is sufficient but not necessary: other could be a type between la and ga, or between la and glb.
             (Type::TypeVar(_), _) => false,
             (_, Type::TypeVar(_)) => false,
 
@@ -172,12 +183,8 @@ impl Type {
                 params: Box::new(params.map(var_mapper)),
                 returns: Box::new(returns.map(var_mapper)),
             },
-            Type::GLB(t1, t2) => {
-                Type::GLB(Box::new(t1.map(var_mapper)), Box::new(t2.map(var_mapper)))
-            }
-            Type::LUB(t1, t2) => {
-                Type::LUB(Box::new(t1.map(var_mapper)), Box::new(t2.map(var_mapper)))
-            }
+            Type::GLB(types) => Type::GLB(types.iter().map(|t| t.map(var_mapper)).collect()),
+            Type::LUB(types) => Type::LUB(types.iter().map(|t| t.map(var_mapper)).collect()),
             Type::Nothing => Type::Nothing,
             Type::Int => Type::Int,
             Type::Bool => Type::Bool,
@@ -188,26 +195,49 @@ impl Type {
         }
     }
 
-    pub fn glb(t1: &Type, t2: &Type) -> Option<Type> {
+    /// Computes the greatest lower bound (GLB) of two types, returning a canonical form.
+    /// Assumes Type::GLB is `GLB(Vec<Type>)`.
+    pub fn glb(t1: &Type, t2: &Type) -> Type {
+        // Shortcut: if one is a subtype of the other
         if t1.is_subtype_of(t2) {
-            return Some(t1.clone());
+            // Return t1, but ensure it's canonical if it's already a GLB/LUB
+            return Self::_form_canonical_compound_type(
+                vec![t1.clone()],
+                CanonicalFormOperation::GLB,
+            );
         }
         if t2.is_subtype_of(t1) {
-            return Some(t2.clone());
+            return Self::_form_canonical_compound_type(
+                vec![t2.clone()],
+                CanonicalFormOperation::GLB,
+            );
         }
 
+        // Handle Nothing and Any
         if *t1 == Type::Nothing || *t2 == Type::Nothing {
-            return Some(Type::Nothing);
+            return Type::Nothing;
+        }
+        if *t1 == Type::Any {
+            return Self::_form_canonical_compound_type(
+                vec![t2.clone()],
+                CanonicalFormOperation::GLB,
+            );
+        }
+        if *t2 == Type::Any {
+            return Self::_form_canonical_compound_type(
+                vec![t1.clone()],
+                CanonicalFormOperation::GLB,
+            );
         }
 
+        // Structural rules
         match (t1, t2) {
-            (Type::Pointer(_), Type::Bool) => None,
-            (Type::Bool, Type::Pointer(_)) => None,
-
-            (Type::Char, Type::Bool) | (Type::Bool, Type::Char) => Some(Type::Nothing),
-
             (Type::Pointer(p1), Type::Pointer(p2)) => {
-                Type::glb(p1, p2).map(|t| Type::Pointer(Box::new(t)))
+                let inner_glb = Self::glb(p1.as_ref(), p2.as_ref());
+                if inner_glb == Type::Nothing {
+                    return Type::Nothing; // Pointer to Nothing is ill-formed or effectively Nothing itself.
+                }
+                return Type::Pointer(Box::new(inner_glb));
             }
             (
                 Type::Function {
@@ -218,54 +248,181 @@ impl Type {
                     params: params2,
                     returns: returns2,
                 },
-            ) => match (Type::lub(params1, params2), Type::glb(returns1, returns2)) {
-                (Some(p_lub), Some(r_glb)) => Some(Type::Function {
-                    params: Box::new(p_lub),
-                    returns: Box::new(r_glb),
-                }),
-                _ => None,
-            },
+            ) => {
+                // Parameters are contravariant (LUB), returns are covariant (GLB)
+                let lub_params = Self::lub(params1.as_ref(), params2.as_ref());
+                let glb_returns = Self::glb(returns1.as_ref(), returns2.as_ref());
+
+                if lub_params == Type::Any || glb_returns == Type::Nothing {
+                    // Or other conditions for "impossible function"
+                    return Type::Nothing; // This function signature is impossible
+                }
+                return Type::Function {
+                    params: Box::new(lub_params),
+                    returns: Box::new(glb_returns),
+                };
+            }
             (Type::Tuple(v1), Type::Tuple(v2)) => {
                 let len1 = v1.len();
                 let len2 = v2.len();
-                let min_len = std::cmp::min(len1, len2);
-                let max_len = std::cmp::max(len1, len2);
+                let max_len = std::cmp::max(len1, len2); // GLB of tuples can extend
                 let mut res_vec = Vec::with_capacity(max_len);
-                let mut possible = true;
-                for i in 0..min_len {
-                    match Type::glb(&v1[i], &v2[i]) {
-                        Some(t) => res_vec.push(t),
-                        None => {
-                            possible = false;
-                            break;
+                for i in 0..max_len {
+                    match (v1.get(i), v2.get(i)) {
+                        (Some(e1), Some(e2)) => {
+                            let elem_glb = Self::glb(e1, e2);
+                            if elem_glb == Type::Nothing
+                                && !(e1.is_subtype_of(e2) || e2.is_subtype_of(e1))
+                            {
+                                // If elements are incompatible, resulting tuple is ill-formed.
+                                return Type::Nothing;
+                            }
+                            res_vec.push(elem_glb);
                         }
+                        (Some(e1), None) => res_vec.push(e1.clone()), // Element from longer tuple
+                        (None, Some(e2)) => res_vec.push(e2.clone()), // Element from longer tuple
+                        (None, None) => unreachable!(),               // Max_len ensures one is Some
                     }
                 }
-                if !possible {
-                    return None;
-                }
+                return Type::Tuple(res_vec);
+            }
+            // Cases for fundamentally incompatible concrete types that are not covered by subtyping
+            // For example, Bool and Pointer(X)
+            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => {
+                return Type::Nothing
+            }
+            (Type::Char, Type::Pointer(_)) | (Type::Pointer(_), Type::Char) => {
+                return Type::Nothing
+            } // Assuming Char GLB Pointer is Nothing
+            (Type::Int, Type::Pointer(_)) | (Type::Pointer(_), Type::Int) => {
+                // If int can be a pointer address, this might be Pointer, otherwise Nothing
+                // For now, let's assume they are incompatible for a simple GLB
+                return Type::Nothing;
+            }
+            (Type::Bool, Type::Function { .. }) | (Type::Function { .. }, Type::Bool) => {
+                return Type::Nothing
+            }
+            // Add more known disjoint pairs if necessary...
 
-                if len1 > len2 {
-                    res_vec.extend(v1[min_len..].iter().cloned());
-                } else if len2 > len1 {
-                    res_vec.extend(v2[min_len..].iter().cloned());
-                }
-                Some(Type::Tuple(res_vec))
-            }
-            (Type::GLB(ga, gb), _) if **ga == *t2 || **gb == *t2 => {
-                Some(Type::GLB(ga.clone(), gb.clone()))
-            }
-            (_, Type::GLB(ga, gb)) if **ga == *t1 || **gb == *t1 => {
-                Some(Type::GLB(ga.clone(), gb.clone()))
-            }
-            (_, Type::TypeVar(_)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
-            (Type::TypeVar(_), _) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
-            (Type::GLB(_, _), _) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
-            (_, Type::GLB(_, _)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
-            (Type::LUB(_, _), _) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
-            (_, Type::LUB(_, _)) => Some(Type::GLB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            // Default: defer to the canonical form helper
+            _ => Self::_form_canonical_compound_type(
+                vec![t1.clone(), t2.clone()],
+                CanonicalFormOperation::GLB,
+            ),
+        }
+    }
 
-            _ => Some(Type::Nothing),
+    /// Private helper to form a canonical GLB from a list of operand types.
+    /// Assumes Type::GLB is `GLB(Vec<Type>)`.
+    fn _form_canonical_compound_type(
+        initial_operands: Vec<Type>,
+        operation: CanonicalFormOperation,
+    ) -> Type {
+        let mut flat_operands: Vec<Type> = Vec::new();
+        let mut worklist = initial_operands;
+
+        // 1. Flatten nested types (GLB for GLB op, LUB for LUB op)
+        while let Some(typ) = worklist.pop() {
+            match operation {
+                CanonicalFormOperation::GLB => match typ {
+                    Type::Nothing => return Type::Nothing, // GLB with Nothing is Nothing
+                    Type::Any => continue,                 // Any is identity for GLB's operands
+                    Type::GLB(inner_types) => worklist.extend(inner_types.into_iter().rev()),
+                    _ => flat_operands.push(typ),
+                },
+                CanonicalFormOperation::LUB => match typ {
+                    Type::Any => return Type::Any, // LUB with Any is Any
+                    Type::Nothing => continue,     // Nothing is identity for LUB's operands
+                    Type::LUB(inner_types) => worklist.extend(inner_types.into_iter().rev()),
+                    _ => flat_operands.push(typ),
+                },
+            }
+        }
+
+        // 2. Handle empty effective operands
+        if flat_operands.is_empty() {
+            return match operation {
+                CanonicalFormOperation::GLB => Type::Any,
+                CanonicalFormOperation::LUB => Type::Nothing,
+            };
+        }
+
+        // 3. Sort and remove exact duplicates for consistent processing
+        //    Type must implement Ord for this sort to be canonical.
+        flat_operands.sort_unstable(); // Or sort() if stable sort is important for Ord impl
+        flat_operands.dedup();
+
+        // 4. Filter out subsumed types (if X <: Y, Y is redundant in GLB(X, Y, ...))
+        let mut minimal_set: Vec<Type> = Vec::new();
+        if flat_operands.len() == 1 {
+            // Optimization
+            minimal_set.push(flat_operands.remove(0));
+        } else {
+            for candidate_type in flat_operands {
+                // If candidate_type is already subsumed by something in minimal_set, skip it.
+                if minimal_set
+                    .iter()
+                    .any(|minimal_elem| minimal_elem.is_subtype_of(&candidate_type))
+                {
+                    continue;
+                }
+                // Remove elements from minimal_set that are subsumed by candidate_type.
+                minimal_set.retain(|minimal_elem| !candidate_type.is_subtype_of(minimal_elem));
+                minimal_set.push(candidate_type);
+            }
+        }
+
+        // Sort again as retain might change order, for canonical GLB operand order
+        minimal_set.sort_unstable();
+
+        // 5. Check for fundamental incompatibilities in the minimal_set
+        //    If the minimal_set contains types that are known to be disjoint.
+        if minimal_set.len() > 1 {
+            // This check needs to be careful. We're checking if the *combination* is Nothing.
+            // Example: minimal_set = [Bool, Pointer(Char)]. Their GLB is Nothing.
+            // A simple pairwise check for pre-defined disjoint types:
+            for i in 0..minimal_set.len() {
+                for j in (i + 1)..minimal_set.len() {
+                    let ti = &minimal_set[i];
+                    let tj = &minimal_set[j];
+                    // Use a helper for direct, non-recursive disjoint checks or rely on binary GLB's specific rules
+                    match (ti, tj) {
+                        (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => {
+                            return Type::Nothing
+                        }
+                        (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => {
+                            return Type::Nothing
+                        }
+                        (Type::Char, Type::Pointer(_)) | (Type::Pointer(_), Type::Char) => {
+                            return Type::Nothing
+                        }
+                        (Type::Int, Type::Pointer(_)) | (Type::Pointer(_), Type::Int) => {
+                            return Type::Nothing
+                        } // Assuming incompatibility
+                        (Type::Bool, Type::Function { .. })
+                        | (Type::Function { .. }, Type::Bool) => return Type::Nothing,
+                        (Type::Int, Type::Function { .. }) | (Type::Function { .. }, Type::Int) => {
+                            return Type::Nothing
+                        }
+                        (Type::Char, Type::Function { .. })
+                        | (Type::Function { .. }, Type::Char) => return Type::Nothing,
+                        (Type::Pointer(_), Type::Function { .. })
+                        | (Type::Function { .. }, Type::Pointer(_)) => return Type::Nothing,
+                        // If Int & Char -> Char, Bool & Int -> Bool, these are not "Nothing"
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // 6. Construct final Type
+        if minimal_set.is_empty() {
+            // Should be caught by flat_operands.is_empty earlier
+            Type::Any
+        } else if minimal_set.len() == 1 {
+            minimal_set.remove(0) // Return the single type directly
+        } else {
+            Type::GLB(minimal_set)
         }
     }
 
@@ -292,23 +449,46 @@ impl Type {
         }
     }
 
-    pub fn lub(t1: &Type, t2: &Type) -> Option<Type> {
+    /// Computes the least upper bound (LUB) of two types, returning a canonical form.
+    /// Assumes Type::LUB is `LUB(Vec<Type>)`.
+    pub fn lub(t1: &Type, t2: &Type) -> Type {
+        // Shortcut: if one is a subtype of the other (LUB is the supertype)
         if t1.is_subtype_of(t2) {
-            return Some(t2.clone());
+            return Self::_form_canonical_compound_type(
+                vec![t2.clone()],
+                CanonicalFormOperation::LUB,
+            );
         }
         if t2.is_subtype_of(t1) {
-            return Some(t1.clone());
+            return Self::_form_canonical_compound_type(
+                vec![t1.clone()],
+                CanonicalFormOperation::LUB,
+            );
         }
 
+        // Handle Any and Nothing
         if *t1 == Type::Any || *t2 == Type::Any {
-            return Some(Type::Any);
+            return Type::Any;
+        }
+        if *t1 == Type::Nothing {
+            // Nothing is identity for LUB
+            return Self::_form_canonical_compound_type(
+                vec![t2.clone()],
+                CanonicalFormOperation::LUB,
+            );
+        }
+        if *t2 == Type::Nothing {
+            return Self::_form_canonical_compound_type(
+                vec![t1.clone()],
+                CanonicalFormOperation::LUB,
+            );
         }
 
-        let p = match (t1, t2) {
-            (Type::Char, Type::Bool) | (Type::Bool, Type::Char) => Some(Type::Truthy), // Ensure this case returns Truthy
-
+        // Structural rules
+        match (t1, t2) {
             (Type::Pointer(p1), Type::Pointer(p2)) => {
-                Type::lub(p1, p2).map(|t| Type::Pointer(Box::new(t)))
+                let inner_lub = Self::lub(p1.as_ref(), p2.as_ref()); // Use public lub
+                return Type::Pointer(Box::new(inner_lub));
             }
             (
                 Type::Function {
@@ -319,53 +499,103 @@ impl Type {
                     params: params2,
                     returns: returns2,
                 },
-            ) => match (Type::glb(params1, params2), Type::lub(returns1, returns2)) {
-                (Some(p_glb), Some(r_lub)) => Some(Type::Function {
-                    params: Box::new(p_glb),
-                    returns: Box::new(r_lub),
-                }),
-                _ => Some(Type::Any),
-            },
+            ) => {
+                let glb_params = Self::glb(params1.as_ref(), params2.as_ref()); // Use public glb
+                let lub_returns = Self::lub(returns1.as_ref(), returns2.as_ref()); // Use public lub
+                if glb_params == Type::Nothing {
+                    return Type::Any;
+                }
+                return Type::Function {
+                    params: Box::new(glb_params),
+                    returns: Box::new(lub_returns),
+                };
+            }
             (Type::Tuple(v1), Type::Tuple(v2)) => {
                 let min_len = std::cmp::min(v1.len(), v2.len());
                 let mut res_vec = Vec::with_capacity(min_len);
                 for i in 0..min_len {
-                    match Type::lub(&v1[i], &v2[i]) {
-                        Some(t) => res_vec.push(t),
-                        None => return Some(Type::Any),
-                    }
+                    res_vec.push(Self::lub(&v1[i], &v2[i])); // Use public lub
                 }
-                Some(Type::Tuple(res_vec))
+                return Type::Tuple(res_vec);
             }
-            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => Some(Type::Truthy),
-            (Type::Pointer(_), Type::Function { .. })
-            | (Type::Function { .. }, Type::Pointer(_)) => Some(Type::Pointer(Box::new(Type::Any))),
-            (Type::Char, Type::Pointer(_)) | (Type::Pointer(_), Type::Char) => Some(Type::Int),
-            (Type::Char, Type::Function { .. }) | (Type::Function { .. }, Type::Char) => {
-                Some(Type::Int)
-            }
-            (Type::Bool, Type::Function { .. }) | (Type::Function { .. }, Type::Bool) => {
-                Some(Type::Int)
-            }
-            (Type::LUB(ga, gb), _) if **ga == *t2 || **gb == *t2 => {
-                Some(Type::LUB(ga.clone(), gb.clone()))
-            }
-            (_, Type::LUB(ga, gb)) if **ga == *t1 || **gb == *t1 => {
-                Some(Type::LUB(ga.clone(), gb.clone()))
-            }
-            (_, Type::TypeVar(_)) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
-            (Type::TypeVar(_), _) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
 
-            (Type::GLB(_, _), _)
-            | (_, Type::GLB(_, _))
-            | (Type::LUB(_, _), _)
-            | (_, Type::LUB(_, _)) => Some(Type::LUB(Box::new(t1.clone()), Box::new(t2.clone()))),
+            // Specific LUBs based on common supertypes from lattice
+            (Type::Char, Type::Bool) | (Type::Bool, Type::Char) => Type::Truthy,
+            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => Type::Truthy,
+            (Type::Char, Type::Pointer(_)) | (Type::Pointer(_), Type::Char) => Type::Int,
+            (Type::Int, Type::Pointer(_)) | (Type::Pointer(_), Type::Int) => Type::Int,
+            (Type::Int, Type::Bool) | (Type::Bool, Type::Int) => Type::Int,
+            (Type::Int, Type::Char) | (Type::Char, Type::Int) => Type::Int,
+            (Type::Function { .. }, Type::Bool) | (Type::Bool, Type::Function { .. }) => {
+                Type::Truthy
+            }
+            (Type::Function { .. }, Type::Char) | (Type::Char, Type::Function { .. }) => Type::Int,
+            (Type::Function { .. }, Type::Int) | (Type::Int, Type::Function { .. }) => Type::Int,
+            (Type::Function { .. }, Type::Pointer(_))
+            | (Type::Pointer(_), Type::Function { .. }) => Type::Truthy,
 
-            _ => Some(Type::Any),
-        };
-        trace!("LUB of {} {} is {}", t1, t2, p.clone().unwrap());
-        p
+            // Default: defer to the canonical form helper
+            _ => Self::_form_canonical_compound_type(
+                vec![t1.clone(), t2.clone()],
+                CanonicalFormOperation::LUB,
+            ),
+        }
     }
+
+    // When computing upper bounds or lower bounds, it could happen that the same type we are computing bounds for
+    // appears in a top-level GLB or LUB. This function removes the given variable from the top-level GLB and LUB,
+    // and attempts simplifying it before returning it. If the type is not a GLB or LUB, it is returned unchanged.
+    pub fn remove_references_from_glb_lub(&self, t: &TypeVarId) -> Type {
+        match self {
+            Type::GLB(types) => {
+                let filtered_types: Vec<Type> = types
+                    .iter()
+                    .filter(|typ| match typ {
+                        Type::TypeVar(id) => id != t,
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect();
+                if filtered_types.len() == types.len() {
+                    // No change, return the original type
+                    return self.clone();
+                }
+                if filtered_types.is_empty() {
+                    return Type::Any;
+                }
+                if filtered_types.len() == 1 {
+                    return filtered_types[0].clone();
+                }
+                Self::_form_canonical_compound_type(filtered_types, CanonicalFormOperation::GLB)
+            }
+            Type::LUB(types) => {
+                let filtered_types: Vec<Type> = types
+                    .iter()
+                    .filter(|typ| match typ {
+                        Type::TypeVar(id) => id != t,
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect();
+                if filtered_types.len() == types.len() {
+                    // No change, return the original type
+                    return self.clone();
+                }
+                if filtered_types.is_empty() {
+                    return Type::Nothing;
+                }
+                if filtered_types.len() == 1 {
+                    return filtered_types[0].clone();
+                }
+                Self::_form_canonical_compound_type(filtered_types, CanonicalFormOperation::LUB)
+            }
+            _ => self.clone(),
+        }
+    }
+
+    // The public wrappers `form_canonical_glb` and `form_canonical_lub` were removed in the previous step
+    // as the public `glb` and `lub` now call `_form_canonical_compound_type` directly in their default cases
+    // and for canonicalizing inputs in shortcut cases.
 
     /// Collects all TypeVarIds involved in this type, including nested ones.
     ///
@@ -388,9 +618,10 @@ impl Type {
                     element_type.collect_involved_type_vars(type_vars);
                 }
             }
-            Type::GLB(t1, t2) | Type::LUB(t1, t2) => {
-                t1.collect_involved_type_vars(type_vars);
-                t2.collect_involved_type_vars(type_vars);
+            Type::GLB(types) | Type::LUB(types) => {
+                types
+                    .iter()
+                    .for_each(|t| t.collect_involved_type_vars(type_vars));
             }
             // Primitive types and Any/Nothing/Truthy don't contain TypeVars directly
             Type::Nothing | Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::Any => {
@@ -424,8 +655,14 @@ impl fmt::Display for Type {
             }
             Type::Truthy => write!(f, "Truthy"),
             Type::Any => write!(f, "Any"),
-            Type::GLB(t1, t2) => write!(f, "GLB({}, {})", t1, t2),
-            Type::LUB(t1, t2) => write!(f, "LUB({}, {})", t1, t2),
+            Type::GLB(types) => {
+                let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+                write!(f, "GLB({})", inner.join(", "))
+            }
+            Type::LUB(types) => {
+                let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+                write!(f, "LUB({})", inner.join(", "))
+            }
         }
     }
 }
@@ -538,18 +775,20 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
                     returns.display_with(self.registry)
                 )
             }
-            Type::GLB(t1, t2) => write!(
-                f,
-                "GLB({}, {})",
-                t1.display_with(self.registry),
-                t2.display_with(self.registry)
-            ),
-            Type::LUB(t1, t2) => write!(
-                f,
-                "LUB({}, {})",
-                t1.display_with(self.registry),
-                t2.display_with(self.registry)
-            ),
+            Type::GLB(types) => {
+                let inner: Vec<String> = types
+                    .iter()
+                    .map(|t| t.display_with(self.registry).to_string())
+                    .collect();
+                write!(f, "GLB({})", inner.join(", "))
+            }
+            Type::LUB(types) => {
+                let inner: Vec<String> = types
+                    .iter()
+                    .map(|t| t.display_with(self.registry).to_string())
+                    .collect();
+                write!(f, "LUB({})", inner.join(", "))
+            }
             Type::Nothing => write!(f, "Nothing"),
             Type::Int => write!(f, "Int"),
             Type::Bool => write!(f, "Bool"),
@@ -623,48 +862,42 @@ mod tests {
 
     #[test]
     fn test_lub() {
-        assert_eq!(Type::lub(&int(), &int()), Some(int()));
-        assert_eq!(Type::lub(&int(), &bool()), Some(int()));
-        assert_eq!(Type::lub(&bool(), &int()), Some(int()));
-        assert_eq!(Type::lub(&bool(), &bool()), Some(bool()));
-        assert_eq!(Type::lub(&char(), &int()), Some(int()));
-        assert_eq!(Type::lub(&char(), &bool()), Some(truthy()));
-        assert_eq!(Type::lub(&char(), &char()), Some(char()));
-        assert_eq!(Type::lub(&nothing(), &int()), Some(int()));
-        assert_eq!(Type::lub(&nothing(), &bool()), Some(bool()));
-        assert_eq!(Type::lub(&nothing(), &char()), Some(char()));
-        assert_eq!(Type::lub(&any(), &int()), Some(any()));
-        assert_eq!(Type::lub(&truthy(), &bool()), Some(truthy()));
-        assert_eq!(Type::lub(&truthy(), &pointer(int())), Some(truthy()));
-        assert_eq!(
-            Type::lub(&pointer(bool()), &pointer(int())),
-            Some(pointer(int()))
-        );
-        assert_eq!(Type::lub(&pointer(pointer(any())), &bool()), Some(truthy()));
+        assert_eq!(Type::lub(&int(), &int()), int());
+        assert_eq!(Type::lub(&int(), &bool()), int());
+        assert_eq!(Type::lub(&bool(), &int()), int());
+        assert_eq!(Type::lub(&bool(), &bool()), bool());
+        assert_eq!(Type::lub(&char(), &int()), int());
+        assert_eq!(Type::lub(&char(), &bool()), truthy());
+        assert_eq!(Type::lub(&char(), &char()), char());
+        assert_eq!(Type::lub(&nothing(), &int()), int());
+        assert_eq!(Type::lub(&nothing(), &bool()), bool());
+        assert_eq!(Type::lub(&nothing(), &char()), char());
+        assert_eq!(Type::lub(&any(), &int()), any());
+        assert_eq!(Type::lub(&truthy(), &bool()), truthy());
+        assert_eq!(Type::lub(&truthy(), &pointer(int())), truthy());
+        assert_eq!(Type::lub(&pointer(bool()), &pointer(int())), pointer(int()));
+        assert_eq!(Type::lub(&pointer(pointer(any())), &bool()), truthy());
     }
 
     #[test]
     fn test_lub_tuples() {
         assert_eq!(
             Type::lub(&tuple(&[bool(), int()]), &tuple(&[bool()])),
-            Some(tuple(&[bool()]))
+            tuple(&[bool()])
         );
         assert_eq!(
             Type::lub(&tuple(&[bool()]), &tuple(&[bool(), char()])),
-            Some(tuple(&[bool()]))
+            tuple(&[bool()])
         );
         assert_eq!(
             Type::lub(&tuple(&[int(), bool(), char()]), &tuple(&[int(), int()])),
-            Some(tuple(&[int(), int()]))
+            tuple(&[int(), int()])
         );
         assert_eq!(
             Type::lub(&tuple(&[bool(), int()]), &tuple(&[int(), bool()])),
-            Some(tuple(&[int(), int()]))
+            tuple(&[int(), int()])
         );
-        assert_eq!(
-            Type::lub(&tuple(&[bool(), int()]), &tuple(&[])),
-            Some(tuple(&[]))
-        );
+        assert_eq!(Type::lub(&tuple(&[bool(), int()]), &tuple(&[])), tuple(&[]));
     }
 
     #[test]
@@ -673,87 +906,87 @@ mod tests {
         let fn1_ret = tuple(&[int()]);
         let fn1 = function(fn1_params.clone(), fn1_ret.clone());
 
-        assert_eq!(Type::lub(&fn1, &fn1), Some(fn1.clone()));
+        assert_eq!(Type::lub(&fn1, &fn1), fn1.clone());
 
         let fn2_params = tuple(&[int()]);
         let fn2 = function(fn2_params.clone(), fn1_ret.clone());
         assert_eq!(
             Type::lub(&fn1, &fn2),
-            Some(function(tuple(&[int(), bool()]), tuple(&[int()])))
+            function(tuple(&[int(), bool()]), tuple(&[int()]))
         );
 
         let fn3_ret = tuple(&[bool()]);
         let fn3 = function(fn1_params.clone(), fn3_ret.clone());
         assert_eq!(
             Type::lub(&fn1, &fn3),
-            Some(function(tuple(&[int(), bool()]), tuple(&[int()])))
+            function(tuple(&[int(), bool()]), tuple(&[int()]))
         );
 
         let fn4_ret = tuple(&[char()]);
         let fn4 = function(fn1_params.clone(), fn4_ret.clone());
         assert_eq!(
             Type::lub(&fn1, &fn4),
-            Some(function(tuple(&[int(), bool()]), tuple(&[int()])))
+            function(tuple(&[int(), bool()]), tuple(&[int()]))
         );
 
         let fn5_params = tuple(&[int(), bool(), char()]);
         let fn5 = function(fn5_params.clone(), fn1_ret.clone());
         assert_eq!(
             Type::lub(&fn1, &fn5),
-            Some(function(tuple(&[int(), bool(), char()]), tuple(&[int()])))
+            function(tuple(&[int(), bool(), char()]), tuple(&[int()]))
         );
     }
 
     #[test]
     fn test_glb() {
-        assert_eq!(Type::glb(&int(), &int()), Some(int()));
-        assert_eq!(Type::glb(&int(), &bool()), Some(bool()));
-        assert_eq!(Type::glb(&bool(), &int()), Some(bool()));
-        assert_eq!(Type::glb(&bool(), &bool()), Some(bool()));
-        assert_eq!(Type::glb(&char(), &int()), Some(char()));
-        assert_eq!(Type::glb(&char(), &bool()), Some(nothing()));
-        assert_eq!(Type::glb(&char(), &char()), Some(char()));
-        assert_eq!(Type::glb(&nothing(), &int()), Some(nothing()));
-        assert_eq!(Type::glb(&nothing(), &bool()), Some(nothing()));
-        assert_eq!(Type::glb(&nothing(), &char()), Some(nothing()));
-        assert_eq!(Type::glb(&any(), &int()), Some(int()));
-        assert_eq!(Type::glb(&truthy(), &bool()), Some(bool()));
-        assert_eq!(Type::glb(&truthy(), &pointer(int())), Some(pointer(int())));
+        assert_eq!(Type::glb(&int(), &int()), int());
+        assert_eq!(Type::glb(&int(), &bool()), bool());
+        assert_eq!(Type::glb(&bool(), &int()), bool());
+        assert_eq!(Type::glb(&bool(), &bool()), bool());
+        assert_eq!(Type::glb(&char(), &int()), char());
+        assert_eq!(Type::glb(&char(), &bool()), nothing());
+        assert_eq!(Type::glb(&char(), &char()), char());
+        assert_eq!(Type::glb(&nothing(), &int()), nothing());
+        assert_eq!(Type::glb(&nothing(), &bool()), nothing());
+        assert_eq!(Type::glb(&nothing(), &char()), nothing());
+        assert_eq!(Type::glb(&any(), &int()), int());
+        assert_eq!(Type::glb(&truthy(), &bool()), bool());
+        assert_eq!(Type::glb(&truthy(), &pointer(int())), pointer(int()));
         assert_eq!(
             Type::glb(&pointer(bool()), &pointer(int())),
-            Some(pointer(bool()))
+            pointer(bool())
         );
-        assert_eq!(Type::glb(&pointer(pointer(any())), &bool()), None);
+        assert_eq!(Type::glb(&pointer(pointer(any())), &bool()), Type::Nothing);
     }
 
     #[test]
     fn test_glb_tuples() {
         assert_eq!(
             Type::glb(&tuple(&[bool(), pointer(int())]), &tuple(&[bool()])),
-            Some(tuple(&[bool(), pointer(int())]))
+            tuple(&[bool(), pointer(int())])
         );
         assert_eq!(
             Type::glb(&tuple(&[bool()]), &tuple(&[bool(), int()])),
-            Some(tuple(&[bool(), int()]))
+            tuple(&[bool(), int()])
         );
         assert_eq!(
             Type::glb(&tuple(&[int(), bool()]), &tuple(&[int(), int()])),
-            Some(tuple(&[int(), bool()]))
+            tuple(&[int(), bool()])
         );
         assert_eq!(
             Type::glb(&tuple(&[]), &tuple(&[bool(), int()])),
-            Some(tuple(&[bool(), int()]))
+            tuple(&[bool(), int()])
         );
         assert_eq!(
             Type::glb(
                 &tuple(&[int(), int(), bool()]),
                 &tuple(&[int(), bool(), char()])
             ),
-            Some(tuple(&[int(), bool(), nothing()]))
+            nothing()
         );
         assert_eq!(
             Type::glb(&tuple(&[bool(),]), &tuple(&[char(), int()])),
-            Some(tuple(&[nothing(), int()]))
+            nothing()
         );
     }
 
@@ -762,27 +995,27 @@ mod tests {
         let fn1_params = tuple(&[int(), bool()]); // Changed args to params
         let fn1_ret = tuple(&[int()]);
         let fn1 = function(fn1_params.clone(), fn1_ret.clone());
-        assert_eq!(Type::glb(&fn1, &fn1), Some(fn1.clone()));
+        assert_eq!(Type::glb(&fn1, &fn1), fn1.clone());
 
         let fn2_params = tuple(&[int()]); // Changed args to params
         let fn2 = function(fn2_params.clone(), fn1_ret.clone());
         assert_eq!(
             Type::glb(&fn1, &fn2),
-            Some(function(tuple(&[int()]), tuple(&[int()])))
+            function(tuple(&[int()]), tuple(&[int()]))
         );
 
         let fn3_params = tuple(&[int(), char()]); // Changed args to params
         let fn3 = function(fn3_params.clone(), fn1_ret.clone());
         assert_eq!(
             Type::glb(&fn1, &fn3),
-            Some(function(tuple(&[int(), truthy()]), tuple(&[int()])))
+            function(tuple(&[int(), truthy()]), tuple(&[int()]))
         );
 
         let fn4_ret = tuple(&[char()]);
         let fn4 = function(fn1_params.clone(), fn4_ret.clone());
         assert_eq!(
             Type::glb(&fn1, &fn4),
-            Some(function(tuple(&[int(), bool()]), tuple(&[char()])))
+            function(tuple(&[int(), bool()]), tuple(&[char()]))
         );
     }
 }
