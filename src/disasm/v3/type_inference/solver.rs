@@ -280,8 +280,8 @@ impl Solver {
                 ConstraintReason::ArithmeticOp2Pointer,
             );
             add_constraint(
-                unclassified.result_type.clone(),
                 unclassified.rhs_type.clone(),
+                unclassified.result_type.clone(),
                 ConstraintReason::ArithmeticOp2Pointer,
             );
         }

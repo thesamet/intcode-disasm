@@ -328,15 +328,30 @@ impl TypeInferenceAnalyzer {
                     store,
                     markers,
                 );
+                let mut arg_type_typle = vec![];
+                for arg in args {
+                    arg_type_typle.push(
+                        self.process_expression(
+                            arg,
+                            function_id,
+                            instruction_id,
+                            state,
+                            store,
+                            markers,
+                        )
+                        .to_type(),
+                    );
+                }
+                let arg_type_tuple = Type::tuple(&arg_type_typle);
                 let args_id = self.fresh_type_var_id();
                 let rets_id = self.fresh_type_var_id();
                 let args_node_info = TypeVarNode {
-                    kind: TypeVarKind::FunctionArgs,
+                    kind: TypeVarKind::CallSiteArgs,
                     instruction_id,
                     function_id,
                 };
                 let rets_node_info = TypeVarNode {
-                    kind: TypeVarKind::FunctionReturn,
+                    kind: TypeVarKind::CallSiteReturns,
                     instruction_id,
                     function_id,
                 };
@@ -350,6 +365,16 @@ impl TypeInferenceAnalyzer {
                         origin_function_id: function_id,
                         origin_instruction_id: instruction_id,
                         reason: ConstraintReason::FunctionCallImpliesFunctionType,
+                    },
+                    state,
+                );
+                store.add_equality_constraint(
+                    Constraint {
+                        sub_type: args_id.to_type(),
+                        super_type: arg_type_tuple,
+                        origin_function_id: function_id,
+                        origin_instruction_id: instruction_id,
+                        reason: ConstraintReason::FunctionCallArguments,
                     },
                     state,
                 );

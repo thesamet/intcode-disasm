@@ -677,9 +677,9 @@ pub enum TypeVarKind {
     /// An expression with an unknown type. This variant stores the expression itself for debugging and linking.
     Expression(Expression<SsaMemoryReference>),
     /// The arguments to a function.
-    FunctionArgs,
+    CallSiteArgs,
     /// The return type of a function.
-    FunctionReturn,
+    CallSiteReturns,
 }
 
 impl TypeVarKind {
@@ -713,7 +713,7 @@ impl TypeVarKind {
 
     pub fn as_function_args(&self) -> Option<()> {
         match self {
-            TypeVarKind::FunctionArgs => Some(()),
+            TypeVarKind::CallSiteArgs => Some(()),
             _ => None,
         }
     }
@@ -725,8 +725,8 @@ impl fmt::Display for TypeVarKind {
             TypeVarKind::Const(v) => write!(f, "Const({})", v),
             TypeVarKind::MemoryReference(memref) => write!(f, "{}", memref),
             TypeVarKind::Expression(expr) => write!(f, "T({})", expr),
-            TypeVarKind::FunctionArgs => write!(f, "FunctionArgs"),
-            TypeVarKind::FunctionReturn => write!(f, "FunctionReturn"),
+            TypeVarKind::CallSiteArgs => write!(f, "CallSiteArgs"),
+            TypeVarKind::CallSiteReturns => write!(f, "CallSiteReturns"),
         }
     }
 }
