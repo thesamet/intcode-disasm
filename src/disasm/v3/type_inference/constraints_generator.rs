@@ -1,5 +1,6 @@
 // disasm/src/disasm/v3/type_inference/analyzer.rs
 
+use itertools::Itertools;
 use log::trace;
 
 use crate::disasm;
@@ -19,33 +20,36 @@ use super::types::TypeVarNode;
 
 use std::collections::HashMap;
 
-pub struct TypeConstraintGenerator<'m, 's, 'c, 'd> {
+pub struct TypeConstraintGeneratorResult {
+    pub state: InferenceAlgorithmState,
+    pub store: ConstraintStore,
+    pub markers: HashMap<char, TypeVarId>, // Type of markers might need adjustment based on actual usage
+    pub function_types: HashMap<FunctionId, (Type, Type)>,
+}
+
+pub struct TypeConstraintGenerator<'a> {
     next_type_var_id_counter: usize,
     // Maps a VersionedMemoryReference to a TypeVarId.
     // This ensures that each unique versioned memory reference gets one TypeVar.
     vmr_to_type_var: HashMap<VersionedMemoryReference, TypeVarId>,
 
     // References to external data structures
-    model: &'m Model<FoldedSsaComplete>,
-    state: &'s mut InferenceAlgorithmState,
-    store: &'c mut ConstraintStore,
-    markers: &'d mut HashMap<char, TypeVarId>, // Type of markers might need adjustment based on actual usage
+    model: &'a Model<FoldedSsaComplete>,
+    result: TypeConstraintGeneratorResult,
 }
 
-impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
-    fn new(
-        model: &'m Model<FoldedSsaComplete>,
-        state: &'s mut InferenceAlgorithmState,
-        store: &'c mut ConstraintStore,
-        markers: &'d mut HashMap<char, TypeVarId>,
-    ) -> Self {
+impl<'a> TypeConstraintGenerator<'a> {
+    fn new(model: &'a Model<FoldedSsaComplete>) -> Self {
         TypeConstraintGenerator {
             next_type_var_id_counter: 0,
             vmr_to_type_var: HashMap::new(),
             model,
-            state,
-            store,
-            markers,
+            result: TypeConstraintGeneratorResult {
+                state: InferenceAlgorithmState::new(),
+                store: ConstraintStore::new(),
+                markers: HashMap::new(),
+                function_types: HashMap::new(),
+            },
         }
     }
 
@@ -88,7 +92,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
             instruction_id,
             function_id,
         };
-        self.state.add_type_var(tv_id, node_info);
+        self.result.state.add_type_var(tv_id, node_info);
         tv_id
     }
 
@@ -104,7 +108,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
             instruction_id,
             function_id,
         };
-        self.state.add_type_var(tv_id, node_info);
+        self.result.state.add_type_var(tv_id, node_info);
         tv_id
     }
 
@@ -120,13 +124,78 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
             instruction_id,
             function_id,
         };
-        self.state.add_type_var(tv_id, node_info);
+        self.result.state.add_type_var(tv_id, node_info);
         tv_id
     }
 
     // Iterates through the SSA model (conceptual)
     fn generate_all_constraints(&mut self) {
         trace!("Generating constraints for model");
+        for (function_id, f) in self.model.functions() {
+            let args = self.fresh_type_var_id();
+            let returns = self.fresh_type_var_id();
+            self.result.state.add_type_var(
+                args,
+                TypeVarNode {
+                    kind: TypeVarKind::CalleeArgs(function_id),
+                    instruction_id: InstructionId::new(0), // Dummy ID for function args
+                    function_id,
+                },
+            );
+            self.result.state.add_type_var(
+                returns,
+                TypeVarNode {
+                    kind: TypeVarKind::CalleeReturns(function_id),
+                    instruction_id: InstructionId::new(0), // Dummy ID for function args
+                    function_id,
+                },
+            );
+            self.result
+                .function_types
+                .insert(function_id, (args.to_type(), returns.to_type()));
+            let mut args_tuple = vec![];
+            let mut rets_tuple = vec![];
+            for (_, v) in f.callee_info().parameter_entry_vars.iter().sorted() {
+                args_tuple.push(
+                    self.get_or_create_type_var_for_vmr(
+                        v,
+                        function_id,
+                        InstructionId::new(0), // Dummy ID for function args
+                    )
+                    .to_type(),
+                );
+            }
+            for (_, v) in f.callee_info().return_writes.iter().sorted() {
+                rets_tuple.push(
+                    self.get_or_create_type_var_for_vmr(
+                        v,
+                        function_id,
+                        InstructionId::new(0), // Dummy ID for function args
+                    )
+                    .to_type(),
+                );
+            }
+            self.result.store.add_equality_constraint(
+                Constraint {
+                    sub_type: args.to_type(),
+                    super_type: Type::tuple(&args_tuple),
+                    origin_function_id: function_id,
+                    origin_instruction_id: InstructionId::new(0), // Dummy ID for function args
+                    reason: ConstraintReason::FunctionArguments,
+                },
+                &self.result.state,
+            );
+            self.result.store.add_equality_constraint(
+                Constraint {
+                    sub_type: returns.to_type(),
+                    super_type: Type::tuple(&rets_tuple),
+                    origin_function_id: function_id,
+                    origin_instruction_id: InstructionId::new(0), // Dummy ID for function args
+                    reason: ConstraintReason::FunctionReturns,
+                },
+                &self.result.state,
+            );
+        }
         for (function_id, f) in self.model.functions() {
             for (_block_id, ssa_block_content) in f.blocks() {
                 // blocks is BTreeMap<BlockId, SsaBlock>
@@ -159,7 +228,6 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
             function_id,
             phi_origin_instruction_id,
         );
-        let dest_type = Type::TypeVar(dest_tv_id);
 
         for (_block_id, incoming_vmr) in &phi.inputs {
             // PhiFunction uses 'inputs'
@@ -169,17 +237,16 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                 function_id,
                 phi_origin_instruction_id, // Source VMRs contribute to the phi at this point
             );
-            let incoming_type = Type::TypeVar(incoming_tv_id);
 
-            self.store.add_constraint(
+            self.result.store.add_constraint(
                 Constraint::new(
-                    incoming_type,
-                    dest_type.clone(),
+                    incoming_tv_id.to_type(),
+                    dest_tv_id.to_type(),
                     function_id,
                     phi_origin_instruction_id,
                     ConstraintReason::PhiNodeOperand,
                 ),
-                &self.state,
+                &self.result.state,
             );
         }
     }
@@ -213,7 +280,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         );
                         let target_type = Type::TypeVar(target_tv_id);
 
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(src_type),
                                 target_type.clone(),
@@ -221,10 +288,10 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::Assignment,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                         if let Some(debug_marker) = target_debug_marker {
-                            self.markers.insert(*debug_marker, target_tv_id);
+                            self.result.markers.insert(*debug_marker, target_tv_id);
                         }
                     }
                     SsaMemoryReference::Deref(ptr_expr_target) => {
@@ -233,7 +300,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                             function_id,
                             instruction_id,
                         );
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(ptr_addr_type),
                                 Type::Pointer(Box::new(Type::TypeVar(src_type))),
@@ -241,14 +308,14 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::AssignmentToDereferenceTarget,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                 }
             }
             Instruction::If { cond, .. } => {
                 let cond_type = self.process_expression(cond, function_id, instruction_id);
-                self.store.add_constraint(
+                self.result.store.add_constraint(
                     Constraint::new(
                         cond_type.to_type(),
                         Type::Truthy,
@@ -256,12 +323,12 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         instruction_id,
                         ConstraintReason::IfConditionOperand,
                     ),
-                    self.state,
+                    &self.result.state,
                 );
             }
             Instruction::Output(expr) => {
                 let expr_type = self.process_expression(expr, function_id, instruction_id);
-                self.store.add_equality_constraint(
+                self.result.store.add_equality_constraint(
                     Constraint::new(
                         expr_type.to_type(),
                         Type::Char,
@@ -269,14 +336,10 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         instruction_id,
                         ConstraintReason::OutputValueType,
                     ),
-                    self.state,
+                    &self.result.state,
                 );
             }
-            Instruction::Call {
-                addr,
-                args,
-                return_to,
-            } => {
+            Instruction::Call { addr, args, .. } => {
                 let addr_var_id = self.process_expression(addr, function_id, instruction_id);
                 let mut arg_type_typle = vec![];
                 for arg in args {
@@ -298,10 +361,10 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                     instruction_id,
                     function_id,
                 };
-                self.state.add_type_var(args_id, args_node_info);
-                self.state.add_type_var(rets_id, rets_node_info);
+                self.result.state.add_type_var(args_id, args_node_info);
+                self.result.state.add_type_var(rets_id, rets_node_info);
                 let fp = Type::function(args_id.to_type(), rets_id.to_type());
-                self.store.add_equality_constraint(
+                self.result.store.add_equality_constraint(
                     Constraint {
                         sub_type: addr_var_id.to_type(),
                         super_type: fp,
@@ -309,9 +372,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         origin_instruction_id: instruction_id,
                         reason: ConstraintReason::FunctionCallImpliesFunctionType,
                     },
-                    self.state,
+                    &self.result.state,
                 );
-                self.store.add_equality_constraint(
+                self.result.store.add_equality_constraint(
                     Constraint {
                         sub_type: args_id.to_type(),
                         super_type: arg_type_tuple,
@@ -319,8 +382,36 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         origin_instruction_id: instruction_id,
                         reason: ConstraintReason::FunctionCallArguments,
                     },
-                    self.state,
+                    &self.result.state,
                 );
+                if let Expression::Constant(direct_addr) = addr {
+                    if let Some((callee_arg_type, callee_ret_type)) = self
+                        .result
+                        .function_types
+                        .get(&FunctionId::new(*direct_addr as usize))
+                    {
+                        self.result.store.add_constraint(
+                            Constraint::new(
+                                args_id.to_type(),
+                                callee_arg_type.clone(),
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::FunctionCallArgumentsBinding,
+                            ),
+                            &self.result.state,
+                        );
+                        self.result.store.add_constraint(
+                            Constraint::new(
+                                callee_ret_type.clone(),
+                                rets_id.to_type(),
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::FunctionCallReturnsBinding,
+                            ),
+                            &self.result.state,
+                        );
+                    }
+                }
             }
 
             // TODO: Handle If, Call, Output, Return for SsaMemoryReference
@@ -346,7 +437,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                 let const_type = Type::TypeVar(tv_id);
 
                 // Need a new ConstraintReason::LiteralInteger
-                self.store.add_constraint(
+                self.result.store.add_constraint(
                     Constraint::new(
                         const_type.clone(),
                         Type::Int,
@@ -354,7 +445,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         instruction_id,
                         ConstraintReason::LiteralInteger,
                     ),
-                    self.state,
+                    &self.result.state,
                 );
                 // If val is 0 or 1, could add specific constraints for Bool/Truthy
                 // E.g., ConstraintReason::LiteralBoolean, ConstraintReason::LiteralTruthy
@@ -374,7 +465,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         self.make_expression_type_var(function_id, instruction_id, expr);
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
-                    self.store.add_equality_constraint(
+                    self.result.store.add_equality_constraint(
                         Constraint::new(
                             Type::TypeVar(ptr_addr_type_var_id),
                             Type::Pointer(Box::new(pointee_type.clone())),
@@ -382,7 +473,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                             instruction_id,
                             ConstraintReason::DereferenceRequiresPointer,
                         ),
-                        self.state,
+                        &self.result.state,
                     );
                     pointee_tv_id
                 }
@@ -398,14 +489,14 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                 match op {
                     disasm::v3::lir::expression::BinaryOperator::Add
                     | disasm::v3::lir::expression::BinaryOperator::Sub => {
-                        self.store.add_unclassified_add_expression(
+                        self.result.store.add_unclassified_add_expression(
                             expr.clone(),
                             lhs_type.clone(),
                             rhs_type.clone(),
                             result_type.clone(),
                         );
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 lhs_type.clone(),
                                 Type::Int,
@@ -413,9 +504,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticLHS,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 rhs_type.clone(),
                                 Type::Int,
@@ -423,9 +514,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticRHS,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -433,12 +524,12 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticResult,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                     disasm::v3::lir::expression::BinaryOperator::Mul => {
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 lhs_type.clone(),
                                 Type::Int,
@@ -446,9 +537,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticLHS,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 rhs_type.clone(),
                                 Type::Int,
@@ -456,9 +547,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticRHS,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -466,7 +557,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticResult,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                     BinaryOperator::GreaterThan
@@ -475,7 +566,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                     | BinaryOperator::NotEquals
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool,
@@ -483,9 +574,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ComparisonResult,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 Type::Bool,
                                 result_type.clone(),
@@ -493,7 +584,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ComparisonResult,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                 }
@@ -503,7 +594,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
                         // Need ConstraintReason::ComparisonLHS, ComparisonRHS, ComparisonResult
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 lhs_type,
                                 Type::Int, // Assuming comparison is between Ints for now
@@ -511,9 +602,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ComparisonLHS,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 rhs_type,
                                 Type::Int, // Assuming comparison is between Ints for now
@@ -521,7 +612,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::ComparisonRHS,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                     _ => {}
@@ -536,7 +627,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                 match op {
                     disasm::v3::lir::expression::UnaryOperator::Not => {
                         // Need ConstraintReason::NotOperand, NotResult
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
                                 Type::Truthy, // Operand of NOT must be Truthy
@@ -544,9 +635,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::NotOperand,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool, // Result of NOT is Bool
@@ -554,11 +645,11 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::NotResult,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                     disasm::v3::lir::expression::UnaryOperator::Minus => {
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
                                 Type::Int,
@@ -566,9 +657,9 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::UnaryMinusOperand,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
-                        self.store.add_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -576,7 +667,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                                 instruction_id,
                                 ConstraintReason::UnaryMinusResult,
                             ),
-                            self.state,
+                            &self.result.state,
                         );
                     }
                 }
@@ -586,7 +677,7 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                 let tv_id = self.make_expression_type_var(function_id, instruction_id, expr);
                 let input_type = Type::TypeVar(tv_id);
                 // Need ConstraintReason::InputSourceType
-                self.store.add_constraint(
+                self.result.store.add_constraint(
                     Constraint::new(
                         input_type,
                         Type::Char, // Assuming input is Char by default
@@ -594,25 +685,21 @@ impl<'m, 's, 'c, 'd> TypeConstraintGenerator<'m, 's, 'c, 'd> {
                         instruction_id,
                         ConstraintReason::InputSourceType,
                     ),
-                    self.state,
+                    &self.result.state,
                 );
                 tv_id
             }
             Expression::DebugMarker(marker, inner_expr) => {
                 let expr_type = self.process_expression(inner_expr, function_id, instruction_id);
-                self.markers.insert(*marker, expr_type);
+                self.result.markers.insert(*marker, expr_type);
                 expr_type
             }
         }
     }
 }
 
-pub fn generate_constraints(
-    model: &Model<FoldedSsaComplete>,
-    state: &mut InferenceAlgorithmState,
-    store: &mut ConstraintStore,
-    markers: &mut HashMap<char, TypeVarId>,
-) {
-    let mut constraint_generator = TypeConstraintGenerator::new(model, state, store, markers);
+pub fn generate_constraints(model: &Model<FoldedSsaComplete>) -> TypeConstraintGeneratorResult {
+    let mut constraint_generator = TypeConstraintGenerator::new(model);
     constraint_generator.generate_all_constraints();
+    constraint_generator.result
 }

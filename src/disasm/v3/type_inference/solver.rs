@@ -74,9 +74,10 @@ impl Solver {
     /// A `Result` containing the model with type inference complete, or an `Error`.
     fn solve(mut self) -> Result<Model<TypeInferenceComplete>, Error> {
         // 1. Initialize Analyzer, State, and Store
-        let mut markers = HashMap::new();
-        let mut analyzer =
-            generate_constraints(&self.model, &mut self.state, &mut self.store, &mut markers);
+        let result = generate_constraints(&self.model);
+        self.store = result.store;
+        self.state = result.state;
+        let markers = result.markers;
 
         //
         let mut iteration_count = 0;
@@ -168,6 +169,22 @@ impl Solver {
                     &sub_type,
                     ChangeReason::Constraint(constraint.clone()),
                 );
+            }
+            (Type::Tuple(ts), Type::Tuple(us)) => {
+                assert!(ts.len() == us.len());
+                for (t, u) in ts.iter().zip(us) {
+                    let (_, ch) = self.store.add_constraint(
+                        Constraint::new(
+                            t.clone(),
+                            u.clone(),
+                            constraint.origin_function_id,
+                            constraint.origin_instruction_id,
+                            ConstraintReason::TupleSubtype,
+                        ),
+                        &self.state,
+                    );
+                    changed |= ch;
+                }
             }
             _ => {}
         }
@@ -279,8 +296,8 @@ impl Solver {
                 ConstraintReason::ArithmeticOp2Pointer,
             );
             add_constraint(
-                unclassified.rhs_type.clone(),
                 unclassified.result_type.clone(),
+                unclassified.rhs_type.clone(),
                 ConstraintReason::ArithmeticOp2Pointer,
             );
         }

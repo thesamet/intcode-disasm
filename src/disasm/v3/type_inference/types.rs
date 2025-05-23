@@ -676,10 +676,14 @@ pub enum TypeVarKind {
     MemoryReference(SsaMemoryReference),
     /// An expression with an unknown type. This variant stores the expression itself for debugging and linking.
     Expression(Expression<SsaMemoryReference>),
-    /// The arguments to a function.
+    /// The arguments to a function call at the call site.
     CallSiteArgs,
-    /// The return type of a function.
+    /// The return type from a function call at the call site.
     CallSiteReturns,
+    // Arguments to a functino within the function
+    CalleeArgs(FunctionId),
+    // Return values at the function call.
+    CalleeReturns(FunctionId),
 }
 
 impl TypeVarKind {
@@ -727,6 +731,8 @@ impl fmt::Display for TypeVarKind {
             TypeVarKind::Expression(expr) => write!(f, "T({})", expr),
             TypeVarKind::CallSiteArgs => write!(f, "CallSiteArgs"),
             TypeVarKind::CallSiteReturns => write!(f, "CallSiteReturns"),
+            TypeVarKind::CalleeArgs(function_id) => write!(f, "CalleeArgs({})", function_id),
+            TypeVarKind::CalleeReturns(function_id) => write!(f, "CalleeReturns({})", function_id),
         }
     }
 }

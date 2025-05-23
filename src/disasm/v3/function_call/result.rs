@@ -14,13 +14,11 @@ pub struct CalleeInfo {
     /// Maps the parameter offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *first read* of that parameter,
     /// typically near the function entry.
-    // TODO: Replace VersionedMemoryReference with the appropriate v3 SSA type when available
     pub parameter_entry_vars: HashMap<i128, VersionedMemoryReference>, // Placeholder type
 
     /// Return values defined by this function.
     /// Maps the return offset `n` (from `[R+n]`, n > 0) to the SSA variable
     /// within *this function* that represents the *last write* to that location before returning.
-    // TODO: Replace VersionedMemoryReference with the appropriate v3 SSA type when available
     pub return_writes: HashMap<i128, VersionedMemoryReference>, // Placeholder type
 }
 

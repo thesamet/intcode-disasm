@@ -39,11 +39,19 @@ pub enum ConstraintReason {
     // Function Calls & Returns
     FunctionCallImpliesFunctionType, // `f(...)` => type(f) <: Function { params: FreshTV, returns: FreshTV }
     FunctionCallArguments, // binds call site arguments to the local function call signature.
-    ReturnStatement,       // `return expr;` => type(expr) <: function_return_type
+    FunctionCallReturns, // binds the return value of a function call to the return type of the function.
+    FunctionArguments,   // callee argument binding
+    FunctionReturns,     // callee return type binding
+    FunctionCallArgumentsBinding,
+    FunctionCallReturnsBinding,
+    ReturnStatement, // `return expr;` => type(expr) <: function_return_type
 
     // Pointer Operations
     DereferenceRequiresPointer, // `*ptr_expr` (read context) => type(ptr_expr) <: Pointer(FreshTV for pointee)
     AssignmentToDereferenceTarget, // `*ptr_expr = src` => type(ptr_expr) <: Pointer(type(src))
+
+    // Tuples
+    TupleSubtype,
 
     // Arithmetic Operations (e.g. +, -, *)
     ArithmeticLHS,                 // `lhs + rhs` => type(lhs) <: Int
