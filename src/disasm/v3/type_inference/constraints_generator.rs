@@ -238,7 +238,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 phi_origin_instruction_id, // Source VMRs contribute to the phi at this point
             );
 
-            self.result.store.add_constraint(
+            self.result.store.add_original_constraint(
                 Constraint::new(
                     incoming_tv_id.to_type(),
                     dest_tv_id.to_type(),
@@ -315,7 +315,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
             Instruction::If { cond, .. } => {
                 let cond_type = self.process_expression(cond, function_id, instruction_id);
-                self.result.store.add_constraint(
+                self.result.store.add_original_constraint(
                     Constraint::new(
                         cond_type.to_type(),
                         Type::Truthy,
@@ -390,7 +390,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         .function_types
                         .get(&FunctionId::new(*direct_addr as usize))
                     {
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 args_id.to_type(),
                                 callee_arg_type.clone(),
@@ -400,7 +400,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 callee_ret_type.clone(),
                                 rets_id.to_type(),
@@ -437,7 +437,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let const_type = Type::TypeVar(tv_id);
 
                 // Need a new ConstraintReason::LiteralInteger
-                self.result.store.add_constraint(
+                self.result.store.add_original_constraint(
                     Constraint::new(
                         const_type.clone(),
                         Type::Int,
@@ -496,7 +496,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             result_type.clone(),
                         );
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 lhs_type.clone(),
                                 Type::Int,
@@ -506,7 +506,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 rhs_type.clone(),
                                 Type::Int,
@@ -516,7 +516,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -566,7 +566,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     | BinaryOperator::NotEquals
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool,
@@ -576,7 +576,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 Type::Bool,
                                 result_type.clone(),
@@ -627,7 +627,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 match op {
                     disasm::v3::lir::expression::UnaryOperator::Not => {
                         // Need ConstraintReason::NotOperand, NotResult
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
                                 Type::Truthy, // Operand of NOT must be Truthy
@@ -637,7 +637,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool, // Result of NOT is Bool
@@ -649,7 +649,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         );
                     }
                     disasm::v3::lir::expression::UnaryOperator::Minus => {
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
                                 Type::Int,
@@ -659,7 +659,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_constraint(
+                        self.result.store.add_original_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -677,7 +677,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let tv_id = self.make_expression_type_var(function_id, instruction_id, expr);
                 let input_type = Type::TypeVar(tv_id);
                 // Need ConstraintReason::InputSourceType
-                self.result.store.add_constraint(
+                self.result.store.add_original_constraint(
                     Constraint::new(
                         input_type,
                         Type::Char, // Assuming input is Char by default

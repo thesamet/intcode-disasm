@@ -47,7 +47,8 @@ macro_rules! define_id_type {
                     .get(0..2)
                     .map(|s| s.to_lowercase())
                     .unwrap_or_else(|| "id".to_string()); // Fallback prefix
-                write!(f, "{}{}", prefix, self.0)
+                                                          // write!(f, "{}{}", prefix, self.0)
+                f.pad(&format!("{}{}", prefix, self.0))
             }
         }
 

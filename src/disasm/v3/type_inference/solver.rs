@@ -13,6 +13,7 @@ use crate::disasm::Error; // Assuming a general error type for the project
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::UnclassifiedArithmeticExpression;
+use super::query_engine::TypeInferenceQueryEngine;
 use super::type_bounds_map::ChangeReason;
 use super::types::TypeVarId;
 use super::{
@@ -139,9 +140,14 @@ impl Solver {
                 entry.reason.display_with(&self.state)
             );
         }
+        result.query_engine = TypeInferenceQueryEngine::new(self.state.clone(), self.store.clone());
 
         // 9. Finalize the result and embed it into a new model state.
-        Ok(self.model.with_type_inference_result(result))
+        let result_model = self.model.with_type_inference_result(result);
+
+        // Create query engine from the solver's final state
+
+        Ok(result_model)
     }
 
     fn apply_constraint(&mut self, constraint: &Constraint) -> bool {
@@ -162,6 +168,7 @@ impl Solver {
                 ChangeReason::Constraint(constraint.clone()),
             );
         }
+
         match (&sub_type, &super_type) {
             (Type::TypeVar(tv_id), Type::TypeVar(tv_id2)) if tv_id == tv_id2 => {
                 changed |= self.state.update_lower_bound(
@@ -173,16 +180,29 @@ impl Solver {
             (Type::Tuple(ts), Type::Tuple(us)) => {
                 assert!(ts.len() == us.len());
                 for (t, u) in ts.iter().zip(us) {
-                    let (_, ch) = self.store.add_constraint(
-                        Constraint::new(
-                            t.clone(),
-                            u.clone(),
-                            constraint.origin_function_id,
-                            constraint.origin_instruction_id,
-                            ConstraintReason::TupleSubtype,
-                        ),
-                        &self.state,
+                    let new_constraint = Constraint::new(
+                        t.clone(),
+                        u.clone(),
+                        constraint.origin_function_id,
+                        constraint.origin_instruction_id,
+                        ConstraintReason::TupleSubtype,
                     );
+
+                    // Get the parent constraint ID for derivation tracking
+                    let (_, ch) = if let Some(parent_id) = self.store.get_constraint_id(constraint)
+                    {
+                        // Track this as a derived constraint from tuple subtyping
+                        self.store.add_derived_constraint(
+                            new_constraint,
+                            parent_id,
+                            ChangeReason::Constraint(constraint.clone()),
+                            &self.state,
+                        )
+                    } else {
+                        // Fallback to original constraint if parent not found
+                        self.store
+                            .add_original_constraint(new_constraint, &self.state)
+                    };
                     changed |= ch;
                 }
             }
@@ -235,16 +255,17 @@ impl Solver {
         let mut changed = false;
 
         let mut add_constraint = |sub_type: Type, super_type: Type, reason: ConstraintReason| {
-            let (_, is_new) = self.store.add_constraint(
-                Constraint::new(
-                    sub_type,
-                    super_type,
-                    FunctionId::new(0),
-                    InstructionId::new(0),
-                    reason,
-                ),
-                &self.state,
+            let new_constraint = Constraint::new(
+                sub_type,
+                super_type,
+                FunctionId::new(0),
+                InstructionId::new(0),
+                reason,
             );
+            // For arithmetic classification, treat as derived from the expression analysis
+            let (_, is_new) = self
+                .store
+                .add_original_constraint(new_constraint, &self.state);
             changed |= is_new;
         };
 
@@ -367,6 +388,7 @@ impl Solver {
                         &Type::Bool,
                         ChangeReason::ConcreteTypeRefinement,
                     );
+                    return true;
                 }
             }
         }

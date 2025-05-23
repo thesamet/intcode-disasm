@@ -73,6 +73,7 @@ impl TypeVarRegistry for InferenceAlgorithmState {
 
 /// Main data structure to hold the state of the iterative type inference algorithm.
 /// This structure manages the upper and lower bounds for type variables.
+#[derive(Debug, Clone, Default)]
 pub struct InferenceAlgorithmState {
     /// Stores the state for each TypeVarId.
     type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
@@ -82,7 +83,7 @@ pub struct InferenceAlgorithmState {
     pub change_log: Vec<ChangeLogEntry>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChangeReason {
     Constraint(Constraint),
     ConcreteTypeRefinement,
@@ -140,6 +141,7 @@ impl fmt::Display for ChangeReason {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ChangeLogEntry {
     pub tv_id: TypeVarId,
     pub state: TypeVarState,

@@ -16,6 +16,24 @@ use std::{
     fmt,
 }; // Assuming types.rs is in the parent module (type_inference)
 
+use super::type_bounds_map::ChangeReason;
+
+/// Describes how a constraint was derived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstraintSource {
+    /// Original constraint from instruction analysis
+    Original {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        reason: ConstraintReason,
+    },
+    /// Constraint derived from other constraints during solving
+    Derived {
+        from_constraint: ConstraintId,
+        derivation_reason: ChangeReason,
+    },
+}
+
 /// A unique identifier for a constraint within a ConstraintStore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ConstraintId(usize);
@@ -108,6 +126,15 @@ impl Constraint {
         }
     }
 
+    /// Checks if this constraint involves the specified type variable.
+    pub fn involves_type_var(&self, tv_id: TypeVarId) -> bool {
+        let mut involved_vars = HashSet::new();
+        self.sub_type.collect_involved_type_vars(&mut involved_vars);
+        self.super_type
+            .collect_involved_type_vars(&mut involved_vars);
+        involved_vars.contains(&tv_id)
+    }
+
     pub fn display_with<'a, 'b, F>(&'a self, registry: &'b F) -> DisplayableConstraint<'a, 'b, F>
     where
         F: TypeVarRegistry,
@@ -152,7 +179,7 @@ pub struct UnclassifiedArithmeticExpression {
 /// A store for collecting and managing type constraints.
 /// Ensures that each unique constraint is stored at most once, identified by a ConstraintId.
 /// Provides efficient lookup of ConstraintIds involving a specific TypeVarId.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ConstraintStore {
     /// Stores the actual unique Constraint objects. The index in this Vec acts as the ConstraintId.
     constraints: Vec<Constraint>,
@@ -161,22 +188,19 @@ pub struct ConstraintStore {
     constraint_to_id: HashMap<Constraint, ConstraintId>,
     /// Auxiliary index for efficient lookup of ConstraintIds involving a specific TypeVarId.
     type_var_constraints: HashMap<TypeVarId, HashSet<ConstraintId>>,
+    /// Tracks how each constraint was derived.
+    constraint_derivations: HashMap<ConstraintId, ConstraintSource>,
 }
 
 impl ConstraintStore {
     pub fn new() -> Self {
-        ConstraintStore {
-            constraints: Vec::new(),
-            unclassified_add_expressions: Vec::new(),
-            constraint_to_id: HashMap::new(),
-            type_var_constraints: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Adds a new constraint to the store if it's not already present.
     /// Returns the ConstraintId of the added or existing constraint, and a boolean
     /// indicating if the constraint was newly added (true if new, false if existing).
-    pub fn add_constraint(
+    pub fn add_original_constraint(
         &mut self,
         constraint: Constraint,
         state: &InferenceAlgorithmState,
@@ -191,6 +215,14 @@ impl ConstraintStore {
 
         self.constraints.push(constraint.clone()); // Store the actual constraint
         self.constraint_to_id.insert(constraint.clone(), new_id); // Map constraint value to its ID
+
+        // Record the constraint source as original (from instruction analysis)
+        let source = ConstraintSource::Original {
+            function_id: constraint.origin_function_id,
+            instruction_id: constraint.origin_instruction_id,
+            reason: constraint.reason.clone(),
+        };
+        self.constraint_derivations.insert(new_id, source);
 
         // Update the TypeVar index
         let mut involved_ids = HashSet::new();
@@ -218,8 +250,8 @@ impl ConstraintStore {
     ) -> bool {
         let mut reversed = constraint.clone();
         std::mem::swap(&mut reversed.sub_type, &mut reversed.super_type);
-        let add1 = self.add_constraint(constraint, state).1;
-        let add2 = self.add_constraint(reversed, state).1;
+        let add1 = self.add_original_constraint(constraint, state).1;
+        let add2 = self.add_original_constraint(reversed, state).1;
         add1 || add2
     }
 
@@ -250,6 +282,102 @@ impl ConstraintStore {
         tv_id: &TypeVarId,
     ) -> Option<&HashSet<ConstraintId>> {
         self.type_var_constraints.get(tv_id)
+    }
+
+    /// Gets the ConstraintId for a given constraint, if it exists in the store.
+    pub fn get_constraint_id(&self, constraint: &Constraint) -> Option<ConstraintId> {
+        self.constraint_to_id.get(constraint).copied()
+    }
+
+    /// Gets the source/derivation information for a constraint.
+    pub fn get_constraint_source(&self, id: ConstraintId) -> Option<&ConstraintSource> {
+        self.constraint_derivations.get(&id)
+    }
+
+    /// Finds all constraints that originated from a specific instruction.
+    pub fn get_constraints_from_instruction(
+        &self,
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+    ) -> Vec<&Constraint> {
+        self.constraints
+            .iter()
+            .filter(|constraint| {
+                constraint.origin_function_id == function_id
+                    && constraint.origin_instruction_id == instruction_id
+            })
+            .collect()
+    }
+
+    /// Finds all constraint IDs that originated from a specific instruction.
+    pub fn get_constraint_ids_from_instruction(
+        &self,
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+    ) -> Vec<ConstraintId> {
+        self.constraints
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, constraint)| {
+                if constraint.origin_function_id == function_id
+                    && constraint.origin_instruction_id == instruction_id
+                {
+                    Some(ConstraintId(idx))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Adds a derived constraint to the store.
+    /// Returns the ConstraintId of the added or existing constraint, and a boolean
+    /// indicating if the constraint was newly added.
+    pub fn add_derived_constraint(
+        &mut self,
+        constraint: Constraint,
+        from_constraint: ConstraintId,
+        derivation_reason: ChangeReason,
+        state: &InferenceAlgorithmState,
+    ) -> (ConstraintId, bool) {
+        if let Some(existing_id) = self.constraint_to_id.get(&constraint) {
+            return (*existing_id, false); // Constraint already exists
+        }
+
+        // Constraint is new
+        let new_id_val = self.constraints.len();
+        let new_id = ConstraintId(new_id_val);
+
+        self.constraints.push(constraint.clone()); // Store the actual constraint
+        self.constraint_to_id.insert(constraint.clone(), new_id); // Map constraint value to its ID
+
+        // Record the constraint source as derived
+        let source = ConstraintSource::Derived {
+            from_constraint,
+            derivation_reason,
+        };
+        self.constraint_derivations.insert(new_id, source);
+
+        // Update the TypeVar index
+        let mut involved_ids = HashSet::new();
+        constraint
+            .sub_type
+            .collect_involved_type_vars(&mut involved_ids);
+        constraint
+            .super_type
+            .collect_involved_type_vars(&mut involved_ids);
+
+        for tv_id in involved_ids {
+            self.type_var_constraints
+                .entry(tv_id)
+                .or_default()
+                .insert(new_id);
+        }
+        trace!(
+            "Added derived constraint {}",
+            constraint.display_with(state)
+        );
+        (new_id, true)
     }
 
     pub fn iter_unclassified_add_expressions(
@@ -309,16 +437,16 @@ mod tests {
         let c2_val = make_test_constraint(Int, Any, ConstraintReason::Assignment); // Identical to c1
         let c3_val = make_test_constraint(Bool, Int, ConstraintReason::Assignment);
 
-        let (id1, added1) = store.add_constraint(c1_val.clone(), &state);
+        let (id1, added1) = store.add_original_constraint(c1_val.clone(), &state);
         assert!(added1, "Adding c1 should succeed");
         assert_eq!(store.len(), 1);
 
-        let (id2, added2) = store.add_constraint(c2_val.clone(), &state);
+        let (id2, added2) = store.add_original_constraint(c2_val.clone(), &state);
         assert!(!added2, "Adding c2 (duplicate) should not report as new");
         assert_eq!(id1, id2, "IDs for identical constraints should be the same");
         assert_eq!(store.len(), 1);
 
-        let (id3, added3) = store.add_constraint(c3_val.clone(), &state);
+        let (id3, added3) = store.add_original_constraint(c3_val.clone(), &state);
         assert!(added3, "Adding c3 should succeed");
         assert_ne!(id1, id3, "ID for c3 should be different from c1");
         assert_eq!(store.len(), 2);
@@ -337,15 +465,15 @@ mod tests {
         let c1 = make_test_constraint(Int, Any, ConstraintReason::Assignment);
         let c2 = make_test_constraint(Bool, Int, ConstraintReason::Assignment);
 
-        let (id1, _) = store.add_constraint(c1.clone(), &state);
+        let (id1, _) = store.add_original_constraint(c1.clone(), &state);
         assert!(!store.is_empty());
         assert_eq!(store.len(), 1);
 
-        let (id2, _) = store.add_constraint(c2.clone(), &state);
+        let (id2, _) = store.add_original_constraint(c2.clone(), &state);
         assert_eq!(store.len(), 2);
 
         // Add duplicate of c1
-        let (id1_dup, added_dup) = store.add_constraint(c1.clone(), &state);
+        let (id1_dup, added_dup) = store.add_original_constraint(c1.clone(), &state);
         assert!(!added_dup);
         assert_eq!(id1_dup, id1);
         assert_eq!(store.len(), 2); // Length should not change
@@ -384,5 +512,73 @@ mod tests {
         assert!(found_id1);
         assert!(found_id2);
         assert_eq!(ids_from_iter.len(), 2, "iter_ids should produce unique ids");
+    }
+
+    #[test]
+    fn test_constraint_source_tracking() {
+        let mut store = ConstraintStore::new();
+        let state = InferenceAlgorithmState::new();
+
+        let c1 = make_test_constraint(Int, Any, ConstraintReason::Assignment);
+        let (id1, _) = store.add_original_constraint(c1.clone(), &state);
+
+        // Check that original constraint has proper source
+        let source = store.get_constraint_source(id1).unwrap();
+        match source {
+            ConstraintSource::Original {
+                function_id,
+                instruction_id,
+                reason,
+            } => {
+                assert_eq!(*function_id, FunctionId::new(0));
+                assert_eq!(*instruction_id, InstructionId::new(0));
+                assert_eq!(*reason, ConstraintReason::Assignment);
+            }
+            _ => panic!("Expected Original source"),
+        }
+
+        // Test derived constraint
+        let c2 = make_test_constraint(Bool, Int, ConstraintReason::TupleSubtype);
+        let (id2, _) = store.add_derived_constraint(
+            c2.clone(),
+            id1,
+            ChangeReason::ConcreteTypeRefinement,
+            &state,
+        );
+
+        let derived_source = store.get_constraint_source(id2).unwrap();
+        match derived_source {
+            ConstraintSource::Derived {
+                from_constraint,
+                derivation_reason,
+            } => {
+                assert_eq!(*from_constraint, id1);
+                assert_eq!(*derivation_reason, ChangeReason::ConcreteTypeRefinement);
+            }
+            _ => panic!("Expected Derived source"),
+        }
+    }
+
+    #[test]
+    fn test_constraint_lookup_methods() {
+        let mut store = ConstraintStore::new();
+        let state = InferenceAlgorithmState::new();
+
+        let c1 = make_test_constraint(Int, Any, ConstraintReason::Assignment);
+        let (id1, _) = store.add_original_constraint(c1.clone(), &state);
+
+        // Test reverse lookup
+        assert_eq!(store.get_constraint_id(&c1), Some(id1));
+
+        // Test instruction-based lookup
+        let constraints_from_inst =
+            store.get_constraints_from_instruction(FunctionId::new(0), InstructionId::new(0));
+        assert_eq!(constraints_from_inst.len(), 1);
+        assert_eq!(*constraints_from_inst[0], c1);
+
+        let constraint_ids_from_inst =
+            store.get_constraint_ids_from_instruction(FunctionId::new(0), InstructionId::new(0));
+        assert_eq!(constraint_ids_from_inst.len(), 1);
+        assert_eq!(constraint_ids_from_inst[0], id1);
     }
 }

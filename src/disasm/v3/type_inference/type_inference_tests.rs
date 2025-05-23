@@ -366,6 +366,48 @@ f1:
     }
 
     #[test]
+    fn test_link_function_params_to_argument_types_single() {
+        let ctx = TypeInferenceComplete::test_context(
+            r#"
+                R += 1000
+                'a [R+1] = 65
+                [R] = @ret
+                goto @maybe_print
+    ret:
+                halt
+    maybe_print:
+                R += 10
+                if 'b [R-9] goto @fret
+                output 1
+    fret:
+                R -= 10
+                goto [R]
+            "#,
+        )
+        .unwrap();
+        println!(
+            "Pretty printed model with types (V3):\n{}",
+            pretty_print_with_types(&ctx.model)
+        );
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_variables()
+        );
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_constraints()
+        );
+        assert_marker_type!(ctx, 'a', Type::Bool);
+        assert_marker_type!(ctx, 'b', Type::Bool);
+    }
+
+    #[test]
     fn test_link_function_params_to_argument_types_multi() {
         let ctx = TypeInferenceComplete::test_context(
             r#"
@@ -404,6 +446,13 @@ f1:
         println!(
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
+        );
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_variables()
         );
         assert_marker_type!(ctx, 'a', Type::Char);
         print_traces_for_marker(&ctx.model, 'b');

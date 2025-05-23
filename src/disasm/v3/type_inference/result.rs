@@ -9,7 +9,7 @@ use crate::disasm::v3::ssa::SsaMemoryReference;
 
 use super::type_bounds_map::TypeVarRegistry;
 use super::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
-use super::TypeVarState;
+use super::{TypeInferenceQueryEngine, TypeVarState};
 
 /// Stores inferred type information for a single function.
 #[derive(Debug, Clone)]
@@ -39,6 +39,7 @@ pub struct TypeInferenceResult {
     pub type_var_states: HashMap<TypeVarId, TypeVarState>,
     pub type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
     pub debug_markers: HashMap<char, TypeVarId>,
+    pub query_engine: TypeInferenceQueryEngine,
 }
 
 impl TypeInferenceResult {
