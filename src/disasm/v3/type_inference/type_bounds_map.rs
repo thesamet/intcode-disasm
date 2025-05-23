@@ -10,6 +10,7 @@ use log::trace;
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
 // and types.rs exposes these publicly or they are accessible via `crate::...`
 use super::{
+    type_interval::TypeInterval,
     types::{Type, TypeVarId, TypeVarNode},
     Constraint,
 }; // Use `super::` if types.rs is in the parent directory (type_inference)
@@ -17,14 +18,7 @@ use super::{
 
 /// Holds the data associated with a single TypeVarId.
 /// It includes the TypeVarNode information and its current best bounds.
-#[derive(Clone, Debug, PartialEq, Eq)] // Requires Type and TypeVarNode to be Clone and Debug
-pub enum TypeVarState {
-    Bounds {
-        lower_bound: Type,
-        upper_bound: Type,
-    },
-    Converged(Type),
-}
+pub type TypeVarState = TypeInterval;
 
 impl TypeVarState {
     pub fn display_with<'a, F>(&'a self, registry: &'a F) -> DisplayableTypeVarState<'a, F> {

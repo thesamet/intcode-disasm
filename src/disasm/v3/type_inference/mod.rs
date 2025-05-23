@@ -6,6 +6,7 @@ pub mod query_engine;
 mod result;
 mod solver;
 pub mod type_bounds_map;
+mod type_interval;
 mod types;
 
 pub use constraints::ConstraintStore;
