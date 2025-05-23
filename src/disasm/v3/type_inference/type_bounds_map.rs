@@ -443,6 +443,77 @@ impl InferenceAlgorithmState {
             }
         }
     }
+
+    /// Get the interval for any type expression
+    pub fn get_type_interval(&self, t: &Type) -> TypeInterval {
+        match t {
+            Type::TypeVar(tv_id) => {
+                self.type_var_states
+                    .get(tv_id)
+                    .cloned()
+                    .unwrap_or_else(TypeInterval::unknown)
+            }
+            
+            Type::GLB(operands) => {
+                operands.iter()
+                    .map(|op| self.get_type_interval(op))
+                    .reduce(|acc, interval| acc.glb(&interval))
+                    .unwrap_or_else(|| TypeInterval::singleton(Type::Any))
+            }
+            
+            Type::LUB(operands) => {
+                operands.iter()
+                    .map(|op| self.get_type_interval(op))
+                    .reduce(|acc, interval| acc.lub(&interval))
+                    .unwrap_or_else(|| TypeInterval::singleton(Type::Nothing))
+            }
+            
+            Type::Pointer(inner) => {
+                let inner_interval = self.get_type_interval(inner);
+                TypeInterval::bounds(
+                    Type::Pointer(Box::new(inner_interval.lower().clone())),
+                    Type::Pointer(Box::new(inner_interval.upper().clone()))
+                )
+            }
+            
+            Type::Function { params, returns } => {
+                let params_interval = self.get_type_interval(params);
+                let returns_interval = self.get_type_interval(returns);
+                // Functions are contravariant in parameters, covariant in returns
+                // For interval [f_lower, f_upper], we want:
+                // f_lower = Function with most restrictive params (upper) and returns (lower)
+                // f_upper = Function with least restrictive params (lower) and returns (upper)
+                TypeInterval::bounds(
+                    Type::Function {
+                        params: Box::new(params_interval.upper().clone()),  // contravariant
+                        returns: Box::new(returns_interval.lower().clone()), // covariant
+                    },
+                    Type::Function {
+                        params: Box::new(params_interval.lower().clone()),  // contravariant
+                        returns: Box::new(returns_interval.upper().clone()), // covariant
+                    }
+                )
+            }
+            
+            Type::Tuple(elements) => {
+                let element_intervals: Vec<TypeInterval> = elements.iter()
+                    .map(|elem| self.get_type_interval(elem))
+                    .collect();
+                    
+                TypeInterval::bounds(
+                    Type::Tuple(
+                        element_intervals.iter().map(|i| i.lower().clone()).collect()
+                    ),
+                    Type::Tuple(
+                        element_intervals.iter().map(|i| i.upper().clone()).collect()
+                    )
+                )
+            }
+            
+            // Concrete types have singleton intervals
+            concrete => TypeInterval::singleton(concrete.clone()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -585,5 +656,94 @@ mod tests {
         state.add_type_var(tv_id, another_node_info);
         assert_eq!(state.get_type_var_node(&tv_id).unwrap(), &node_info);
         assert!(state.take_updated_vars().is_empty());
+    }
+
+    #[test]
+    fn test_get_type_interval_concrete_types() {
+        let state = InferenceAlgorithmState::new();
+        
+        // Concrete types should return singleton intervals
+        let int_interval = state.get_type_interval(&Type::Int);
+        assert_eq!(int_interval.lower(), &Type::Int);
+        assert_eq!(int_interval.upper(), &Type::Int);
+        assert!(int_interval.is_singleton());
+        
+        let bool_interval = state.get_type_interval(&Type::Bool);
+        assert_eq!(bool_interval.lower(), &Type::Bool);
+        assert_eq!(bool_interval.upper(), &Type::Bool);
+        assert!(bool_interval.is_singleton());
+    }
+
+    #[test]
+    fn test_get_type_interval_type_vars() {
+        let mut state = InferenceAlgorithmState::new();
+        let tv_id = TypeVarId::new(1);
+        
+        state.add_type_var(
+            tv_id,
+            make_node(
+                TypeVarKind::Expression(build_expr!(1)),
+                InstructionId::new(1),
+                FunctionId::new(0),
+            ),
+        );
+        
+        // Before any updates, should have default bounds [Nothing, Any]
+        let interval = state.get_type_interval(&Type::TypeVar(tv_id));
+        assert_eq!(interval.lower(), &Type::Nothing);
+        assert_eq!(interval.upper(), &Type::Any);
+        
+        // After updating bounds
+        state.update_lower_bound(&tv_id, &Type::Bool, ChangeReason::Test);
+        state.update_upper_bound(&tv_id, &Type::Int, ChangeReason::Test);
+        
+        let updated_interval = state.get_type_interval(&Type::TypeVar(tv_id));
+        assert_eq!(updated_interval.lower(), &Type::Bool);
+        assert_eq!(updated_interval.upper(), &Type::Int);
+    }
+
+    #[test]
+    fn test_get_type_interval_glb() {
+        let mut state = InferenceAlgorithmState::new();
+        let tv_id = TypeVarId::new(1);
+        
+        state.add_type_var(
+            tv_id,
+            make_node(
+                TypeVarKind::Expression(build_expr!(1)),
+                InstructionId::new(1),
+                FunctionId::new(0),
+            ),
+        );
+        
+        // Set type var bounds to [Bool, Truthy]
+        state.update_lower_bound(&tv_id, &Type::Bool, ChangeReason::Test);
+        state.update_upper_bound(&tv_id, &Type::Truthy, ChangeReason::Test);
+        
+        // Test GLB(Int, TypeVar) where TypeVar ∈ [Bool, Truthy]
+        let glb_type = Type::GLB(vec![Type::Int, Type::TypeVar(tv_id)]);
+        let interval = state.get_type_interval(&glb_type);
+        
+        // GLB(Int, [Bool, Truthy]) should give us [GLB(Int, Bool), GLB(Int, Truthy)]
+        // GLB(Int, Bool) = Bool, GLB(Int, Truthy) = Int
+        assert_eq!(interval.lower(), &Type::Bool);
+        assert_eq!(interval.upper(), &Type::Int);
+    }
+
+    #[test]
+    fn test_get_type_interval_complex_types() {
+        let state = InferenceAlgorithmState::new();
+        
+        // Test Pointer type
+        let pointer_type = Type::Pointer(Box::new(Type::Int));
+        let pointer_interval = state.get_type_interval(&pointer_type);
+        assert_eq!(pointer_interval.lower(), &Type::Pointer(Box::new(Type::Int)));
+        assert_eq!(pointer_interval.upper(), &Type::Pointer(Box::new(Type::Int)));
+        
+        // Test Tuple type
+        let tuple_type = Type::Tuple(vec![Type::Int, Type::Bool]);
+        let tuple_interval = state.get_type_interval(&tuple_type);
+        assert_eq!(tuple_interval.lower(), &Type::Tuple(vec![Type::Int, Type::Bool]));
+        assert_eq!(tuple_interval.upper(), &Type::Tuple(vec![Type::Int, Type::Bool]));
     }
 }
