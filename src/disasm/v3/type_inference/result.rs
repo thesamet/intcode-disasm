@@ -8,6 +8,7 @@ use log::debug;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 
 use super::type_bounds_map::TypeVarRegistry;
+use super::type_interval::TypeInterval;
 use super::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
 use super::{TypeInferenceQueryEngine, TypeVarState};
 
@@ -51,7 +52,7 @@ impl TypeInferenceResult {
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {
         self.debug_markers.get(&marker).and_then(|typ| {
             match self.type_var_states.get(typ).unwrap() {
-                TypeVarState::Bounds {
+                TypeInterval::Bounds {
                     lower_bound,
                     upper_bound,
                 } => {
@@ -63,7 +64,7 @@ impl TypeInferenceResult {
                     );
                     None
                 }
-                TypeVarState::Converged(ty) => Some(ty.clone()),
+                TypeInterval::Converged(ty) => Some(ty.clone()),
             }
         })
     }
@@ -72,7 +73,7 @@ impl TypeInferenceResult {
         self.type_var_states
             .iter()
             .filter_map(|(id, state)| {
-                if let TypeVarState::Converged(ty) = state {
+                if let TypeInterval::Converged(ty) = state {
                     Some((
                         self.type_var_nodes.get(id).unwrap().kind.clone(),
                         ty.clone(),
@@ -87,7 +88,7 @@ impl TypeInferenceResult {
     pub fn print_all_type_bounds(&self) {
         for (id, state) in self.type_var_states.iter().sorted_by_key(|(id, _)| *id) {
             match state {
-                TypeVarState::Bounds {
+                TypeInterval::Bounds {
                     lower_bound,
                     upper_bound,
                 } => {
@@ -98,7 +99,7 @@ impl TypeInferenceResult {
                         upper_bound.display_with(self)
                     );
                 }
-                TypeVarState::Converged(ty) => {
+                TypeInterval::Converged(ty) => {
                     println!(
                         "{:?<50} == {:<20}",
                         id.display_with(self),

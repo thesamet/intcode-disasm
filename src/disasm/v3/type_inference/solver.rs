@@ -20,6 +20,7 @@ use super::{
     generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
     Type, TypeVarState,
 };
+use super::type_interval::TypeInterval;
 
 /// Solver for type inference.
 ///
@@ -356,7 +357,7 @@ impl Solver {
             .collect();
 
         for (tv_id, var) in type_states {
-            if let TypeVarState::Bounds {
+            if let TypeInterval::Bounds {
                 lower_bound,
                 upper_bound,
             } = var

@@ -229,8 +229,8 @@ impl TypeInferenceQueryEngine {
         let converged_vars: Vec<_> = self
             .state
             .iter_all_type_states()
-            .filter(|(_, state)| {
-                matches!(state, super::type_bounds_map::TypeVarState::Converged(_))
+            .filter(|&(_, state)| {
+                matches!(state, super::type_interval::TypeInterval::Converged(_))
             })
             .map(|(id, _)| *id)
             .collect();
