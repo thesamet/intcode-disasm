@@ -44,7 +44,7 @@ impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
 /// Represents the possible types in our type system
 use std::fmt;
 
-use super::type_bounds_map::TypeVarRegistry;
+use super::{type_bounds_map::TypeVarRegistry, InferenceAlgorithmState};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
@@ -545,13 +545,19 @@ impl Type {
     // When computing upper bounds or lower bounds, it could happen that the same type we are computing bounds for
     // appears in a top-level GLB or LUB. This function removes the given variable from the top-level GLB and LUB,
     // and attempts simplifying it before returning it. If the type is not a GLB or LUB, it is returned unchanged.
-    pub fn remove_references_from_glb_lub(&self, t: &TypeVarId) -> Type {
+    pub fn remove_cycles_from_glb_lub(
+        &self,
+        t: &TypeVarId,
+        state: &InferenceAlgorithmState,
+    ) -> Type {
         match self {
             Type::GLB(types) => {
                 let filtered_types: Vec<Type> = types
                     .iter()
                     .filter(|typ| match typ {
-                        Type::TypeVar(id) => id != t,
+                        Type::TypeVar(id) => {
+                            id != t && *state.get_type_interval(typ).lower() != t.to_type()
+                        }
                         _ => true,
                     })
                     .cloned()

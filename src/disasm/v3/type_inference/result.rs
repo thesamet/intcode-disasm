@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
 use super::type_bounds_map::TypeVarRegistry;
 use super::type_interval::TypeInterval;
@@ -39,6 +39,7 @@ impl Default for FunctionTypeInfo {
 pub struct TypeInferenceResult {
     pub type_var_states: HashMap<TypeVarId, TypeVarState>,
     pub type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
+    pub mem_ref_to_type_var_id: HashMap<SsaMemoryReference, TypeVarId>,
     pub debug_markers: HashMap<char, TypeVarId>,
     pub query_engine: TypeInferenceQueryEngine,
 }
@@ -107,6 +108,17 @@ impl TypeInferenceResult {
                     );
                 }
             }
+        }
+    }
+
+    pub fn get_type_for(&self, t: SsaMemoryReference) -> Type {
+        let tv_id = self
+            .mem_ref_to_type_var_id
+            .get(&t)
+            .expect(&format!("No type var for {}", t));
+        match self.type_var_states.get(&tv_id).unwrap() {
+            TypeInterval::Converged(t) => t.clone(),
+            TypeInterval::Bounds { .. } => Type::Any,
         }
     }
 }

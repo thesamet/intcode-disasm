@@ -403,8 +403,8 @@ f1:
                 .query_engine
                 .list_all_constraints()
         );
-        assert_marker_type!(ctx, 'a', Type::Bool);
-        assert_marker_type!(ctx, 'b', Type::Bool);
+        assert_marker_type!(ctx, 'a', Type::Int);
+        assert_marker_type!(ctx, 'b', Type::Truthy);
     }
 
     #[test]
@@ -437,8 +437,9 @@ f1:
                 goto [R]
 
     somefunc:
-                R += 1
-                R -= 1
+                R += 2
+                [R-1] = 17
+                R -= 2
                 goto [R]
             "#,
         )
@@ -458,7 +459,7 @@ f1:
         print_traces_for_marker(&ctx.model, 'b');
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_is_function_pointer!(ctx, 'c');
-        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Truthy)));
+        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Bool)));
     }
 
     #[test]

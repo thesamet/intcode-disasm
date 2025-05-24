@@ -10,17 +10,18 @@ use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::UnclassifiedArithmeticExpression;
 use super::query_engine::TypeInferenceQueryEngine;
 use super::type_bounds_map::ChangeReason;
+use super::type_interval::TypeInterval;
 use super::types::TypeVarId;
 use super::{
     generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
     Type, TypeVarState,
 };
-use super::type_interval::TypeInterval;
 
 /// Solver for type inference.
 ///
@@ -109,9 +110,6 @@ impl Solver {
             }
             changed |= !to_remove.is_empty();
 
-            // for expr in to_remove {
-            //     self.store.remove_unclassified_add_expressions(&expr);
-            // }
             if !changed {
                 changed |= self.refine_concrete_types();
             }
@@ -127,11 +125,18 @@ impl Solver {
             .iter_all_type_nodes()
             .map(|(id, var)| (*id, var.clone()))
             .collect();
-        result.type_var_states = self
-            .state
-            .iter_all_type_states()
-            .map(|(id, state)| (*id, state.clone()))
-            .collect();
+        for (id, state) in self.state.iter_all_type_states() {
+            result.type_var_states.insert(*id, state.clone());
+            if let Some(mem_ref) = self
+                .state
+                .get_type_var_node(id)
+                .unwrap()
+                .kind
+                .as_memory_reference()
+            {
+                result.mem_ref_to_type_var_id.insert(mem_ref.clone(), *id);
+            }
+        }
         result.debug_markers = markers;
         for entry in self.state.change_log.iter() {
             debug!(
@@ -179,7 +184,6 @@ impl Solver {
                 );
             }
             (Type::Tuple(ts), Type::Tuple(us)) => {
-                assert!(ts.len() == us.len());
                 for (t, u) in ts.iter().zip(us) {
                     let new_constraint = Constraint::new(
                         t.clone(),
@@ -390,6 +394,12 @@ impl Solver {
                         ChangeReason::ConcreteTypeRefinement,
                     );
                     return true;
+                } else if upper_bound == Type::Truthy {
+                    self.state.update_lower_bound(
+                        &tv_id,
+                        &Type::Truthy,
+                        ChangeReason::ConcreteTypeRefinement,
+                    );
                 }
             }
         }

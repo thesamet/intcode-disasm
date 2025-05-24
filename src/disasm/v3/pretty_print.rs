@@ -7,7 +7,7 @@ use itertools::Itertools;
 use crate::derive_display;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{
-    FoldedSsaComplete, HasFunctionCallAnalysisResult, TypeInferenceComplete,
+    FoldedSsaComplete, HasFunctionCallAnalysisResult, HasTypeInferenceResult, TypeInferenceComplete,
 };
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::{
@@ -245,10 +245,67 @@ fn format_signature<S: ModelState + 'static>(
         )
     }
 
+    fn format_typed_signature<
+        T: HasTypeInferenceResult + ModelState + 'static,
+        S: ModelState + 'static,
+    >(
+        model: &Model<T>,
+        function: &FunctionView<S>,
+        ctx: &FormattingContext,
+    ) -> String
+    where
+        T: HasFunctionCallAnalysisResult,
+    {
+        let res = model.type_inference_result();
+        let args = model
+            .function_call_analysis_result()
+            .functions
+            .get(&function.function_id())
+            .unwrap()
+            .parameter_entry_vars
+            .values()
+            .sorted_by_key(|v| v.as_stack_relative().unwrap())
+            .map(|v| (v, res.get_type_for((*v).into())))
+            .map(|(v, t)| {
+                format!(
+                    "{}: {}",
+                    v.pretty_print_with_context(ctx),
+                    t.display_with(res)
+                )
+            })
+            .join(&", ".color(ctx.colors().unwrap().low_prio).to_string());
+        let rets = model
+            .function_call_analysis_result()
+            .functions
+            .get(&function.function_id())
+            .unwrap()
+            .return_writes
+            .values()
+            .sorted_by_key(|v| v.as_stack_relative().unwrap())
+            .map(|v| (v, res.get_type_for((*v).into())))
+            .map(|(v, t)| {
+                format!(
+                    "{}: {}",
+                    v.pretty_print_with_context(ctx),
+                    t.display_with(res)
+                )
+            })
+            .join(&", ".color(ctx.colors().unwrap().low_prio).to_string());
+        format!(
+            "{}{}{}{}{}{}",
+            "(".color(ctx.colors().unwrap().low_prio),
+            args,
+            ") -> ".color(ctx.colors().unwrap().low_prio),
+            "(".color(ctx.colors().unwrap().low_prio),
+            rets,
+            ")".color(ctx.colors().unwrap().low_prio),
+        )
+    }
+
     match_type!(function.model, {
         &Model<FunctionCallAnalysisComplete> as m => format_signature(m, function, ctx),
         &Model<FoldedSsaComplete> as m => format_signature(m, function, ctx),
-        &Model<TypeInferenceComplete> as m =>  format_signature(m, function, ctx),
+        &Model<TypeInferenceComplete> as m =>  format_typed_signature(m, function, ctx),
         _ => "".to_string(),
     })
 }

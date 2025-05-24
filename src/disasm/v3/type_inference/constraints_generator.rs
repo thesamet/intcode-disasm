@@ -4,6 +4,7 @@ use itertools::Itertools;
 use log::trace;
 
 use crate::disasm;
+use crate::disasm::v3::control_flow::BlockView;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
@@ -211,7 +212,11 @@ impl<'a> TypeConstraintGenerator<'a> {
 
                 // Process instructions
                 for instruction_node in &ssa_block_content.folded_ssa().instructions {
-                    self.generate_constraints_for_instruction(instruction_node, function_id);
+                    self.generate_constraints_for_instruction(
+                        &ssa_block_content,
+                        instruction_node,
+                        function_id,
+                    );
                 }
             }
         }
@@ -253,6 +258,7 @@ impl<'a> TypeConstraintGenerator<'a> {
 
     fn generate_constraints_for_instruction(
         &mut self,
+        block: &BlockView<'a, FoldedSsaComplete>,
         instruction_node: &InstructionNode<SsaMemoryReference>,
         function_id: FunctionId,
     ) {
@@ -341,28 +347,38 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
             Instruction::Call { addr, args, .. } => {
                 let addr_var_id = self.process_expression(addr, function_id, instruction_id);
-                let mut arg_type_typle = vec![];
+                let mut arg_type_tuple = vec![];
                 for arg in args {
-                    arg_type_typle.push(
+                    arg_type_tuple.push(
                         self.process_expression(arg, function_id, instruction_id)
                             .to_type(),
                     );
                 }
-                let arg_type_tuple = Type::tuple(&arg_type_typle);
+                let arg_type_tuple = Type::tuple(&arg_type_tuple);
                 let args_id = self.fresh_type_var_id();
-                let rets_id = self.fresh_type_var_id();
                 let args_node_info = TypeVarNode {
                     kind: TypeVarKind::CallSiteArgs,
                     instruction_id,
                     function_id,
                 };
+                self.result.state.add_type_var(args_id, args_node_info);
+
+                let mut ret_type_tuple = vec![];
+                for (_, ret) in block.call_site_info().return_reads.iter() {
+                    ret_type_tuple.push(
+                        self.get_or_create_type_var_for_vmr(ret, function_id, instruction_id)
+                            .to_type(),
+                    );
+                }
+                let ret_type_tuple = Type::tuple(&ret_type_tuple);
+                let rets_id = self.fresh_type_var_id();
                 let rets_node_info = TypeVarNode {
                     kind: TypeVarKind::CallSiteReturns,
                     instruction_id,
                     function_id,
                 };
-                self.result.state.add_type_var(args_id, args_node_info);
                 self.result.state.add_type_var(rets_id, rets_node_info);
+
                 let fp = Type::function(args_id.to_type(), rets_id.to_type());
                 self.result.store.add_equality_constraint(
                     Constraint {
@@ -381,6 +397,16 @@ impl<'a> TypeConstraintGenerator<'a> {
                         origin_function_id: function_id,
                         origin_instruction_id: instruction_id,
                         reason: ConstraintReason::FunctionCallArguments,
+                    },
+                    &self.result.state,
+                );
+                self.result.store.add_equality_constraint(
+                    Constraint {
+                        sub_type: ret_type_tuple,
+                        super_type: rets_id.to_type(),
+                        origin_function_id: function_id,
+                        origin_instruction_id: instruction_id,
+                        reason: ConstraintReason::FunctionCallReturns,
                     },
                     &self.result.state,
                 );
