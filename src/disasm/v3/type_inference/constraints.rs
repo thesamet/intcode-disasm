@@ -198,15 +198,20 @@ impl ConstraintStore {
     }
 
     /// Adds a new constraint to the store if it's not already present.
-    /// Returns the ConstraintId of the added or existing constraint, and a boolean
+    /// BoBool the ConstraintId of the added or existing constraint, and a boolean
     /// indicating if the constraint was newly added (true if new, false if existing).
-    pub fn add_original_constraint(
+    /// Internal helper method to add a constraint with specified source
+    fn add_constraint(
         &mut self,
         constraint: Constraint,
+        source: ConstraintSource,
         state: &InferenceAlgorithmState,
     ) -> (ConstraintId, bool) {
         if let Some(existing_id) = self.constraint_to_id.get(&constraint) {
             return (*existing_id, false); // Constraint already exists
+        }
+        if constraint.sub_type == constraint.super_type {
+            return (ConstraintId(0), false); // No constraint needed
         }
 
         // Constraint is new
@@ -216,12 +221,7 @@ impl ConstraintStore {
         self.constraints.push(constraint.clone()); // Store the actual constraint
         self.constraint_to_id.insert(constraint.clone(), new_id); // Map constraint value to its ID
 
-        // Record the constraint source as original (from instruction analysis)
-        let source = ConstraintSource::Original {
-            function_id: constraint.origin_function_id,
-            instruction_id: constraint.origin_instruction_id,
-            reason: constraint.reason.clone(),
-        };
+        // Record the constraint source
         self.constraint_derivations.insert(new_id, source);
 
         // Update the TypeVar index
@@ -241,6 +241,19 @@ impl ConstraintStore {
         }
         trace!("Added constraint {}", constraint.display_with(state));
         (new_id, true)
+    }
+
+    pub fn add_original_constraint(
+        &mut self,
+        constraint: Constraint,
+        state: &InferenceAlgorithmState,
+    ) -> (ConstraintId, bool) {
+        let source = ConstraintSource::Original {
+            function_id: constraint.origin_function_id,
+            instruction_id: constraint.origin_instruction_id,
+            reason: constraint.reason.clone(),
+        };
+        self.add_constraint(constraint, source, state)
     }
 
     pub fn add_equality_constraint(
@@ -340,44 +353,11 @@ impl ConstraintStore {
         derivation_reason: ChangeReason,
         state: &InferenceAlgorithmState,
     ) -> (ConstraintId, bool) {
-        if let Some(existing_id) = self.constraint_to_id.get(&constraint) {
-            return (*existing_id, false); // Constraint already exists
-        }
-
-        // Constraint is new
-        let new_id_val = self.constraints.len();
-        let new_id = ConstraintId(new_id_val);
-
-        self.constraints.push(constraint.clone()); // Store the actual constraint
-        self.constraint_to_id.insert(constraint.clone(), new_id); // Map constraint value to its ID
-
-        // Record the constraint source as derived
         let source = ConstraintSource::Derived {
             from_constraint,
             derivation_reason,
         };
-        self.constraint_derivations.insert(new_id, source);
-
-        // Update the TypeVar index
-        let mut involved_ids = HashSet::new();
-        constraint
-            .sub_type
-            .collect_involved_type_vars(&mut involved_ids);
-        constraint
-            .super_type
-            .collect_involved_type_vars(&mut involved_ids);
-
-        for tv_id in involved_ids {
-            self.type_var_constraints
-                .entry(tv_id)
-                .or_default()
-                .insert(new_id);
-        }
-        trace!(
-            "Added derived constraint {}",
-            constraint.display_with(state)
-        );
-        (new_id, true)
+        self.add_constraint(constraint, source, state)
     }
 
     pub fn iter_unclassified_add_expressions(
