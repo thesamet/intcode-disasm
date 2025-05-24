@@ -320,7 +320,7 @@ impl Solver {
                 ConstraintReason::ArithmeticResultOp1IntOp2Int,
             );
         }
-        if is_result_char || is_result_int {
+        if is_result_char && is_result_int {
             add_constraint(
                 unclassified.lhs_type.clone(),
                 Type::Int,
@@ -393,6 +393,24 @@ impl Solver {
 
     fn refine_concrete_types(&mut self) -> bool {
         trace!("{}", "Refining concrete types".red());
+        for (tv_id, var) in self.state.iter_all_type_states() {
+            trace!(
+                "tv_id: {} - {} : {}",
+                tv_id,
+                tv_id.display_with(&self.state),
+                var.display_with(&self.state)
+            );
+        }
+        trace!("*** Known constraints");
+        for c in self
+            .store
+            .iter()
+            .map(|c| (self.store.get_constraint_id(c).unwrap(), c))
+            .sorted_by_key(|x| x.0)
+        {
+            trace!("{:?}: {}", c.0, c.1.display_with(&self.state));
+        }
+
         let type_states: Vec<(TypeVarId, TypeVarState)> = self
             .state
             .iter_all_type_states()
@@ -405,7 +423,8 @@ impl Solver {
                 upper_bound,
             } = var
             {
-                if lower_bound == Type::Nothing && upper_bound.is_concrete_type() {
+                /*
+                if upper_bound.is_concrete_type() {
                     self.state.update_lower_bound(
                         &tv_id,
                         &upper_bound,
@@ -413,7 +432,7 @@ impl Solver {
                     );
                     return true;
                 }
-                if upper_bound == Type::Any && lower_bound.is_concrete_type() {
+                if lower_bound.is_concrete_type() {
                     self.state.update_upper_bound(
                         &tv_id,
                         &lower_bound,
@@ -421,6 +440,7 @@ impl Solver {
                     );
                     return true;
                 }
+                */
                 if lower_bound == Type::Nothing && upper_bound == Type::Truthy {
                     self.state.update_upper_bound(
                         &tv_id,

@@ -3,10 +3,14 @@ mod type_inference_tests {
 
     use crate::disasm::test_utils::TestContextBuilder;
 
+    use crate::disasm::v3::common::formatting::PrettyPrintConfig;
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print
-    use crate::disasm::v3::pretty_print::{pretty_print_folded_ssa, pretty_print_with_types};
+    use crate::disasm::v3::pretty_print::{
+        pretty_print_folded_ssa, pretty_print_ssa_with_config, pretty_print_with_types,
+    };
     use crate::disasm::v3::ssa::types::VersionableMemoryKind;
     use crate::disasm::v3::ssa::SsaMemoryReference;
+    use crate::disasm::v3::type_inference::query_engine;
     use crate::disasm::v3::type_inference::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
     use crate::disasm::v3::{FunctionId, InstructionId}; // V3 Type
 
@@ -574,6 +578,15 @@ f1:
                 .query_engine
                 .list_all_variables()
         );
+        let tvid = TypeVarId::new(10);
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .find_root_causes(tvid)
+        );
+
         assert_marker_type!(ctx, 'a', Type::Int); // not smart enough yet to see it's char.
         assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
         assert_marker_type!(ctx, 'e', Type::pointer(Type::Char));
@@ -993,6 +1006,14 @@ f1:
         println!(
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
+        );
+        ctx.model.type_inference_result().print_all_type_bounds();
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_constraints()
         );
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Int);

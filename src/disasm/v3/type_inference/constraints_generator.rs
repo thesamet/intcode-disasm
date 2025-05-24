@@ -132,7 +132,7 @@ impl<'a> TypeConstraintGenerator<'a> {
     // Iterates through the SSA model (conceptual)
     fn generate_all_constraints(&mut self) {
         trace!("Generating constraints for model");
-        for (function_id, f) in self.model.functions() {
+        for (function_id, f) in self.model.functions().sorted_by_key(|f| f.0) {
             let args = self.fresh_type_var_id();
             let returns = self.fresh_type_var_id();
             self.result.state.add_type_var(
@@ -197,8 +197,8 @@ impl<'a> TypeConstraintGenerator<'a> {
                 &self.result.state,
             );
         }
-        for (function_id, f) in self.model.functions() {
-            for (_block_id, ssa_block_content) in f.blocks() {
+        for (function_id, f) in self.model.functions().sorted_by_key(|f| f.0) {
+            for (_block_id, ssa_block_content) in f.blocks().sorted_by_key(|b| b.0) {
                 // blocks is BTreeMap<BlockId, SsaBlock>
                 // Process Phi functions first for the block
                 let phi_origin_instruction_id = ssa_block_content

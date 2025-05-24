@@ -35,7 +35,7 @@ pub enum ConstraintSource {
 }
 
 /// A unique identifier for a constraint within a ConstraintStore.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstraintId(usize);
 
 /// Describes the reason a type constraint was generated.

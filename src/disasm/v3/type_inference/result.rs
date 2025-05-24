@@ -135,4 +135,7 @@ impl TypeVarRegistry for TypeInferenceResult {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode> {
         self.type_var_nodes.get(tv_id)
     }
+    fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState> {
+        self.type_var_states.get(tv_id)
+    }
 }
