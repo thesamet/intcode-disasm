@@ -6,7 +6,7 @@ mod type_inference_tests {
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print
     use crate::disasm::v3::pretty_print::{pretty_print_folded_ssa, pretty_print_with_types};
     use crate::disasm::v3::ssa::types::VersionableMemoryKind;
-    use crate::disasm::v3::type_inference::types::Type; // V3 Type
+    use crate::disasm::v3::type_inference::types::{Type, TypeVarId}; // V3 Type
 
     // For full implementation, these might be needed:
     // use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
@@ -519,6 +519,13 @@ f1:
                 .type_inference_result()
                 .query_engine
                 .list_all_variables()
+        );
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .explain_bounds(Type::TypeVarId(15))
         );
 
         assert_marker_type!(ctx, 'b', Type::Int);
