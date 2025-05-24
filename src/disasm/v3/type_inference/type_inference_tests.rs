@@ -513,7 +513,13 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        print_traces_for_marker(&ctx.model, 'b');
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_variables()
+        );
 
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
