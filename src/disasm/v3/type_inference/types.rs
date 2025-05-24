@@ -44,7 +44,10 @@ impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
 /// Represents the possible types in our type system
 use std::fmt;
 
-use super::{type_bounds_map::TypeVarRegistry, InferenceAlgorithmState};
+use super::{
+    type_bounds_map::{BoundDirection, TypeVarRegistry},
+    InferenceAlgorithmState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
@@ -549,8 +552,16 @@ impl Type {
         &self,
         t: &TypeVarId,
         state: &InferenceAlgorithmState,
+        direction: BoundDirection,
     ) -> Type {
         match self {
+            Type::TypeVar(s) if s == t => {
+                // If the type is the same as the variable, remove it.
+                return match direction {
+                    BoundDirection::Lower => Type::Nothing,
+                    BoundDirection::Upper => Type::Any,
+                };
+            }
             Type::GLB(types) => {
                 let filtered_types: Vec<Type> = types
                     .iter()

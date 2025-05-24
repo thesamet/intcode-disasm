@@ -116,10 +116,18 @@ impl TypeInferenceResult {
             .mem_ref_to_type_var_id
             .get(&t)
             .expect(&format!("No type var for {}", t));
-        match self.type_var_states.get(&tv_id).unwrap() {
+        self.get_type_for_id(*tv_id)
+    }
+
+    pub fn get_type_for_id(&self, t: TypeVarId) -> Type {
+        match self.type_var_states.get(&t).unwrap() {
             TypeInterval::Converged(t) => t.clone(),
             TypeInterval::Bounds { .. } => Type::Any,
         }
+    }
+
+    pub fn type_id_for_node(&self, t: TypeVarNode) -> TypeVarId {
+        *self.type_var_nodes.iter().find(|x| *x.1 == t).unwrap().0
     }
 }
 

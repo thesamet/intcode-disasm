@@ -115,7 +115,7 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableChangeReason<'a, F> {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum BoundDirection {
+pub enum BoundDirection {
     Lower,
     Upper,
 }
@@ -171,25 +171,98 @@ impl InferenceAlgorithmState {
         // Determine which bound is being updated and what its current effective (resolved) value is,
         // and what the other effective (resolved) bound is.
         // Also, calculate the new potential bound using LUB for lower or GLB for upper.
-        let (mut new_lower_bound, mut new_upper_bound) = match direction {
+        let (mut new_lower_bound, mut new_upper_bound, cycles_removed) = match direction {
             BoundDirection::Lower => {
-                let new_val = Type::lub(&resolved_current_lower_bound, &new_bound);
-                let new_val = new_val.remove_cycles_from_glb_lub(tv_id, self);
-                (new_val, resolved_current_upper_bound.clone())
+                trace!(
+                    "*** Updating lower bound of {:?}  :  {} for {}",
+                    tv_id,
+                    tv_id.display_with(self),
+                    reason.display_with(self)
+                );
+                trace!(
+                    "   initial_lower_bound_in_state     (raw): {}",
+                    initial_lower_bound_in_state
+                );
+                trace!(
+                    "   initial_lower_bound_in_state (display): {}",
+                    initial_lower_bound_in_state.display_with(self)
+                );
+                trace!(
+                    "   resolved_current_lower_bound     (raw): {}",
+                    resolved_current_lower_bound
+                );
+                trace!(
+                    "   resolved_current_lower_bound (display): {}",
+                    resolved_current_lower_bound.display_with(self)
+                );
+                trace!(" new_bound_requested: {}", new_bound.display_with(self));
+
+                let new_val_pre = Type::lub(&resolved_current_lower_bound, &new_bound);
+                trace!("  new_val_with_lub = {}", new_val_pre.display_with(self));
+                let new_val = new_val_pre.remove_cycles_from_glb_lub(tv_id, self, direction);
+                trace!("  after_cycle_removal = {}", new_val.display_with(self));
+                trace!(
+                    "    it's resolved upper_bound = {}",
+                    resolved_current_upper_bound.display_with(self)
+                );
+                let cycles_removed = new_val_pre != new_val;
+                (
+                    new_val,
+                    resolved_current_upper_bound.clone(),
+                    cycles_removed,
+                )
             }
             BoundDirection::Upper => {
-                let new_val = Type::glb(&resolved_current_upper_bound, &new_bound);
-                let new_val = new_val.remove_cycles_from_glb_lub(tv_id, self);
-                (resolved_current_lower_bound.clone(), new_val)
+                trace!(
+                    "*** Updating upper bound of {:?}  :  {} for {}",
+                    tv_id,
+                    tv_id.display_with(self),
+                    reason.display_with(self)
+                );
+                trace!(
+                    "   initial_upper_bound_in_state     (raw): {}",
+                    initial_upper_bound_in_state
+                );
+                trace!(
+                    "   initial_upper_bound_in_state (display): {}",
+                    initial_upper_bound_in_state.display_with(self)
+                );
+                trace!(
+                    "   resolved_current_upper_bound     (raw): {}",
+                    resolved_current_upper_bound
+                );
+                trace!(
+                    "   resolved_current_upper_bound (display): {}",
+                    resolved_current_upper_bound.display_with(self)
+                );
+                trace!(" new_bound_requested: {}", new_bound.display_with(self));
+                let new_val_pre = Type::glb(&resolved_current_upper_bound, &new_bound);
+                trace!("  new_val_with_glb = {}", new_val_pre.display_with(self));
+                let new_val = new_val_pre.remove_cycles_from_glb_lub(tv_id, self, direction);
+                trace!("  after_cycle_removal = {}", new_val.display_with(self));
+                trace!(
+                    "    it's resolved lower_bound = {}",
+                    resolved_current_lower_bound.display_with(self)
+                );
+                let cycles_removed = new_val_pre != new_val;
+                (
+                    resolved_current_lower_bound.clone(),
+                    new_val,
+                    cycles_removed,
+                )
             }
         };
 
         // Prevent type point to itself.
         if new_upper_bound == tv_id.to_type() {
-            new_upper_bound = resolved_current_upper_bound;
+            new_upper_bound = resolved_current_upper_bound.clone();
+            trace!(
+                "   self-reference detected, new_upper_bound = {}",
+                new_upper_bound.display_with(self)
+            );
         }
         if new_lower_bound == tv_id.to_type() {
-            new_lower_bound = resolved_current_lower_bound;
+            new_lower_bound = resolved_current_lower_bound.clone();
         }
 
         if new_lower_bound == new_upper_bound && new_lower_bound != tv_id.to_type() {
@@ -198,7 +271,9 @@ impl InferenceAlgorithmState {
             return true;
         } else {
             let mut changed = false;
-            if new_lower_bound != *initial_lower_bound_in_state {
+            if new_lower_bound != *initial_lower_bound_in_state
+                && (!new_lower_bound.is_subtype_of(&resolved_current_lower_bound) || cycles_removed)
+            {
                 trace!(
                     "Updated {} >: {}, was {}, reason: {}",
                     tv_id.display_with(self),
@@ -208,8 +283,12 @@ impl InferenceAlgorithmState {
                 );
                 self.updated_type_vars.insert(*tv_id);
                 changed = true;
+            } else {
+                trace!("No lower bound change");
             }
-            if new_upper_bound != *initial_upper_bound_in_state {
+            if new_upper_bound != *initial_upper_bound_in_state
+                && (!resolved_current_upper_bound.is_subtype_of(&new_upper_bound) || cycles_removed)
+            {
                 trace!(
                     "Updated {} <: {}, was {}, reason: {}",
                     tv_id.display_with(self),
@@ -219,6 +298,8 @@ impl InferenceAlgorithmState {
                 );
                 self.updated_type_vars.insert(*tv_id);
                 changed = true;
+            } else {
+                trace!("No upper bound change");
             }
             if changed {
                 let state_to_update = self.type_var_states.get_mut(tv_id).unwrap();
@@ -232,6 +313,8 @@ impl InferenceAlgorithmState {
                     reason,
                 });
                 return true;
+            } else {
+                trace!("No bounds change");
             }
         }
 

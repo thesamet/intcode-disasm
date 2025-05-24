@@ -14,6 +14,7 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::UnclassifiedArithmeticExpression;
+use super::constraints_generator::TypeConstraintGeneratorResult;
 use super::query_engine::TypeInferenceQueryEngine;
 use super::type_bounds_map::ChangeReason;
 use super::type_interval::TypeInterval;
@@ -77,10 +78,10 @@ impl Solver {
     /// A `Result` containing the model with type inference complete, or an `Error`.
     fn solve(mut self) -> Result<Model<TypeInferenceComplete>, Error> {
         // 1. Initialize Analyzer, State, and Store
-        let result = generate_constraints(&self.model);
-        self.store = result.store;
-        self.state = result.state;
-        let markers = result.markers;
+        let generator_result = generate_constraints(&self.model);
+        self.store = generator_result.store;
+        self.state = generator_result.state;
+        let markers = generator_result.markers;
 
         //
         let mut iteration_count = 0;
@@ -94,7 +95,7 @@ impl Solver {
             let mut changed = false;
 
             while let Some(constraint) = worklist.pop_front() {
-                changed |= self.apply_constraint(&constraint);
+                changed |= self.apply_constraint(&constraint, &generator_result.function_types);
             }
 
             let mut to_remove = HashSet::new();
@@ -156,7 +157,11 @@ impl Solver {
         Ok(result_model)
     }
 
-    fn apply_constraint(&mut self, constraint: &Constraint) -> bool {
+    fn apply_constraint(
+        &mut self,
+        constraint: &Constraint,
+        function_types: &HashMap<FunctionId, (Type, Type)>,
+    ) -> bool {
         let mut changed = false;
         let sub_type = self.state.resolve_type(&constraint.sub_type);
         let super_type = self.state.resolve_type(&constraint.super_type);
@@ -210,6 +215,40 @@ impl Solver {
                     };
                     changed |= ch;
                 }
+            }
+            (Type::TypeVar(tv_id), Type::Function { .. })
+                if self
+                    .state
+                    .get_type_var_node(tv_id)
+                    .unwrap()
+                    .kind
+                    .as_const()
+                    .is_some() =>
+            {
+                let addr = self
+                    .state
+                    .get_type_var_node(tv_id)
+                    .unwrap()
+                    .kind
+                    .as_const()
+                    .unwrap();
+                if let Some((callee_arg_type, callee_ret_type)) =
+                    function_types.get(&FunctionId::new(*addr as usize))
+                {
+                    let func_type =
+                        Type::function(callee_arg_type.clone(), callee_ret_type.clone());
+                    changed |= self.store.add_equality_constraint(
+                        Constraint {
+                            sub_type: func_type,
+                            super_type: tv_id.to_type(),
+                            origin_function_id: constraint.origin_function_id,
+                            origin_instruction_id: constraint.origin_instruction_id,
+                            reason: ConstraintReason::ConstIsFunctionPointer,
+                        },
+                        &self.state,
+                    )
+                }
+                println!("TypeVar {:?} is a function", tv_id);
             }
             _ => {}
         }

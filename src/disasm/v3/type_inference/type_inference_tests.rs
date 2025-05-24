@@ -6,7 +6,9 @@ mod type_inference_tests {
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print
     use crate::disasm::v3::pretty_print::{pretty_print_folded_ssa, pretty_print_with_types};
     use crate::disasm::v3::ssa::types::VersionableMemoryKind;
-    use crate::disasm::v3::type_inference::types::{Type, TypeVarId}; // V3 Type
+    use crate::disasm::v3::ssa::SsaMemoryReference;
+    use crate::disasm::v3::type_inference::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
+    use crate::disasm::v3::{FunctionId, InstructionId}; // V3 Type
 
     // For full implementation, these might be needed:
     // use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
@@ -525,7 +527,7 @@ f1:
             ctx.model
                 .type_inference_result()
                 .query_engine
-                .explain_bounds(Type::TypeVarId(15))
+                .explain_bounds(TypeVarId::new(15))
         );
 
         assert_marker_type!(ctx, 'b', Type::Int);
@@ -564,6 +566,13 @@ f1:
         println!(
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
+        );
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_variables()
         );
         assert_marker_type!(ctx, 'a', Type::Int); // not smart enough yet to see it's char.
         assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
@@ -623,8 +632,38 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        print_traces_for_marker(&ctx.model, 'a');
-        print_traces_for_marker(&ctx.model, 'x');
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .list_all_variables()
+        );
+        let t_id = ctx
+            .model
+            .type_inference_result()
+            .type_id_for_node(TypeVarNode {
+                kind: TypeVarKind::Const(54),
+                instruction_id: InstructionId::new(8),
+                function_id: FunctionId::new(29),
+            });
+
+        println!(
+            "{}",
+            ctx.model
+                .type_inference_result()
+                .query_engine
+                .explain_bounds(t_id)
+        );
+        // for ct in ctx
+        //     .model
+        //     .type_inference_result()
+        //     .query_engine
+        //     .get_affecting_constraints(t_id)
+        // {
+        //     println!("{}", ct.display_with(ctx.model.type_inference_result()))
+        // }
+
         assert_marker_type!(
             ctx,
             'a',

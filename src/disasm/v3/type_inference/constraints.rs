@@ -62,6 +62,7 @@ pub enum ConstraintReason {
     FunctionReturns,     // callee return type binding
     FunctionCallArgumentsBinding,
     FunctionCallReturnsBinding,
+    ConstIsFunctionPointer,
     ReturnStatement, // `return expr;` => type(expr) <: function_return_type
 
     // Pointer Operations
