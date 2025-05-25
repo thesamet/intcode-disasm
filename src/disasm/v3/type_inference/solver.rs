@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use super::constraints::UnclassifiedArithmeticExpression;
 use super::constraints_generator::TypeConstraintGeneratorResult;
 use super::query_engine::TypeInferenceQueryEngine;
-use super::type_bounds_map::ChangeReason;
+use super::type_bounds_map::{ChangeReason, TypeVarRegistry};
 use super::type_interval::TypeInterval;
 use super::types::TypeVarId;
 use super::{
@@ -98,21 +98,17 @@ impl Solver {
                 changed |= self.apply_constraint(&constraint, &generator_result.function_types);
             }
 
-            let mut to_remove = HashSet::new();
             let e = self
                 .store
                 .iter_unclassified_add_expressions()
                 .cloned()
                 .collect_vec();
             for unclassified in e {
-                if self.try_classify_add_expression(&unclassified) {
-                    to_remove.insert(unclassified.clone());
-                }
+                changed |= self.try_classify_add_expression(&unclassified);
             }
-            changed |= !to_remove.is_empty();
 
             if !changed {
-                changed |= self.refine_concrete_types();
+                changed |= self.try_solving();
             }
 
             if !changed {
@@ -259,43 +255,38 @@ impl Solver {
         &mut self,
         unclassified: &UnclassifiedArithmeticExpression,
     ) -> bool {
-        let mut changed = false;
-        let Expression::Binary { lhs, rhs, op } = &unclassified.expression else {
+        let Expression::Binary { op, .. } = &unclassified.expression else {
             panic!("Expected BinaryOp expression");
         };
         if op != &BinaryOperator::Add && op != &BinaryOperator::Sub {
             panic!("Expected Add or Sub operator");
         }
-        let Type::TypeVar(op1_type_var) = unclassified.lhs_type else {
+        let Type::TypeVar(op1_tvid) = unclassified.lhs_type else {
             panic!("Expected TypeVar for lhs type");
         };
-        let Type::TypeVar(op2_type_var) = unclassified.rhs_type else {
+        let Type::TypeVar(op2_tvid) = unclassified.rhs_type else {
             panic!("Expected TypeVar for rhs type");
         };
-        let Type::TypeVar(res_type_var) = unclassified.result_type else {
+        let Type::TypeVar(res_tvid) = unclassified.result_type else {
             panic!("Expected TypeVar for result type");
         };
-        let (op1_lower_unresolved, op1_upper_unresolved) =
-            self.state.get_bounds(&op1_type_var).unwrap();
-        let (op2_lower_unresolved, op2_upper_unresolved) =
-            self.state.get_bounds(&op2_type_var).unwrap();
-        let (res_lower_unresolved, res_upper_unresolved) =
-            self.state.get_bounds(&res_type_var).unwrap();
+        let op1 = op1_tvid.to_type();
+        let op2 = op2_tvid.to_type();
+        let res = res_tvid.to_type();
 
-        let op1_lower = self.state.resolve_type(&op1_lower_unresolved);
-        let op1_upper = self.state.resolve_type(&op1_upper_unresolved);
-        let op2_lower = self.state.resolve_type(&op2_lower_unresolved);
-        let op2_upper = self.state.resolve_type(&op2_upper_unresolved);
-        let res_lower = self.state.resolve_type(&res_lower_unresolved);
-        let res_upper = self.state.resolve_type(&res_upper_unresolved);
-
-        let is_op1_int = matches!(op1_lower, Type::Int);
-        let is_op2_int = matches!(op2_lower, Type::Int);
-        let is_result_int = matches!(res_lower, Type::Int);
-        let is_op1_pointer = matches!(op1_upper, Type::Pointer(_));
-        let is_op2_pointer = matches!(op2_upper, Type::Pointer(_));
-        let is_result_pointer = matches!(res_upper, Type::Pointer(_));
-        let is_result_char = matches!(res_lower, Type::Char);
+        let is_op1_int = Type::Int.is_subtype_of(&op1, &self.state).is_yes();
+        let is_op2_int = Type::Int.is_subtype_of(&op2, &self.state).is_yes();
+        let is_result_int = Type::Int.is_subtype_of(&res, &self.state).is_yes();
+        let is_op1_pointer = op1
+            .is_subtype_of(&Type::pointer(Type::Any), &self.state)
+            .is_yes();
+        let is_op2_pointer = op2
+            .is_subtype_of(&Type::pointer(Type::Any), &self.state)
+            .is_yes();
+        let is_result_pointer = res
+            .is_subtype_of(&Type::pointer(Type::Any), &self.state)
+            .is_yes();
+        let is_result_char = Type::Char.is_subtype_of(&res, &self.state).is_yes();
         let mut changed = false;
 
         let mut add_constraint = |sub_type: Type, super_type: Type, reason: ConstraintReason| {
@@ -391,8 +382,7 @@ impl Solver {
         changed
     }
 
-    fn refine_concrete_types(&mut self) -> bool {
-        trace!("{}", "Refining concrete types".red());
+    fn try_solving(&mut self) -> bool {
         for (tv_id, var) in self.state.iter_all_type_states() {
             trace!(
                 "tv_id: {} - {} : {}",
@@ -401,6 +391,8 @@ impl Solver {
                 var.display_with(&self.state)
             );
         }
+        /*
+        trace!("{}", "Refining concrete types".red());
         trace!("*** Known constraints");
         for c in self
             .store
@@ -416,14 +408,15 @@ impl Solver {
             .iter_all_type_states()
             .map(|(id, state)| (*id, state.clone()))
             .collect();
+            */
 
+        /*
         for (tv_id, var) in type_states {
             if let TypeInterval::Bounds {
                 lower_bound,
                 upper_bound,
             } = var
             {
-                /*
                 if upper_bound.is_concrete_type() {
                     self.state.update_lower_bound(
                         &tv_id,
@@ -440,7 +433,6 @@ impl Solver {
                     );
                     return true;
                 }
-                */
                 if lower_bound == Type::Nothing && upper_bound == Type::Truthy {
                     self.state.update_upper_bound(
                         &tv_id,
@@ -462,6 +454,7 @@ impl Solver {
                 }
             }
         }
+        */
         false
     }
 }

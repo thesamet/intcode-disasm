@@ -395,20 +395,14 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_variables()
-        );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_constraints()
-        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_constraints();
         assert_marker_type!(ctx, 'a', Type::Int);
         assert_marker_type!(ctx, 'b', Type::Truthy);
     }
@@ -454,13 +448,10 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_variables()
-        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
         assert_marker_type!(ctx, 'a', Type::Char);
         print_traces_for_marker(&ctx.model, 'b');
         assert_marker_type!(ctx, 'b', Type::Int);
@@ -519,20 +510,10 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_variables()
-        );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .explain_bounds(TypeVarId::new(15))
-        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
 
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_type!(ctx, 'c', Type::Int);
@@ -571,21 +552,11 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_variables()
-        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
         let tvid = TypeVarId::new(10);
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .find_root_causes(tvid)
-        );
 
         assert_marker_type!(ctx, 'a', Type::Int); // not smart enough yet to see it's char.
         assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
@@ -645,13 +616,10 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_with_types(&ctx.model)
         );
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_variables()
-        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
         let t_id = ctx
             .model
             .type_inference_result()
@@ -661,13 +629,6 @@ f1:
                 function_id: FunctionId::new(29),
             });
 
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .explain_bounds(t_id)
-        );
         // for ct in ctx
         //     .model
         //     .type_inference_result()
@@ -1008,13 +969,10 @@ f1:
             pretty_print_with_types(&ctx.model)
         );
         ctx.model.type_inference_result().print_all_type_bounds();
-        println!(
-            "{}",
-            ctx.model
-                .type_inference_result()
-                .query_engine
-                .list_all_constraints()
-        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_constraints();
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Int);
     }

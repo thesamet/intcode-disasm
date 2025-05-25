@@ -367,22 +367,16 @@ impl ConstraintStore {
         self.unclassified_add_expressions.iter()
     }
 
-    pub fn remove_unclassified_add_expressions(
-        &mut self,
-        expression: &UnclassifiedArithmeticExpression,
-    ) {
-        self.unclassified_add_expressions
-            .retain(|e| e != expression);
-    }
-
     /// Provides an iterator over all unique constraints (as &Constraint) in the store.
     pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
         self.constraints.iter()
     }
 
     /// Provides an iterator over all unique ConstraintIds in the store.
-    pub fn iter_ids(&self) -> impl Iterator<Item = ConstraintId> + '_ {
-        (0..self.constraints.len()).map(ConstraintId)
+    pub fn iter_with_ids(&self) -> impl Iterator<Item = (ConstraintId, &Constraint)> + '_ {
+        (0..self.constraints.len())
+            .map(ConstraintId)
+            .map(|id| (id, &self.constraints[id.0]))
     }
 
     /// Gets the total number of unique constraints in the store.
@@ -401,9 +395,7 @@ mod tests {
     use super::*;
     use crate::disasm::v3::{FunctionId, InstructionId};
     // Ensure Type and its variants needed for tests are correctly imported
-    use super::super::types::Type::{
-        self, Any, Bool, Function, Int, Pointer, Tuple, TypeVar, GLB, LUB,
-    };
+    use super::super::types::Type::{self, Any, Bool, Function, Int, Pointer, Tuple, TypeVar};
 
     fn make_test_constraint(sub: Type, sup: Type, reason: ConstraintReason) -> Constraint {
         Constraint::new(sub, sup, FunctionId::new(0), InstructionId::new(0), reason)
@@ -479,7 +471,7 @@ mod tests {
         let mut found_id1 = false;
         let mut found_id2 = false;
         let mut ids_from_iter = HashSet::new();
-        for id_val in store.iter_ids() {
+        for (id_val, _) in store.iter_with_ids() {
             id_count += 1;
             ids_from_iter.insert(id_val);
             if id_val == id1 {

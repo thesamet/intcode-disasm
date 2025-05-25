@@ -53,19 +53,15 @@ impl TypeInferenceResult {
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {
         self.debug_markers.get(&marker).and_then(|typ| {
             match self.type_var_states.get(typ).unwrap() {
-                TypeInterval::Bounds {
-                    lower_bound,
-                    upper_bound,
-                } => {
+                v @ TypeVarState::Bounds { .. } => {
                     debug!(
-                        "Type of marker {} has not converged: [{}, {}]",
+                        "Type of marker {} has not converged: {}",
                         marker,
-                        lower_bound.display_with(self),
-                        upper_bound.display_with(self)
+                        v.display_with(self)
                     );
                     None
                 }
-                TypeInterval::Converged(ty) => Some(ty.clone()),
+                TypeVarState::Converged(ty) => Some(ty.clone()),
             }
         })
     }
@@ -74,7 +70,7 @@ impl TypeInferenceResult {
         self.type_var_states
             .iter()
             .filter_map(|(id, state)| {
-                if let TypeInterval::Converged(ty) = state {
+                if let TypeVarState::Converged(ty) = state {
                     Some((
                         self.type_var_nodes.get(id).unwrap().kind.clone(),
                         ty.clone(),
@@ -89,18 +85,14 @@ impl TypeInferenceResult {
     pub fn print_all_type_bounds(&self) {
         for (id, state) in self.type_var_states.iter().sorted_by_key(|(id, _)| *id) {
             match state {
-                TypeInterval::Bounds {
-                    lower_bound,
-                    upper_bound,
-                } => {
+                v @ TypeVarState::Bounds { .. } => {
                     println!(
-                        "{:?<50} ∈ [{:<20}, {:<20}]", // Restored original format string
+                        "{:?<50} ∈ [{}]", // Restored original format string
                         id.display_with(self),
-                        lower_bound.display_with(self),
-                        upper_bound.display_with(self)
+                        v.display_with(self)
                     );
                 }
-                TypeInterval::Converged(ty) => {
+                TypeVarState::Converged(ty) => {
                     println!(
                         "{:?<50} == {:<20}",
                         id.display_with(self),
@@ -121,8 +113,8 @@ impl TypeInferenceResult {
 
     pub fn get_type_for_id(&self, t: TypeVarId) -> Type {
         match self.type_var_states.get(&t).unwrap() {
-            TypeInterval::Converged(t) => t.clone(),
-            TypeInterval::Bounds { .. } => Type::Any,
+            TypeVarState::Converged(t) => t.clone(),
+            TypeVarState::Bounds { .. } => Type::Any,
         }
     }
 

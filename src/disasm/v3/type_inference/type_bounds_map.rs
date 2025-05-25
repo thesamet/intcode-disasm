@@ -4,6 +4,7 @@ use core::fmt;
 use std::collections::{HashMap, HashSet};
 
 use colored::Colorize;
+use itertools::Itertools;
 use log::trace;
 
 // Import necessary types from your existing types.rs file.
@@ -18,7 +19,15 @@ use super::{
 
 /// Holds the data associated with a single TypeVarId.
 /// It includes the TypeVarNode information and its current best bounds.
-pub type TypeVarState = TypeInterval;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeVarState {
+    Bounds {
+        lower_bounds: HashSet<Type>,
+        upper_bounds: HashSet<Type>,
+    },
+    Converged(Type),
+}
 
 impl TypeVarState {
     pub fn display_with<'a, F>(&'a self, registry: &'a F) -> DisplayableTypeVarState<'a, F> {
@@ -38,14 +47,20 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableTypeVarState<'a, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.state {
             TypeVarState::Bounds {
-                lower_bound,
-                upper_bound,
+                lower_bounds,
+                upper_bounds,
             } => {
                 write!(
                     f,
                     "[{}, {}]",
-                    lower_bound.display_with(self.registry),
-                    upper_bound.display_with(self.registry)
+                    lower_bounds
+                        .iter()
+                        .map(|t| t.display_with(self.registry))
+                        .join(", "),
+                    upper_bounds
+                        .iter()
+                        .map(|t| t.display_with(self.registry))
+                        .join(", "),
                 )
             }
             TypeVarState::Converged(typ) => {
@@ -58,16 +73,16 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableTypeVarState<'a, F> {
 pub trait TypeVarRegistry {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode>;
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState>;
-    fn lower_bound(&self, tv_id: &TypeVarId) -> &Type {
+    fn lower_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
         match self.get_type_var_state(tv_id).unwrap() {
-            TypeVarState::Bounds { lower_bound, .. } => lower_bound,
-            TypeVarState::Converged(typ) => typ,
+            TypeVarState::Bounds { lower_bounds, .. } => lower_bounds.iter().collect(),
+            TypeVarState::Converged(ty) => HashSet::from([ty]),
         }
     }
-    fn upper_bound(&self, tv_id: &TypeVarId) -> &Type {
+    fn upper_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
         match self.get_type_var_state(tv_id).unwrap() {
-            TypeVarState::Bounds { upper_bound, .. } => upper_bound,
-            TypeVarState::Converged(typ) => typ,
+            TypeVarState::Bounds { upper_bounds, .. } => upper_bounds.iter().collect(),
+            TypeVarState::Converged(ty) => HashSet::from([ty]),
         }
     }
 }
@@ -166,181 +181,25 @@ impl InferenceAlgorithmState {
         direction: BoundDirection,
         reason: ChangeReason,
     ) -> bool {
-        let Some(state) = self.type_var_states.get(tv_id) else {
+        if *new_bound == tv_id.to_type() {
+            // No change if the new bound is the same as the current type
+            return false;
+        }
+        let Some(state) = self.type_var_states.get_mut(tv_id) else {
             panic!("TypeVarId {:?} not found", tv_id);
         };
         let TypeVarState::Bounds {
-            lower_bound: initial_lower_bound_in_state, // From state, potentially unresolved
-            upper_bound: initial_upper_bound_in_state, // From state, potentially unresolved
+            lower_bounds,
+            upper_bounds,
         } = state
         else {
             return false; // Already converged or not in Bounds state
         };
-
-        // Resolve current bounds from the state once at the beginning
-        let resolved_current_lower_bound = self.resolve_type(initial_lower_bound_in_state);
-        let resolved_current_upper_bound = self.resolve_type(initial_upper_bound_in_state);
-        // We resolve the bound here (even if it's been resolved by the caller, since the value of resolve_type)
-        // might change during applicatino of a constraint.
-        let new_bound = self.resolve_type(new_bound);
-
-        // Determine which bound is being updated and what its current effective (resolved) value is,
-        // and what the other effective (resolved) bound is.
-        // Also, calculate the new potential bound using LUB for lower or GLB for upper.
-        let (mut new_lower_bound, mut new_upper_bound, cycles_removed) = match direction {
-            BoundDirection::Lower => {
-                trace!(
-                    "*** Updating lower bound of {:?}  :  {} for {}",
-                    tv_id,
-                    tv_id.display_with(self),
-                    reason.display_with(self)
-                );
-                trace!(
-                    "   initial_lower_bound_in_state     (raw): {}",
-                    initial_lower_bound_in_state
-                );
-                trace!(
-                    "   initial_lower_bound_in_state (display): {}",
-                    initial_lower_bound_in_state.display_with(self)
-                );
-                trace!(
-                    "   resolved_current_lower_bound     (raw): {}",
-                    resolved_current_lower_bound
-                );
-                trace!(
-                    "   resolved_current_lower_bound (display): {}",
-                    resolved_current_lower_bound.display_with(self)
-                );
-                trace!(" new_bound_requested: {}", new_bound.display_with(self));
-
-                let new_val_pre = Type::lub(&resolved_current_lower_bound, &new_bound, self);
-                trace!("  new_val_with_lub = {}", new_val_pre.display_with(self));
-                let new_val = new_val_pre.remove_cycles_from_glb_lub(tv_id, self, direction);
-                trace!("  after_cycle_removal = {}", new_val.display_with(self));
-                trace!(
-                    "    it's resolved upper_bound = {}",
-                    resolved_current_upper_bound.display_with(self)
-                );
-                let cycles_removed = new_val_pre != new_val;
-                (
-                    new_val,
-                    resolved_current_upper_bound.clone(),
-                    cycles_removed,
-                )
-            }
-            BoundDirection::Upper => {
-                trace!(
-                    "*** Updating upper bound of {:?}  :  {} for {}",
-                    tv_id,
-                    tv_id.display_with(self),
-                    reason.display_with(self)
-                );
-                trace!(
-                    "   initial_upper_bound_in_state     (raw): {}",
-                    initial_upper_bound_in_state
-                );
-                trace!(
-                    "   initial_upper_bound_in_state (display): {}",
-                    initial_upper_bound_in_state.display_with(self)
-                );
-                trace!(
-                    "   resolved_current_upper_bound     (raw): {}",
-                    resolved_current_upper_bound
-                );
-                trace!(
-                    "   resolved_current_upper_bound (display): {}",
-                    resolved_current_upper_bound.display_with(self)
-                );
-                trace!(" new_bound_requested: {}", new_bound.display_with(self));
-                let new_val_pre = Type::glb(&resolved_current_upper_bound, &new_bound, self);
-                trace!("  new_val_with_glb = {}", new_val_pre.display_with(self));
-                let new_val = new_val_pre.remove_cycles_from_glb_lub(tv_id, self, direction);
-                trace!("  after_cycle_removal = {}", new_val.display_with(self));
-                trace!(
-                    "    it's resolved lower_bound = {}",
-                    resolved_current_lower_bound.display_with(self)
-                );
-                let cycles_removed = new_val_pre != new_val;
-                (
-                    resolved_current_lower_bound.clone(),
-                    new_val,
-                    cycles_removed,
-                )
-            }
+        let mut changed = match direction {
+            BoundDirection::Lower => lower_bounds.insert(new_bound.clone()),
+            BoundDirection::Upper => upper_bounds.insert(new_bound.clone()),
         };
-
-        // Prevent type point to itself.
-        if new_upper_bound == tv_id.to_type() {
-            new_upper_bound = resolved_current_upper_bound.clone();
-            trace!(
-                "   self-reference detected, new_upper_bound = {}",
-                new_upper_bound.display_with(self)
-            );
-        }
-        if new_lower_bound == tv_id.to_type() {
-            new_lower_bound = resolved_current_lower_bound.clone();
-        }
-
-        if new_lower_bound == new_upper_bound && new_lower_bound != tv_id.to_type() {
-            self.handle_convergence(tv_id, new_lower_bound.clone(), &reason);
-            self.updated_type_vars.insert(*tv_id);
-            return true;
-        } else {
-            let mut changed = false;
-            if new_lower_bound != *initial_lower_bound_in_state
-                && (!new_lower_bound
-                    .is_subtype_of(&resolved_current_lower_bound, self)
-                    .is_yes()
-                    || cycles_removed)
-            {
-                trace!(
-                    "Updated {} >: {}, was {}, reason: {}",
-                    tv_id.display_with(self),
-                    new_lower_bound.display_with(self),
-                    initial_lower_bound_in_state.display_with(self),
-                    reason
-                );
-                self.updated_type_vars.insert(*tv_id);
-                changed = true;
-            } else {
-                trace!("No lower bound change");
-            }
-            if new_upper_bound != *initial_upper_bound_in_state
-                && (!resolved_current_upper_bound
-                    .is_subtype_of(&new_upper_bound, self)
-                    .is_yes()
-                    || cycles_removed)
-            {
-                trace!(
-                    "Updated {} <: {}, was {}, reason: {}",
-                    tv_id.display_with(self),
-                    new_upper_bound.display_with(self),
-                    initial_upper_bound_in_state.display_with(self),
-                    reason
-                );
-                self.updated_type_vars.insert(*tv_id);
-                changed = true;
-            } else {
-                trace!("No upper bound change");
-            }
-            if changed {
-                let state_to_update = self.type_var_states.get_mut(tv_id).unwrap();
-                *state_to_update = TypeVarState::Bounds {
-                    lower_bound: new_lower_bound,
-                    upper_bound: new_upper_bound,
-                };
-                self.change_log.push(ChangeLogEntry {
-                    tv_id: *tv_id,
-                    state: state_to_update.clone(),
-                    reason,
-                });
-                return true;
-            } else {
-                trace!("No bounds change");
-            }
-        }
-
-        false
+        changed
     }
 
     pub fn new() -> Self {
@@ -366,8 +225,8 @@ impl InferenceAlgorithmState {
             self.type_var_states.insert(
                 tv_id,
                 TypeVarState::Bounds {
-                    lower_bound: Type::Nothing, // Smallest type in the lattice
-                    upper_bound: Type::Any,     // Largest type in the lattice
+                    lower_bounds: HashSet::new(),
+                    upper_bounds: HashSet::new(),
                 },
             );
             self.updated_type_vars.insert(tv_id); // TypeVarId: Clone
@@ -414,27 +273,25 @@ impl InferenceAlgorithmState {
         self.update_bound_internal(tv_id, new_upper_constraint, BoundDirection::Upper, reason)
     }
 
-    pub fn handle_convergence(
-        &mut self,
-        tv_id: &TypeVarId,
-        new_value: Type,
-        reason: &ChangeReason,
-    ) {
+    /*
+    pub fn handle_convergence(&mut self, tv_id: &TypeVarId, reason: &ChangeReason) {
+    let intersection = lower_bounds
+        .intersection(upper_bounds)
+        .cloned()
+        .collect_vec();
+    assert!(
+        intersection.len() <= 1,
+        "Lower and upper bound have multiple shared elements"
+    );
+    if intersection.len() == 1 {
+        *state = TypeVarState::Converged(intersection[0].clone());
+        self.handle_convergence(tv_id, &reason);
+        changed = true;
+    }
         let state = self.type_var_states.remove(tv_id).unwrap();
-        let TypeVarState::Bounds {
-            lower_bound,
-            upper_bound,
-        } = state
-        else {
-            panic!("TypeVarState should be Bounds");
+        let TypeVarState::Converged(new_value) = state else {
+            panic!("TypeVarState has not converged");
         };
-        // One of the previous bounds must have been updated earlier to the new value.
-        if lower_bound != new_value && upper_bound != new_value {
-            panic!(
-                "Handle_convergence called, but neither bounds equal to {}",
-                new_value
-            );
-        }
         let msg = format!(
             "CONVERGENCE: {} ==> {}    Reason: {}",
             tv_id.display_with(self),
@@ -442,8 +299,6 @@ impl InferenceAlgorithmState {
             reason.display_with(self)
         );
         trace!("{}", msg.green());
-        self.type_var_states
-            .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
         self.change_log.push(ChangeLogEntry {
             tv_id: *tv_id,
             state: TypeVarState::Converged(new_value.clone()),
@@ -453,16 +308,18 @@ impl InferenceAlgorithmState {
         for (id, state) in self.type_var_states.iter() {
             match state {
                 TypeVarState::Bounds {
-                    lower_bound,
-                    upper_bound,
+                    lower_bounds,
+                    upper_bounds,
                 } => {
-                    let lower_bound = self.resolve_type(lower_bound);
-                    let upper_bound = self.resolve_type(upper_bound);
+                    let new_lower_bounds =
+                        lower_bounds.iter().map(|t| self.resolve_type(t)).collect();
+                    let new_upper_bounds =
+                        upper_bounds.iter().map(|t| self.resolve_type(t)).collect();
                     tvs.insert(
                         *id,
                         TypeVarState::Bounds {
-                            lower_bound,
-                            upper_bound,
+                            lower_bounds: new_lower_bounds,
+                            upper_bounds: new_upper_bounds,
                         },
                     );
                     if tvs[id] != self.type_var_states[id] {
@@ -487,22 +344,10 @@ impl InferenceAlgorithmState {
         }
         self.type_var_states = tvs;
     }
+    */
 
     pub fn has_type_var(&self, tv_id: &TypeVarId) -> bool {
         self.type_var_nodes.contains_key(tv_id)
-    }
-
-    /// Retrieves the current lower and upper bounds for a given TypeVarId.
-    /// Returns `None` if the TypeVarId is not found.
-    pub fn get_bounds(&self, tv_id: &TypeVarId) -> Option<(&Type, &Type)> {
-        match self.type_var_states.get(tv_id) {
-            Some(TypeVarState::Bounds {
-                lower_bound,
-                upper_bound,
-            }) => Some((lower_bound, upper_bound)),
-            Some(TypeVarState::Converged(tv_id)) => Some((tv_id, tv_id)),
-            _ => None,
-        }
     }
 
     /// Retrieves the `TypeVarNode` for a given `TypeVarId`.
@@ -530,7 +375,24 @@ impl InferenceAlgorithmState {
     }
 
     pub fn resolve_type(&self, typ: &Type) -> Type {
-        typ.resolve(self)
+        let mut typ = typ.clone();
+        loop {
+            let mut changed = false;
+
+            typ = typ.map(&mut |tv_id| match self
+                .get_type_var_state(&tv_id)
+                .unwrap_or_else(|| panic!("Could not get type_var_state for {tv_id}"))
+            {
+                TypeVarState::Converged(ty) => {
+                    changed = true;
+                    ty.clone()
+                }
+                _ => Type::TypeVar(*tv_id),
+            });
+            if !changed {
+                break typ;
+            }
+        }
     }
 }
 
@@ -558,36 +420,6 @@ mod tests {
             kind,
             instruction_id,
             function_id,
-        }
-    }
-
-    #[test]
-    fn test_add_and_get_bounds() {
-        let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = TypeVarId::new(1);
-        state.add_type_var(
-            tv1_id,
-            make_node(
-                TypeVarKind::Expression(build_expr!(10)),
-                InstructionId::new(10),
-                FunctionId::new(1),
-            ),
-        );
-
-        state.update_lower_bound(&tv1_id, &Type::Int, ChangeReason::Test);
-
-        let (lower, upper) = state.get_bounds(&tv1_id).expect("tv1 should exist");
-        // These assertions depend on Type::Nothing.lub(&Type::Int) resulting in Type::Int
-        // and initial upper bound being Type::Any.
-        // Also, Type must implement PartialEq for these comparisons.
-        assert_eq!(*lower, Type::Int);
-        assert_eq!(*upper, Type::Any);
-
-        if let Some(node) = state.get_type_var_node(&tv1_id) {
-            assert_eq!(node.kind, TypeVarKind::Expression(Expression::Constant(10)));
-        // Assumes TypeVarKind has PartialEq
-        } else {
-            panic!("Node info not found for tv1_id");
         }
     }
 
@@ -640,39 +472,5 @@ mod tests {
         let updated_again = state.take_updated_vars();
         assert_eq!(updated_again.len(), 1);
         assert!(updated_again.contains(&tv2_id));
-    }
-
-    #[test]
-    fn test_add_type_var_explicitly() {
-        let mut state = InferenceAlgorithmState::new();
-        let tv_id: TypeVarId = TypeVarId::new(5);
-        let node_info = make_node(
-            TypeVarKind::Expression(build_expr!(34)),
-            InstructionId::new(50),
-            FunctionId::new(5),
-        );
-
-        state.add_type_var(tv_id, node_info.clone()); // node_info needs to be Clone
-
-        let (lower, upper) = state
-            .get_bounds(&tv_id)
-            .expect("tv_id should exist after add_type_var");
-        assert_eq!(*lower, Type::Nothing);
-        assert_eq!(*upper, Type::Any);
-        assert_eq!(state.get_type_var_node(&tv_id).unwrap(), &node_info); // Requires TypeVarNode to impl PartialEq
-
-        let updated = state.take_updated_vars();
-        assert_eq!(updated.len(), 1);
-        assert!(updated.contains(&tv_id));
-
-        // Adding again should not change anything or error with current implementation
-        let another_node_info = make_node(
-            TypeVarKind::Expression(build_expr!(35)),
-            InstructionId::new(55),
-            FunctionId::new(5),
-        ); // Changed MemoryReference to Expression
-        state.add_type_var(tv_id, another_node_info);
-        assert_eq!(state.get_type_var_node(&tv_id).unwrap(), &node_info);
-        assert!(state.take_updated_vars().is_empty());
     }
 }
