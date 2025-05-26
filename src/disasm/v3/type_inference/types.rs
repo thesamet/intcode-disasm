@@ -108,8 +108,7 @@ impl From<bool> for YesNoMaybe {
 impl Type {
     pub fn is_concrete_type(&self) -> bool {
         match self {
-            Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
-            Type::NumericLiteral => false,
+            Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::NumericLiteral => true,
             Type::Any | Type::Nothing => false,
             Type::Pointer(pointee) => pointee.is_concrete_type(),
             Type::Function { params, returns } => {
@@ -263,21 +262,22 @@ impl Type {
                 }
                 YesNoMaybe::Maybe
             }
-            (Type::Char, Type::Int) => true.into(),
-            (Type::Bool, Type::Int) => true.into(),
-            (Type::Pointer(_), Type::Int) => true.into(),
-            (Type::Function { .. }, Type::Int) => true.into(),
-
-            (Type::Function { .. }, Type::Pointer(p_target)) => {
-                // Function <: Pointer(Int) and Function <: Pointer(Any)
-                (**p_target == Type::Int || **p_target == Type::Any).into()
-            }
-
-            (Type::Int, Type::NumericLiteral) => true.into(),
-            (Type::Bool, Type::NumericLiteral) => true.into(),
+            (Type::NumericLiteral, Type::Truthy) => true.into(),
+            (Type::Char, Type::Truthy) => true.into(),
             (Type::Char, Type::NumericLiteral) => true.into(),
+            (Type::Bool, Type::Truthy) => true.into(),
+            (Type::Bool, Type::NumericLiteral) => true.into(),
+            (Type::Int, Type::Truthy) => true.into(),
+            (Type::Int, Type::NumericLiteral) => true.into(),
+            (Type::Pointer(_), Type::Truthy) => true.into(),
             (Type::Pointer(_), Type::NumericLiteral) => true.into(),
+            (Type::Function { .. }, Type::Truthy) => true.into(),
             (Type::Function { .. }, Type::NumericLiteral) => true.into(),
+            (Type::Function { .. }, Type::Pointer(p_target)) => (**p_target
+                == Type::NumericLiteral
+                || **p_target == Type::Truthy
+                || **p_target == Type::Any)
+                .into(),
 
             (Type::Pointer(p1), Type::Pointer(p2)) => p1.is_subtype_of(p2, registry),
             (

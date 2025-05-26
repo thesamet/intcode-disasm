@@ -255,7 +255,7 @@ f1:
         assert_type_on_model(&ctx.model, 501, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int); // Macro now uses ctx.model and stub helper
         print_traces_for_marker(&ctx.model, 'b'); // Use new stub helper
-        assert_marker_type!(ctx, 'b', Type::NumericLiteral); // Macro now uses ctx.model and stub helper
+        assert_marker_type!(ctx, 'b', Type::Truthy); // Macro now uses ctx.model and stub helper
     }
 
     #[test]

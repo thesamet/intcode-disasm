@@ -335,7 +335,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.store.add_original_constraint(
                     Constraint::new(
                         cond_type.to_type(),
-                        Type::NumericLiteral,
+                        Type::Truthy,
                         function_id,
                         instruction_id,
                         ConstraintReason::IfConditionOperand,
@@ -484,10 +484,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.store.add_original_constraint(
                     Constraint::new(
                         const_type.clone(),
-                        Type::Int,
+                        Type::NumericLiteral,
                         function_id,
                         instruction_id,
-                        ConstraintReason::LiteralInteger,
+                        ConstraintReason::NumericLiteral,
                     ),
                     &self.result.state,
                 );
@@ -536,37 +536,6 @@ impl<'a> TypeConstraintGenerator<'a> {
                             lhs_type.clone(),
                             rhs_type.clone(),
                             result_type.clone(),
-                        );
-                        // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        self.result.store.add_original_constraint(
-                            Constraint::new(
-                                lhs_type.clone(),
-                                Type::Int,
-                                function_id,
-                                instruction_id,
-                                ConstraintReason::ArithmeticLHS,
-                            ),
-                            &self.result.state,
-                        );
-                        self.result.store.add_original_constraint(
-                            Constraint::new(
-                                rhs_type.clone(),
-                                Type::Int,
-                                function_id,
-                                instruction_id,
-                                ConstraintReason::ArithmeticRHS,
-                            ),
-                            &self.result.state,
-                        );
-                        self.result.store.add_original_constraint(
-                            Constraint::new(
-                                result_type.clone(),
-                                Type::Int,
-                                function_id,
-                                instruction_id,
-                                ConstraintReason::ArithmeticResult,
-                            ),
-                            &self.result.state,
                         );
                     }
                     disasm::v3::lir::expression::BinaryOperator::Mul => {

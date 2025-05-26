@@ -47,7 +47,7 @@ pub enum ConstraintReason {
     PhiNodeOperand,           // Incoming value to a PHI node: type(incoming) <: type(phi_dest)
 
     // Literals
-    LiteralInteger, // A literal number implies Int type, e.g. `5` => TypeVar(N) <: Int
+    NumericLiteral, // A literal number implies Int type, e.g. `5` => TypeVar(N) <: Int
     LiteralBoolean, // A literal boolean (true/false, or 0/1 if distinguished) => TypeVar(N) <: Bool
     // LiteralTruthy might be derived via Bool <: Truthy, so not strictly needed here.
 

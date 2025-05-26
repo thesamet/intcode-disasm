@@ -457,13 +457,6 @@ impl Solver {
                 ConstraintReason::ArithmeticResultPointerOp2Int,
             );
         }
-        if is_op1_int || is_op2_int {
-            add_constraint(
-                unclassified.result_type.clone(),
-                Type::Int,
-                ConstraintReason::ArithmeticOp1IntOrOp2Int,
-            );
-        }
 
         changed
     }
@@ -570,6 +563,16 @@ impl Solver {
             {
                 let effective_glb = self.effective_glb(&upper_bounds.iter().cloned().collect_vec());
                 let effective_lub = self.effective_lub(&lower_bounds.iter().cloned().collect_vec());
+                trace!(
+                    "effective glb of {}: {:?}",
+                    upper_bounds.iter().join(", "),
+                    effective_glb
+                );
+                trace!(
+                    "effective lub of {}: {:?}",
+                    lower_bounds.iter().join(", "),
+                    effective_lub
+                );
                 if effective_lub.is_some() {
                     debug!(
                         "Type {} {} converged to {} (effective lub)",
@@ -584,18 +587,20 @@ impl Solver {
                     );
                     return true;
                 }
-                if effective_glb.is_some() {
+                if let Some(glb) = effective_glb {
                     debug!(
                         "Type {} {} converged to {} (effective glb)",
                         tv_id,
                         tv_id.display_with(&self.state),
-                        effective_glb.as_ref().unwrap().display_with(&self.state)
+                        glb.display_with(&self.state)
                     );
-                    self.state.converge(
-                        &tv_id,
-                        effective_glb.unwrap(),
-                        ChangeReason::ConvergeToGLB,
-                    );
+                    let final_type = if glb == Type::NumericLiteral {
+                        Type::Int
+                    } else {
+                        glb
+                    };
+                    self.state
+                        .converge(&tv_id, final_type, ChangeReason::ConvergeToGLB);
                     return true;
                 }
             }
