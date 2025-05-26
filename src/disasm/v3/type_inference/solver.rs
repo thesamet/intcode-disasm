@@ -360,9 +360,11 @@ impl Solver {
         let op2 = op2_tvid.to_type();
         let res = res_tvid.to_type();
 
-        let is_op1_int = Type::Int.is_subtype_of(&op1, &self.state).is_yes();
-        let is_op2_int = Type::Int.is_subtype_of(&op2, &self.state).is_yes();
-        let is_result_int = Type::Int.is_subtype_of(&res, &self.state).is_yes();
+        let is_op1_int = op1.is_subtype_of(&Type::Int, &self.state).is_yes();
+        let is_op2_int = op2.is_subtype_of(&Type::Int, &self.state).is_yes();
+        let is_op1_char = op1.is_subtype_of(&Type::Char, &self.state).is_yes();
+        let is_op2_char = op2.is_subtype_of(&Type::Char, &self.state).is_yes();
+        let is_result_int = res.is_subtype_of(&Type::Int, &self.state).is_yes();
         let is_op1_pointer = op1
             .is_subtype_of(&Type::pointer(Type::Any), &self.state)
             .is_yes();
@@ -394,67 +396,101 @@ impl Solver {
             add_constraint(
                 unclassified.result_type.clone(),
                 Type::Int,
-                ConstraintReason::ArithmeticResultOp1IntOp2Int,
+                ConstraintReason::ArithmeticResultBothInt,
             );
         }
-        if is_result_char && is_result_int {
+        if (is_result_int || is_result_char || is_result_pointer) && is_op1_int {
+            add_constraint(
+                unclassified.rhs_type.clone(),
+                res.clone(),
+                ConstraintReason::ArithmeticOperandToIntLikeResult,
+            );
+            add_constraint(
+                res.clone(),
+                unclassified.rhs_type.clone(),
+                ConstraintReason::ArithmeticOperandToIntLikeResult,
+            );
+        }
+        if (is_result_int || is_result_char || is_result_pointer) && is_op2_int {
             add_constraint(
                 unclassified.lhs_type.clone(),
-                Type::Int,
-                ConstraintReason::ArithmeticResultCharOrInt,
+                res.clone(),
+                ConstraintReason::ArithmeticOperandToIntLikeResult,
             );
+            add_constraint(
+                res.clone(),
+                unclassified.lhs_type.clone(),
+                ConstraintReason::ArithmeticOperandToIntLikeResult,
+            );
+        }
+        if is_op1_char || is_op1_pointer {
             add_constraint(
                 unclassified.rhs_type.clone(),
                 Type::Int,
-                ConstraintReason::ArithmeticResultCharOrInt,
+                ConstraintReason::ArithmeticOtherOperandMustBeInt,
+            );
+            add_constraint(
+                res.clone(),
+                op1.clone(),
+                ConstraintReason::ArithmeticResultMatchesOther,
+            );
+            add_constraint(
+                op1,
+                res.clone(),
+                ConstraintReason::ArithmeticResultMatchesOther,
             );
         }
-        if is_op1_pointer {
-            add_constraint(
-                unclassified.rhs_type.clone(),
-                Type::Int,
-                ConstraintReason::ArithmeticOp1Pointer,
-            );
-            add_constraint(
-                unclassified.lhs_type.clone(),
-                unclassified.result_type.clone(),
-                ConstraintReason::ArithmeticOp1Pointer,
-            );
-            add_constraint(
-                unclassified.result_type.clone(),
-                unclassified.lhs_type.clone(),
-                ConstraintReason::ArithmeticOp1Pointer,
-            );
-        }
-        if is_op2_pointer {
+        if is_op2_char || is_op2_pointer {
             add_constraint(
                 unclassified.lhs_type.clone(),
                 Type::Int,
-                ConstraintReason::ArithmeticOp2Pointer,
+                ConstraintReason::ArithmeticOtherOperandMustBeInt,
             );
             add_constraint(
-                unclassified.rhs_type.clone(),
-                unclassified.result_type.clone(),
-                ConstraintReason::ArithmeticOp2Pointer,
+                res.clone(),
+                op2.clone(),
+                ConstraintReason::ArithmeticResultMatchesOther,
             );
             add_constraint(
-                unclassified.result_type.clone(),
-                unclassified.rhs_type.clone(),
-                ConstraintReason::ArithmeticOp2Pointer,
+                op2,
+                res.clone(),
+                ConstraintReason::ArithmeticResultMatchesOther,
             );
         }
-        if is_result_pointer && is_op1_int {
+        if is_op1_int {
             add_constraint(
                 unclassified.rhs_type.clone(),
                 unclassified.result_type.clone(),
-                ConstraintReason::ArithmeticResultPointerOp1Int,
+                ConstraintReason::ArithmeticIntOperandImpliesResult,
+            );
+            add_constraint(
+                unclassified.result_type.clone(),
+                unclassified.rhs_type.clone(),
+                ConstraintReason::ArithmeticIntOperandImpliesResult,
             );
         }
-        if is_result_pointer && is_op2_int {
+        if is_op2_int {
             add_constraint(
                 unclassified.lhs_type.clone(),
                 unclassified.result_type.clone(),
-                ConstraintReason::ArithmeticResultPointerOp2Int,
+                ConstraintReason::ArithmeticIntOperandImpliesResult,
+            );
+            add_constraint(
+                unclassified.result_type.clone(),
+                unclassified.lhs_type.clone(),
+                ConstraintReason::ArithmeticIntOperandImpliesResult,
+            );
+        }
+        if is_result_int {
+            add_constraint(
+                unclassified.lhs_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticResultBothInt,
+            );
+            add_constraint(
+                unclassified.rhs_type.clone(),
+                Type::Int,
+                ConstraintReason::ArithmeticResultBothInt,
             );
         }
 

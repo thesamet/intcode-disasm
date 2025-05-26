@@ -87,6 +87,16 @@ pub enum ConstraintReason {
     ArithmeticResultOp1IntOp2Int,  // Arithmetic result of int and int
     ArithmeticResultPointerOp1Int, // Arithmetic result of pointer and int
     ArithmeticResultPointerOp2Int, // Arithmetic result of pointer and int
+    ArithmeticResultBothInt,
+    ArithmeticOperandToIntLikeResult,
+    ArithmeticOtherOperandMustBeInt,
+    ArithmeticResultMatchesOther,
+    ArithmeticIntOperandImpliesResult,
+
+    MemoryAddressCalculation,
+    // Memory Operations
+    MemoryReadRequiresPointer,
+    MemoryWriteRequiresPointer,
 
     // Comparison Operations (e.g. <, ==) - often operands are Ints, result is Bool
     ComparisonLHS,    // `lhs < rhs` => type(lhs) <: Int (or other comparable type)
@@ -102,7 +112,8 @@ pub enum ConstraintReason {
 
     // Input/Output
     InputSourceType, // `input x` => type(x) <: Char (or chosen input type)
-    OutputValueType, // `output x` => type(x) <: Int (or Char, if outputting characters)
+    OutputValueType,
+    GlobalVariable(usize), // `output x` => type(x) <: Int (or Char, if outputting characters)
 }
 
 /// Represents a subtype constraint: `sub_type <: super_type`.

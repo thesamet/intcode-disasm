@@ -4,7 +4,9 @@ mod type_inference_tests {
     use crate::disasm::test_utils::TestContextBuilder;
 
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print
-    use crate::disasm::v3::pretty_print::{pretty_print_folded_ssa, pretty_print_types};
+    use crate::disasm::v3::pretty_print::{
+        pretty_print_folded_ssa, pretty_print_types, pretty_print_with_types_stdout,
+    };
     use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 
     use crate::disasm::v3::type_inference::types::Type;
@@ -396,7 +398,7 @@ f1:
             .query_engine
             .list_all_constraints();
         assert_marker_type!(ctx, 'a', Type::Int);
-        assert_marker_type!(ctx, 'b', Type::NumericLiteral);
+        assert_marker_type!(ctx, 'b', Type::Truthy);
     }
 
     #[test]
@@ -447,7 +449,7 @@ f1:
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_is_function_pointer!(ctx, 'c');
-        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::NumericLiteral)));
+        assert_marker_type!(ctx, 'd', Type::pointer(Type::Truthy));
     }
 
     #[test]
@@ -777,10 +779,11 @@ f1:
             "#,
         )
         .unwrap();
-        println!(
-            "Pretty printed model with types (V3):\n{}",
-            pretty_print_folded_ssa(&ctx.model)
-        );
+        pretty_print_with_types_stdout(&ctx.model);
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
 
         // Test case 3: [R+301] is an integer, [R+300] must be a pointer, result is pointer
         assert_marker_type!(ctx, 'g', Type::pointer(Type::Char));
@@ -947,6 +950,7 @@ f1:
             ; Function that adds 5 to its input
             func:
             R += 3             ; Adjust stack for local variables
+            [R-2] = [R-2] * 3
             'a [R-2] = 'b [R-2] + 5  ; result = arg + 5
             R -= 3             ; Restore stack
             goto [R]           ; Return
@@ -1025,9 +1029,8 @@ f1:
         f3:
             R += 3
             ptr3 = [R-2]
-            [R-1] = *ptr3
-            [R-1] = [R-1] * 7
-            [5000] = [R-1]
+            [R-2] = *ptr3
+            [R-2] = [R-2] * 7
             R -= 3
             goto [R]
             "#,

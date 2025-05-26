@@ -93,6 +93,12 @@ impl YesNoMaybe {
             _ => false,
         }
     }
+    pub fn is_no(&self) -> bool {
+        match self {
+            YesNoMaybe::No => true,
+            _ => false,
+        }
+    }
 }
 
 impl From<bool> for YesNoMaybe {
@@ -826,6 +832,10 @@ mod tests {
         }
     }
 
+    fn numeric() -> Type {
+        Type::NumericLiteral
+    }
+
     struct NoRegistry {}
 
     impl NoRegistry {
@@ -851,9 +861,11 @@ mod tests {
     fn test_is_subtype_of() {
         let registry = NoRegistry::new();
         assert!(int().is_subtype_of(&int(), &registry).is_yes());
-        assert!(bool().is_subtype_of(&int(), &registry).is_yes());
+        assert!(bool().is_subtype_of(&int(), &registry).is_no());
         assert!(bool().is_subtype_of(&bool(), &registry).is_yes());
-        assert!(char().is_subtype_of(&int(), &registry).is_yes());
+        assert!(char().is_subtype_of(&int(), &registry).is_no());
+        assert!(char().is_subtype_of(&bool(), &registry).is_no());
+        assert!(char().is_subtype_of(&numeric(), &registry).is_yes());
         assert!(nothing().is_subtype_of(&int(), &registry).is_yes());
         assert!(nothing().is_subtype_of(&bool(), &registry).is_yes());
         assert!(nothing().is_subtype_of(&char(), &registry).is_yes());
@@ -862,6 +874,9 @@ mod tests {
         assert!(pointer(int()).is_subtype_of(&truthy(), &registry).is_yes());
         assert!(pointer(bool())
             .is_subtype_of(&pointer(int()), &registry)
+            .is_no());
+        assert!(pointer(bool())
+            .is_subtype_of(&pointer(truthy()), &registry)
             .is_yes());
         assert!(tuple(&[char()])
             .is_subtype_of(&tuple(&[]), &registry)
@@ -871,9 +886,9 @@ mod tests {
             .is_yes()); // Expecting !Yes, which means No or Maybe
 
         let fn_ty = function(tuple(&[]), tuple(&[]));
-        assert!(fn_ty.is_subtype_of(&pointer(int()), &registry).is_yes());
+        assert!(fn_ty.is_subtype_of(&pointer(truthy()), &registry).is_yes());
         assert!(fn_ty.is_subtype_of(&pointer(any()), &registry).is_yes());
-        assert!(fn_ty.is_subtype_of(&int(), &registry).is_yes());
+        assert!(fn_ty.is_subtype_of(&int(), &registry).is_no());
         assert!(fn_ty.is_subtype_of(&truthy(), &registry).is_yes());
     }
 }

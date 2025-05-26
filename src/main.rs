@@ -3,6 +3,7 @@ use disasm::disasm::v3::analysis::{self};
 use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, PrettyPrintConfig};
 use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
+    pretty_print_types_with_config, pretty_print_with_types_stdout,
 };
 use disasm::disasm::v3::type_inference::TypeVarId;
 use disasm::disasm::v3::FunctionId;
@@ -62,6 +63,8 @@ enum Command {
         theme: String,
         #[arg(long, help = "List all available color themes")]
         list_themes: bool,
+        #[arg(long, help = "Function ID to print types for", default_value_t = usize::MAX)]
+        function: usize,
     },
     FlowRecovery {
         input: String,
@@ -95,13 +98,18 @@ fn main() {
             input,
             theme,
             list_themes,
+            function,
         } => {
             if list_themes {
                 list_available_themes();
                 return;
             }
             validate_theme(&theme);
-            types(input.unwrap(), theme)
+            types(
+                input.unwrap(),
+                (function != usize::MAX).then(|| FunctionId::new(function)),
+                theme,
+            )
         }
         Command::FlowRecovery { input } => flow_recovery(input),
         Command::FoldedSsa {
@@ -204,24 +212,18 @@ fn folded_ssa(input: String, theme: String) {
     println!("{}", pretty_print_folded_ssa_with_config(&model, config));
 }
 
-fn types(input: String, _theme: String) {
+fn types(input: String, function: Option<FunctionId>, _theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
     let model = analysis::binary_to_type_inference(prog).unwrap();
-    let fu1130 = FunctionId::new(1130);
-    println!("{}", &model.function(&fu1130).pretty_print());
-    let qe = &model.type_inference_result().query_engine;
-    qe.list_function_variables(&fu1130);
-    qe.list_variable_changes(TypeVarId::new(7));
-
-    /*
-    if theme == "default" {
+    if let Some(function_id) = function {
+        let fu = model.function(&function_id);
+        println!("{}", fu.pretty_print());
+        let qe = &model.type_inference_result().query_engine;
+        qe.list_function_variables(&function_id);
+        qe.list_variable_changes(TypeVarId::new(7));
+    } else {
         pretty_print_with_types_stdout(&model);
-        return;
     }
-
-    let config = get_theme_config(&theme, true);
-    println!("{}", pretty_print_types_with_config(&model, config));
-    */
 }
 
 fn flow_recovery(input: String) {

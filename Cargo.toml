@@ -7,28 +7,17 @@ edition = "2021"
 members = ["crates/model_macros_impl", "crates/dsl_macros_impl"]
 
 [dependencies]
-ambassador = "0.4.1"
 model_macros_impl = { path = "crates/model_macros_impl" }
 dsl_macros_impl = { path = "crates/dsl_macros_impl" }
 clap = { version = "4.5.32", features = ["derive"] }
 colored = "2.1.0"
-derive_more = { version = "2.0.1", features = [
-  "from",
-  "display",
-  "debug",
-  "constructor",
-  "as_ref",
-  "into",
-] }
 env_logger = "0.11.7"
 itertools = "0.14.0"
 log = "0.4.26"
 nom = "8.0.0"
 paste = "1.0.15"
-pathfinding = "4.14.0"
 petgraph = "0.8.1"
 pretty_assertions = { version = "1.4.1", features = ["unstable"] }
-statum = "0.1.48"
 thiserror = "2.0.12"
 castaway = "0.2.3"
 either = "1.15.0"

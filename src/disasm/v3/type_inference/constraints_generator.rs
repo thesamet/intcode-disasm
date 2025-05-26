@@ -5,9 +5,10 @@ use log::trace;
 
 use crate::disasm;
 use crate::disasm::v3::control_flow::BlockView;
-use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction};
+use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
+use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 // SsaBlock was unused
 use crate::disasm::v3::lir::InstructionNode; // Assuming this is generic over SsaMemoryReference
@@ -33,6 +34,7 @@ pub struct TypeConstraintGenerator<'a> {
     // Maps a VersionedMemoryReference to a TypeVarId.
     // This ensures that each unique versioned memory reference gets one TypeVar.
     vmr_to_type_var: HashMap<VersionedMemoryReference, TypeVarId>,
+    global_vars: HashMap<usize, TypeVarId>,
 
     // References to external data structures
     model: &'a Model<FoldedSsaComplete>,
@@ -44,6 +46,7 @@ impl<'a> TypeConstraintGenerator<'a> {
         TypeConstraintGenerator {
             next_type_var_id_counter: 0,
             vmr_to_type_var: HashMap::new(),
+            global_vars: HashMap::new(),
             model,
             result: TypeConstraintGeneratorResult {
                 state: InferenceAlgorithmState::new(),
@@ -205,6 +208,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 &self.result.state,
             );
         }
+
         for (function_id, f) in self.model.functions().sorted_by_key(|f| f.0) {
             for (_block_id, ssa_block_content) in f.blocks().sorted_by_key(|b| b.0) {
                 // blocks is BTreeMap<BlockId, SsaBlock>
@@ -226,6 +230,28 @@ impl<'a> TypeConstraintGenerator<'a> {
                         function_id,
                     );
                 }
+            }
+        }
+
+        for (addr, tv_id, var) in self
+            .vmr_to_type_var
+            .iter()
+            .filter_map(|(var, tv_id)| var.as_global().map(|addr| (addr, tv_id, var)))
+            .sorted()
+        {
+            if let Some(canonical_id) = self.global_vars.get(&addr) {
+                self.result.store.add_original_equality_constraint(
+                    Constraint::new(
+                        Type::TypeVar(*canonical_id),
+                        Type::TypeVar(*tv_id),
+                        var.function_id,
+                        InstructionId::new(0), // Dummy ID for function args
+                        ConstraintReason::GlobalVariable(addr),
+                    ),
+                    &self.result.state,
+                );
+            } else {
+                self.global_vars.insert(addr, *tv_id);
             }
         }
     }
