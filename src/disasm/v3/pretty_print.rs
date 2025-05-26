@@ -719,7 +719,9 @@ pub fn pretty_print_with_types<S: ModelState + 'static>(model: &Model<S>) -> Str
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
-    let config = PrettyPrintConfig::default().with_show_vars(false);
+    let config = PrettyPrintConfig::default()
+        .with_show_vars(false)
+        .with_show_types_var_ids(true);
     pretty_print_ssa_with_config(model, config)
 }
 

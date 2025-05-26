@@ -13,7 +13,7 @@ use crate::disasm::Error; // Assuming a general error type for the project
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::constraints::UnclassifiedArithmeticExpression;
+use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
 use super::constraints_generator::TypeConstraintGeneratorResult;
 use super::query_engine::TypeInferenceQueryEngine;
 use super::type_bounds_map::{ChangeReason, TypeVarRegistry};
@@ -86,7 +86,11 @@ impl Solver {
         //
         let mut iteration_count = 0;
         loop {
-            let mut worklist: VecDeque<Constraint> = self.store.iter().cloned().collect();
+            let mut worklist: VecDeque<(ConstraintId, Constraint)> = self
+                .store
+                .iter_with_ids()
+                .map(|(id, x)| (id, x.clone()))
+                .collect();
             iteration_count += 1;
             if iteration_count >= 30 {
                 panic!("Too many iterations");
@@ -94,8 +98,12 @@ impl Solver {
 
             let mut changed = false;
 
-            while let Some(constraint) = worklist.pop_front() {
-                changed |= self.apply_constraint(&constraint, &generator_result.function_types);
+            while let Some((constraint_id, constraint)) = worklist.pop_front() {
+                changed |= self.apply_constraint(
+                    &constraint_id,
+                    &constraint,
+                    &generator_result.function_types,
+                );
             }
 
             let e = self
@@ -135,14 +143,6 @@ impl Solver {
             }
         }
         result.debug_markers = markers;
-        for entry in self.state.change_log.iter() {
-            debug!(
-                "{}: updated to {}  reason: {}",
-                entry.tv_id.display_with(&self.state),
-                entry.state.display_with(&self.state),
-                entry.reason.display_with(&self.state)
-            );
-        }
         result.query_engine = TypeInferenceQueryEngine::new(self.state.clone(), self.store.clone());
 
         // 9. Finalize the result and embed it into a new model state.
@@ -155,6 +155,7 @@ impl Solver {
 
     fn apply_constraint(
         &mut self,
+        constraint_id: &ConstraintId,
         constraint: &Constraint,
         function_types: &HashMap<FunctionId, (Type, Type)>,
     ) -> bool {
@@ -164,16 +165,16 @@ impl Solver {
         if let Type::TypeVar(tv_id) = &sub_type {
             changed |= self.state.update_upper_bound(
                 tv_id,
-                &constraint.super_type,
-                ChangeReason::Constraint(constraint.clone()),
+                &super_type,
+                ChangeReason::Constraint(*constraint_id),
             );
         }
         if let Type::TypeVar(tv_id) = &super_type {
             changed |= self.state.update_lower_bound(
                 tv_id,
-                &constraint.sub_type,
-                ChangeReason::Constraint(constraint.clone()),
-            );
+                &sub_type,
+                ChangeReason::Constraint(*constraint_id),
+            )
         }
 
         match (&sub_type, &super_type) {
@@ -181,7 +182,7 @@ impl Solver {
                 changed |= self.state.update_lower_bound(
                     tv_id,
                     &sub_type,
-                    ChangeReason::Constraint(constraint.clone()),
+                    ChangeReason::Constraint(*constraint_id),
                 );
             }
             (Type::Tuple(ts), Type::Tuple(us)) => {
@@ -201,16 +202,66 @@ impl Solver {
                         self.store.add_derived_constraint(
                             new_constraint,
                             parent_id,
-                            ChangeReason::Constraint(constraint.clone()),
+                            ChangeReason::Constraint(*constraint_id),
                             &self.state,
                         )
                     } else {
-                        // Fallback to original constraint if parent not found
-                        self.store
-                            .add_original_constraint(new_constraint, &self.state)
+                        panic!("Could not find parent constraint id")
                     };
                     changed |= ch;
                 }
+            }
+            (Type::Pointer(x), Type::Pointer(y)) => {
+                // Pointer subtyping
+                let new_constraint = Constraint::new(
+                    *x.clone(),
+                    *y.clone(),
+                    constraint.origin_function_id,
+                    constraint.origin_instruction_id,
+                    ConstraintReason::PointerSubtype,
+                );
+                let (_, ch) = self
+                    .store
+                    .add_original_constraint(new_constraint, &self.state);
+                changed |= ch;
+            }
+            (
+                Type::Function {
+                    params: params1,
+                    returns: returns1,
+                },
+                Type::Function {
+                    params: params2,
+                    returns: returns2,
+                },
+            ) => {
+                let params_constraint = Constraint::new(
+                    params2.as_ref().clone(),
+                    params1.as_ref().clone(),
+                    constraint.origin_function_id,
+                    constraint.origin_instruction_id,
+                    ConstraintReason::FunctionParamsSubtype,
+                );
+                let returns_constraint = Constraint::new(
+                    returns1.as_ref().clone(),
+                    returns2.as_ref().clone(),
+                    constraint.origin_function_id,
+                    constraint.origin_instruction_id,
+                    ConstraintReason::FunctionReturnsSubtype,
+                );
+                let (_, ch1) = self.store.add_derived_constraint(
+                    params_constraint,
+                    *constraint_id,
+                    ChangeReason::Constraint(*constraint_id),
+                    &self.state,
+                );
+                let (_, ch2) = self.store.add_derived_constraint(
+                    returns_constraint,
+                    *constraint_id,
+                    ChangeReason::Constraint(*constraint_id),
+                    &self.state,
+                );
+                changed |= ch1 || ch2;
             }
             (Type::TypeVar(tv_id), Type::Function { .. })
                 if self
@@ -233,7 +284,7 @@ impl Solver {
                 {
                     let func_type =
                         Type::function(callee_arg_type.clone(), callee_ret_type.clone());
-                    changed |= self.store.add_equality_constraint(
+                    changed |= self.store.add_derived_equality_constraint(
                         Constraint {
                             sub_type: func_type,
                             super_type: tv_id.to_type(),
@@ -241,10 +292,11 @@ impl Solver {
                             origin_instruction_id: constraint.origin_instruction_id,
                             reason: ConstraintReason::ConstIsFunctionPointer,
                         },
+                        *constraint_id,
+                        ChangeReason::Constraint(*constraint_id),
                         &self.state,
                     )
                 }
-                println!("TypeVar {:?} is a function", tv_id);
             }
             _ => {}
         }
@@ -382,14 +434,126 @@ impl Solver {
         changed
     }
 
+    fn effective_glb(&self, types: &[Type]) -> Option<Type> {
+        if !types.iter().all(|t| t.is_concrete_type()) {
+            return None;
+        }
+        if types.len() == 1 && types[0].is_concrete_type() {
+            return Some(types[0].clone());
+        }
+        for i in types {
+            if types
+                .iter()
+                .all(|j| i.is_subtype_of(j, &self.state).is_yes())
+            {
+                return Some(i.clone());
+            }
+        }
+        return None;
+    }
+
+    fn effective_lub(&self, types: &[Type]) -> Option<Type> {
+        if !types.iter().all(|t| t.is_concrete_type()) {
+            return None;
+        }
+        if types.len() == 1 && types[0].is_concrete_type() {
+            return Some(types[0].clone());
+        }
+        return None;
+    }
+
     fn try_solving(&mut self) -> bool {
-        for (tv_id, var) in self.state.iter_all_type_states() {
-            trace!(
-                "tv_id: {} - {} : {}",
-                tv_id,
-                tv_id.display_with(&self.state),
-                var.display_with(&self.state)
-            );
+        let mut concrete_candidates: HashMap<TypeVarId, Type> = HashMap::new();
+        let mut non_concrete_candidates: HashMap<TypeVarId, Type> = HashMap::new();
+        for (tv_id, state) in self.state.iter_all_type_states() {
+            match state {
+                TypeVarState::Bounds {
+                    lower_bounds,
+                    upper_bounds,
+                } => {
+                    let intersection: HashSet<&Type> = lower_bounds
+                        .intersection(upper_bounds)
+                        .collect::<HashSet<_>>();
+                    if let Some(&concrete) = intersection.iter().find(|t| t.is_concrete_type()) {
+                        concrete_candidates.insert(*tv_id, concrete.clone());
+                    } else if let Some(&t) = intersection.iter().next() {
+                        non_concrete_candidates.insert(*tv_id, t.clone());
+                    }
+                }
+                TypeVarState::Converged(_) => continue,
+            }
+        }
+        if !concrete_candidates.is_empty() {
+            for (tv_id, t) in concrete_candidates.into_iter() {
+                debug!(
+                    "Type {:?} {} converged to {}",
+                    tv_id,
+                    tv_id.display_with(&self.state),
+                    t.display_with(&self.state)
+                );
+                self.state
+                    .converge(&tv_id, t, ChangeReason::ConcreteConvergence);
+            }
+            return true;
+        }
+        if !non_concrete_candidates.is_empty() {
+            let mut changed = false;
+            for (tv_id, t) in non_concrete_candidates.into_iter() {
+                let t = self.state.resolve_type(&t);
+                if t == tv_id.to_type() {
+                    continue;
+                }
+                changed = true;
+                trace!(
+                    "Non-concrete convergence for {tv_id}: {}",
+                    self.state.get_type_var_state(&tv_id).unwrap()
+                );
+
+                self.state
+                    .converge(&tv_id, t, ChangeReason::NonConcreteConvergence);
+            }
+            if changed {
+                return true;
+            }
+        }
+        let vars = self.state.iter_all_type_states().collect_vec();
+        for (&tv_id, state) in vars {
+            if let TypeVarState::Bounds {
+                lower_bounds,
+                upper_bounds,
+            } = state
+            {
+                let effective_glb = self.effective_glb(&upper_bounds.iter().cloned().collect_vec());
+                let effective_lub = self.effective_lub(&lower_bounds.iter().cloned().collect_vec());
+                if effective_lub.is_some() {
+                    debug!(
+                        "Type {} {} converged to {} (effective lub)",
+                        tv_id,
+                        tv_id.display_with(&self.state),
+                        effective_lub.as_ref().unwrap().display_with(&self.state)
+                    );
+                    self.state.converge(
+                        &tv_id,
+                        effective_lub.unwrap(),
+                        ChangeReason::ConvergeToLUB,
+                    );
+                    return true;
+                }
+                if effective_glb.is_some() {
+                    debug!(
+                        "Type {} {} converged to {} (effective glb)",
+                        tv_id,
+                        tv_id.display_with(&self.state),
+                        effective_glb.as_ref().unwrap().display_with(&self.state)
+                    );
+                    self.state.converge(
+                        &tv_id,
+                        effective_glb.unwrap(),
+                        ChangeReason::ConvergeToGLB,
+                    );
+                    return true;
+                }
+            }
         }
         /*
         trace!("{}", "Refining concrete types".red());

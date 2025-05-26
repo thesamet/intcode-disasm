@@ -87,14 +87,16 @@ impl TypeInferenceResult {
             match state {
                 v @ TypeVarState::Bounds { .. } => {
                     println!(
-                        "{:?<50} ∈ [{}]", // Restored original format string
+                        "{:<5} {} ∈ {}", // Restored original format string
+                        id,
                         id.display_with(self),
                         v.display_with(self)
                     );
                 }
                 TypeVarState::Converged(ty) => {
                     println!(
-                        "{:?<50} == {:<20}",
+                        "{:<5} {} == {:<20}",
+                        id,
                         id.display_with(self),
                         ty.display_with(self)
                     );

@@ -239,6 +239,7 @@ fn get_theme_config(theme: &str, show_types: bool) -> PrettyPrintConfig {
         colors: Some(colors),
         show_types,
         show_vars: false,
+        show_types_var_ids: false,
         indent_width: 4,
     }
 }

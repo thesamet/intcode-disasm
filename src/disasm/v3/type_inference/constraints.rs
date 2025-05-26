@@ -58,8 +58,8 @@ pub enum ConstraintReason {
     FunctionCallImpliesFunctionType, // `f(...)` => type(f) <: Function { params: FreshTV, returns: FreshTV }
     FunctionCallArguments, // binds call site arguments to the local function call signature.
     FunctionCallReturns, // binds the return value of a function call to the return type of the function.
-    FunctionArguments,   // callee argument binding
-    FunctionReturns,     // callee return type binding
+    CalleeFunctionArguments, // callee argument binding
+    CalleeFunctionReturns, // callee return type binding
     FunctionCallArgumentsBinding,
     FunctionCallReturnsBinding,
     ConstIsFunctionPointer,
@@ -71,6 +71,9 @@ pub enum ConstraintReason {
 
     // Tuples
     TupleSubtype,
+    PointerSubtype,
+    FunctionParamsSubtype,
+    FunctionReturnsSubtype,
 
     // Arithmetic Operations (e.g. +, -, *)
     ArithmeticLHS,                 // `lhs + rhs` => type(lhs) <: Int
@@ -147,6 +150,20 @@ impl Constraint {
     }
 }
 
+impl fmt::Display for Constraint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} <: {}  (from {} at {}, reason: {:?})",
+            self.sub_type,
+            self.super_type,
+            self.origin_function_id,
+            self.origin_instruction_id,
+            self.reason
+        )
+    }
+}
+
 pub struct DisplayableConstraint<'a, 'b, F>
 where
     F: TypeVarRegistry,
@@ -160,8 +177,8 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableConstraint<'a, 'b, 
         write!(
             f,
             "{} <: {}  (from {} at {}, reason: {:?})",
-            self.constraint.sub_type.display_with(self.registry),
-            self.constraint.super_type.display_with(self.registry),
+            self.constraint.sub_type,
+            self.constraint.super_type,
             self.constraint.origin_function_id,
             self.constraint.origin_instruction_id,
             self.constraint.reason
@@ -183,7 +200,7 @@ pub struct UnclassifiedArithmeticExpression {
 #[derive(Debug, Clone, Default)]
 pub struct ConstraintStore {
     /// Stores the actual unique Constraint objects. The index in this Vec acts as the ConstraintId.
-    constraints: Vec<Constraint>,
+    constraints: HashMap<ConstraintId, Constraint>,
     unclassified_add_expressions: Vec<UnclassifiedArithmeticExpression>,
     /// Maps a Constraint (by value) to its unique ConstraintId for quick uniqueness checks.
     constraint_to_id: HashMap<Constraint, ConstraintId>,
@@ -219,7 +236,7 @@ impl ConstraintStore {
         let new_id_val = self.constraints.len();
         let new_id = ConstraintId(new_id_val);
 
-        self.constraints.push(constraint.clone()); // Store the actual constraint
+        self.constraints.insert(new_id, constraint.clone()); // Store the actual constraint
         self.constraint_to_id.insert(constraint.clone(), new_id); // Map constraint value to its ID
 
         // Record the constraint source
@@ -257,7 +274,24 @@ impl ConstraintStore {
         self.add_constraint(constraint, source, state)
     }
 
-    pub fn add_equality_constraint(
+    /// Adds a derived constraint to the store.
+    /// Returns the ConstraintId of the added or existing constraint, and a boolean
+    /// indicating if the constraint was newly added.
+    pub fn add_derived_constraint(
+        &mut self,
+        constraint: Constraint,
+        from_constraint: ConstraintId,
+        derivation_reason: ChangeReason,
+        state: &InferenceAlgorithmState,
+    ) -> (ConstraintId, bool) {
+        let source = ConstraintSource::Derived {
+            from_constraint,
+            derivation_reason,
+        };
+        self.add_constraint(constraint, source, state)
+    }
+
+    pub fn add_original_equality_constraint(
         &mut self,
         constraint: Constraint,
         state: &InferenceAlgorithmState,
@@ -266,6 +300,24 @@ impl ConstraintStore {
         std::mem::swap(&mut reversed.sub_type, &mut reversed.super_type);
         let add1 = self.add_original_constraint(constraint, state).1;
         let add2 = self.add_original_constraint(reversed, state).1;
+        add1 || add2
+    }
+
+    pub fn add_derived_equality_constraint(
+        &mut self,
+        constraint: Constraint,
+        from_constraint: ConstraintId,
+        derivation_reason: ChangeReason,
+        state: &InferenceAlgorithmState,
+    ) -> bool {
+        let mut reversed = constraint.clone();
+        std::mem::swap(&mut reversed.sub_type, &mut reversed.super_type);
+        let add1 = self
+            .add_derived_constraint(constraint, from_constraint, derivation_reason, state)
+            .1;
+        let add2 = self
+            .add_derived_constraint(reversed, from_constraint, derivation_reason, state)
+            .1;
         add1 || add2
     }
 
@@ -287,7 +339,7 @@ impl ConstraintStore {
 
     /// Gets a reference to a Constraint by its ConstraintId.
     pub fn get_constraint_by_id(&self, id: ConstraintId) -> Option<&Constraint> {
-        self.constraints.get(id.0)
+        self.constraints.get(&id)
     }
 
     /// Gets a reference to the set of ConstraintIds involving a specific TypeVarId.
@@ -316,10 +368,11 @@ impl ConstraintStore {
     ) -> Vec<&Constraint> {
         self.constraints
             .iter()
-            .filter(|constraint| {
+            .filter(|(_, constraint)| {
                 constraint.origin_function_id == function_id
                     && constraint.origin_instruction_id == instruction_id
             })
+            .map(|(_, constraint)| constraint)
             .collect()
     }
 
@@ -332,7 +385,7 @@ impl ConstraintStore {
         self.constraints
             .iter()
             .enumerate()
-            .filter_map(|(idx, constraint)| {
+            .filter_map(|(idx, (_, constraint))| {
                 if constraint.origin_function_id == function_id
                     && constraint.origin_instruction_id == instruction_id
                 {
@@ -344,23 +397,6 @@ impl ConstraintStore {
             .collect()
     }
 
-    /// Adds a derived constraint to the store.
-    /// Returns the ConstraintId of the added or existing constraint, and a boolean
-    /// indicating if the constraint was newly added.
-    pub fn add_derived_constraint(
-        &mut self,
-        constraint: Constraint,
-        from_constraint: ConstraintId,
-        derivation_reason: ChangeReason,
-        state: &InferenceAlgorithmState,
-    ) -> (ConstraintId, bool) {
-        let source = ConstraintSource::Derived {
-            from_constraint,
-            derivation_reason,
-        };
-        self.add_constraint(constraint, source, state)
-    }
-
     pub fn iter_unclassified_add_expressions(
         &self,
     ) -> impl Iterator<Item = &UnclassifiedArithmeticExpression> {
@@ -368,15 +404,15 @@ impl ConstraintStore {
     }
 
     /// Provides an iterator over all unique constraints (as &Constraint) in the store.
-    pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
+    pub fn iter(&self) -> impl Iterator<Item = (&ConstraintId, &Constraint)> {
         self.constraints.iter()
     }
 
     /// Provides an iterator over all unique ConstraintIds in the store.
     pub fn iter_with_ids(&self) -> impl Iterator<Item = (ConstraintId, &Constraint)> + '_ {
-        (0..self.constraints.len())
-            .map(ConstraintId)
-            .map(|id| (id, &self.constraints[id.0]))
+        self.constraints
+            .iter()
+            .map(|(id, constraint)| (*id, constraint))
     }
 
     /// Gets the total number of unique constraints in the store.
@@ -395,7 +431,7 @@ mod tests {
     use super::*;
     use crate::disasm::v3::{FunctionId, InstructionId};
     // Ensure Type and its variants needed for tests are correctly imported
-    use super::super::types::Type::{self, Any, Bool, Function, Int, Pointer, Tuple, TypeVar};
+    use super::super::types::Type::{self, Any, Bool, Int};
 
     fn make_test_constraint(sub: Type, sup: Type, reason: ConstraintReason) -> Constraint {
         Constraint::new(sub, sup, FunctionId::new(0), InstructionId::new(0), reason)
@@ -456,10 +492,10 @@ mod tests {
         let mut found_c2 = false;
         for constraint_ref in store.iter() {
             count += 1;
-            if *constraint_ref == c1 {
+            if *constraint_ref.0 == id1 {
                 found_c1 = true;
             }
-            if *constraint_ref == c2 {
+            if *constraint_ref.0 == id2 {
                 found_c2 = true;
             }
         }
@@ -512,12 +548,7 @@ mod tests {
 
         // Test derived constraint
         let c2 = make_test_constraint(Bool, Int, ConstraintReason::TupleSubtype);
-        let (id2, _) = store.add_derived_constraint(
-            c2.clone(),
-            id1,
-            ChangeReason::ConcreteTypeRefinement,
-            &state,
-        );
+        let (id2, _) = store.add_derived_constraint(c2.clone(), id1, ChangeReason::Test, &state);
 
         let derived_source = store.get_constraint_source(id2).unwrap();
         match derived_source {
@@ -526,7 +557,7 @@ mod tests {
                 derivation_reason,
             } => {
                 assert_eq!(*from_constraint, id1);
-                assert_eq!(*derivation_reason, ChangeReason::ConcreteTypeRefinement);
+                assert_eq!(*derivation_reason, ChangeReason::Test);
             }
             _ => panic!("Expected Derived source"),
         }

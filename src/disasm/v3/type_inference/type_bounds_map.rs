@@ -1,7 +1,10 @@
 // disasm/src/disasm/v3/type_inference/type_bounds_map.rs
 
 use core::fmt;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Display,
+};
 
 use colored::Colorize;
 use itertools::Itertools;
@@ -11,6 +14,7 @@ use log::trace;
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
 // and types.rs exposes these publicly or they are accessible via `crate::...`
 use super::{
+    constraints::ConstraintId,
     type_interval::TypeInterval,
     types::{Type, TypeVarId, TypeVarNode},
     Constraint,
@@ -52,7 +56,7 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableTypeVarState<'a, F> {
             } => {
                 write!(
                     f,
-                    "[{}, {}]",
+                    "[{{{}}}, {{{}}}]",
                     lower_bounds
                         .iter()
                         .map(|t| t.display_with(self.registry))
@@ -66,6 +70,23 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableTypeVarState<'a, F> {
             TypeVarState::Converged(typ) => {
                 write!(f, "{}", typ.display_with(self.registry))
             }
+        }
+    }
+}
+
+impl fmt::Display for TypeVarState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeVarState::Bounds {
+                lower_bounds,
+                upper_bounds,
+            } => write!(
+                f,
+                "[{{{}}}, {{{}}}]",
+                lower_bounds.iter().join(", "),
+                upper_bounds.iter().join(", ")
+            ),
+            TypeVarState::Converged(ty) => write!(f, "{}", ty),
         }
     }
 }
@@ -108,11 +129,14 @@ pub struct InferenceAlgorithmState {
     pub change_log: Vec<ChangeLogEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ChangeReason {
-    Constraint(Constraint),
-    ConcreteTypeRefinement,
+    Constraint(ConstraintId),
     ConvergenceOf(TypeVarId),
+    ConcreteConvergence, // This is used when a concrete type converges to a specific type.
+    ConvergeToLUB,
+    ConvergeToGLB,
+    NonConcreteConvergence,
     Test,
 }
 
@@ -133,14 +157,17 @@ impl<'a> ChangeReason {
 impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableChangeReason<'a, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.reason {
-            ChangeReason::Constraint(constraint) => {
-                write!(f, "Constraint: {}", constraint.display_with(self.registry))
+            ChangeReason::Constraint(constraint_id) => {
+                write!(f, "Constraint: {:?}", constraint_id)
             }
-            ChangeReason::ConcreteTypeRefinement => write!(f, "concrete type refinement"),
             ChangeReason::ConvergenceOf(tv_id) => {
                 write!(f, "convergence of {}", tv_id.display_with(self.registry))
             }
             ChangeReason::Test => write!(f, "test"),
+            ChangeReason::ConcreteConvergence => write!(f, "concrete convergence"),
+            ChangeReason::ConvergeToLUB => write!(f, "converge to LUB"),
+            ChangeReason::ConvergeToGLB => write!(f, "converge to GLB"),
+            ChangeReason::NonConcreteConvergence => write!(f, "non-concrete convergence"),
         }
     }
 }
@@ -154,14 +181,17 @@ pub enum BoundDirection {
 impl fmt::Display for ChangeReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ChangeReason::Constraint(constraint) => {
-                write!(f, "Constraint: {:?}", constraint.reason)
+            ChangeReason::Constraint(constraint_id) => {
+                write!(f, "Constraint: {:?}", constraint_id)
             }
             ChangeReason::ConvergenceOf(id) => {
                 write!(f, "ConvergenceOf({})", id)
             }
-            ChangeReason::ConcreteTypeRefinement => write!(f, "ConcreteTypeRefinement"),
             ChangeReason::Test => write!(f, "Test"),
+            ChangeReason::ConcreteConvergence => write!(f, "ConcreteConvergence"),
+            ChangeReason::ConvergeToLUB => write!(f, "ConvergeToLUB"),
+            ChangeReason::ConvergeToGLB => write!(f, "ConvergeToGLB"),
+            ChangeReason::NonConcreteConvergence => write!(f, "NonConcreteConvergence"),
         }
     }
 }
@@ -188,6 +218,7 @@ impl InferenceAlgorithmState {
         let Some(state) = self.type_var_states.get_mut(tv_id) else {
             panic!("TypeVarId {:?} not found", tv_id);
         };
+        let old_state = state.clone();
         let TypeVarState::Bounds {
             lower_bounds,
             upper_bounds,
@@ -195,11 +226,83 @@ impl InferenceAlgorithmState {
         else {
             return false; // Already converged or not in Bounds state
         };
-        let mut changed = match direction {
+        let changed = match direction {
             BoundDirection::Lower => lower_bounds.insert(new_bound.clone()),
             BoundDirection::Upper => upper_bounds.insert(new_bound.clone()),
         };
+        if changed {
+            trace!("Updated bounds {} to {}   was  {}", tv_id, state, old_state);
+            self.updated_type_vars.insert(*tv_id);
+            let state = state.clone();
+            self.change_log.push(ChangeLogEntry {
+                tv_id: *tv_id,
+                state,
+                reason,
+            });
+        }
         changed
+    }
+
+    pub fn converge(&mut self, tv_id: &TypeVarId, new_bound: Type, reason: ChangeReason) {
+        let state = self.type_var_states.get_mut(tv_id).unwrap();
+        if matches!(state, TypeVarState::Converged { .. }) {
+            panic!("Type var id {:?} already converged.", tv_id);
+        }
+        self.type_var_states
+            .insert(*tv_id, TypeVarState::Converged(new_bound.clone()));
+        self.change_log.push(ChangeLogEntry {
+            tv_id: *tv_id,
+            state: TypeVarState::Converged(new_bound.clone()),
+            reason,
+        });
+        trace!("{}", format!("{} converted to {}", tv_id, new_bound).red());
+        let mut log_entries = vec![];
+        self.type_var_states = self
+            .type_var_states
+            .iter()
+            .map(|(id, v)| match (id, v) {
+                (id, _) if id == tv_id => (*id, TypeVarState::Converged(new_bound.clone())),
+                (
+                    id,
+                    TypeVarState::Bounds {
+                        lower_bounds,
+                        upper_bounds,
+                    },
+                ) => {
+                    let new_lower_bounds: HashSet<Type> = lower_bounds
+                        .iter()
+                        .filter(|l| **l != tv_id.to_type())
+                        .map(|l| self.resolve_type(l))
+                        .collect();
+                    let new_upper_bounds: HashSet<Type> = upper_bounds
+                        .iter()
+                        .filter(|u| **u != tv_id.to_type())
+                        .map(|u| self.resolve_type(u))
+                        .collect();
+                    if new_lower_bounds != *lower_bounds || new_upper_bounds != *upper_bounds {
+                        log_entries.push(ChangeLogEntry {
+                            tv_id: *id,
+                            state: TypeVarState::Bounds {
+                                lower_bounds: new_lower_bounds.clone(),
+                                upper_bounds: new_upper_bounds.clone(),
+                            },
+                            reason: ChangeReason::ConvergenceOf(*tv_id),
+                        });
+                    }
+                    (
+                        *id,
+                        TypeVarState::Bounds {
+                            lower_bounds: new_lower_bounds,
+                            upper_bounds: new_upper_bounds,
+                        },
+                    )
+                }
+                (id, TypeVarState::Converged(ty)) => {
+                    (*id, TypeVarState::Converged(self.resolve_type(ty)))
+                }
+            })
+            .collect();
+        self.change_log.extend(log_entries);
     }
 
     pub fn new() -> Self {
@@ -238,6 +341,7 @@ impl InferenceAlgorithmState {
     /// If the TypeVarId already exists, this function will not overwrite it or error.
     /// Modify if different behavior (e.g., update node_info, error) is desired for existing keys.
     pub fn add_type_var(&mut self, tv_id: TypeVarId, node_info: TypeVarNode) {
+        trace!("Adding variable {}: {}", tv_id, node_info);
         self.ensure_type_var_exists(tv_id, || node_info);
     }
 

@@ -31,17 +31,17 @@
 //!   Total constraints, bound changes, original vs derived counts, converged variables
 //!
 //! ```
-use std::fmt::Write;
 
+use colored::Colorize;
 use itertools::Itertools;
 
+use crate::disasm::v3::type_inference::{type_bounds_map::ChangeReason, ConstraintReason};
+
 use super::{
-    constraints::{Constraint, ConstraintStore},
-    type_bounds_map::{ChangeLogEntry, ChangeReason, InferenceAlgorithmState, TypeVarRegistry},
+    constraints::{Constraint, ConstraintId, ConstraintStore},
+    type_bounds_map::InferenceAlgorithmState,
     types::TypeVarId,
-    TypeVarState,
 };
-use crate::disasm::v3::{FunctionId, InstructionId};
 
 /// Query engine for analyzing type inference results.
 #[derive(Debug, Clone, Default)]
@@ -57,9 +57,10 @@ impl TypeInferenceQueryEngine {
     }
 
     pub fn list_all_variables(&self) {
-        for (tv_id, state) in self.state.iter_all_type_states() {
+        for (tv_id, state) in self.state.iter_all_type_states().sorted_by_key(|t| t.0) {
             let _ = println!(
-                "{}: {}",
+                "{:>5}: {}: {}",
+                tv_id,
                 tv_id.display_with(&self.state),
                 state.display_with(&self.state)
             );
@@ -69,6 +70,58 @@ impl TypeInferenceQueryEngine {
     pub fn list_all_constraints(&self) {
         for (id, constraint) in self.store.iter_with_ids() {
             println!("{:?}: {}", id, constraint.display_with(&self.state));
+        }
+    }
+
+    pub fn list_variable_changes(&self, tv_id: TypeVarId) {
+        for ch in self.state.change_log.iter() {
+            if ch.tv_id == tv_id {
+                println!(
+                    "{}",
+                    &format!(
+                        "{} {}: changed to {} because {}",
+                        ch.tv_id,
+                        ch.tv_id.display_with(&self.state),
+                        ch.state,
+                        ch.reason
+                    )
+                    .green()
+                );
+                match ch.reason {
+                    ChangeReason::Constraint(constraint_id) => {
+                        self.print_constraint_derivation(constraint_id)
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub fn print_constraint_derivation(&self, id: ConstraintId) {
+        if let Some(constraint) = self.store.get_constraint_by_id(id) {
+            self.print_constraint_recursive(id, constraint, 0);
+        } else {
+            println!("Constraint {:?} not found", id);
+        }
+    }
+
+    fn print_constraint_recursive(&self, id: ConstraintId, constraint: &Constraint, indent: usize) {
+        let indent_str = "  ".repeat(indent);
+        println!("{}{:?}: {}", indent_str, id, constraint,);
+
+        if let Some(source) = self.store.get_constraint_source(id) {
+            if let super::constraints::ConstraintSource::Derived {
+                from_constraint, ..
+            } = source
+            {
+                if let Some(parent_constraint) = self.store.get_constraint_by_id(*from_constraint) {
+                    self.print_constraint_recursive(
+                        *from_constraint,
+                        parent_constraint,
+                        indent + 1,
+                    );
+                }
+            }
         }
     }
 

@@ -7,6 +7,7 @@ use std::fmt;
 pub struct PrettyPrintConfig {
     pub colors: Option<Colors>,
     pub show_types: bool,
+    pub show_types_var_ids: bool,
     pub show_vars: bool,
     pub indent_width: usize,
 }
@@ -17,6 +18,7 @@ impl Default for PrettyPrintConfig {
             colors: Some(Colors::default()),
             show_types: true,
             show_vars: true,
+            show_types_var_ids: false,
             indent_width: 4,
         }
     }
@@ -41,6 +43,10 @@ impl PrettyPrintConfig {
         self.show_vars
     }
 
+    pub fn get_show_types_var_ids(&self) -> bool {
+        self.show_types_var_ids
+    }
+
     pub fn indent_width(&self) -> usize {
         self.indent_width
     }
@@ -63,6 +69,11 @@ impl PrettyPrintConfig {
 
     pub fn with_show_vars(mut self, show_vars: bool) -> Self {
         self.show_vars = show_vars;
+        self
+    }
+
+    pub fn with_show_types_var_ids(mut self, show_types_var_ids: bool) -> Self {
+        self.show_types_var_ids = show_types_var_ids;
         self
     }
 

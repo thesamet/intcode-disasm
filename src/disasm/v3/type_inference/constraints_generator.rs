@@ -66,6 +66,7 @@ impl<'a> TypeConstraintGenerator<'a> {
         vmr: &VersionedMemoryReference,
         function_id: FunctionId, // Function where this VMR is defined/used
         instruction_id: InstructionId, // Instruction that "introduces" this VMR to typing
+        role: Option<String>, // Optional role for the memory reference, e.g., "argument", "return"
     ) -> TypeVarId {
         if let Some(tv_id) = self.vmr_to_type_var.get(vmr) {
             return *tv_id;
@@ -74,8 +75,12 @@ impl<'a> TypeConstraintGenerator<'a> {
         // When creating a TypeVar for a VMR, its kind is MemoryReference.
         // We wrap the VMR in SsaMemoryReference::Versioned for the TypeVarKind.
         let ssa_ref_for_kind = SsaMemoryReference::Versioned(*vmr);
-        let new_tv_id =
-            self.create_memory_reference_type_var(function_id, instruction_id, &ssa_ref_for_kind);
+        let new_tv_id = self.create_memory_reference_type_var(
+            function_id,
+            instruction_id,
+            &ssa_ref_for_kind,
+            role,
+        );
         self.vmr_to_type_var.insert(vmr.clone(), new_tv_id);
         new_tv_id
     }
@@ -118,10 +123,11 @@ impl<'a> TypeConstraintGenerator<'a> {
         function_id: FunctionId,
         instruction_id: InstructionId,
         ssa_memref: &SsaMemoryReference,
+        role: Option<String>,
     ) -> TypeVarId {
         let tv_id = self.fresh_type_var_id();
         let node_info = TypeVarNode {
-            kind: TypeVarKind::MemoryReference(ssa_memref.clone()),
+            kind: TypeVarKind::MemoryReference(ssa_memref.clone(), role),
             instruction_id,
             function_id,
         };
@@ -156,43 +162,45 @@ impl<'a> TypeConstraintGenerator<'a> {
                 .insert(function_id, (args.to_type(), returns.to_type()));
             let mut args_tuple = vec![];
             let mut rets_tuple = vec![];
-            for (_, v) in f.callee_info().parameter_entry_vars.iter().sorted() {
+            for (idx, v) in f.callee_info().parameter_entry_vars.iter().sorted() {
                 args_tuple.push(
                     self.get_or_create_type_var_for_vmr(
                         v,
                         function_id,
                         InstructionId::new(0), // Dummy ID for function args
+                        Some(format!("CalleeArg{idx} for {function_id}")),
                     )
                     .to_type(),
                 );
             }
-            for (_, v) in f.callee_info().return_writes.iter().sorted() {
+            for (idx, v) in f.callee_info().return_writes.iter().sorted() {
                 rets_tuple.push(
                     self.get_or_create_type_var_for_vmr(
                         v,
                         function_id,
                         InstructionId::new(0), // Dummy ID for function args
+                        Some(format!("CalleeReturn{idx} for {function_id}")),
                     )
                     .to_type(),
                 );
             }
-            self.result.store.add_equality_constraint(
+            self.result.store.add_original_equality_constraint(
                 Constraint {
                     sub_type: args.to_type(),
                     super_type: Type::tuple(&args_tuple),
                     origin_function_id: function_id,
                     origin_instruction_id: InstructionId::new(0), // Dummy ID for function args
-                    reason: ConstraintReason::FunctionArguments,
+                    reason: ConstraintReason::CalleeFunctionArguments,
                 },
                 &self.result.state,
             );
-            self.result.store.add_equality_constraint(
+            self.result.store.add_original_equality_constraint(
                 Constraint {
                     sub_type: returns.to_type(),
                     super_type: Type::tuple(&rets_tuple),
                     origin_function_id: function_id,
                     origin_instruction_id: InstructionId::new(0), // Dummy ID for function args
-                    reason: ConstraintReason::FunctionReturns,
+                    reason: ConstraintReason::CalleeFunctionReturns,
                 },
                 &self.result.state,
             );
@@ -232,6 +240,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             &phi.result, // PhiFunction uses 'result'
             function_id,
             phi_origin_instruction_id,
+            Some(format!("Phi for {}", function_id)),
         );
 
         for (_block_id, incoming_vmr) in &phi.inputs {
@@ -241,6 +250,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 incoming_vmr,
                 function_id,
                 phi_origin_instruction_id, // Source VMRs contribute to the phi at this point
+                None,
             );
 
             self.result.store.add_original_constraint(
@@ -283,10 +293,11 @@ impl<'a> TypeConstraintGenerator<'a> {
                             &vmr_target,
                             function_id,
                             instruction_id,
+                            None,
                         );
                         let target_type = Type::TypeVar(target_tv_id);
 
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(src_type),
                                 target_type.clone(),
@@ -306,7 +317,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             function_id,
                             instruction_id,
                         );
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(ptr_addr_type),
                                 Type::Pointer(Box::new(Type::TypeVar(src_type))),
@@ -334,7 +345,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
             Instruction::Output(expr) => {
                 let expr_type = self.process_expression(expr, function_id, instruction_id);
-                self.result.store.add_equality_constraint(
+                self.result.store.add_original_equality_constraint(
                     Constraint::new(
                         expr_type.to_type(),
                         Type::Char,
@@ -357,17 +368,24 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let arg_type_tuple = Type::tuple(&arg_type_tuple);
                 let args_id = self.fresh_type_var_id();
                 let args_node_info = TypeVarNode {
-                    kind: TypeVarKind::CallSiteArgs,
+                    kind: TypeVarKind::CallSiteArgs { addr: addr_var_id },
                     instruction_id,
                     function_id,
                 };
                 self.result.state.add_type_var(args_id, args_node_info);
 
                 let mut ret_type_tuple = vec![];
-                for (_, ret) in block.call_site_info().return_reads.iter() {
+                for (idx, ret) in block.call_site_info().return_reads.iter() {
                     ret_type_tuple.push(
-                        self.get_or_create_type_var_for_vmr(ret, function_id, instruction_id)
-                            .to_type(),
+                        self.get_or_create_type_var_for_vmr(
+                            ret,
+                            function_id,
+                            instruction_id,
+                            Some(format!(
+                                "CallSiteReturn{idx} for call into {addr_var_id} in {function_id}"
+                            )),
+                        )
+                        .to_type(),
                     );
                 }
                 let ret_type_tuple = Type::tuple(&ret_type_tuple);
@@ -380,7 +398,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.state.add_type_var(rets_id, rets_node_info);
 
                 let fp = Type::function(args_id.to_type(), rets_id.to_type());
-                self.result.store.add_equality_constraint(
+                self.result.store.add_original_constraint(
                     Constraint {
                         sub_type: addr_var_id.to_type(),
                         super_type: fp,
@@ -390,7 +408,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     },
                     &self.result.state,
                 );
-                self.result.store.add_equality_constraint(
+                self.result.store.add_original_equality_constraint(
                     Constraint {
                         sub_type: args_id.to_type(),
                         super_type: arg_type_tuple,
@@ -400,7 +418,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     },
                     &self.result.state,
                 );
-                self.result.store.add_equality_constraint(
+                self.result.store.add_original_equality_constraint(
                     Constraint {
                         sub_type: ret_type_tuple,
                         super_type: rets_id.to_type(),
@@ -480,7 +498,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             Expression::Addressable(ssa_ref) => match ssa_ref {
                 SsaMemoryReference::Versioned(vmr) => {
                     let tv_id =
-                        self.get_or_create_type_var_for_vmr(vmr, function_id, instruction_id);
+                        self.get_or_create_type_var_for_vmr(vmr, function_id, instruction_id, None);
                     tv_id
                 }
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
@@ -491,7 +509,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         self.make_expression_type_var(function_id, instruction_id, expr);
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
-                    self.result.store.add_equality_constraint(
+                    self.result.store.add_original_equality_constraint(
                         Constraint::new(
                             Type::TypeVar(ptr_addr_type_var_id),
                             Type::Pointer(Box::new(pointee_type.clone())),
@@ -555,7 +573,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     }
                     disasm::v3::lir::expression::BinaryOperator::Mul => {
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 lhs_type.clone(),
                                 Type::Int,
@@ -565,7 +583,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 rhs_type.clone(),
                                 Type::Int,
@@ -575,7 +593,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -620,7 +638,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
                         // Need ConstraintReason::ComparisonLHS, ComparisonRHS, ComparisonResult
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 lhs_type,
                                 Type::Int, // Assuming comparison is between Ints for now
@@ -630,7 +648,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ),
                             &self.result.state,
                         );
-                        self.result.store.add_equality_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 rhs_type,
                                 Type::Int, // Assuming comparison is between Ints for now

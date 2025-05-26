@@ -106,13 +106,24 @@ impl From<bool> for YesNoMaybe {
 impl Type {
     pub fn is_concrete_type(&self) -> bool {
         match self {
-            Type::Int | Type::Bool | Type::Char => true,
-            Type::Any | Type::Nothing | Type::Truthy => false,
+            Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
+            Type::Any | Type::Nothing => false,
             Type::Pointer(pointee) => pointee.is_concrete_type(),
             Type::Function { params, returns } => {
                 params.is_concrete_type() && returns.is_concrete_type()
             }
             Type::Tuple(elements) => elements.iter().all(|e| e.is_concrete_type()),
+            Type::TypeVar(_) => false,
+        }
+    }
+
+    pub fn is_atomic_type(&self) -> bool {
+        match self {
+            Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
+            Type::Any | Type::Nothing => false,
+            Type::Pointer(pointee) => pointee.is_atomic_type(),
+            Type::Function { .. } => false,
+            Type::Tuple(..) => false,
             Type::TypeVar(_) => false,
         }
     }
@@ -616,7 +627,7 @@ impl fmt::Display for Type {
             Type::Char => write!(f, "Char"),
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
             Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
-            Type::TypeVar(id) => write!(f, "TypeVar({})", id),
+            Type::TypeVar(id) => write!(f, "{}", id),
             Type::Tuple(elements) => {
                 let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
                 write!(f, "Tuple({})", elements_str.join(", "))
@@ -633,11 +644,13 @@ pub enum TypeVarKind {
     /// A constant value.
     Const(i128),
     /// The variable is linked to a memory reference.
-    MemoryReference(SsaMemoryReference),
+    MemoryReference(SsaMemoryReference, Option<String>),
     /// An expression with an unknown type. This variant stores the expression itself for debugging and linking.
     Expression(Expression<SsaMemoryReference>),
     /// The arguments to a function call at the call site.
-    CallSiteArgs,
+    CallSiteArgs {
+        addr: TypeVarId,
+    },
     /// The return type from a function call at the call site.
     CallSiteReturns,
     // Arguments to a functino within the function
@@ -649,14 +662,14 @@ pub enum TypeVarKind {
 impl TypeVarKind {
     pub fn as_memory_reference(&self) -> Option<&SsaMemoryReference> {
         match self {
-            TypeVarKind::MemoryReference(memref) => Some(memref),
+            TypeVarKind::MemoryReference(memref, ..) => Some(memref),
             _ => None,
         }
     }
 
     pub fn as_versioned_memory(&self) -> Option<&VersionedMemoryReference> {
         match self {
-            TypeVarKind::MemoryReference(memref) => memref.as_versioned(),
+            TypeVarKind::MemoryReference(memref, ..) => memref.as_versioned(),
             _ => None,
         }
     }
@@ -677,7 +690,7 @@ impl TypeVarKind {
 
     pub fn as_function_args(&self) -> Option<()> {
         match self {
-            TypeVarKind::CallSiteArgs => Some(()),
+            TypeVarKind::CallSiteArgs { .. } => Some(()),
             _ => None,
         }
     }
@@ -687,9 +700,16 @@ impl fmt::Display for TypeVarKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TypeVarKind::Const(v) => write!(f, "Const({})", v),
-            TypeVarKind::MemoryReference(memref) => write!(f, "{}", memref),
+            TypeVarKind::MemoryReference(memref, role) => {
+                write!(
+                    f,
+                    "{} {}",
+                    memref,
+                    role.as_ref().map(|s| s.as_str()).unwrap_or("")
+                )
+            }
             TypeVarKind::Expression(expr) => write!(f, "T({})", expr),
-            TypeVarKind::CallSiteArgs => write!(f, "CallSiteArgs"),
+            TypeVarKind::CallSiteArgs { addr } => write!(f, "CallSiteArgs for {addr}"),
             TypeVarKind::CallSiteReturns => write!(f, "CallSiteReturns"),
             TypeVarKind::CalleeArgs(function_id) => write!(f, "CalleeArgs({})", function_id),
             TypeVarKind::CalleeReturns(function_id) => write!(f, "CalleeReturns({})", function_id),
