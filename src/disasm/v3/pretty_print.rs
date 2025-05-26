@@ -27,6 +27,7 @@ use crate::disasm::v2::{
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
 use super::common::formatting::{ContextualPrettyPrint, SemanticColor};
+use super::model::HasFoldedSsaResult;
 
 // --- Operator Precedence Helpers ---
 fn binary_op_precedence(op: &BinaryOperator) -> u8 {
@@ -59,9 +60,11 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
                     }
                     None => "".to_string(),
                 };
+                let target_type = ""; // castaway::match_type!(self.model, {});
                 format!(
-                    "{debug_marker}{} {} {}",
+                    "{debug_marker}{}{} {} {}",
                     target.pretty_print_with_context(ctx),
+                    target_type,
                     ctx.fmt_eq(),
                     src.pretty_print_with_context(ctx)
                 )
@@ -700,14 +703,14 @@ pub fn pretty_print_folded_ssa_with_config<S: ModelState + 'static>(
     config: PrettyPrintConfig,
 ) -> String
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasFoldedSsaResult + HasControlFlowGraphResult,
 {
     model.pretty_print_with_config(&config)
 }
 
 pub fn pretty_print_folded_ssa<S: ModelState + 'static>(model: &Model<S>) -> String
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasFoldedSsaResult + HasControlFlowGraphResult,
 {
     let config = PrettyPrintConfig::default()
         .with_show_types(false)
@@ -715,14 +718,24 @@ where
     pretty_print_folded_ssa_with_config(model, config)
 }
 
-pub fn pretty_print_with_types<S: ModelState + 'static>(model: &Model<S>) -> String
+pub fn pretty_print_types<S: ModelState + 'static>(model: &Model<S>) -> String
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
     let config = PrettyPrintConfig::default()
         .with_show_vars(false)
         .with_show_types_var_ids(true);
-    pretty_print_ssa_with_config(model, config)
+    pretty_print_types_with_config(model, config)
+}
+
+pub fn pretty_print_types_with_config<S: ModelState + 'static>(
+    model: &Model<S>,
+    config: PrettyPrintConfig,
+) -> String
+where
+    S: HasSsaResult + HasControlFlowGraphResult,
+{
+    model.pretty_print_with_config(&config)
 }
 
 // --- Backward compatibility functions ---
@@ -736,7 +749,7 @@ where
 
 pub fn pretty_print_with_types_stdout<S: ModelState + 'static>(model: &Model<S>)
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasTypeInferenceResult + HasControlFlowGraphResult,
 {
-    println!("{}", pretty_print_with_types(model));
+    println!("{}", pretty_print_types(model));
 }

@@ -81,7 +81,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             &ssa_ref_for_kind,
             role,
         );
-        self.vmr_to_type_var.insert(vmr.clone(), new_tv_id);
+        self.vmr_to_type_var.insert(*vmr, new_tv_id);
         new_tv_id
     }
 
@@ -243,7 +243,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             Some(format!("Phi for {}", function_id)),
         );
 
-        for (_block_id, incoming_vmr) in &phi.inputs {
+        for incoming_vmr in phi.inputs.values() {
             // PhiFunction uses 'inputs'
             // inputs: Vec<(BlockId, VersionedMemoryReference)>
             let incoming_tv_id = self.get_or_create_type_var_for_vmr(
@@ -285,12 +285,12 @@ impl<'a> TypeConstraintGenerator<'a> {
                 src,
                 target_debug_marker,
             } => {
-                let src_type = self.process_expression(&src, function_id, instruction_id);
+                let src_type = self.process_expression(src, function_id, instruction_id);
 
                 match target {
                     SsaMemoryReference::Versioned(vmr_target) => {
                         let target_tv_id = self.get_or_create_type_var_for_vmr(
-                            &vmr_target,
+                            vmr_target,
                             function_id,
                             instruction_id,
                             None,
@@ -497,9 +497,8 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
             Expression::Addressable(ssa_ref) => match ssa_ref {
                 SsaMemoryReference::Versioned(vmr) => {
-                    let tv_id =
-                        self.get_or_create_type_var_for_vmr(vmr, function_id, instruction_id, None);
-                    tv_id
+                    
+                    self.get_or_create_type_var_for_vmr(vmr, function_id, instruction_id, None)
                 }
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
                     let ptr_addr_type_var_id =
@@ -610,20 +609,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                     | BinaryOperator::NotEquals
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool,
-                                function_id,
-                                instruction_id,
-                                ConstraintReason::ComparisonResult,
-                            ),
-                            &self.result.state,
-                        );
-                        self.result.store.add_original_constraint(
-                            Constraint::new(
-                                Type::Bool,
-                                result_type.clone(),
                                 function_id,
                                 instruction_id,
                                 ConstraintReason::ComparisonResult,
@@ -641,7 +630,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 lhs_type,
-                                Type::Int, // Assuming comparison is between Ints for now
+                                Type::Int,
                                 function_id,
                                 instruction_id,
                                 ConstraintReason::ComparisonLHS,
@@ -651,10 +640,22 @@ impl<'a> TypeConstraintGenerator<'a> {
                         self.result.store.add_original_equality_constraint(
                             Constraint::new(
                                 rhs_type,
-                                Type::Int, // Assuming comparison is between Ints for now
+                                Type::Int,
                                 function_id,
                                 instruction_id,
                                 ConstraintReason::ComparisonRHS,
+                            ),
+                            &self.result.state,
+                        );
+                    }
+                    BinaryOperator::Equals | BinaryOperator::NotEquals => {
+                        self.result.store.add_original_equality_constraint(
+                            Constraint::new(
+                                lhs_type,
+                                rhs_type,
+                                function_id,
+                                instruction_id,
+                                ConstraintReason::EqualityComparisonSameType,
                             ),
                             &self.result.state,
                         );

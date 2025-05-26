@@ -1,6 +1,5 @@
 //! Type inference solver implementation.
 
-use colored::Colorize;
 use itertools::Itertools;
 use log::{debug, trace};
 
@@ -10,14 +9,11 @@ use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
 
-use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
-use super::constraints_generator::TypeConstraintGeneratorResult;
 use super::query_engine::TypeInferenceQueryEngine;
 use super::type_bounds_map::{ChangeReason, TypeVarRegistry};
-use super::type_interval::TypeInterval;
 use super::types::TypeVarId;
 use super::{
     generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
@@ -92,7 +88,7 @@ impl Solver {
                 .map(|(id, x)| (id, x.clone()))
                 .collect();
             iteration_count += 1;
-            if iteration_count >= 30 {
+            if iteration_count >= 10000 {
                 panic!("Too many iterations");
             }
 
@@ -113,6 +109,39 @@ impl Solver {
                 .collect_vec();
             for unclassified in e {
                 changed |= self.try_classify_add_expression(&unclassified);
+            }
+
+            let ts = self
+                .state
+                .iter_all_type_states()
+                .map(|(x, y)| (*x, y.clone()))
+                .collect_vec();
+
+            for (t, ts) in ts {
+                if let TypeVarState::Bounds { .. } = ts {
+                    // FIXME: create dummy instruction id for constaint uniqueness around the typevar.
+                    let new_constraint = Constraint::new(
+                        Type::Int,
+                        Type::Bool,
+                        FunctionId::new(0),
+                        InstructionId::new(100000 + t.index()),
+                        ConstraintReason::FunctionSubtype,
+                    );
+                    let (cid, ch) = self
+                        .store
+                        .add_original_constraint(new_constraint.clone(), &self.state);
+                    let upper_bounds = self.state.transitive_upper_bounds(&t);
+                    changed |= ch;
+
+                    if upper_bounds.iter().any(|t| t.is_function()) {
+                        changed |= self.derive_when_subtype_of_function(
+                            &t,
+                            &generator_result.function_types,
+                            &cid,
+                            &new_constraint,
+                        );
+                    }
+                }
             }
 
             if !changed {
@@ -263,42 +292,47 @@ impl Solver {
                 );
                 changed |= ch1 || ch2;
             }
-            (Type::TypeVar(tv_id), Type::Function { .. })
-                if self
-                    .state
-                    .get_type_var_node(tv_id)
-                    .unwrap()
-                    .kind
-                    .as_const()
-                    .is_some() =>
-            {
-                let addr = self
-                    .state
-                    .get_type_var_node(tv_id)
-                    .unwrap()
-                    .kind
-                    .as_const()
-                    .unwrap();
-                if let Some((callee_arg_type, callee_ret_type)) =
-                    function_types.get(&FunctionId::new(*addr as usize))
-                {
-                    let func_type =
-                        Type::function(callee_arg_type.clone(), callee_ret_type.clone());
-                    changed |= self.store.add_derived_equality_constraint(
-                        Constraint {
-                            sub_type: func_type,
-                            super_type: tv_id.to_type(),
-                            origin_function_id: constraint.origin_function_id,
-                            origin_instruction_id: constraint.origin_instruction_id,
-                            reason: ConstraintReason::ConstIsFunctionPointer,
-                        },
-                        *constraint_id,
-                        ChangeReason::Constraint(*constraint_id),
-                        &self.state,
-                    )
-                }
+            (Type::TypeVar(tv_id), Type::Function { .. }) => {
+                changed |= self.derive_when_subtype_of_function(
+                    tv_id,
+                    function_types,
+                    constraint_id,
+                    constraint,
+                );
             }
             _ => {}
+        }
+        changed
+    }
+
+    fn derive_when_subtype_of_function(
+        &mut self,
+        tv_id: &TypeVarId,
+        function_types: &HashMap<FunctionId, (Type, Type)>,
+        constraint_id: &ConstraintId,
+        constraint: &Constraint,
+    ) -> bool {
+        let Some(addr) = self.state.get_type_var_node(tv_id).unwrap().kind.as_const() else {
+            return false;
+        };
+        let mut changed = false;
+
+        if let Some((callee_arg_type, callee_ret_type)) =
+            function_types.get(&FunctionId::new(*addr as usize))
+        {
+            let func_type = Type::function(callee_arg_type.clone(), callee_ret_type.clone());
+            changed |= self.store.add_derived_equality_constraint(
+                Constraint {
+                    sub_type: func_type,
+                    super_type: tv_id.to_type(),
+                    origin_function_id: constraint.origin_function_id,
+                    origin_instruction_id: constraint.origin_instruction_id,
+                    reason: ConstraintReason::ConstIsFunctionPointer,
+                },
+                *constraint_id,
+                ChangeReason::Constraint(*constraint_id),
+                &self.state,
+            )
         }
         changed
     }
@@ -449,17 +483,28 @@ impl Solver {
                 return Some(i.clone());
             }
         }
-        return None;
+        None
     }
 
     fn effective_lub(&self, types: &[Type]) -> Option<Type> {
+        if types.len() == 6 {
+            println!("Effective lub {:?}", types);
+            for t in types {
+                println!(
+                    "{} {}: {}",
+                    t,
+                    t.display_with(&self.state),
+                    self.state.resolve_type(t).display_with(&self.state),
+                );
+            }
+        }
         if !types.iter().all(|t| t.is_concrete_type()) {
             return None;
         }
         if types.len() == 1 && types[0].is_concrete_type() {
             return Some(types[0].clone());
         }
-        return None;
+        None
     }
 
     fn try_solving(&mut self) -> bool {

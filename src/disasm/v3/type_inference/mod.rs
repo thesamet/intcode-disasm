@@ -6,7 +6,6 @@ pub mod query_engine;
 mod result;
 mod solver;
 pub mod type_bounds_map;
-mod type_interval;
 mod types;
 
 pub use constraints::ConstraintStore;
@@ -17,5 +16,6 @@ pub use result::TypeInferenceResult;
 pub use solver::Solver;
 pub use type_bounds_map::{InferenceAlgorithmState, TypeVarState};
 pub use types::Type;
+pub use types::TypeVarId;
 
 mod type_inference_tests;

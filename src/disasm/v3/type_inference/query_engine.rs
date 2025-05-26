@@ -35,7 +35,7 @@
 use colored::Colorize;
 use itertools::Itertools;
 
-use crate::disasm::v3::type_inference::{type_bounds_map::ChangeReason, ConstraintReason};
+use crate::disasm::v3::{type_inference::type_bounds_map::ChangeReason, FunctionId};
 
 use super::{
     constraints::{Constraint, ConstraintId, ConstraintStore},
@@ -58,7 +58,23 @@ impl TypeInferenceQueryEngine {
 
     pub fn list_all_variables(&self) {
         for (tv_id, state) in self.state.iter_all_type_states().sorted_by_key(|t| t.0) {
-            let _ = println!(
+            println!(
+                "{:>5}: {}: {}",
+                tv_id,
+                tv_id.display_with(&self.state),
+                state.display_with(&self.state)
+            );
+        }
+    }
+
+    pub fn list_function_variables(&self, function_id: &FunctionId) {
+        for (tv_id, state) in self
+            .state
+            .iter_all_type_states()
+            .filter(|v| self.state.get_type_var_node(v.0).unwrap().function_id == *function_id)
+            .sorted_by_key(|t| t.0)
+        {
+            println!(
                 "{:>5}: {}: {}",
                 tv_id,
                 tv_id.display_with(&self.state),
@@ -87,11 +103,8 @@ impl TypeInferenceQueryEngine {
                     )
                     .green()
                 );
-                match ch.reason {
-                    ChangeReason::Constraint(constraint_id) => {
-                        self.print_constraint_derivation(constraint_id)
-                    }
-                    _ => {}
+                if let ChangeReason::Constraint(constraint_id) = ch.reason {
+                    self.print_constraint_derivation(constraint_id)
                 }
             }
         }

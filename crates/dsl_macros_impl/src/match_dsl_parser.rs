@@ -855,7 +855,6 @@ mod tests {
     use crate::dsl::{
         PatternBindType, PatternBindVariable, PatternExpression, PatternSsaMemoryReference,
     };
-    use syn::{parse_quote, Block};
 
     #[test]
     fn test_parse_match_arm_simple_pattern() {

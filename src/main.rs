@@ -1,10 +1,11 @@
 use clap::{Parser, Subcommand};
 use disasm::disasm::v3::analysis::{self};
-use disasm::disasm::v3::common::formatting::{Colors, PrettyPrintConfig};
+use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, PrettyPrintConfig};
 use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
-    pretty_print_with_types_stdout,
 };
+use disasm::disasm::v3::type_inference::TypeVarId;
+use disasm::disasm::v3::FunctionId;
 use itertools::Itertools;
 use std::process;
 
@@ -38,6 +39,18 @@ enum Command {
         #[arg(long, help = "List all available color themes")]
         list_themes: bool,
     },
+    FoldedSsa {
+        #[arg(required_unless_present = "list_themes")]
+        input: Option<String>,
+        #[arg(
+            long,
+            default_value = "default",
+            help = "Color theme (run with --list-themes to see all available themes)"
+        )]
+        theme: String,
+        #[arg(long, help = "List all available color themes")]
+        list_themes: bool,
+    },
     Types {
         #[arg(required_unless_present = "list_themes")]
         input: Option<String>,
@@ -52,18 +65,6 @@ enum Command {
     },
     FlowRecovery {
         input: String,
-    },
-    FoldedSsa {
-        #[arg(required_unless_present = "list_themes")]
-        input: Option<String>,
-        #[arg(
-            long,
-            default_value = "default",
-            help = "Color theme (run with --list-themes to see all available themes)"
-        )]
-        theme: String,
-        #[arg(long, help = "List all available color themes")]
-        list_themes: bool,
     },
 }
 
@@ -184,23 +185,6 @@ fn ssa(input: String, theme: String) {
     println!("{}", pretty_print_ssa_with_config(&model, config));
 }
 
-fn types(input: String, theme: String) {
-    let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let model = analysis::binary_to_function_calls(prog).unwrap();
-
-    if theme == "default" {
-        pretty_print_with_types_stdout(&model);
-        return;
-    }
-
-    let config = get_theme_config(&theme, true);
-    // Assuming pretty_print_ssa_with_config can handle Model<FunctionCallAnalysisComplete>
-    // We might need a new function or to make pretty_print_ssa_with_config more generic
-    // if it specifically requires FunctionCallAnalysisComplete.
-    // For now, let's reuse it, as the core data (SSA blocks) is similar.
-    println!("{}", pretty_print_ssa_with_config(&model, config));
-}
-
 fn folded_ssa(input: String, theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
     // The analysis function `binary_to_folded_ssa` returns Model<FoldedSsaComplete>
@@ -211,12 +195,6 @@ fn folded_ssa(input: String, theme: String) {
     let model = analysis::binary_to_folded_ssa(prog).unwrap();
 
     if theme == "default" {
-        // Placeholder: Adapt or create a new function for Model<FoldedSsaComplete>
-        // For now, let's assume pretty_print_ssa_stdout can be made generic or we have an equivalent.
-        // If pretty_print_ssa_stdout is strictly typed to Model<FunctionCallAnalysisComplete>,
-        // this will need adjustment in a subsequent step (e.g., by making it generic over
-        // states that provide SsaResult or similar block structures).
-        // Given the prompt "The pretty_print of ssa should work", this is the intent.
         pretty_print_ssa_stdout(&model); // This will likely need adjustment to accept Model<FoldedSsaComplete>
         return;
     }
@@ -224,6 +202,26 @@ fn folded_ssa(input: String, theme: String) {
     let config = get_theme_config(&theme, false); // `show_types` is false for SSA view
                                                   // Similar to above, pretty_print_ssa_with_config might need adjustment.
     println!("{}", pretty_print_folded_ssa_with_config(&model, config));
+}
+
+fn types(input: String, _theme: String) {
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    let model = analysis::binary_to_type_inference(prog).unwrap();
+    let fu1130 = FunctionId::new(1130);
+    println!("{}", &model.function(&fu1130).pretty_print());
+    let qe = &model.type_inference_result().query_engine;
+    qe.list_function_variables(&fu1130);
+    qe.list_variable_changes(TypeVarId::new(7));
+
+    /*
+    if theme == "default" {
+        pretty_print_with_types_stdout(&model);
+        return;
+    }
+
+    let config = get_theme_config(&theme, true);
+    println!("{}", pretty_print_types_with_config(&model, config));
+    */
 }
 
 fn flow_recovery(input: String) {

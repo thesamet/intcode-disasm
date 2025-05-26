@@ -101,7 +101,7 @@ where
             .map(|(_, b)| b)
     }
 
-    pub fn all_blocks<'a>(&'a self) -> impl Iterator<Item = (BlockId, BlockView<'a, S>)> {
+    pub fn all_blocks(&self) -> impl Iterator<Item = (BlockId, BlockView<'_, S>)> {
         self.functions()
             .flat_map(move |(_, function)| function.blocks())
     }

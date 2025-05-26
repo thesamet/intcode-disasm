@@ -225,7 +225,8 @@ impl DataFlowAnalyzer {
                 // definitions flow forward.
                 if matches!(block_view.next(), NextKind::FunctionCall(_)) {
                     // Use block_view
-                    current_defs_out.retain(|d| !d.kind.is_outgoing_parameter() && !d.kind.is_global());
+                    current_defs_out
+                        .retain(|d| !d.kind.is_outgoing_parameter() && !d.kind.is_global());
                     // This matches v2 behavior
                 }
 
@@ -431,8 +432,8 @@ impl DataFlowAnalyzer {
                 .iter()
                 .filter(|(mem_ref, _)| {
                     // Include positive stack offsets (return values) and global memory references
-                    mem_ref.as_stack_relative().is_some_and(|offset| offset > 0) ||
-                    mem_ref.is_global()
+                    mem_ref.as_stack_relative().is_some_and(|offset| offset > 0)
+                        || mem_ref.is_global()
                 })
                 .map(|(mem_ref, instr_id)| (mem_ref.clone(), *instr_id))
                 .collect_vec(); // Collect as Vec<(MemoryReference, InstructionId)>
@@ -455,7 +456,7 @@ impl DataFlowAnalyzer {
                     );
                     let return_values_accessed = calling_block_flow
                         .return_values_accessed
-                        .get_or_insert_default();
+                        .get_or_insert_with(HashMap::new);
 
                     // Insert each memory usage into the map
                     for (mem_ref, instr_id) in memory_usages {

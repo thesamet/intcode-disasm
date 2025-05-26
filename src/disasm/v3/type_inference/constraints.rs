@@ -74,6 +74,7 @@ pub enum ConstraintReason {
     PointerSubtype,
     FunctionParamsSubtype,
     FunctionReturnsSubtype,
+    FunctionSubtype,
 
     // Arithmetic Operations (e.g. +, -, *)
     ArithmeticLHS,                 // `lhs + rhs` => type(lhs) <: Int
@@ -91,6 +92,7 @@ pub enum ConstraintReason {
     ComparisonLHS,    // `lhs < rhs` => type(lhs) <: Int (or other comparable type)
     ComparisonRHS,    // `lhs < rhs` => type(rhs) <: Int (or other comparable type)
     ComparisonResult, // `expr_result = lhs < rhs` => type(expr_result) <: Bool
+    EqualityComparisonSameType, // `lhs == rhs` => type(lhs) =:= type(rhs)
 
     // Unary Operations
     NotOperand,        // `!operand` => type(operand) <: Truthy
@@ -145,7 +147,7 @@ impl Constraint {
     {
         DisplayableConstraint {
             constraint: self,
-            registry,
+            _registry: registry,
         }
     }
 }
@@ -169,7 +171,7 @@ where
     F: TypeVarRegistry,
 {
     constraint: &'a Constraint,
-    registry: &'b F,
+    _registry: &'b F,
 }
 
 impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableConstraint<'a, 'b, F> {

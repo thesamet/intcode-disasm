@@ -5,10 +5,9 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
+use crate::disasm::v3::ssa::SsaMemoryReference;
 
 use super::type_bounds_map::TypeVarRegistry;
-use super::type_interval::TypeInterval;
 use super::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
 use super::{TypeInferenceQueryEngine, TypeVarState};
 
@@ -16,14 +15,14 @@ use super::{TypeInferenceQueryEngine, TypeVarState};
 #[derive(Debug, Clone)]
 pub struct FunctionTypeInfo {
     /// Maps SSA variables to their inferred types.
-    pub var_types: HashMap<SsaMemoryReference, Type>,
+    pub _var_types: HashMap<SsaMemoryReference, Type>,
 }
 
 impl FunctionTypeInfo {
     /// Creates a new empty `FunctionTypeInfo`.
     pub fn new() -> Self {
         Self {
-            var_types: HashMap::new(),
+            _var_types: HashMap::new(),
         }
     }
 }
@@ -109,7 +108,7 @@ impl TypeInferenceResult {
         let tv_id = self
             .mem_ref_to_type_var_id
             .get(&t)
-            .expect(&format!("No type var for {}", t));
+            .unwrap_or_else(|| panic!("No type var for {}", t));
         self.get_type_for_id(*tv_id)
     }
 

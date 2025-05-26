@@ -1,6 +1,3 @@
-use itertools::Itertools;
-use log::trace;
-
 use crate::disasm::v3::{
     define_id_type,
     lir::Expression,
@@ -45,10 +42,7 @@ impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
 /// Represents the possible types in our type system
 use std::{collections::HashSet, fmt};
 
-use super::{
-    type_bounds_map::{BoundDirection, TypeVarRegistry},
-    InferenceAlgorithmState, TypeVarState,
-};
+use super::type_bounds_map::TypeVarRegistry;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
@@ -128,6 +122,20 @@ impl Type {
         }
     }
 
+    pub fn is_function(&self) -> bool {
+        match self {
+            Type::Function { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_type_var_id(&self) -> Option<&TypeVarId> {
+        match self {
+            Type::TypeVar(id) => Some(id),
+            _ => None,
+        }
+    }
+
     /*
     fn resolve_bounds(&self, registry: &impl TypeVarRegistry) -> (Type, Type) {
         let v = match self {
@@ -188,11 +196,6 @@ impl Type {
         registry: &'a impl TypeVarRegistry,
     ) -> YesNoMaybe {
         if !visited.insert((self, other)) {
-            trace!(
-                "Cycle detected in subtype checking {} {}",
-                self.display_with(registry),
-                other.display_with(registry)
-            );
             return YesNoMaybe::Maybe;
         }
         if self == other {
@@ -251,7 +254,7 @@ impl Type {
                         return YesNoMaybe::Yes;
                     }
                 }
-                return YesNoMaybe::Maybe;
+                YesNoMaybe::Maybe
             }
             (other, Type::TypeVar(tv_id)) => {
                 let lb = registry.lower_bounds(tv_id);
@@ -260,7 +263,7 @@ impl Type {
                         return YesNoMaybe::Yes;
                     }
                 }
-                return YesNoMaybe::Maybe;
+                YesNoMaybe::Maybe
             }
             (Type::Char, Type::Int) => true.into(),
             (Type::Bool, Type::Int) => true.into(),
@@ -630,7 +633,7 @@ impl fmt::Display for Type {
             Type::TypeVar(id) => write!(f, "{}", id),
             Type::Tuple(elements) => {
                 let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
-                write!(f, "Tuple({})", elements_str.join(", "))
+                write!(f, "({})", elements_str.join(", "))
             }
             Type::Truthy => write!(f, "Truthy"),
             Type::Any => write!(f, "Any"),
@@ -751,12 +754,12 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
                     .iter()
                     .map(|e| e.display_with(self.registry).to_string())
                     .collect();
-                write!(f, "Tuple({})", elements_str.join(", "))
+                write!(f, "({})", elements_str.join(", "))
             }
             Type::Function { params, returns } => {
                 write!(
                     f,
-                    "Function<{} -> {}>",
+                    "Function{} -> {}",
                     params.display_with(self.registry),
                     returns.display_with(self.registry)
                 )
@@ -774,7 +777,6 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::disasm::v3::type_inference::type_bounds_map::ChangeReason;
 
     use super::*;
 

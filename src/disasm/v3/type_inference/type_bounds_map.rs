@@ -1,10 +1,7 @@
 // disasm/src/disasm/v3/type_inference/type_bounds_map.rs
 
 use core::fmt;
-use std::{
-    collections::{HashMap, HashSet},
-    path::Display,
-};
+use std::collections::{HashMap, HashSet};
 
 use colored::Colorize;
 use itertools::Itertools;
@@ -15,9 +12,7 @@ use log::trace;
 // and types.rs exposes these publicly or they are accessible via `crate::...`
 use super::{
     constraints::ConstraintId,
-    type_interval::TypeInterval,
     types::{Type, TypeVarId, TypeVarNode},
-    Constraint,
 }; // Use `super::` if types.rs is in the parent directory (type_inference)
    // TypeVarKind is imported separately in the tests module if needed.
 
@@ -91,6 +86,25 @@ impl fmt::Display for TypeVarState {
     }
 }
 
+fn transitive_upper_bound_inner<'a>(
+    registry: &'a (impl TypeVarRegistry + ?Sized),
+    tv_id: &TypeVarId,
+    visited: &mut HashSet<TypeVarId>,
+    out: &mut HashSet<&'a Type>,
+) {
+    if !visited.insert(*tv_id) {
+        return;
+    }
+    let upper_bounds = registry.upper_bounds(tv_id);
+    for bound in upper_bounds.iter() {
+        if let Some(id) = bound.as_type_var_id() {
+            transitive_upper_bound_inner(registry, id, visited, out);
+        } else {
+            out.insert(*bound);
+        }
+    }
+}
+
 pub trait TypeVarRegistry {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode>;
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState>;
@@ -105,6 +119,12 @@ pub trait TypeVarRegistry {
             TypeVarState::Bounds { upper_bounds, .. } => upper_bounds.iter().collect(),
             TypeVarState::Converged(ty) => HashSet::from([ty]),
         }
+    }
+
+    fn transitive_upper_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
+        let mut out = HashSet::new();
+        transitive_upper_bound_inner(self, tv_id, &mut HashSet::new(), &mut out);
+        out
     }
 }
 
@@ -322,9 +342,9 @@ impl InferenceAlgorithmState {
         tv_id: TypeVarId,
         node_info_fn: impl FnOnce() -> TypeVarNode,
     ) {
-        if !self.type_var_nodes.contains_key(&tv_id) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.type_var_nodes.entry(tv_id) {
             let node_info = node_info_fn(); // Create node_info only if it's a new TypeVar
-            self.type_var_nodes.insert(tv_id, node_info);
+            e.insert(node_info);
             self.type_var_states.insert(
                 tv_id,
                 TypeVarState::Bounds {
@@ -484,7 +504,7 @@ impl InferenceAlgorithmState {
             let mut changed = false;
 
             typ = typ.map(&mut |tv_id| match self
-                .get_type_var_state(&tv_id)
+                .get_type_var_state(tv_id)
                 .unwrap_or_else(|| panic!("Could not get type_var_state for {tv_id}"))
             {
                 TypeVarState::Converged(ty) => {
@@ -507,7 +527,7 @@ mod tests {
     use super::*;
     use crate::disasm::{
         test_utils::init_logging,
-        v3::{lir::Expression, type_inference::ConstraintReason, FunctionId, InstructionId},
+        v3::{FunctionId, InstructionId},
     };
     // Explicitly import TypeVarKind for the test module from the correct path.
     // `super` (type_bounds_map) -> `super` (type_inference) -> `types` (types.rs module)

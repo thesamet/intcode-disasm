@@ -3,16 +3,12 @@ mod type_inference_tests {
 
     use crate::disasm::test_utils::TestContextBuilder;
 
-    use crate::disasm::v3::common::formatting::PrettyPrintConfig;
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print
-    use crate::disasm::v3::pretty_print::{
-        pretty_print_folded_ssa, pretty_print_ssa_with_config, pretty_print_with_types,
-    };
+    use crate::disasm::v3::pretty_print::{pretty_print_folded_ssa, pretty_print_types};
     use crate::disasm::v3::ssa::types::VersionableMemoryKind;
-    use crate::disasm::v3::ssa::SsaMemoryReference;
-    use crate::disasm::v3::type_inference::query_engine;
-    use crate::disasm::v3::type_inference::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
-    use crate::disasm::v3::{FunctionId, InstructionId}; // V3 Type
+
+    use crate::disasm::v3::type_inference::types::Type;
+    // V3 Type
 
     // For full implementation, these might be needed:
     // use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
@@ -57,14 +53,6 @@ mod type_inference_tests {
                 );
             };
         };
-    }
-
-    fn function_pointer(args: &[Type], returns: &[Type]) -> Type {
-        // Represent function pointers directly as Function signatures
-        Type::Function {
-            params: Box::new(Type::Tuple(args.to_vec())),
-            returns: Box::new(Type::Tuple(returns.to_vec())),
-        }
     }
 
     // --- Start of Stub Helper Functions ---
@@ -224,7 +212,7 @@ mod type_inference_tests {
             Ok(ctx) => {
                 println!(
                     "Pretty printed model with types (V3):\n{}",
-                    pretty_print_with_types(&ctx.model)
+                    pretty_print_types(&ctx.model)
                 );
                 ctx.model.type_inference_result().print_all_type_bounds();
                 panic!("Expected test_context to fail.");
@@ -260,7 +248,7 @@ f1:
         // The Model<TypeInferenceComplete> should satisfy these.
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model.type_inference_result().print_all_type_bounds();
 
@@ -282,7 +270,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model.type_inference_result().print_all_type_bounds();
         assert_type_on_model(&ctx.model, 1000, Type::Bool);
@@ -338,7 +326,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model.type_inference_result().print_all_type_bounds();
         print_traces_for_marker(&ctx.model, 'a');
@@ -369,7 +357,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         assert_marker_type!(ctx, 'd', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Char);
@@ -397,7 +385,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model
             .type_inference_result()
@@ -450,7 +438,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model
             .type_inference_result()
@@ -479,7 +467,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         assert_marker_is_function_pointer!(ctx, 'a');
     }
@@ -511,7 +499,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model
             .type_inference_result()
@@ -553,13 +541,12 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model
             .type_inference_result()
             .query_engine
             .list_all_variables();
-        let tvid = TypeVarId::new(10);
 
         assert_marker_type!(ctx, 'a', Type::Int); // not smart enough yet to see it's char.
         assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
@@ -617,7 +604,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model
             .type_inference_result()
@@ -706,7 +693,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
     }
 
@@ -760,7 +747,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
 
         // Test case 2: [R+200] is a pointer, [R+202] must be an integer, result must be a pointer
@@ -825,7 +812,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
 
         // Test case 4: [R+301] is an integer, [R+303] is a pointer, so [R+300] must be a pointer.
@@ -865,7 +852,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
 
         // Test case 4: When one operand and result are known to be pointers,
@@ -905,7 +892,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
 
         // Test case 4: When one operand and result are known to be pointers,
@@ -934,7 +921,7 @@ f1:
         .unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
 
         // Test case 4: When one operand and result are known to be pointers,
@@ -967,7 +954,7 @@ f1:
         let ctx = TypeInferenceComplete::test_context(assembly).unwrap();
         println!(
             "Pretty printed model with types (V3):\n{}",
-            pretty_print_with_types(&ctx.model)
+            pretty_print_types(&ctx.model)
         );
         ctx.model.type_inference_result().print_all_type_bounds();
         ctx.model
@@ -976,5 +963,84 @@ f1:
             .list_all_constraints();
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Int);
+    }
+
+    #[test]
+    fn test_fn_pointer_args_inferred() {
+        let ctx = TypeInferenceComplete::test_context(
+            r#"
+            R += 1000
+            [R+1] = 2000
+            [R+2] = @f1
+            [R] = @c1
+            goto @takes_pointer
+            c1:
+
+            [R+1] = 3000
+            [R+2] = @f2
+            [R] = @c2
+            goto @takes_pointer
+            c2:
+
+            [R+1] = 3000
+            [R+2] = @f3
+            [R] = @c3
+            goto @takes_pointer
+            c3:
+            halt
+
+        takes_pointer:  ; R-5: Pointer(int)  to pass, [R-4]: Functin(Pointer(Int), Int) -> ()
+            R += 6
+            [R-1] = 3
+            [R-2] = 4
+            ; ptr4 = [R-5]
+            ; [6000] = *ptr4
+            [R-2] = [R-2] * [R-1]
+            [R-2] = [R-5] + [R-2]
+            [R+1] = [R-5]
+            [R+2] = 17
+            [R] = @tpret
+            goto [R-4]
+        tpret:
+            R-=6
+            goto [R]
+
+
+        f1:
+            R += 2
+            ptr1 = [R-1]
+            output *ptr1
+            R -= 2
+            goto [R]
+
+        f2:
+            R += 2
+            ptr2 = [R-1]
+            if *ptr2 goto @fret2
+            output 35
+        fret2:
+            R -= 2
+            goto [R]
+
+        f3:
+            R += 3
+            ptr3 = [R-2]
+            [R-1] = *ptr3
+            [R-1] = [R-1] * 7
+            [5000] = [R-1]
+            R -= 3
+            goto [R]
+            "#,
+        )
+        .unwrap();
+        println!(
+            "Pretty printed model with types (V3):\n{}",
+            pretty_print_types(&ctx.model)
+        );
+        ctx.model
+            .type_inference_result()
+            .query_engine
+            .list_all_variables();
+        assert!(false);
     }
 }
