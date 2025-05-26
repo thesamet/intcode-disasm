@@ -335,7 +335,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.store.add_original_constraint(
                     Constraint::new(
                         cond_type.to_type(),
-                        Type::Truthy,
+                        Type::NumericLiteral,
                         function_id,
                         instruction_id,
                         ConstraintReason::IfConditionOperand,
@@ -497,7 +497,6 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
             Expression::Addressable(ssa_ref) => match ssa_ref {
                 SsaMemoryReference::Versioned(vmr) => {
-                    
                     self.get_or_create_type_var_for_vmr(vmr, function_id, instruction_id, None)
                 }
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
@@ -675,7 +674,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         self.result.store.add_original_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
-                                Type::Truthy, // Operand of NOT must be Truthy
+                                Type::NumericLiteral, // Operand of NOT must be Truthy
                                 function_id,
                                 instruction_id,
                                 ConstraintReason::NotOperand,

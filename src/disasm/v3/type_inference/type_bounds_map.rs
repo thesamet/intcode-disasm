@@ -577,7 +577,7 @@ mod tests {
         assert!(state.update_upper_bound(&tv1_id, &Type::Int, ChangeReason::Test)); // Any.glb(Int) = Int
 
         assert!(state.update_lower_bound(&tv2_id, &Type::Bool, ChangeReason::Test));
-        assert!(state.update_upper_bound(&tv2_id, &Type::Truthy, ChangeReason::Test)); // Any.glb(Truthy) = Truthy
+        assert!(state.update_upper_bound(&tv2_id, &Type::NumericLiteral, ChangeReason::Test)); // Any.glb(Truthy) = Truthy
 
         let updated = state.take_updated_vars();
         assert_eq!(updated.len(), 2);

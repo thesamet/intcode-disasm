@@ -255,7 +255,7 @@ f1:
         assert_type_on_model(&ctx.model, 501, Type::Int);
         assert_marker_type!(ctx, 'a', Type::Int); // Macro now uses ctx.model and stub helper
         print_traces_for_marker(&ctx.model, 'b'); // Use new stub helper
-        assert_marker_type!(ctx, 'b', Type::Truthy); // Macro now uses ctx.model and stub helper
+        assert_marker_type!(ctx, 'b', Type::NumericLiteral); // Macro now uses ctx.model and stub helper
     }
 
     #[test]
@@ -396,7 +396,7 @@ f1:
             .query_engine
             .list_all_constraints();
         assert_marker_type!(ctx, 'a', Type::Int);
-        assert_marker_type!(ctx, 'b', Type::Truthy);
+        assert_marker_type!(ctx, 'b', Type::NumericLiteral);
     }
 
     #[test]
@@ -447,7 +447,7 @@ f1:
         assert_marker_type!(ctx, 'a', Type::Char);
         assert_marker_type!(ctx, 'b', Type::Int);
         assert_marker_is_function_pointer!(ctx, 'c');
-        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::Truthy)));
+        assert_marker_type!(ctx, 'd', Type::Pointer(Box::new(Type::NumericLiteral)));
     }
 
     #[test]

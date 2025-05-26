@@ -46,8 +46,18 @@ use super::type_bounds_map::TypeVarRegistry;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
-    /// Nothing type (bottom of the lattice, subtype of all types)
-    Nothing,
+    /// Any type (top of the lattice, supertype of all types)
+    Any,
+    // This type represents anything that can be used as a condition. It is top-level type for
+    // Int, Bool, Char, Pointer, Function, Tuple. What distinguishes it from numeric literal is
+    // that it can be inferred from being used in an int condition. NumericLiteral <: Truthy
+    Truthy,
+
+    // A marker that stands for a number literal that was found in the code. It could represent
+    // an Int, Bool, Char, Pointer or Function, but not a Tuple.  Type inference rules produce
+    // literals as a last resort.
+    NumericLiteral,
+
     /// Integer type
     Int,
     /// Boolean type (result of comparisons)
@@ -56,6 +66,8 @@ pub enum Type {
     Char,
     /// Pointer type with optional pointee type
     Pointer(Box<Type>),
+    /// Tuple type (for function arguments and returns)
+    Tuple(Vec<Type>),
     /// Function type with parameter and return types. The types must be tuples.
     Function {
         params: Box<Type>,  // Should be Type::Tuple
@@ -63,12 +75,8 @@ pub enum Type {
     },
     /// Type variable used during inference
     TypeVar(TypeVarId),
-    /// Tuple type (for function arguments and returns)
-    Tuple(Vec<Type>),
-    // A marker type representing anything that can be used as a condition.
-    Truthy,
-    /// Any type (top of the lattice, supertype of all types)
-    Any,
+    /// Nothing type (bottom of the lattice, subtype of all types)
+    Nothing,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -101,23 +109,13 @@ impl Type {
     pub fn is_concrete_type(&self) -> bool {
         match self {
             Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
+            Type::NumericLiteral => false,
             Type::Any | Type::Nothing => false,
             Type::Pointer(pointee) => pointee.is_concrete_type(),
             Type::Function { params, returns } => {
                 params.is_concrete_type() && returns.is_concrete_type()
             }
             Type::Tuple(elements) => elements.iter().all(|e| e.is_concrete_type()),
-            Type::TypeVar(_) => false,
-        }
-    }
-
-    pub fn is_atomic_type(&self) -> bool {
-        match self {
-            Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
-            Type::Any | Type::Nothing => false,
-            Type::Pointer(pointee) => pointee.is_atomic_type(),
-            Type::Function { .. } => false,
-            Type::Tuple(..) => false,
             Type::TypeVar(_) => false,
         }
     }
@@ -275,11 +273,11 @@ impl Type {
                 (**p_target == Type::Int || **p_target == Type::Any).into()
             }
 
-            (Type::Int, Type::Truthy) => true.into(),
-            (Type::Bool, Type::Truthy) => true.into(),
-            (Type::Char, Type::Truthy) => true.into(),
-            (Type::Pointer(_), Type::Truthy) => true.into(),
-            (Type::Function { .. }, Type::Truthy) => true.into(),
+            (Type::Int, Type::NumericLiteral) => true.into(),
+            (Type::Bool, Type::NumericLiteral) => true.into(),
+            (Type::Char, Type::NumericLiteral) => true.into(),
+            (Type::Pointer(_), Type::NumericLiteral) => true.into(),
+            (Type::Function { .. }, Type::NumericLiteral) => true.into(),
 
             (Type::Pointer(p1), Type::Pointer(p2)) => p1.is_subtype_of(p2, registry),
             (
@@ -340,6 +338,7 @@ impl Type {
             Type::Bool => Type::Bool,
             Type::Char => Type::Char,
             Type::Pointer(pointee) => Type::Pointer(Box::new(pointee.map(var_mapper))),
+            Type::NumericLiteral => Type::NumericLiteral,
             Type::Truthy => Type::Truthy,
             Type::Any => Type::Any,
         }
@@ -596,7 +595,13 @@ impl Type {
                 }
             }
             // Primitive types and Any/Nothing/Truthy don't contain TypeVars directly
-            Type::Nothing | Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::Any => {
+            Type::Nothing
+            | Type::Int
+            | Type::Bool
+            | Type::Char
+            | Type::NumericLiteral
+            | Type::Truthy
+            | Type::Any => {
                 // No nested type vars
             }
         }
@@ -607,7 +612,13 @@ impl Type {
             Type::TypeVar(_) => false,
             Type::Tuple(elements) => elements.iter().all(|e| e.is_var_free()),
             Type::Function { params, returns } => params.is_var_free() && returns.is_var_free(),
-            Type::Nothing | Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::Any => true,
+            Type::Nothing
+            | Type::Int
+            | Type::Bool
+            | Type::Char
+            | Type::NumericLiteral
+            | Type::Truthy
+            | Type::Any => true,
             Type::Pointer(pointee) => pointee.is_var_free(),
         }
     }
@@ -635,6 +646,7 @@ impl fmt::Display for Type {
                 let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
                 write!(f, "({})", elements_str.join(", "))
             }
+            Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
             Type::Any => write!(f, "Any"),
         }
@@ -769,6 +781,7 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::Bool => write!(f, "Bool"),
             Type::Char => write!(f, "Char"),
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee.display_with(self.registry)),
+            Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
             Type::Any => write!(f, "Any"),
         }
@@ -797,7 +810,7 @@ mod tests {
         Type::Any
     }
     fn truthy() -> Type {
-        Type::Truthy
+        Type::NumericLiteral
     }
     fn pointer(pointee: Type) -> Type {
         Type::Pointer(Box::new(pointee))
