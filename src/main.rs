@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
+use disasm::disasm::repl;
 use disasm::disasm::v3::analysis::{self};
 use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, PrettyPrintConfig};
 use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
-    pretty_print_types_with_config, pretty_print_with_types_stdout,
+    pretty_print_with_types_stdout,
 };
 use disasm::disasm::v3::type_inference::TypeVarId;
 use disasm::disasm::v3::FunctionId;
@@ -66,6 +67,9 @@ enum Command {
         #[arg(long, help = "Function ID to print types for", default_value_t = usize::MAX)]
         function: usize,
     },
+    Repl {
+        input: Option<String>,
+    },
     FlowRecovery {
         input: String,
     },
@@ -112,6 +116,7 @@ fn main() {
             )
         }
         Command::FlowRecovery { input } => flow_recovery(input),
+        Command::Repl { input } => repl(input.unwrap()),
         Command::FoldedSsa {
             input,
             theme,
@@ -224,6 +229,12 @@ fn types(input: String, function: Option<FunctionId>, _theme: String) {
     } else {
         pretty_print_with_types_stdout(&model);
     }
+}
+
+fn repl(input: String) {
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    let model = analysis::binary_to_type_inference(prog).unwrap();
+    let _ = repl::repl(model);
 }
 
 fn flow_recovery(input: String) {

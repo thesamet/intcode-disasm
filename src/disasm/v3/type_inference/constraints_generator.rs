@@ -8,7 +8,6 @@ use crate::disasm::v3::control_flow::BlockView;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
-use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 // SsaBlock was unused
 use crate::disasm::v3::lir::InstructionNode; // Assuming this is generic over SsaMemoryReference

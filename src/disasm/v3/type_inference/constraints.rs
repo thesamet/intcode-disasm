@@ -16,7 +16,7 @@ use std::{
     fmt,
 }; // Assuming types.rs is in the parent module (type_inference)
 
-use super::type_bounds_map::ChangeReason;
+use super::type_bounds_map::BoundChangeReason;
 
 /// Describes how a constraint was derived.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub enum ConstraintSource {
     /// Constraint derived from other constraints during solving
     Derived {
         from_constraint: ConstraintId,
-        derivation_reason: ChangeReason,
+        derivation_reason: BoundChangeReason,
     },
 }
 
@@ -294,7 +294,7 @@ impl ConstraintStore {
         &mut self,
         constraint: Constraint,
         from_constraint: ConstraintId,
-        derivation_reason: ChangeReason,
+        derivation_reason: BoundChangeReason,
         state: &InferenceAlgorithmState,
     ) -> (ConstraintId, bool) {
         let source = ConstraintSource::Derived {
@@ -320,7 +320,7 @@ impl ConstraintStore {
         &mut self,
         constraint: Constraint,
         from_constraint: ConstraintId,
-        derivation_reason: ChangeReason,
+        derivation_reason: BoundChangeReason,
         state: &InferenceAlgorithmState,
     ) -> bool {
         let mut reversed = constraint.clone();
@@ -421,13 +421,6 @@ impl ConstraintStore {
         self.constraints.iter()
     }
 
-    /// Provides an iterator over all unique ConstraintIds in the store.
-    pub fn iter_with_ids(&self) -> impl Iterator<Item = (ConstraintId, &Constraint)> + '_ {
-        self.constraints
-            .iter()
-            .map(|(id, constraint)| (*id, constraint))
-    }
-
     /// Gets the total number of unique constraints in the store.
     pub fn len(&self) -> usize {
         self.constraints.len()
@@ -520,13 +513,13 @@ mod tests {
         let mut found_id1 = false;
         let mut found_id2 = false;
         let mut ids_from_iter = HashSet::new();
-        for (id_val, _) in store.iter_with_ids() {
+        for (id_val, _) in store.iter() {
             id_count += 1;
             ids_from_iter.insert(id_val);
-            if id_val == id1 {
+            if *id_val == id1 {
                 found_id1 = true;
             }
-            if id_val == id2 {
+            if *id_val == id2 {
                 found_id2 = true;
             }
         }
@@ -561,7 +554,8 @@ mod tests {
 
         // Test derived constraint
         let c2 = make_test_constraint(Bool, Int, ConstraintReason::TupleSubtype);
-        let (id2, _) = store.add_derived_constraint(c2.clone(), id1, ChangeReason::Test, &state);
+        let (id2, _) =
+            store.add_derived_constraint(c2.clone(), id1, BoundChangeReason::Test, &state);
 
         let derived_source = store.get_constraint_source(id2).unwrap();
         match derived_source {
@@ -570,7 +564,7 @@ mod tests {
                 derivation_reason,
             } => {
                 assert_eq!(*from_constraint, id1);
-                assert_eq!(*derivation_reason, ChangeReason::Test);
+                assert_eq!(*derivation_reason, BoundChangeReason::Test);
             }
             _ => panic!("Expected Derived source"),
         }

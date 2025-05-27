@@ -31,12 +31,17 @@ where
     /// # Panics
     /// Panics if the function ID does not exist in the model
     pub fn function(&self, function_id: &FunctionId) -> FunctionView<'_, S> {
+        self.get_function(function_id)
+            .unwrap_or_else(|| panic!("Function {} does not exist", function_id))
+    }
+
+    pub fn get_function(&self, function_id: &FunctionId) -> Option<FunctionView<'_, S>> {
         let function = self
             .control_flow_graph_result()
             .functions
             .get(function_id)
-            .unwrap();
-        FunctionView::new(self, function)
+            .map(|function| FunctionView::new(self, function));
+        function
     }
 
     /// Returns an iterator over all functions in the model.

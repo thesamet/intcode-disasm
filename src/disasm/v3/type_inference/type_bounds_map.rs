@@ -147,29 +147,34 @@ pub struct InferenceAlgorithmState {
     /// Tracks TypeVarIds whose bounds have changed since the last `take_updated_vars` call.
     updated_type_vars: HashSet<TypeVarId>, // TypeVarId: Eq + Hash
     pub change_log: Vec<ChangeLogEntry>,
+
+    iteration: usize,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ChangeReason {
+pub enum BoundChangeReason {
     Constraint(ConstraintId),
-    ConvergenceOf(TypeVarId),
+    Test,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ConverganceType {
     ConcreteConvergence, // This is used when a concrete type converges to a specific type.
     ConvergeToLUB,
     ConvergeToGLB,
     NonConcreteConvergence,
-    Test,
 }
 
 pub struct DisplayableChangeReason<'a, F> {
-    reason: &'a ChangeReason,
-    registry: &'a F,
+    reason: &'a BoundChangeReason,
+    _registry: &'a F,
 }
 
-impl<'a> ChangeReason {
+impl<'a> BoundChangeReason {
     pub fn display_with<F>(&'a self, registry: &'a F) -> DisplayableChangeReason<'a, F> {
         DisplayableChangeReason {
             reason: self,
-            registry,
+            _registry: registry,
         }
     }
 }
@@ -177,50 +182,58 @@ impl<'a> ChangeReason {
 impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableChangeReason<'a, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.reason {
-            ChangeReason::Constraint(constraint_id) => {
+            BoundChangeReason::Constraint(constraint_id) => {
                 write!(f, "Constraint: {:?}", constraint_id)
             }
-            ChangeReason::ConvergenceOf(tv_id) => {
-                write!(f, "convergence of {}", tv_id.display_with(self.registry))
-            }
-            ChangeReason::Test => write!(f, "test"),
-            ChangeReason::ConcreteConvergence => write!(f, "concrete convergence"),
-            ChangeReason::ConvergeToLUB => write!(f, "converge to LUB"),
-            ChangeReason::ConvergeToGLB => write!(f, "converge to GLB"),
-            ChangeReason::NonConcreteConvergence => write!(f, "non-concrete convergence"),
+            BoundChangeReason::Test => write!(f, "Test"),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BoundDirection {
     Lower,
     Upper,
 }
 
-impl fmt::Display for ChangeReason {
+impl fmt::Display for BoundChangeReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ChangeReason::Constraint(constraint_id) => {
+            BoundChangeReason::Constraint(constraint_id) => {
                 write!(f, "Constraint: {:?}", constraint_id)
             }
-            ChangeReason::ConvergenceOf(id) => {
-                write!(f, "ConvergenceOf({})", id)
-            }
-            ChangeReason::Test => write!(f, "Test"),
-            ChangeReason::ConcreteConvergence => write!(f, "ConcreteConvergence"),
-            ChangeReason::ConvergeToLUB => write!(f, "ConvergeToLUB"),
-            ChangeReason::ConvergeToGLB => write!(f, "ConvergeToGLB"),
-            ChangeReason::NonConcreteConvergence => write!(f, "NonConcreteConvergence"),
+            BoundChangeReason::Test => write!(f, "Test"),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeLogEntry {
+    pub iteration: usize,
     pub tv_id: TypeVarId,
-    pub state: TypeVarState,
-    pub reason: ChangeReason,
+    pub kind: ChangeLogKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Represents the different kinds of changes that can occur during type inference.
+pub enum ChangeLogKind {
+    /// A new bound (lower or upper) was added to a type variable.
+    AddedBound {
+        direction: BoundDirection,
+        new_bound: Type,
+        reason: BoundChangeReason,
+    },
+    /// A type variable has converged to a specific type.
+    Converged {
+        new_type: Type,
+        convergence_type: ConverganceType,
+    },
+    /// A depenedency fo the type var in ChangeLogEntry has converged, triggering a
+    /// rewrite.
+    DependencyConverged {
+        dependent_var_id: TypeVarId,
+        new_value: Type,
+    },
 }
 
 impl InferenceAlgorithmState {
@@ -229,7 +242,7 @@ impl InferenceAlgorithmState {
         tv_id: &TypeVarId,
         new_bound: &Type,
         direction: BoundDirection,
-        reason: ChangeReason,
+        reason: BoundChangeReason,
     ) -> bool {
         if *new_bound == tv_id.to_type() {
             // No change if the new bound is the same as the current type
@@ -253,17 +266,25 @@ impl InferenceAlgorithmState {
         if changed {
             trace!("Updated bounds {} to {}   was  {}", tv_id, state, old_state);
             self.updated_type_vars.insert(*tv_id);
-            let state = state.clone();
             self.change_log.push(ChangeLogEntry {
                 tv_id: *tv_id,
-                state,
-                reason,
+                kind: ChangeLogKind::AddedBound {
+                    direction,
+                    new_bound: new_bound.clone(),
+                    reason,
+                },
+                iteration: self.iteration,
             });
         }
         changed
     }
 
-    pub fn converge(&mut self, tv_id: &TypeVarId, new_bound: Type, reason: ChangeReason) {
+    pub fn converge(
+        &mut self,
+        tv_id: &TypeVarId,
+        new_bound: Type,
+        convergence_type: ConverganceType,
+    ) {
         let state = self.type_var_states.get_mut(tv_id).unwrap();
         if matches!(state, TypeVarState::Converged { .. }) {
             panic!("Type var id {:?} already converged.", tv_id);
@@ -271,11 +292,20 @@ impl InferenceAlgorithmState {
         self.type_var_states
             .insert(*tv_id, TypeVarState::Converged(new_bound.clone()));
         self.change_log.push(ChangeLogEntry {
+            iteration: self.iteration,
             tv_id: *tv_id,
-            state: TypeVarState::Converged(new_bound.clone()),
-            reason,
+            kind: ChangeLogKind::Converged {
+                new_type: new_bound.clone(),
+                convergence_type,
+            },
         });
         trace!("{}", format!("{} converted to {}", tv_id, new_bound).red());
+
+        let kind = || ChangeLogKind::DependencyConverged {
+            dependent_var_id: *tv_id,
+            new_value: new_bound.clone(),
+        };
+
         let mut log_entries = vec![];
         self.type_var_states = self
             .type_var_states
@@ -301,12 +331,9 @@ impl InferenceAlgorithmState {
                         .collect();
                     if new_lower_bounds != *lower_bounds || new_upper_bounds != *upper_bounds {
                         log_entries.push(ChangeLogEntry {
+                            iteration: self.iteration,
                             tv_id: *id,
-                            state: TypeVarState::Bounds {
-                                lower_bounds: new_lower_bounds.clone(),
-                                upper_bounds: new_upper_bounds.clone(),
-                            },
-                            reason: ChangeReason::ConvergenceOf(*tv_id),
+                            kind: kind(),
                         });
                     }
                     (
@@ -331,6 +358,7 @@ impl InferenceAlgorithmState {
             type_var_nodes: HashMap::new(),
             updated_type_vars: HashSet::new(),
             change_log: Vec::new(),
+            iteration: 0,
         }
     }
 
@@ -376,7 +404,7 @@ impl InferenceAlgorithmState {
         &mut self,
         tv_id: &TypeVarId,
         new_lower_constraint: &Type,
-        reason: ChangeReason,
+        reason: BoundChangeReason,
     ) -> bool {
         self.update_bound_internal(tv_id, new_lower_constraint, BoundDirection::Lower, reason)
     }
@@ -392,7 +420,7 @@ impl InferenceAlgorithmState {
         &mut self,
         tv_id: &TypeVarId,
         new_upper_constraint: &Type,
-        reason: ChangeReason,
+        reason: BoundChangeReason,
     ) -> bool {
         self.update_bound_internal(tv_id, new_upper_constraint, BoundDirection::Upper, reason)
     }
@@ -573,11 +601,11 @@ mod tests {
         );
 
         // Initial updates
-        assert!(state.update_lower_bound(&tv1_id, &Type::Int, ChangeReason::Test));
-        assert!(state.update_upper_bound(&tv1_id, &Type::Int, ChangeReason::Test)); // Any.glb(Int) = Int
+        assert!(state.update_lower_bound(&tv1_id, &Type::Int, BoundChangeReason::Test));
+        assert!(state.update_upper_bound(&tv1_id, &Type::Int, BoundChangeReason::Test)); // Any.glb(Int) = Int
 
-        assert!(state.update_lower_bound(&tv2_id, &Type::Bool, ChangeReason::Test));
-        assert!(state.update_upper_bound(&tv2_id, &Type::NumericLiteral, ChangeReason::Test)); // Any.glb(Truthy) = Truthy
+        assert!(state.update_lower_bound(&tv2_id, &Type::Bool, BoundChangeReason::Test));
+        assert!(state.update_upper_bound(&tv2_id, &Type::NumericLiteral, BoundChangeReason::Test)); // Any.glb(Truthy) = Truthy
 
         let updated = state.take_updated_vars();
         assert_eq!(updated.len(), 2);
@@ -588,11 +616,11 @@ mod tests {
         assert!(state.take_updated_vars().is_empty());
 
         // No change update
-        assert!(!state.update_lower_bound(&tv1_id, &Type::Int, ChangeReason::Test)); // Int.lub(Int) = Int, no change
+        assert!(!state.update_lower_bound(&tv1_id, &Type::Int, BoundChangeReason::Test)); // Int.lub(Int) = Int, no change
         assert!(state.take_updated_vars().is_empty()); // Still empty
 
         // Change update again (assuming Bool <: Truthy, so glb(Truthy, Bool) = Bool)
-        assert!(state.update_upper_bound(&tv2_id, &Type::Bool, ChangeReason::Test));
+        assert!(state.update_upper_bound(&tv2_id, &Type::Bool, BoundChangeReason::Test));
         let updated_again = state.take_updated_vars();
         assert_eq!(updated_again.len(), 1);
         assert!(updated_again.contains(&tv2_id));

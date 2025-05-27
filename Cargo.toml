@@ -21,6 +21,9 @@ pretty_assertions = { version = "1.4.1", features = ["unstable"] }
 thiserror = "2.0.12"
 castaway = "0.2.3"
 either = "1.15.0"
+rustyline = "16.0.0"
+tabled = { version = "0.19.0", features = ["ansi"] }
+term_size = "0.3.2"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

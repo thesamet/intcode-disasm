@@ -5,6 +5,7 @@ use log::{debug, trace};
 
 use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
+use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
@@ -13,7 +14,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
 use super::query_engine::TypeInferenceQueryEngine;
-use super::type_bounds_map::{ChangeReason, TypeVarRegistry};
+use super::type_bounds_map::{BoundChangeReason, TypeVarRegistry};
 use super::types::TypeVarId;
 use super::{
     generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
@@ -82,11 +83,8 @@ impl Solver {
         //
         let mut iteration_count = 0;
         loop {
-            let mut worklist: VecDeque<(ConstraintId, Constraint)> = self
-                .store
-                .iter_with_ids()
-                .map(|(id, x)| (id, x.clone()))
-                .collect();
+            let mut worklist: VecDeque<(ConstraintId, Constraint)> =
+                self.store.iter().map(|(id, x)| (*id, x.clone())).collect();
             iteration_count += 1;
             if iteration_count >= 10000 {
                 panic!("Too many iterations");
@@ -195,14 +193,14 @@ impl Solver {
             changed |= self.state.update_upper_bound(
                 tv_id,
                 &super_type,
-                ChangeReason::Constraint(*constraint_id),
+                BoundChangeReason::Constraint(*constraint_id),
             );
         }
         if let Type::TypeVar(tv_id) = &super_type {
             changed |= self.state.update_lower_bound(
                 tv_id,
                 &sub_type,
-                ChangeReason::Constraint(*constraint_id),
+                BoundChangeReason::Constraint(*constraint_id),
             )
         }
 
@@ -211,7 +209,7 @@ impl Solver {
                 changed |= self.state.update_lower_bound(
                     tv_id,
                     &sub_type,
-                    ChangeReason::Constraint(*constraint_id),
+                    BoundChangeReason::Constraint(*constraint_id),
                 );
             }
             (Type::Tuple(ts), Type::Tuple(us)) => {
@@ -224,19 +222,13 @@ impl Solver {
                         ConstraintReason::TupleSubtype,
                     );
 
-                    // Get the parent constraint ID for derivation tracking
-                    let (_, ch) = if let Some(parent_id) = self.store.get_constraint_id(constraint)
-                    {
-                        // Track this as a derived constraint from tuple subtyping
-                        self.store.add_derived_constraint(
-                            new_constraint,
-                            parent_id,
-                            ChangeReason::Constraint(*constraint_id),
-                            &self.state,
-                        )
-                    } else {
-                        panic!("Could not find parent constraint id")
-                    };
+                    // Track this as a derived constraint from tuple subtyping
+                    let (_, ch) = self.store.add_derived_constraint(
+                        new_constraint,
+                        *constraint_id,
+                        BoundChangeReason::Constraint(*constraint_id),
+                        &self.state,
+                    );
                     changed |= ch;
                 }
             }
@@ -281,13 +273,13 @@ impl Solver {
                 let (_, ch1) = self.store.add_derived_constraint(
                     params_constraint,
                     *constraint_id,
-                    ChangeReason::Constraint(*constraint_id),
+                    BoundChangeReason::Constraint(*constraint_id),
                     &self.state,
                 );
                 let (_, ch2) = self.store.add_derived_constraint(
                     returns_constraint,
                     *constraint_id,
-                    ChangeReason::Constraint(*constraint_id),
+                    BoundChangeReason::Constraint(*constraint_id),
                     &self.state,
                 );
                 changed |= ch1 || ch2;
@@ -330,7 +322,7 @@ impl Solver {
                     reason: ConstraintReason::ConstIsFunctionPointer,
                 },
                 *constraint_id,
-                ChangeReason::Constraint(*constraint_id),
+                BoundChangeReason::Constraint(*constraint_id),
                 &self.state,
             )
         }
@@ -356,9 +348,9 @@ impl Solver {
         let Type::TypeVar(res_tvid) = unclassified.result_type else {
             panic!("Expected TypeVar for result type");
         };
-        let op1 = op1_tvid.to_type();
-        let op2 = op2_tvid.to_type();
-        let res = res_tvid.to_type();
+        let op1 = self.state.resolve_type(&op1_tvid.to_type());
+        let op2 = self.state.resolve_type(&op2_tvid.to_type());
+        let res = self.state.resolve_type(&res_tvid.to_type());
 
         let is_op1_int = op1.is_subtype_of(&Type::Int, &self.state).is_yes();
         let is_op2_int = op2.is_subtype_of(&Type::Int, &self.state).is_yes();
@@ -566,7 +558,7 @@ impl Solver {
                     t.display_with(&self.state)
                 );
                 self.state
-                    .converge(&tv_id, t, ChangeReason::ConcreteConvergence);
+                    .converge(&tv_id, t, ConverganceType::ConcreteConvergence);
             }
             return true;
         }
@@ -584,7 +576,7 @@ impl Solver {
                 );
 
                 self.state
-                    .converge(&tv_id, t, ChangeReason::NonConcreteConvergence);
+                    .converge(&tv_id, t, ConverganceType::NonConcreteConvergence);
             }
             if changed {
                 return true;
@@ -619,7 +611,7 @@ impl Solver {
                     self.state.converge(
                         &tv_id,
                         effective_lub.unwrap(),
-                        ChangeReason::ConvergeToLUB,
+                        ConverganceType::ConvergeToLUB,
                     );
                     return true;
                 }
@@ -636,7 +628,7 @@ impl Solver {
                         glb
                     };
                     self.state
-                        .converge(&tv_id, final_type, ChangeReason::ConvergeToGLB);
+                        .converge(&tv_id, final_type, ConverganceType::ConvergeToGLB);
                     return true;
                 }
             }

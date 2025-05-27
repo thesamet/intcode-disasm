@@ -32,14 +32,13 @@
 //!
 //! ```
 
-use colored::Colorize;
 use itertools::Itertools;
 
-use crate::disasm::v3::{type_inference::type_bounds_map::ChangeReason, FunctionId};
+use crate::disasm::v3::{type_inference::type_bounds_map::BoundChangeReason, FunctionId};
 
 use super::{
     constraints::{Constraint, ConstraintId, ConstraintStore},
-    type_bounds_map::InferenceAlgorithmState,
+    type_bounds_map::{ChangeLogKind, InferenceAlgorithmState},
     types::TypeVarId,
 };
 
@@ -84,27 +83,57 @@ impl TypeInferenceQueryEngine {
     }
 
     pub fn list_all_constraints(&self) {
-        for (id, constraint) in self.store.iter_with_ids() {
+        for (id, constraint) in self.store.iter() {
             println!("{:?}: {}", id, constraint.display_with(&self.state));
         }
     }
 
-    pub fn list_variable_changes(&self, tv_id: TypeVarId) {
+    pub fn list_variable_changes(&self, in_tv_id: TypeVarId) {
         for ch in self.state.change_log.iter() {
-            if ch.tv_id == tv_id {
-                println!(
-                    "{}",
-                    &format!(
-                        "{} {}: changed to {} because {}",
+            if ch.tv_id != in_tv_id {
+                continue;
+            }
+            match &ch.kind {
+                ChangeLogKind::AddedBound {
+                    direction: bound,
+                    new_bound,
+                    reason,
+                } => {
+                    println!(
+                        "{} {} {:?}: {} because {}",
                         ch.tv_id,
                         ch.tv_id.display_with(&self.state),
-                        ch.state,
-                        ch.reason
+                        bound,
+                        new_bound.display_with(&self.state),
+                        reason.display_with(&self.state)
+                    );
+                    if let BoundChangeReason::Constraint(constraint_id) = reason {
+                        self.print_constraint_derivation(*constraint_id)
+                    }
+                }
+                ChangeLogKind::Converged {
+                    new_type,
+                    convergence_type,
+                } => {
+                    println!(
+                        "{} {}: {} because {:?}",
+                        ch.tv_id,
+                        ch.tv_id.display_with(&self.state),
+                        new_type.display_with(&self.state),
+                        convergence_type,
                     )
-                    .green()
-                );
-                if let ChangeReason::Constraint(constraint_id) = ch.reason {
-                    self.print_constraint_derivation(constraint_id)
+                }
+                ChangeLogKind::DependencyConverged {
+                    dependent_var_id,
+                    new_value,
+                } => {
+                    println!(
+                        "{} {}: dependency {} converted to {}",
+                        ch.tv_id,
+                        ch.tv_id.display_with(&self.state),
+                        dependent_var_id,
+                        new_value.display_with(&self.state),
+                    )
                 }
             }
         }
