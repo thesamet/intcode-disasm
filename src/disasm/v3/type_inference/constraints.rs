@@ -146,9 +146,9 @@ impl Constraint {
     /// Checks if this constraint involves the specified type variable.
     pub fn involves_type_var(&self, tv_id: TypeVarId) -> bool {
         let mut involved_vars = HashSet::new();
-        self.sub_type.collect_involved_type_vars(&mut involved_vars);
+        self.sub_type.insert_involved_type_vars(&mut involved_vars);
         self.super_type
-            .collect_involved_type_vars(&mut involved_vars);
+            .insert_involved_type_vars(&mut involved_vars);
         involved_vars.contains(&tv_id)
     }
 
@@ -259,10 +259,10 @@ impl ConstraintStore {
         let mut involved_ids = HashSet::new();
         constraint
             .sub_type
-            .collect_involved_type_vars(&mut involved_ids);
+            .insert_involved_type_vars(&mut involved_ids);
         constraint
             .super_type
-            .collect_involved_type_vars(&mut involved_ids);
+            .insert_involved_type_vars(&mut involved_ids);
 
         for tv_id in involved_ids {
             self.type_var_constraints

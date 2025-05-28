@@ -6,6 +6,10 @@ use std::collections::{HashMap, HashSet};
 use colored::Colorize;
 use itertools::Itertools;
 use log::trace;
+use petgraph::{
+    visit::{GraphBase, GraphRef, IntoNeighbors, IntoNeighborsDirected, Reversed, Visitable},
+    Direction,
+};
 
 // Import necessary types from your existing types.rs file.
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
@@ -144,6 +148,8 @@ pub struct InferenceAlgorithmState {
     /// Stores the state for each TypeVarId.
     type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
     type_var_states: HashMap<TypeVarId, TypeVarState>,
+    dependents: HashMap<TypeVarId, HashSet<TypeVarId>>,
+
     /// Tracks TypeVarIds whose bounds have changed since the last `take_updated_vars` call.
     updated_type_vars: HashSet<TypeVarId>, // TypeVarId: Eq + Hash
     pub change_log: Vec<ChangeLogEntry>,
@@ -266,6 +272,9 @@ impl InferenceAlgorithmState {
         if changed {
             trace!("Updated bounds {} to {}   was  {}", tv_id, state, old_state);
             self.updated_type_vars.insert(*tv_id);
+            for dep in new_bound.involved_type_vars() {
+                self.dependents.entry(dep).or_default().insert(*tv_id);
+            }
             self.change_log.push(ChangeLogEntry {
                 tv_id: *tv_id,
                 kind: ChangeLogKind::AddedBound {
@@ -279,34 +288,84 @@ impl InferenceAlgorithmState {
         changed
     }
 
+    /// If `u`'s bounds depend on `v`, then `u` is added to `v`'s dependents list.
+    /// That means when type `v` is updated, type variable `u` is considered a
+    /// "dependent".  This means that `u`'s bounds might need to be re-evaluated when `v` changes.
+    ///
+    /// In other words, this function records that `u` depends on `v`.
+    ///
+    /// Note: the dependents map stores the reverse mapping: from a type variable to the set of type
+    /// variables that depend on it.
+    fn add_dependency(&mut self, u: &TypeVarId, v: &Type) {
+        // Iterate through all type variables involved in `v` and add `u` as a dependent.
+        for dep_tv_id in v.involved_type_vars() {
+            self.dependents.entry(dep_tv_id).or_default().insert(*u);
+        }
+    }
+
     pub fn converge(
         &mut self,
         tv_id: &TypeVarId,
-        new_bound: Type,
+        new_value: Type,
         convergence_type: ConverganceType,
     ) {
-        let state = self.type_var_states.get_mut(tv_id).unwrap();
+        let state = self.type_var_states.get(tv_id).unwrap();
         if matches!(state, TypeVarState::Converged { .. }) {
             panic!("Type var id {:?} already converged.", tv_id);
         }
         self.type_var_states
-            .insert(*tv_id, TypeVarState::Converged(new_bound.clone()));
+            .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
         self.change_log.push(ChangeLogEntry {
             iteration: self.iteration,
             tv_id: *tv_id,
             kind: ChangeLogKind::Converged {
-                new_type: new_bound.clone(),
+                new_type: new_value.clone(),
                 convergence_type,
             },
         });
-        trace!("{}", format!("{} converted to {}", tv_id, new_bound).red());
+        trace!("{}", format!("{} converted to {}", tv_id, new_value).red());
 
         let kind = || ChangeLogKind::DependencyConverged {
             dependent_var_id: *tv_id,
-            new_value: new_bound.clone(),
+            new_value: new_value.clone(),
         };
 
         let mut log_entries = vec![];
+        for id in self.get_all_dependents(tv_id) {
+            self.add_dependency(&id, &new_value);
+            match self.type_var_states.get(&id).unwrap() {
+                TypeVarState::Bounds {
+                    lower_bounds,
+                    upper_bounds,
+                } => {
+                    let new_lower_bounds: HashSet<Type> =
+                        lower_bounds.iter().map(|l| self.resolve_type(l)).collect();
+                    let new_upper_bounds: HashSet<Type> =
+                        upper_bounds.iter().map(|u| self.resolve_type(u)).collect();
+                    if new_lower_bounds != *lower_bounds || new_upper_bounds != *upper_bounds {
+                        log_entries.push(ChangeLogEntry {
+                            iteration: self.iteration,
+                            tv_id: id,
+                            kind: kind(),
+                        });
+                        self.type_var_states.insert(
+                            id,
+                            TypeVarState::Bounds {
+                                lower_bounds: new_lower_bounds,
+                                upper_bounds: new_upper_bounds,
+                            },
+                        );
+                    }
+                }
+                TypeVarState::Converged(ty) => {
+                    self.type_var_states
+                        .insert(*tv_id, TypeVarState::Converged(ty.clone()));
+                }
+            }
+        }
+        self.type_var_states
+            .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
+        /*
         self.type_var_states = self
             .type_var_states
             .iter()
@@ -350,12 +409,14 @@ impl InferenceAlgorithmState {
             })
             .collect();
         self.change_log.extend(log_entries);
+        */
     }
 
     pub fn new() -> Self {
         InferenceAlgorithmState {
             type_var_states: HashMap::new(),
             type_var_nodes: HashMap::new(),
+            dependents: HashMap::new(),
             updated_type_vars: HashSet::new(),
             change_log: Vec::new(),
             iteration: 0,
@@ -545,6 +606,95 @@ impl InferenceAlgorithmState {
                 break typ;
             }
         }
+    }
+
+    pub fn get_all_dependencies(&self, tv_id: &TypeVarId) -> HashSet<TypeVarId> {
+        let g = TypeVarDependencyGraph { state: self };
+        let mut dfs = petgraph::visit::Dfs::new(&g, *tv_id);
+        let mut out = HashSet::new();
+        while let Some(v) = dfs.next(&g) {
+            out.insert(v);
+        }
+        out
+    }
+
+    pub fn get_all_dependents(&self, tv_id: &TypeVarId) -> HashSet<TypeVarId> {
+        let g = Reversed(TypeVarDependencyGraph { state: self });
+        let mut dfs = petgraph::visit::Dfs::new(&g, *tv_id);
+        let mut out = HashSet::new();
+        while let Some(v) = dfs.next(&g) {
+            out.insert(v);
+        }
+        out
+    }
+}
+
+#[derive(Copy, Clone)]
+struct TypeVarDependencyGraph<'a> {
+    state: &'a InferenceAlgorithmState,
+}
+
+impl GraphBase for TypeVarDependencyGraph<'_> {
+    type EdgeId = ();
+
+    type NodeId = TypeVarId;
+}
+
+impl<'a> IntoNeighborsDirected for TypeVarDependencyGraph<'a> {
+    type NeighborsDirected = <HashSet<TypeVarId> as IntoIterator>::IntoIter;
+
+    fn neighbors_directed(self, n: Self::NodeId, d: Direction) -> Self::NeighborsDirected {
+        match d {
+            Direction::Outgoing => IntoNeighbors::neighbors(self, n),
+            Direction::Incoming => self
+                .state
+                .dependents
+                .get(&n)
+                .cloned()
+                .unwrap_or_else(|| HashSet::new())
+                .into_iter(),
+        }
+    }
+}
+
+impl<'a> IntoNeighbors for TypeVarDependencyGraph<'a> {
+    type Neighbors = <HashSet<TypeVarId> as IntoIterator>::IntoIter;
+
+    fn neighbors(self, tv_id: TypeVarId) -> Self::Neighbors {
+        let mut out = HashSet::new();
+        match self.state.get_type_var_state(&tv_id) {
+            Some(TypeVarState::Bounds {
+                lower_bounds,
+                upper_bounds,
+            }) => {
+                let mut out = HashSet::new();
+                for bound in upper_bounds.iter().chain(lower_bounds.iter()) {
+                    bound.insert_involved_type_vars(&mut out);
+                }
+            }
+            Some(TypeVarState::Converged(ty)) => {
+                // A converged type may have depenenencies. It may converged say to a Pointer(tv_id_other)
+                ty.insert_involved_type_vars(&mut out);
+            }
+            None => panic!("TypeVarId {:?} not found", tv_id),
+        }
+        out.into_iter()
+    }
+}
+
+impl GraphRef for TypeVarDependencyGraph<'_> {}
+
+impl Visitable for TypeVarDependencyGraph<'_> {
+    type Map = HashSet<TypeVarId>;
+
+    #[doc = r" Create a new visitor map"]
+    fn visit_map(self: &Self) -> Self::Map {
+        HashSet::new()
+    }
+
+    #[doc = r" Reset the visitor map (and resize to new size of graph if needed)"]
+    fn reset_map(self: &Self, map: &mut Self::Map) {
+        map.clear()
     }
 }
 

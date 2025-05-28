@@ -575,29 +575,25 @@ impl Type {
         }
     }
 
-    // The public wrappers `form_canonical_glb` and `form_canonical_lub` were removed in the previous step
-    // as the public `glb` and `lub` now call `_form_canonical_compound_type` directly in their default cases
-    // and for canonicalizing inputs in shortcut cases.
-
     /// Collects all TypeVarIds involved in this type, including nested ones.
     ///
     /// # Arguments
     /// * `type_vars`: A mutable HashSet to which discovered TypeVarIds will be added.
-    pub fn collect_involved_type_vars(&self, type_vars: &mut std::collections::HashSet<TypeVarId>) {
+    pub fn insert_involved_type_vars(&self, type_vars: &mut HashSet<TypeVarId>) {
         match self {
             Type::TypeVar(id) => {
                 type_vars.insert(*id);
             }
             Type::Pointer(inner_type) => {
-                inner_type.collect_involved_type_vars(type_vars);
+                inner_type.insert_involved_type_vars(type_vars);
             }
             Type::Function { params, returns } => {
-                params.collect_involved_type_vars(type_vars);
-                returns.collect_involved_type_vars(type_vars);
+                params.insert_involved_type_vars(type_vars);
+                returns.insert_involved_type_vars(type_vars);
             }
             Type::Tuple(elements) => {
                 for element_type in elements {
-                    element_type.collect_involved_type_vars(type_vars);
+                    element_type.insert_involved_type_vars(type_vars);
                 }
             }
             // Primitive types and Any/Nothing/Truthy don't contain TypeVars directly
@@ -611,6 +607,12 @@ impl Type {
                 // No nested type vars
             }
         }
+    }
+
+    pub fn involved_type_vars(&self) -> HashSet<TypeVarId> {
+        let mut involved_vars = HashSet::new();
+        self.insert_involved_type_vars(&mut involved_vars);
+        involved_vars
     }
 
     pub fn is_var_free(&self) -> bool {
