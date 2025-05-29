@@ -27,3 +27,4 @@ examples/
 .plandex*
 context_portal
 .claude
+history.txt
