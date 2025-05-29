@@ -1,6 +1,7 @@
 use crate::disasm::v3::{
     define_id_type,
-    lir::Expression,
+    lir::{Expression, Instruction, InstructionNode},
+    model::{HasFoldedSsaResult, HasTypeInferenceResult, Model, ModelState},
     ssa::{SsaMemoryReference, VersionedMemoryReference},
     FunctionId, InstructionId,
 };
@@ -30,12 +31,12 @@ pub struct DisplayableTypeVarId<'a> {
 
 impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind = &self
+        let path = &self
             .registry
             .get_type_var_node(&self.id)
             .unwrap_or_else(|| panic!("TypeVarId {} not found", self.id))
-            .kind;
-        f.write_str(&kind.to_string())
+            .path;
+        write!(f, "{:?}", path)
     }
 }
 
@@ -748,20 +749,368 @@ impl fmt::Display for TypeVarKind {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ExpressionPathElement {
+    BinaryLeft,
+    BinaryRight,
+    Unary,
+    Deref,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExpressionPath(Vec<ExpressionPathElement>);
+
+impl ExpressionPath {
+    pub fn root() -> Self {
+        ExpressionPath(vec![])
+    }
+
+    pub fn extending(&self, element: ExpressionPathElement) -> Self {
+        let mut new_path = self.clone();
+        new_path.0.push(element);
+        new_path
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn get_subexpression<'a>(
+        &self,
+        expression: &'a Expression<SsaMemoryReference>,
+    ) -> &'a Expression<SsaMemoryReference> {
+        let mut current_expression = expression;
+        while let Expression::DebugMarker(_, expr) = current_expression {
+            current_expression = expr;
+        }
+        for element in &self.0 {
+            match element {
+                ExpressionPathElement::BinaryLeft => {
+                    if let Expression::Binary { lhs, .. } = current_expression {
+                        current_expression = lhs;
+                    } else {
+                        panic!("Invalid path: expected Binary with left hand side");
+                    }
+                }
+                ExpressionPathElement::BinaryRight => {
+                    if let Expression::Binary { rhs, .. } = current_expression {
+                        current_expression = rhs;
+                    } else {
+                        panic!("Invalid path: expected Binary with right hand side");
+                    }
+                }
+                ExpressionPathElement::Unary => {
+                    if let Expression::Unary { arg, .. } = current_expression {
+                        current_expression = arg;
+                    } else {
+                        panic!("Invalid path: expected Unary expression");
+                    }
+                }
+                ExpressionPathElement::Deref => {
+                    if let Expression::Addressable(SsaMemoryReference::Deref(expr)) =
+                        current_expression
+                    {
+                        current_expression = expr;
+                    } else {
+                        panic!("Invalid path: expected Addressable::Deref expression");
+                    }
+                }
+            }
+            while let Expression::DebugMarker(_, expr) = current_expression {
+                current_expression = expr;
+            }
+        }
+        current_expression
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeVarPath {
+    FunctionDefArg {
+        function_id: FunctionId,
+        index: usize,
+    },
+    FunctionDefArgTuple {
+        function_id: FunctionId,
+    },
+    FunctionDefRet {
+        function_id: FunctionId,
+        index: usize,
+    },
+    FunctionDefRetTuple {
+        function_id: FunctionId,
+    },
+    AssignmentTargetVersioned {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        vmr: VersionedMemoryReference,
+    },
+    AssignmentTargetDeref {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        expression_path: ExpressionPath,
+    },
+    AssignmentSrc {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        expression_path: ExpressionPath,
+    },
+    IfCond {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        expression_path: ExpressionPath,
+    },
+    Output {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        expression_path: ExpressionPath,
+    },
+    CallAddress {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        expression_path: ExpressionPath,
+    },
+    CallArgTuple {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+    },
+    CallArg {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        index: usize,
+        expression_path: ExpressionPath,
+    },
+    CallRetTuple {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+    },
+    CallRet {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        index: usize,
+        vmr: VersionedMemoryReference,
+    },
+    PhiAssignment {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+    },
+    PhiAssignmentArg {
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        index: usize,
+    },
+}
+
+impl TypeVarPath {
+    pub fn function_id(&self) -> FunctionId {
+        match self {
+            TypeVarPath::FunctionDefArg { function_id, .. }
+            | TypeVarPath::FunctionDefArgTuple { function_id, .. }
+            | TypeVarPath::FunctionDefRet { function_id, .. }
+            | TypeVarPath::FunctionDefRetTuple { function_id, .. }
+            | TypeVarPath::AssignmentTargetVersioned { function_id, .. }
+            | TypeVarPath::AssignmentTargetDeref { function_id, .. }
+            | TypeVarPath::AssignmentSrc { function_id, .. }
+            | TypeVarPath::IfCond { function_id, .. }
+            | TypeVarPath::Output { function_id, .. }
+            | TypeVarPath::CallAddress { function_id, .. }
+            | TypeVarPath::CallArg { function_id, .. }
+            | TypeVarPath::CallArgTuple { function_id, .. }
+            | TypeVarPath::CallRet { function_id, .. }
+            | TypeVarPath::CallRetTuple { function_id, .. }
+            | TypeVarPath::PhiAssignment { function_id, .. }
+            | TypeVarPath::PhiAssignmentArg { function_id, .. } => *function_id,
+        }
+    }
+
+    pub fn instruction_id(&self) -> Option<InstructionId> {
+        match self {
+            TypeVarPath::AssignmentTargetVersioned { instruction_id, .. }
+            | TypeVarPath::AssignmentTargetDeref { instruction_id, .. }
+            | TypeVarPath::AssignmentSrc { instruction_id, .. }
+            | TypeVarPath::IfCond { instruction_id, .. }
+            | TypeVarPath::Output { instruction_id, .. }
+            | TypeVarPath::CallAddress { instruction_id, .. }
+            | TypeVarPath::CallArg { instruction_id, .. }
+            | TypeVarPath::CallRet { instruction_id, .. }
+            | TypeVarPath::PhiAssignment { instruction_id, .. }
+            | TypeVarPath::PhiAssignmentArg { instruction_id, .. }
+            | TypeVarPath::CallArgTuple { instruction_id, .. }
+            | TypeVarPath::CallRetTuple { instruction_id, .. } => Some(*instruction_id),
+            TypeVarPath::FunctionDefArg { .. }
+            | TypeVarPath::FunctionDefArgTuple { .. }
+            | TypeVarPath::FunctionDefRet { .. }
+            | TypeVarPath::FunctionDefRetTuple { .. } => None,
+        }
+    }
+
+    pub fn expression_path(&self) -> Option<&ExpressionPath> {
+        match self {
+            TypeVarPath::FunctionDefArg { .. }
+            | TypeVarPath::FunctionDefArgTuple { .. }
+            | TypeVarPath::FunctionDefRet { .. }
+            | TypeVarPath::FunctionDefRetTuple { .. }
+            | TypeVarPath::AssignmentTargetVersioned { .. }
+            | TypeVarPath::CallArgTuple { .. }
+            | TypeVarPath::CallRet { .. }
+            | TypeVarPath::PhiAssignment { .. }
+            | TypeVarPath::PhiAssignmentArg { .. }
+            | TypeVarPath::CallRetTuple { .. } => None,
+            TypeVarPath::AssignmentSrc {
+                expression_path, ..
+            }
+            | TypeVarPath::AssignmentTargetDeref {
+                expression_path, ..
+            }
+            | TypeVarPath::IfCond {
+                expression_path, ..
+            }
+            | TypeVarPath::Output {
+                expression_path, ..
+            }
+            | TypeVarPath::CallAddress {
+                expression_path, ..
+            }
+            | TypeVarPath::CallArg {
+                expression_path, ..
+            } => Some(expression_path),
+        }
+    }
+
+    pub fn with_expression_path(&self, expression_path: ExpressionPath) -> TypeVarPath {
+        match self {
+            TypeVarPath::AssignmentTargetDeref {
+                function_id,
+                instruction_id,
+                ..
+            } => TypeVarPath::AssignmentTargetDeref {
+                function_id: *function_id,
+                instruction_id: *instruction_id,
+                expression_path,
+            },
+            TypeVarPath::AssignmentSrc {
+                function_id,
+                instruction_id,
+                ..
+            } => TypeVarPath::AssignmentSrc {
+                function_id: *function_id,
+                instruction_id: *instruction_id,
+                expression_path,
+            },
+            TypeVarPath::IfCond {
+                function_id,
+                instruction_id,
+                ..
+            } => TypeVarPath::IfCond {
+                function_id: *function_id,
+                instruction_id: *instruction_id,
+                expression_path,
+            },
+            TypeVarPath::Output {
+                function_id,
+                instruction_id,
+                ..
+            } => TypeVarPath::Output {
+                function_id: *function_id,
+                instruction_id: *instruction_id,
+                expression_path,
+            },
+            TypeVarPath::CallAddress {
+                function_id,
+                instruction_id,
+                ..
+            } => TypeVarPath::CallAddress {
+                function_id: *function_id,
+                instruction_id: *instruction_id,
+                expression_path,
+            },
+            TypeVarPath::CallArg {
+                function_id,
+                instruction_id,
+                index,
+                ..
+            } => TypeVarPath::CallArg {
+                function_id: *function_id,
+                instruction_id: *instruction_id,
+                index: *index,
+                expression_path,
+            },
+            _ => panic!("Cannot add expression path to {:?}", self),
+        }
+    }
+
+    pub fn extending_path(&self, element: ExpressionPathElement) -> TypeVarPath {
+        self.with_expression_path(
+            self.expression_path()
+                .unwrap_or_else(|| {
+                    panic!("Cannot extend path for {:?} / element {:?}", self, element)
+                })
+                .extending(element),
+        )
+    }
+
+    pub fn instruction_from_model<'a, S>(
+        &self,
+        model: &'a Model<S>,
+    ) -> Option<&'a InstructionNode<SsaMemoryReference>>
+    where
+        S: ModelState + HasFoldedSsaResult,
+    {
+        let Some(instruction_id) = self.instruction_id() else {
+            return None;
+        };
+        let f = model.function(&self.function_id());
+        f.blocks()
+            .map(|(_, block)| &block.folded_ssa().instructions)
+            .flatten()
+            .find(|instruction| instruction.id == instruction_id)
+    }
+
+    pub fn expression_from_model<'a, S>(
+        &self,
+        model: &'a Model<S>,
+    ) -> Option<&'a Expression<SsaMemoryReference>>
+    where
+        S: ModelState + HasFoldedSsaResult,
+    {
+        let Some(inst) = self.instruction_from_model(model) else {
+            return None;
+        };
+        let Some(path) = self.expression_path() else {
+            return None;
+        };
+        let expr = match (self, &inst.kind) {
+            (
+                TypeVarPath::AssignmentTargetDeref { .. },
+                Instruction::Assign {
+                    target: SsaMemoryReference::Deref(expr),
+                    ..
+                },
+            ) => expr,
+            (TypeVarPath::AssignmentSrc { .. }, Instruction::Assign { src, .. }) => src,
+            (TypeVarPath::IfCond { .. }, Instruction::If { cond, .. }) => cond,
+            (TypeVarPath::Output { .. }, Instruction::Output(output)) => output,
+            (TypeVarPath::CallAddress { .. }, Instruction::Call { addr, .. }) => addr,
+            (TypeVarPath::CallArg { index, .. }, Instruction::Call { args, .. }) => &args[*index],
+            _ => panic!(
+                "Unexpected combination of TypeVarPath and Instruction: {:?}",
+                self
+            ),
+        };
+        Some(path.get_subexpression(expr))
+    }
+}
+
 /// Stores information about the origin of a type variable.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeVarNode {
-    /// What kind of type variable is this?
-    pub kind: TypeVarKind,
-    /// What instruction ID introduced this type variable?
-    pub instruction_id: InstructionId,
-    /// What function ID contains this type variable?
-    pub function_id: FunctionId,
+    pub path: TypeVarPath,
+    pub vmr: Option<VersionedMemoryReference>,
 }
 
 impl fmt::Display for TypeVarNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind)
+        write!(f, "{:?}", self.path)
     }
 }
 

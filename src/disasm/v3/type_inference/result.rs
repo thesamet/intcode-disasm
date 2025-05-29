@@ -8,7 +8,7 @@ use log::debug;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
-use super::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
+use super::types::{Type, TypeVarId, TypeVarNode, TypeVarPath};
 use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarState};
 
 /// Stores inferred type information for a single function.
@@ -67,15 +67,12 @@ impl TypeInferenceResult {
         })
     }
 
-    pub fn get_all_inferred_types(&self) -> Vec<(TypeVarKind, Type)> {
+    pub fn get_all_inferred_types(&self) -> Vec<(TypeVarNode, Type)> {
         self.type_var_states
             .iter()
             .filter_map(|(id, state)| {
                 if let TypeVarState::Converged(ty) = state {
-                    Some((
-                        self.type_var_nodes.get(id).unwrap().kind.clone(),
-                        ty.clone(),
-                    ))
+                    Some((self.type_var_nodes.get(id).cloned().unwrap(), ty.clone()))
                 } else {
                     None
                 }
@@ -106,12 +103,16 @@ impl TypeInferenceResult {
         }
     }
 
-    pub fn get_type_for(&self, t: SsaMemoryReference) -> Type {
-        let tv_id = self
-            .mem_ref_to_type_var_id
+    pub fn get_type_id_for(&self, t: SsaMemoryReference) -> TypeVarId {
+        self.mem_ref_to_type_var_id
             .get(&t)
-            .unwrap_or_else(|| panic!("No type var for {}", t));
-        self.get_type_for_id(*tv_id)
+            .cloned()
+            .unwrap_or_else(|| panic!("No type var for {}", t))
+    }
+
+    pub fn get_type_for(&self, t: SsaMemoryReference) -> Type {
+        let tv_id = self.get_type_id_for(t);
+        self.get_type_for_id(tv_id)
     }
 
     pub fn get_type_for_id(&self, t: TypeVarId) -> Type {

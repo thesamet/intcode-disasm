@@ -70,7 +70,14 @@ impl TypeInferenceQueryEngine {
         for (tv_id, state) in self
             .state
             .iter_all_type_states()
-            .filter(|v| self.state.get_type_var_node(v.0).unwrap().function_id == *function_id)
+            .filter(|v| {
+                self.state
+                    .get_type_var_node(v.0)
+                    .unwrap()
+                    .path
+                    .function_id()
+                    == *function_id
+            })
             .sorted_by_key(|t| t.0)
         {
             println!(

@@ -16,8 +16,10 @@ use crate::disasm::v3::{
 
 use super::v3::{
     control_flow::FunctionView,
+    lir::Expression,
     model::{Model, TypeInferenceComplete},
-    type_inference::{constraints::ConstraintId, Type, TypeVarId},
+    ssa::SsaMemoryReference,
+    type_inference::{constraints::ConstraintId, Type, TypeVarId, TypeVarPath},
 };
 
 #[derive(Subcommand, Debug, Clone)]
@@ -30,7 +32,11 @@ enum Command {
     Functions,
     /// Display type variables for a function
     #[clap(alias = "v")]
-    Variables { function: FunctionId },
+    Variables {
+        id: Option<TypeVarId>,
+        #[arg(short, long)]
+        function: Option<FunctionId>,
+    },
     /// Show change history for a type variable
     #[clap(alias = "h")]
     History {
@@ -138,18 +144,58 @@ fn run_command(cmd: ReplLine, model: &Model<TypeInferenceComplete>) -> Result<()
                 println!("{}", id);
             }
         }
-        Command::Variables { function } => list_variables(model, function)?,
+        Command::Variables { id, function } => list_variables(model, id, function)?,
         Command::History { tv_id, resolve } => changelog(model, tv_id, resolve)?,
         Command::Constraints { id, function } => constraint(model, id, function)?,
     }
     Ok(())
 }
 
+fn format_path<'a>(
+    model: &'a Model<TypeInferenceComplete>,
+    path: &TypeVarPath,
+) -> (String, Option<&'a Expression<SsaMemoryReference>>) {
+    let expr = path.expression_from_model(model);
+    let role = match path {
+        TypeVarPath::AssignmentTargetVersioned { vmr, .. } => format!("Assign to {}", vmr),
+        TypeVarPath::AssignmentTargetDeref { .. } => format!("Assign to deref"),
+        TypeVarPath::FunctionDefArg { index, .. } => format!("DefArg[{}]", index),
+        TypeVarPath::FunctionDefArgTuple { .. } => "FunctionDefArgTuple".to_string(),
+        TypeVarPath::FunctionDefRet { index, .. } => format!("DefRet[{}]", index),
+        TypeVarPath::FunctionDefRetTuple { .. } => "FunctionDefRetTuple".to_string(),
+        TypeVarPath::AssignmentSrc {
+            expression_path: _, ..
+        } => format!("AssignmentSrc"),
+        TypeVarPath::IfCond {
+            expression_path: _, ..
+        } => format!("IfCond"),
+        TypeVarPath::Output {
+            expression_path: _, ..
+        } => format!("Output"),
+        TypeVarPath::CallAddress {
+            expression_path: _, ..
+        } => format!("CallAddress"),
+        TypeVarPath::CallArgTuple { .. } => "CallArgTuple".to_string(),
+        TypeVarPath::CallArg {
+            index,
+            expression_path: _,
+            ..
+        } => format!("CallArg[{}]", index),
+        TypeVarPath::CallRetTuple { .. } => "CallRetTuple".to_string(),
+        TypeVarPath::CallRet { index, vmr, .. } => format!("CallRet[{}] {}", index, vmr),
+        TypeVarPath::PhiAssignment { .. } => "PhiAssignment".to_string(),
+        TypeVarPath::PhiAssignmentArg { index, .. } => {
+            format!("PhiAssignmentArg: {}", index)
+        }
+    };
+    (role, expr)
+}
+
 fn list_variables(
     model: &Model<TypeInferenceComplete>,
-    function: FunctionId,
+    id: Option<TypeVarId>,
+    function: Option<FunctionId>,
 ) -> Result<(), String> {
-    let _ = get_function(model, &function)?;
     let ti = model.type_inference_result();
     use tabled::{Table, Tabled};
     #[derive(Tabled)]
@@ -157,7 +203,8 @@ fn list_variables(
         id: String,
         function: String,
         inst: String,
-        kind: String,
+        role: String,
+        expr: String,
         lower: String,
         upper: String,
     }
@@ -166,17 +213,28 @@ fn list_variables(
     for (row, (tv, tv_node)) in ti
         .type_var_nodes
         .iter()
-        .filter(|(_, n)| n.function_id == function)
+        .filter(|(tv_id, n)| {
+            id.is_none_or(|id| id == **tv_id) && function.is_none_or(|f| f == n.path.function_id())
+        })
         .sorted_by_key(|(id, _)| *id)
         .enumerate()
     {
         let state = ti.type_var_states.get(tv).unwrap();
+        let (role, expr) = format_path(model, &tv_node.path);
 
         data.push(TypeVarRow {
             id: format!("{}", tv),
-            function: format!("{}", tv_node.function_id),
-            inst: format!("{}", tv_node.instruction_id),
-            kind: format!("{}", tv_node.kind),
+            function: format!("{}", tv_node.path.function_id()),
+            inst: format!(
+                "{}",
+                tv_node
+                    .path
+                    .instruction_id()
+                    .map(|c| c.to_string())
+                    .unwrap_or_default()
+            ),
+            role,
+            expr: expr.map(|e| e.to_string()).unwrap_or_default(),
             lower: match state {
                 TypeVarState::Bounds { lower_bounds, .. } => format_bounds(lower_bounds),
                 TypeVarState::Converged(ty) => {
@@ -193,11 +251,11 @@ fn list_variables(
     let mut table = Table::new(data);
     table
         .with(Style::modern())
-        .modify(Columns::new(4..6), Width::wrap(30))
-        .modify(Columns::single(3), Width::wrap(15));
+        .modify(Columns::new(5..7), Width::wrap(30))
+        .modify(Columns::single(4), Width::wrap(15));
     for row in converged_rows {
-        table.modify((row + 1, 4), Span::column(2));
-        table.modify((row + 1, 4), Width::wrap(50));
+        table.modify((row + 1, 5), Span::column(2));
+        table.modify((row + 1, 5), Width::wrap(50));
     }
     println!("{}", table.to_string());
     Ok(())

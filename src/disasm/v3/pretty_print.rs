@@ -268,10 +268,17 @@ fn format_signature<S: ModelState + 'static>(
             .parameter_entry_vars
             .values()
             .sorted_by_key(|v| v.as_stack_relative().unwrap())
-            .map(|v| (v, res.get_type_for((*v).into())))
-            .map(|(v, t)| {
+            .map(|v| {
+                (
+                    v,
+                    res.get_type_for((*v).into()),
+                    res.get_type_id_for((*v).into()),
+                )
+            })
+            .map(|(v, t, tv_id)| {
                 format!(
-                    "{}: {}",
+                    "[{}] {}: {}",
+                    tv_id,
                     v.pretty_print_with_context(ctx),
                     t.display_with(res)
                 )
@@ -285,10 +292,17 @@ fn format_signature<S: ModelState + 'static>(
             .return_writes
             .values()
             .sorted_by_key(|v| v.as_stack_relative().unwrap())
-            .map(|v| (v, res.get_type_for((*v).into())))
-            .map(|(v, t)| {
+            .map(|v| {
+                (
+                    v,
+                    res.get_type_for((*v).into()),
+                    res.get_type_id_for((*v).into()),
+                )
+            })
+            .map(|(v, t, tv_id)| {
                 format!(
-                    "{}: {}",
+                    "[{}] {}: {}",
+                    tv_id,
                     v.pretty_print_with_context(ctx),
                     t.display_with(res)
                 )

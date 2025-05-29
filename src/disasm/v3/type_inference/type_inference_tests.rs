@@ -106,7 +106,7 @@ mod type_inference_tests {
             .get_all_inferred_types()
             .iter()
             .filter_map(|(var_kind, type_val)| {
-                if let Some(vmr) = var_kind.as_versioned_memory() {
+                if let Some(vmr) = var_kind.vmr {
                     if let VersionableMemoryKind::Memory(mem_addr) = vmr.kind {
                         if mem_addr == addr {
                             return Some((
@@ -1004,7 +1004,7 @@ f1:
             r#"
             R += 1000
             [R+1] = 2000
-            [R+2] = @f1
+            [R+2] = 'a @f1
             [R] = @c1
             goto @takes_pointer
             c1:
@@ -1073,7 +1073,7 @@ f1:
             .type_inference_result()
             .query_engine
             .list_all_variables();
-        repl::repl(&ctx.model);
-        assert!(false);
+        assert_marker_type!(ctx, 'a', Type::Int); // Macro now uses ctx.model and stub helper
+                                                  // assert!(false);
     }
 }

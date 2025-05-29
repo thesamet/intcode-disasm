@@ -10,12 +10,14 @@ use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 // SsaBlock was unused
-use crate::disasm::v3::lir::InstructionNode; // Assuming this is generic over SsaMemoryReference
+use crate::disasm::v3::lir::InstructionNode;
+use crate::disasm::v3::type_inference::types::ExpressionPath;
+// Assuming this is generic over SsaMemoryReference
 use crate::disasm::v3::{FunctionId, InstructionId};
 
 use super::constraints::{Constraint, ConstraintReason, ConstraintStore};
 use super::type_bounds_map::InferenceAlgorithmState;
-use super::types::{Type, TypeVarId, TypeVarKind};
+use super::types::{ExpressionPathElement, Type, TypeVarId, TypeVarPath};
 // TypeVarNode is defined in types.rs and re-exported by the parent module.
 use super::types::TypeVarNode;
 
@@ -66,9 +68,7 @@ impl<'a> TypeConstraintGenerator<'a> {
     fn get_or_create_type_var_for_vmr(
         &mut self,
         vmr: &VersionedMemoryReference,
-        function_id: FunctionId, // Function where this VMR is defined/used
-        instruction_id: InstructionId, // Instruction that "introduces" this VMR to typing
-        role: Option<String>, // Optional role for the memory reference, e.g., "argument", "return"
+        path: TypeVarPath,
     ) -> TypeVarId {
         if let Some(tv_id) = self.vmr_to_type_var.get(vmr) {
             return *tv_id;
@@ -76,45 +76,27 @@ impl<'a> TypeConstraintGenerator<'a> {
 
         // When creating a TypeVar for a VMR, its kind is MemoryReference.
         // We wrap the VMR in SsaMemoryReference::Versioned for the TypeVarKind.
-        let ssa_ref_for_kind = SsaMemoryReference::Versioned(*vmr);
-        let new_tv_id = self.create_memory_reference_type_var(
-            function_id,
-            instruction_id,
-            &ssa_ref_for_kind,
-            role,
-        );
+        let new_tv_id = self.create_memory_reference_type_var(path, *vmr);
         self.vmr_to_type_var.insert(*vmr, new_tv_id);
         new_tv_id
     }
 
     /// Creates a new TypeVar for an expression result or intermediate value.
-    fn make_expression_type_var(
-        &mut self,
-        function_id: FunctionId,
-        instruction_id: InstructionId,
-        expression: &Expression<SsaMemoryReference>,
-    ) -> TypeVarId {
+    fn make_expression_type_var(&mut self, type_var_path: TypeVarPath) -> TypeVarId {
         let tv_id = self.fresh_type_var_id();
         let node_info = TypeVarNode {
-            kind: TypeVarKind::Expression(expression.clone()),
-            instruction_id,
-            function_id,
+            path: type_var_path,
+            vmr: None,
         };
         self.result.state.add_type_var(tv_id, node_info);
         tv_id
     }
 
-    fn make_const_type_var(
-        &mut self,
-        function_id: FunctionId,
-        instruction_id: InstructionId,
-        const_val: i128,
-    ) -> TypeVarId {
+    fn make_const_type_var(&mut self, type_var_path: TypeVarPath) -> TypeVarId {
         let tv_id = self.fresh_type_var_id();
         let node_info = TypeVarNode {
-            kind: TypeVarKind::Const(const_val),
-            instruction_id,
-            function_id,
+            path: type_var_path,
+            vmr: None,
         };
         self.result.state.add_type_var(tv_id, node_info);
         tv_id
@@ -122,16 +104,13 @@ impl<'a> TypeConstraintGenerator<'a> {
 
     fn create_memory_reference_type_var(
         &mut self,
-        function_id: FunctionId,
-        instruction_id: InstructionId,
-        ssa_memref: &SsaMemoryReference,
-        role: Option<String>,
+        type_var_path: TypeVarPath,
+        vmr: VersionedMemoryReference,
     ) -> TypeVarId {
         let tv_id = self.fresh_type_var_id();
         let node_info = TypeVarNode {
-            kind: TypeVarKind::MemoryReference(ssa_memref.clone(), role),
-            instruction_id,
-            function_id,
+            path: type_var_path,
+            vmr: Some(vmr),
         };
         self.result.state.add_type_var(tv_id, node_info);
         tv_id
@@ -146,17 +125,15 @@ impl<'a> TypeConstraintGenerator<'a> {
             self.result.state.add_type_var(
                 args,
                 TypeVarNode {
-                    kind: TypeVarKind::CalleeArgs(function_id),
-                    instruction_id: InstructionId::new(0), // Dummy ID for function args
-                    function_id,
+                    path: TypeVarPath::FunctionDefArgTuple { function_id },
+                    vmr: None,
                 },
             );
             self.result.state.add_type_var(
                 returns,
                 TypeVarNode {
-                    kind: TypeVarKind::CalleeReturns(function_id),
-                    instruction_id: InstructionId::new(0), // Dummy ID for function args
-                    function_id,
+                    path: TypeVarPath::FunctionDefRetTuple { function_id },
+                    vmr: None,
                 },
             );
             self.result
@@ -168,9 +145,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                 args_tuple.push(
                     self.get_or_create_type_var_for_vmr(
                         v,
-                        function_id,
-                        InstructionId::new(0), // Dummy ID for function args
-                        Some(format!("CalleeArg{idx} for {function_id}")),
+                        TypeVarPath::FunctionDefArg {
+                            function_id,
+                            index: *idx as usize,
+                        },
                     )
                     .to_type(),
                 );
@@ -179,9 +157,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                 rets_tuple.push(
                     self.get_or_create_type_var_for_vmr(
                         v,
-                        function_id,
-                        InstructionId::new(0), // Dummy ID for function args
-                        Some(format!("CalleeReturn{idx} for {function_id}")),
+                        TypeVarPath::FunctionDefRet {
+                            function_id,
+                            index: *idx as usize,
+                        },
                     )
                     .to_type(),
                 );
@@ -263,19 +242,22 @@ impl<'a> TypeConstraintGenerator<'a> {
     ) {
         let dest_tv_id = self.get_or_create_type_var_for_vmr(
             &phi.result, // PhiFunction uses 'result'
-            function_id,
-            phi_origin_instruction_id,
-            Some(format!("Phi for {}", function_id)),
+            TypeVarPath::PhiAssignment {
+                function_id,
+                instruction_id: phi_origin_instruction_id,
+            },
         );
 
-        for incoming_vmr in phi.inputs.values() {
+        for (index, incoming_vmr) in phi.inputs.values().enumerate() {
             // PhiFunction uses 'inputs'
             // inputs: Vec<(BlockId, VersionedMemoryReference)>
             let incoming_tv_id = self.get_or_create_type_var_for_vmr(
                 incoming_vmr,
-                function_id,
-                phi_origin_instruction_id, // Source VMRs contribute to the phi at this point
-                None,
+                TypeVarPath::PhiAssignmentArg {
+                    function_id,
+                    instruction_id: phi_origin_instruction_id,
+                    index,
+                },
             );
 
             self.result.store.add_original_constraint(
@@ -310,15 +292,26 @@ impl<'a> TypeConstraintGenerator<'a> {
                 src,
                 target_debug_marker,
             } => {
-                let src_type = self.process_expression(src, function_id, instruction_id);
+                let src_type = self.process_expression(
+                    src,
+                    function_id,
+                    instruction_id,
+                    TypeVarPath::AssignmentSrc {
+                        function_id,
+                        instruction_id,
+                        expression_path: ExpressionPath::root(),
+                    },
+                );
 
                 match target {
                     SsaMemoryReference::Versioned(vmr_target) => {
                         let target_tv_id = self.get_or_create_type_var_for_vmr(
                             vmr_target,
-                            function_id,
-                            instruction_id,
-                            None,
+                            TypeVarPath::AssignmentTargetVersioned {
+                                function_id,
+                                instruction_id,
+                                vmr: *vmr_target,
+                            },
                         );
                         let target_type = Type::TypeVar(target_tv_id);
 
@@ -341,6 +334,11 @@ impl<'a> TypeConstraintGenerator<'a> {
                             ptr_expr_target.as_ref(), // ptr_expr_target is Box<Expression>
                             function_id,
                             instruction_id,
+                            TypeVarPath::AssignmentTargetDeref {
+                                function_id,
+                                instruction_id,
+                                expression_path: ExpressionPath::root(),
+                            },
                         );
                         self.result.store.add_original_equality_constraint(
                             Constraint::new(
@@ -356,7 +354,16 @@ impl<'a> TypeConstraintGenerator<'a> {
                 }
             }
             Instruction::If { cond, .. } => {
-                let cond_type = self.process_expression(cond, function_id, instruction_id);
+                let cond_type = self.process_expression(
+                    cond,
+                    function_id,
+                    instruction_id,
+                    TypeVarPath::IfCond {
+                        function_id,
+                        instruction_id,
+                        expression_path: ExpressionPath::root(),
+                    },
+                );
                 self.result.store.add_original_constraint(
                     Constraint::new(
                         cond_type.to_type(),
@@ -369,7 +376,16 @@ impl<'a> TypeConstraintGenerator<'a> {
                 );
             }
             Instruction::Output(expr) => {
-                let expr_type = self.process_expression(expr, function_id, instruction_id);
+                let expr_type = self.process_expression(
+                    expr,
+                    function_id,
+                    instruction_id,
+                    TypeVarPath::Output {
+                        function_id,
+                        instruction_id,
+                        expression_path: ExpressionPath::root(),
+                    },
+                );
                 self.result.store.add_original_equality_constraint(
                     Constraint::new(
                         expr_type.to_type(),
@@ -382,20 +398,41 @@ impl<'a> TypeConstraintGenerator<'a> {
                 );
             }
             Instruction::Call { addr, args, .. } => {
-                let addr_var_id = self.process_expression(addr, function_id, instruction_id);
+                let addr_var_id = self.process_expression(
+                    addr,
+                    function_id,
+                    instruction_id,
+                    TypeVarPath::CallAddress {
+                        function_id,
+                        instruction_id,
+                        expression_path: ExpressionPath::root(),
+                    },
+                );
                 let mut arg_type_tuple = vec![];
-                for arg in args {
+                for (index, arg) in args.iter().enumerate() {
                     arg_type_tuple.push(
-                        self.process_expression(arg, function_id, instruction_id)
-                            .to_type(),
+                        self.process_expression(
+                            arg,
+                            function_id,
+                            instruction_id,
+                            TypeVarPath::CallArg {
+                                function_id,
+                                instruction_id,
+                                index,
+                                expression_path: ExpressionPath::root(),
+                            },
+                        )
+                        .to_type(),
                     );
                 }
                 let arg_type_tuple = Type::tuple(&arg_type_tuple);
                 let args_id = self.fresh_type_var_id();
                 let args_node_info = TypeVarNode {
-                    kind: TypeVarKind::CallSiteArgs { addr: addr_var_id },
-                    instruction_id,
-                    function_id,
+                    path: TypeVarPath::CallArgTuple {
+                        function_id,
+                        instruction_id,
+                    },
+                    vmr: None,
                 };
                 self.result.state.add_type_var(args_id, args_node_info);
 
@@ -404,11 +441,12 @@ impl<'a> TypeConstraintGenerator<'a> {
                     ret_type_tuple.push(
                         self.get_or_create_type_var_for_vmr(
                             ret,
-                            function_id,
-                            instruction_id,
-                            Some(format!(
-                                "CallSiteReturn{idx} for call into {addr_var_id} in {function_id}"
-                            )),
+                            TypeVarPath::CallRet {
+                                function_id,
+                                instruction_id,
+                                index: *idx as usize,
+                                vmr: *ret,
+                            },
                         )
                         .to_type(),
                     );
@@ -416,14 +454,16 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let ret_type_tuple = Type::tuple(&ret_type_tuple);
                 let rets_id = self.fresh_type_var_id();
                 let rets_node_info = TypeVarNode {
-                    kind: TypeVarKind::CallSiteReturns,
-                    instruction_id,
-                    function_id,
+                    path: TypeVarPath::CallRetTuple {
+                        function_id,
+                        instruction_id,
+                    },
+                    vmr: None,
                 };
                 self.result.state.add_type_var(rets_id, rets_node_info);
 
                 let fp = Type::function(args_id.to_type(), rets_id.to_type());
-                self.result.store.add_original_equality_constraint(
+                self.result.store.add_original_constraint(
                     Constraint {
                         sub_type: addr_var_id.to_type(),
                         super_type: fp,
@@ -499,10 +539,11 @@ impl<'a> TypeConstraintGenerator<'a> {
         expr: &Expression<SsaMemoryReference>,
         function_id: FunctionId,
         instruction_id: InstructionId,
+        path: TypeVarPath,
     ) -> TypeVarId {
         match expr {
-            Expression::Constant(val) => {
-                let tv_id = self.make_const_type_var(function_id, instruction_id, *val);
+            Expression::Constant(_) => {
+                let tv_id = self.make_const_type_var(path);
                 let const_type = Type::TypeVar(tv_id);
 
                 // Need a new ConstraintReason::LiteralInteger
@@ -522,14 +563,17 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
             Expression::Addressable(ssa_ref) => match ssa_ref {
                 SsaMemoryReference::Versioned(vmr) => {
-                    self.get_or_create_type_var_for_vmr(vmr, function_id, instruction_id, None)
+                    self.get_or_create_type_var_for_vmr(vmr, path)
                 }
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
-                    let ptr_addr_type_var_id =
-                        self.process_expression(inner_ptr_expr, function_id, instruction_id);
+                    let ptr_addr_type_var_id = self.process_expression(
+                        inner_ptr_expr,
+                        function_id,
+                        instruction_id,
+                        path.extending_path(ExpressionPathElement::Deref),
+                    );
 
-                    let pointee_tv_id =
-                        self.make_expression_type_var(function_id, instruction_id, expr);
+                    let pointee_tv_id = self.make_expression_type_var(path);
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
                     self.result.store.add_original_equality_constraint(
@@ -546,11 +590,19 @@ impl<'a> TypeConstraintGenerator<'a> {
                 }
             },
             Expression::Binary { op, lhs, rhs } => {
-                let lhs_type =
-                    Type::TypeVar(self.process_expression(lhs, function_id, instruction_id));
-                let rhs_type =
-                    Type::TypeVar(self.process_expression(rhs, function_id, instruction_id));
-                let result_tv_id = self.make_expression_type_var(function_id, instruction_id, expr);
+                let lhs_type = Type::TypeVar(self.process_expression(
+                    lhs,
+                    function_id,
+                    instruction_id,
+                    path.extending_path(ExpressionPathElement::BinaryLeft),
+                ));
+                let rhs_type = Type::TypeVar(self.process_expression(
+                    rhs,
+                    function_id,
+                    instruction_id,
+                    path.extending_path(ExpressionPathElement::BinaryRight),
+                ));
+                let result_tv_id = self.make_expression_type_var(path);
                 let result_type = Type::TypeVar(result_tv_id);
 
                 match op {
@@ -658,8 +710,13 @@ impl<'a> TypeConstraintGenerator<'a> {
                 result_tv_id
             }
             Expression::Unary { op, arg } => {
-                let arg_type = self.process_expression(arg, function_id, instruction_id);
-                let result_tv_id = self.make_expression_type_var(function_id, instruction_id, expr);
+                let arg_type = self.process_expression(
+                    arg,
+                    function_id,
+                    instruction_id,
+                    path.extending_path(ExpressionPathElement::Unary),
+                );
+                let result_tv_id = self.make_expression_type_var(path);
                 let result_type = Type::TypeVar(result_tv_id);
 
                 match op {
@@ -712,7 +769,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 result_tv_id
             }
             Expression::Input() => {
-                let tv_id = self.make_expression_type_var(function_id, instruction_id, expr);
+                let tv_id = self.make_expression_type_var(path);
                 let input_type = Type::TypeVar(tv_id);
                 // Need ConstraintReason::InputSourceType
                 self.result.store.add_original_constraint(
@@ -728,7 +785,8 @@ impl<'a> TypeConstraintGenerator<'a> {
                 tv_id
             }
             Expression::DebugMarker(marker, inner_expr) => {
-                let expr_type = self.process_expression(inner_expr, function_id, instruction_id);
+                let expr_type =
+                    self.process_expression(inner_expr, function_id, instruction_id, path);
                 self.result.markers.insert(*marker, expr_type);
                 expr_type
             }

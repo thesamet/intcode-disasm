@@ -8,7 +8,7 @@ use crate::disasm::v3::lir::Expression;
 use crate::disasm::v3::model::SsaComplete;
 use crate::disasm::v3::pretty_print::pretty_print_ssa;
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
-use crate::disasm::v3::{BlockId};
+use crate::disasm::v3::BlockId;
 // Keep v2 dispatching
 
 use dsl_macros_impl::memref;
@@ -436,11 +436,11 @@ fn test_basic_versioning() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', memref!([R+3].1));
-    assert_marker_at_main!(ctx, 'b', memref!([R+2].1));
-    assert_marker_at_main!(ctx, 'c', memref!([R+2].2));
-    assert_marker_at_main!(ctx, 'd', memref!([R+3].1));
-    assert_marker_at_main!(ctx, 'e', memref!([R+4].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R + 3].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R + 2].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R + 2].2));
+    assert_marker_at_main!(ctx, 'd', memref!([R + 3].1));
+    assert_marker_at_main!(ctx, 'e', memref!([R + 4].1));
 }
 
 #[test]
@@ -458,10 +458,10 @@ fn test_creates_phi_on_same_block_loop() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
-    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
-    assert_marker_at_main!(ctx, 'b', memref!([R-2].2));
-    assert_marker_at_main!(ctx, 'c', memref!([R-2].3));
-    assert_marker_at_main!(ctx, 'd', memref!([R-2].3));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 2].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 2].2));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 2].3));
+    assert_marker_at_main!(ctx, 'd', memref!([R - 2].3));
 }
 
 #[test]
@@ -482,10 +482,10 @@ fn test_creates_phi_on_multi_block_loop() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
-    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
-    assert_marker_at_main!(ctx, 'b', memref!([R-2].2));
-    assert_marker_at_main!(ctx, 'c', memref!([R-2].3));
-    assert_marker_at_main!(ctx, 'd', memref!([R-2].3));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 2].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 2].2));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 2].3));
+    assert_marker_at_main!(ctx, 'd', memref!([R - 2].3));
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn test_deref_versioning() {
     assert_marker_at_main!(ctx, 'a', memref!([P 23].2));
     assert_marker_at_main!(ctx, 'b', memref!([P 23].3));
     assert_marker_at_main!(ctx, 'c', memref!(*([P 23].3)));
-    assert_marker_at_main!(ctx, 'd', memref!([R+1].1));
+    assert_marker_at_main!(ctx, 'd', memref!([R + 1].1));
 }
 
 #[test]
@@ -557,8 +557,8 @@ fn test_incr_write_after_read() {
                 "#,
     )
     .unwrap();
-    assert_marker_at_main!(ctx, 'a', memref!([R-1].0));
-    assert_marker_at_main!(ctx, 'b', memref!([R-1].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 1].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 1].1));
 }
 
 #[test]
@@ -594,24 +594,24 @@ fn test_function_calls_and_loop() {
     pretty_print_ssa(&ctx.model); // Removed pretty print
 
     // Initial assignments before loop
-    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
-    assert_marker_at_main!(ctx, 'b', memref!([R-3].1));
-    assert_marker_at_main!(ctx, 'c', memref!([R-5].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 2].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 3].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 5].1));
 
     // Inside loop header - Phi versions
-    assert_marker_at_main!(ctx, 'd', memref!([R-3].2));
-    assert_marker_at_main!(ctx, 'e', memref!([R-2].1));
-    assert_marker_at_main!(ctx, 'f', memref!([R-5].1));
-    assert_marker_at_main!(ctx, 'g', memref!([R-3].2));
-    assert_marker_at_main!(ctx, 'h', memref!([R-3].2));
-    assert_marker_at_main!(ctx, 'i', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'd', memref!([R - 3].2));
+    assert_marker_at_main!(ctx, 'e', memref!([R - 2].1));
+    assert_marker_at_main!(ctx, 'f', memref!([R - 5].1));
+    assert_marker_at_main!(ctx, 'g', memref!([R - 3].2));
+    assert_marker_at_main!(ctx, 'h', memref!([R - 3].2));
+    assert_marker_at_main!(ctx, 'i', memref!([R - 2].1));
 
     // After function call return
-    assert_marker_at_main!(ctx, 'j', memref!([R+1].2));
+    assert_marker_at_main!(ctx, 'j', memref!([R + 1].2));
 
     // Inside loop body (after call)
-    assert_marker_at_main!(ctx, 'k', memref!([R-3].2));
-    assert_marker_at_main!(ctx, 'l', memref!([R-3].3));
+    assert_marker_at_main!(ctx, 'k', memref!([R - 3].2));
+    assert_marker_at_main!(ctx, 'l', memref!([R - 3].3));
 }
 
 #[test]
@@ -711,9 +711,9 @@ fn test_versioning_with_if() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', memref!([R-4].0));
-    assert_marker_at_main!(ctx, 'b', memref!([R-4].0));
-    assert_marker_at_main!(ctx, 'c', memref!([R-4].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 4].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 4].0));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 4].1));
 }
 
 #[test]
@@ -736,9 +736,9 @@ fn test_if_convergence_versioning() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', memref!([R-4].0));
-    assert_marker_at_main!(ctx, 'b', memref!([R-4].0));
-    assert_marker_at_main!(ctx, 'c', memref!([R-4].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 4].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 4].0));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 4].1));
 }
 
 #[test]
@@ -769,9 +769,9 @@ fn test_if_convergence_versioning_with_phi() {
     )
     .unwrap();
     // pretty_print_ssa(&ctx.model); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', memref!([R-2].0));
-    assert_marker_at_main!(ctx, 'b', memref!([R-2].1));
-    assert_marker_at_main!(ctx, 'c', memref!([R-2].2));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 2].0));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 2].1));
+    assert_marker_at_main!(ctx, 'c', memref!([R - 2].2));
 }
 
 #[test]
@@ -796,9 +796,9 @@ fn function_call_with_arg_that_is_branched() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model));
-    assert_marker_at_main!(ctx, 'a', memref!([R+1].1));
-    assert_marker_at_main!(ctx, 'b', memref!([R+1].2));
-    assert_marker_at_main!(ctx, 'c', memref!([R+1].4));
+    assert_marker_at_main!(ctx, 'a', memref!([R + 1].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R + 1].2));
+    assert_marker_at_main!(ctx, 'c', memref!([R + 1].4));
 
     // Check the merge block has a phi function for [R+1] using the v3 model views
     let main_func_view = ctx.main_function();
@@ -830,8 +830,8 @@ fn increment_on_add_after_mul() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', memref!([R-3].1));
-    assert_marker_at_main!(ctx, 'b', memref!([R-3].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 3].1));
+    assert_marker_at_main!(ctx, 'b', memref!([R - 3].1));
 }
 
 #[test]
@@ -850,9 +850,9 @@ fn version_correct_following_a_conditional_jump() {
     )
     .unwrap();
     println!("{}", pretty_print_ssa(&ctx.model)); // Removed pretty print
-    assert_marker_at_main!(ctx, 'a', memref!([R-2].1));
-    assert_marker_at_main!(ctx, 'd', memref!([R-2].2));
-    assert_marker_at_main!(ctx, 'e', memref!([R-2].1));
+    assert_marker_at_main!(ctx, 'a', memref!([R - 2].1));
+    assert_marker_at_main!(ctx, 'd', memref!([R - 2].2));
+    assert_marker_at_main!(ctx, 'e', memref!([R - 2].1));
     assert!(!ctx
         .main_function()
         .block(&BlockId::from(17))

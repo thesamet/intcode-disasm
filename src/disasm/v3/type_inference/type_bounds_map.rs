@@ -753,7 +753,10 @@ mod tests {
     use super::*;
     use crate::disasm::{
         test_utils::init_logging,
-        v3::{FunctionId, InstructionId},
+        v3::{
+            type_inference::types::{ExpressionPath, TypeVarPath},
+            FunctionId, InstructionId,
+        },
     };
     // Explicitly import TypeVarKind for the test module from the correct path.
     // `super` (type_bounds_map) -> `super` (type_inference) -> `types` (types.rs module)
@@ -767,9 +770,12 @@ mod tests {
         function_id: FunctionId,
     ) -> TypeVarNode {
         TypeVarNode {
-            kind,
-            instruction_id,
-            function_id,
+            path: TypeVarPath::Output {
+                function_id,
+                instruction_id,
+                expression_path: ExpressionPath::root(),
+            },
+            vmr: None,
         }
     }
 

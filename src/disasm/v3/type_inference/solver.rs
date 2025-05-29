@@ -120,6 +120,7 @@ impl Solver {
                 .map(|(x, y)| (*x, y.clone()))
                 .collect_vec();
 
+            /*
             for (t, ts) in ts {
                 if let TypeVarState::Bounds { .. } = ts {
                     // FIXME: create dummy instruction id for constaint uniqueness around the typevar.
@@ -146,6 +147,7 @@ impl Solver {
                     }
                 }
             }
+            */
 
             if !changed {
                 changed |= self.try_solving();
@@ -172,14 +174,8 @@ impl Solver {
                 }
             }
             result.type_var_states.insert(*id, state.clone());
-            if let Some(mem_ref) = self
-                .state
-                .get_type_var_node(id)
-                .unwrap()
-                .kind
-                .as_memory_reference()
-            {
-                result.mem_ref_to_type_var_id.insert(mem_ref.clone(), *id);
+            if let Some(mem_ref) = self.state.get_type_var_node(id).unwrap().vmr {
+                result.mem_ref_to_type_var_id.insert(mem_ref.into(), *id);
             }
         }
         result.debug_markers = markers;
@@ -322,7 +318,13 @@ impl Solver {
         constraint_id: &ConstraintId,
         constraint: &Constraint,
     ) -> bool {
-        let Some(addr) = self.state.get_type_var_node(tv_id).unwrap().kind.as_const() else {
+        let Some(Expression::Constant(addr)) = self
+            .state
+            .get_type_var_node(tv_id)
+            .unwrap()
+            .path
+            .expression_from_model(&self.model)
+        else {
             return false;
         };
         let mut changed = false;
@@ -563,7 +565,11 @@ impl Solver {
                         .filter(|t| **t != tv_id.to_type())
                         .sorted()
                         .collect_vec();
-                    if let Some(&concrete) = intersection.iter().find(|t| t.is_concrete_type()) {
+                    if let Ok(&concrete) = intersection
+                        .iter()
+                        .filter(|t| t.is_concrete_type())
+                        .exactly_one()
+                    {
                         conv.insert(*tv_id, concrete.clone());
                     } else if let Some(&t) = intersection.iter().find_map(|t| t.as_type_var_id()) {
                         // To prevent cycles, make the larger tv_id always converge to the smaller id, unless it converged in a prior iteration.
@@ -573,7 +579,10 @@ impl Solver {
                             (t.max(*tv_id), t.min(*tv_id))
                         };
                         conv.insert(u, v.to_type());
-                    } else if let Some(item) = intersection.iter().next() {
+                    } else if let Some(item) =
+                        intersection.iter().filter(|t| !t.is_concrete_type()).next()
+                    {
+                        // The case of exactly one concrete convergence is handle above. We don't want to pocess here cases of two or more concrete convergences.
                         conv.insert(*tv_id, (*item).clone());
                     }
                 }
