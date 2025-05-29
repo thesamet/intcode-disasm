@@ -638,6 +638,14 @@ impl Type {
             returns: Box::new(Type::Tuple(returns.to_vec())),
         }
     }
+
+    /// Returns `true` if the type is [`NumericLiteral`].
+    ///
+    /// [`NumericLiteral`]: Type::NumericLiteral
+    #[must_use]
+    pub fn is_numeric_literal(&self) -> bool {
+        matches!(self, Self::NumericLiteral)
+    }
 }
 
 impl fmt::Display for Type {

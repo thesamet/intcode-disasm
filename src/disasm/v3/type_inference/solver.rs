@@ -602,8 +602,20 @@ impl Solver {
                 upper_bounds,
             } = state
             {
-                let effective_glb = self.effective_glb(&upper_bounds.iter().cloned().collect_vec());
-                let effective_lub = self.effective_lub(&lower_bounds.iter().cloned().collect_vec());
+                let effective_glb = self.effective_glb(
+                    &upper_bounds
+                        .iter()
+                        .filter(|t| !t.is_numeric_literal())
+                        .cloned()
+                        .collect_vec(),
+                );
+                let effective_lub = self.effective_lub(
+                    &lower_bounds
+                        .iter()
+                        .filter(|t| !t.is_numeric_literal())
+                        .cloned()
+                        .collect_vec(),
+                );
                 trace!(
                     "effective glb of {}: {:?}",
                     upper_bounds.iter().join(", "),
@@ -642,6 +654,15 @@ impl Solver {
                     };
                     self.state
                         .converge(&tv_id, final_type, ConverganceType::ConvergeToGLB);
+                    return true;
+                }
+                if upper_bounds
+                    .iter()
+                    .exactly_one()
+                    .is_ok_and(|t| t.is_numeric_literal())
+                {
+                    self.state
+                        .converge(&tv_id, Type::Int, ConverganceType::ConvergeToGLB);
                     return true;
                 }
             }

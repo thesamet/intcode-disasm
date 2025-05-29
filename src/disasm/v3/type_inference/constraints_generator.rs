@@ -423,7 +423,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.state.add_type_var(rets_id, rets_node_info);
 
                 let fp = Type::function(args_id.to_type(), rets_id.to_type());
-                self.result.store.add_original_constraint(
+                self.result.store.add_original_equality_constraint(
                     Constraint {
                         sub_type: addr_var_id.to_type(),
                         super_type: fp,
