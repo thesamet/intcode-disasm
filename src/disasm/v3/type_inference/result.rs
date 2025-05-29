@@ -7,9 +7,9 @@ use log::debug;
 
 use crate::disasm::v3::ssa::SsaMemoryReference;
 
-use super::type_bounds_map::TypeVarRegistry;
+use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
 use super::types::{Type, TypeVarId, TypeVarKind, TypeVarNode};
-use super::{TypeInferenceQueryEngine, TypeVarState};
+use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarState};
 
 /// Stores inferred type information for a single function.
 #[derive(Debug, Clone)]
@@ -41,6 +41,8 @@ pub struct TypeInferenceResult {
     pub mem_ref_to_type_var_id: HashMap<SsaMemoryReference, TypeVarId>,
     pub debug_markers: HashMap<char, TypeVarId>,
     pub query_engine: TypeInferenceQueryEngine,
+    pub change_log: Vec<ChangeLogEntry>,
+    pub constraint_store: ConstraintStore,
 }
 
 impl TypeInferenceResult {

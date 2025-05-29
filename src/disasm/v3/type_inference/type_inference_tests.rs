@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod type_inference_tests {
 
+    use crate::disasm::repl::{self, repl};
     use crate::disasm::test_utils::TestContextBuilder;
 
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print
@@ -9,6 +10,7 @@ mod type_inference_tests {
     };
     use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 
+    use crate::disasm::v3::type_inference::type_bounds_map::TypeVarRegistry;
     use crate::disasm::v3::type_inference::types::Type;
     // V3 Type
 
@@ -16,12 +18,22 @@ mod type_inference_tests {
     // use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
     // Marker types
+
     macro_rules! assert_marker_type {
         ($ctx:expr, $marker:expr, $expected_type:expr) => {
             let model = &$ctx.model; // Get reference to the model from TestContext
             let actual_type = get_marker_type_from_model(model, $marker)
                 .unwrap_or_else(|| panic!("No type found for marker '{}'", $marker));
 
+            if std::env::var("REPL").is_ok() {
+                if actual_type != $expected_type {
+                    println!(
+                        "Marker {} has incorrect type: expected {:?}, actual {:?}",
+                        $marker, $expected_type, actual_type
+                    );
+                    repl(&$ctx.model);
+                }
+            }
             assert_eq!(
                 actual_type, $expected_type,
                 "Marker {} has incorrect type: expected {:?}, actual {:?}",
@@ -29,12 +41,22 @@ mod type_inference_tests {
             );
         };
     }
-
+    macro_rules! panic_or_repl {
+        ($ctx:expr, $($arg:tt)*) => {
+            if std::env::var("REPL").is_ok() {
+                println!($($arg)*);
+                repl(&$ctx.model);
+                panic!($($arg)*);
+            } else {
+                panic!($($arg)*);
+            }
+        };
+    }
     macro_rules! assert_function_pointer {
-        ($typ: expr) => {
+        ($ctx:expr, $typ: expr) => {
             // Should be a direct Function type
             let Type::Function { .. } = $typ else {
-                panic!("Not a function pointer, got {:?}", $typ);
+                panic_or_repl!($ctx, "Not a function pointer, got {:?}", $typ);
             };
         };
     }
@@ -43,15 +65,18 @@ mod type_inference_tests {
         ($ctx:expr, $marker:expr) => {
             let actual_type =
                 get_marker_type_from_model(&$ctx.model, $marker).unwrap_or_else(|| {
-                    panic!(
+                    panic_or_repl!(
+                        $ctx,
                         "No type found for marker '{}' in assert_marker_is_function_pointer",
                         $marker
                     )
                 });
             let Type::Function { .. } = actual_type else {
-                panic!(
+                panic_or_repl!(
+                    $ctx,
                     "Marker {} is not a function pointer, got {:?}",
-                    $marker, actual_type
+                    $marker,
+                    actual_type
                 );
             };
         };
@@ -80,11 +105,15 @@ mod type_inference_tests {
         type_inf_result
             .get_all_inferred_types()
             .iter()
-            .filter_map(|(var_kind, _type_val)| {
+            .filter_map(|(var_kind, type_val)| {
                 if let Some(vmr) = var_kind.as_versioned_memory() {
                     if let VersionableMemoryKind::Memory(mem_addr) = vmr.kind {
                         if mem_addr == addr {
-                            return Some((var_kind, vmr.version, _type_val.clone()));
+                            return Some((
+                                var_kind,
+                                vmr.version,
+                                type_inf_result.resolve_type(type_val),
+                            ));
                         }
                     }
                 }
@@ -176,7 +205,6 @@ mod type_inference_tests {
 
     /// Test for type conflicts
     #[test]
-    #[ignore]
     fn test_type_conflict() {
         let assembly = r#"
             R += 1000
@@ -308,14 +336,14 @@ f1:
         )
         .unwrap();
         let typ = get_type_at_addr_from_model(&ctx.model, 1001).unwrap();
-        assert_function_pointer!(typ);
+        assert_function_pointer!(ctx, typ);
     }
 
     #[test]
     fn test_function_addr_with_debug() {
         let ctx = TypeInferenceComplete::test_context(
             r#"
-                    R += 1000
+                    R += 3
                     'd [R+1] = 'a [R-2]
                     [R+1] = 15
                     'c [R+1] = 'b [R+1] + 5
@@ -641,7 +669,7 @@ f1:
         assert_marker_type!(
             ctx,
             'x',
-            Type::function_pointer_type(&[Type::Int, Type::Int], &[Type::Int])
+            Type::function_pointer_type(&[Type::Int, Type::Char], &[Type::Int])
         );
         assert_marker_type!(ctx, 's', Type::Int);
         assert_marker_type!(ctx, 'r', Type::Int);

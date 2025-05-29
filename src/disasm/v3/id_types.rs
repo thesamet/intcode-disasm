@@ -52,6 +52,16 @@ macro_rules! define_id_type {
             }
         }
 
+        impl std::str::FromStr for $id_type {
+            type Err = String;
+
+            fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+                s.parse::<usize>()
+                    .map($id_type::new)
+                    .map_err(|e| format!("Failed to parse FunctionId: {}", e))
+            }
+        }
+
         impl $id_type {}
     };
 }

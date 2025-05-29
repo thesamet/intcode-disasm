@@ -83,8 +83,13 @@ impl Solver {
         //
         let mut iteration_count = 0;
         loop {
-            let mut worklist: VecDeque<(ConstraintId, Constraint)> =
-                self.store.iter().map(|(id, x)| (*id, x.clone())).collect();
+            self.state.next_iteration();
+            let mut worklist: VecDeque<(ConstraintId, Constraint)> = self
+                .store
+                .iter()
+                .sorted_by_key(|c| c.0)
+                .map(|(id, x)| (*id, x.clone()))
+                .collect();
             iteration_count += 1;
             if iteration_count >= 10000 {
                 panic!("Too many iterations");
@@ -158,6 +163,14 @@ impl Solver {
             .map(|(id, var)| (*id, var.clone()))
             .collect();
         for (id, state) in self.state.iter_all_type_states() {
+            match state {
+                TypeVarState::Bounds { .. } => {
+                    result.type_var_states.insert(*id, state.clone());
+                }
+                TypeVarState::Converged(ty) => {
+                    self.state.resolve_type(ty);
+                }
+            }
             result.type_var_states.insert(*id, state.clone());
             if let Some(mem_ref) = self
                 .state
@@ -171,6 +184,8 @@ impl Solver {
         }
         result.debug_markers = markers;
         result.query_engine = TypeInferenceQueryEngine::new(self.state.clone(), self.store.clone());
+        result.constraint_store = self.store;
+        result.change_log = self.state.change_log;
 
         // 9. Finalize the result and embed it into a new model state.
         let result_model = self.model.with_type_inference_result(result);
@@ -213,18 +228,18 @@ impl Solver {
                 );
             }
             (Type::Tuple(ts), Type::Tuple(us)) => {
-                for (t, u) in ts.iter().zip(us) {
+                for (idx, (t, u)) in ts.iter().zip(us).enumerate() {
                     let new_constraint = Constraint::new(
                         t.clone(),
                         u.clone(),
                         constraint.origin_function_id,
                         constraint.origin_instruction_id,
-                        ConstraintReason::TupleSubtype,
+                        ConstraintReason::TupleElementSubtype(idx),
                     );
 
                     // Track this as a derived constraint from tuple subtyping
                     let (_, ch) = self.store.add_derived_constraint(
-                        new_constraint,
+                        new_constraint.clone(),
                         *constraint_id,
                         BoundChangeReason::Constraint(*constraint_id),
                         &self.state,
@@ -529,59 +544,57 @@ impl Solver {
     }
 
     fn try_solving(&mut self) -> bool {
-        let mut concrete_candidates: HashMap<TypeVarId, Type> = HashMap::new();
-        let mut non_concrete_candidates: HashMap<TypeVarId, Type> = HashMap::new();
+        let mut conv = HashMap::new();
         for (tv_id, state) in self.state.iter_all_type_states() {
             match state {
                 TypeVarState::Bounds {
                     lower_bounds,
                     upper_bounds,
                 } => {
-                    let intersection: HashSet<&Type> = lower_bounds
+                    if conv.contains_key(tv_id) {
+                        // already processed as a type alias (was the max end)
+                        continue;
+                    }
+                    let intersection: Vec<&Type> = lower_bounds
                         .intersection(upper_bounds)
-                        .collect::<HashSet<_>>();
+                        .filter(|t| **t != tv_id.to_type())
+                        .sorted()
+                        .collect_vec();
                     if let Some(&concrete) = intersection.iter().find(|t| t.is_concrete_type()) {
-                        concrete_candidates.insert(*tv_id, concrete.clone());
-                    } else if let Some(&t) = intersection.iter().next() {
-                        non_concrete_candidates.insert(*tv_id, t.clone());
+                        conv.insert(*tv_id, concrete.clone());
+                    } else if let Some(&t) = intersection.iter().find_map(|t| t.as_type_var_id()) {
+                        // To prevent cycles, make the larger tv_id always converge to the smaller id, unless it converged in a prior iteration.
+                        let (u, v) = if self.state.get_type_var_state(&t).unwrap().is_converged() {
+                            (*tv_id, t)
+                        } else {
+                            (t.max(*tv_id), t.min(*tv_id))
+                        };
+                        conv.insert(u, v.to_type());
+                    } else if let Some(item) = intersection.iter().next() {
+                        conv.insert(*tv_id, (*item).clone());
                     }
                 }
                 TypeVarState::Converged(_) => continue,
             }
         }
-        if !concrete_candidates.is_empty() {
-            for (tv_id, t) in concrete_candidates.into_iter() {
-                debug!(
-                    "Type {:?} {} converged to {}",
-                    tv_id,
-                    tv_id.display_with(&self.state),
-                    t.display_with(&self.state)
-                );
-                self.state
-                    .converge(&tv_id, t, ConverganceType::ConcreteConvergence);
+        let mut changed = false;
+        for (tv_id, target_type) in conv.iter().sorted() {
+            let new_value = self.state.resolve_type(&target_type);
+            if new_value == tv_id.to_type() {
+                continue;
             }
+            let conv_type = if new_value.is_concrete_type() {
+                ConverganceType::ConcreteConvergence
+            } else {
+                ConverganceType::NonConcreteConvergence
+            };
+            self.state.converge(&tv_id, new_value, conv_type);
+            changed = true;
+        }
+        if changed {
             return true;
         }
-        if !non_concrete_candidates.is_empty() {
-            let mut changed = false;
-            for (tv_id, t) in non_concrete_candidates.into_iter() {
-                let t = self.state.resolve_type(&t);
-                if t == tv_id.to_type() {
-                    continue;
-                }
-                changed = true;
-                trace!(
-                    "Non-concrete convergence for {tv_id}: {}",
-                    self.state.get_type_var_state(&tv_id).unwrap()
-                );
 
-                self.state
-                    .converge(&tv_id, t, ConverganceType::NonConcreteConvergence);
-            }
-            if changed {
-                return true;
-            }
-        }
         let vars = self.state.iter_all_type_states().collect_vec();
         for (&tv_id, state) in vars {
             if let TypeVarState::Bounds {

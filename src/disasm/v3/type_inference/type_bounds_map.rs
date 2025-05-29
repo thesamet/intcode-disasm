@@ -39,6 +39,22 @@ impl TypeVarState {
             registry,
         }
     }
+
+    /// Returns `true` if the type var state is [`Bounds`].
+    ///
+    /// [`Bounds`]: TypeVarState::Bounds
+    #[must_use]
+    pub fn is_bounds(&self) -> bool {
+        matches!(self, Self::Bounds { .. })
+    }
+
+    /// Returns `true` if the type var state is [`Converged`].
+    ///
+    /// [`Converged`]: TypeVarState::Converged
+    #[must_use]
+    pub fn is_converged(&self) -> bool {
+        matches!(self, Self::Converged(..))
+    }
 }
 
 pub struct DisplayableTypeVarState<'a, F> {
@@ -130,6 +146,27 @@ pub trait TypeVarRegistry {
         transitive_upper_bound_inner(self, tv_id, &mut HashSet::new(), &mut out);
         out
     }
+
+    fn resolve_type(&self, typ: &Type) -> Type {
+        let mut typ = typ.clone();
+        loop {
+            let mut changed = false;
+
+            typ = typ.map(&mut |tv_id| match self
+                .get_type_var_state(tv_id)
+                .unwrap_or_else(|| panic!("Could not get type_var_state for {tv_id}"))
+            {
+                TypeVarState::Converged(ty) => {
+                    changed = true;
+                    ty.clone()
+                }
+                _ => Type::TypeVar(*tv_id),
+            });
+            if !changed {
+                break typ;
+            }
+        }
+    }
 }
 
 impl TypeVarRegistry for InferenceAlgorithmState {
@@ -171,6 +208,17 @@ pub enum ConverganceType {
     NonConcreteConvergence,
 }
 
+impl fmt::Display for ConverganceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConverganceType::ConcreteConvergence => write!(f, "ConcreteConvergence"),
+            ConverganceType::ConvergeToLUB => write!(f, "ConvergeToLUB"),
+            ConverganceType::ConvergeToGLB => write!(f, "ConvergeToGLB"),
+            ConverganceType::NonConcreteConvergence => write!(f, "NonConcreteConvergence"),
+        }
+    }
+}
+
 pub struct DisplayableChangeReason<'a, F> {
     reason: &'a BoundChangeReason,
     _registry: &'a F,
@@ -200,6 +248,15 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableChangeReason<'a, F> {
 pub enum BoundDirection {
     Lower,
     Upper,
+}
+
+impl fmt::Display for BoundDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BoundDirection::Lower => write!(f, ":>"),
+            BoundDirection::Upper => write!(f, "<:"),
+        }
+    }
 }
 
 impl fmt::Display for BoundChangeReason {
@@ -243,6 +300,10 @@ pub enum ChangeLogKind {
 }
 
 impl InferenceAlgorithmState {
+    pub fn next_iteration(&mut self) {
+        self.iteration += 1;
+    }
+
     fn update_bound_internal(
         &mut self,
         tv_id: &TypeVarId,
@@ -323,7 +384,6 @@ impl InferenceAlgorithmState {
                 convergence_type,
             },
         });
-        trace!("{}", format!("{} converted to {}", tv_id, new_value).red());
 
         let kind = || ChangeLogKind::DependencyConverged {
             dependent_var_id: *tv_id,
@@ -331,17 +391,28 @@ impl InferenceAlgorithmState {
         };
 
         let mut log_entries = vec![];
-        for id in self.get_all_dependents(tv_id) {
+        let ids = self.type_var_nodes.keys().cloned().collect_vec();
+        for id in ids {
+            //.get_all_dependents(tv_id) {
+            if id == *tv_id {
+                continue;
+            }
             self.add_dependency(&id, &new_value);
             match self.type_var_states.get(&id).unwrap() {
                 TypeVarState::Bounds {
                     lower_bounds,
                     upper_bounds,
                 } => {
-                    let new_lower_bounds: HashSet<Type> =
-                        lower_bounds.iter().map(|l| self.resolve_type(l)).collect();
-                    let new_upper_bounds: HashSet<Type> =
-                        upper_bounds.iter().map(|u| self.resolve_type(u)).collect();
+                    let new_lower_bounds: HashSet<Type> = lower_bounds
+                        .iter()
+                        .map(|l| self.resolve_type(l))
+                        .filter(|l| *l != id.to_type())
+                        .collect();
+                    let new_upper_bounds: HashSet<Type> = upper_bounds
+                        .iter()
+                        .map(|u| self.resolve_type(u))
+                        .filter(|l| *l != id.to_type())
+                        .collect();
                     if new_lower_bounds != *lower_bounds || new_upper_bounds != *upper_bounds {
                         log_entries.push(ChangeLogEntry {
                             iteration: self.iteration,
@@ -359,12 +430,11 @@ impl InferenceAlgorithmState {
                 }
                 TypeVarState::Converged(ty) => {
                     self.type_var_states
-                        .insert(*tv_id, TypeVarState::Converged(ty.clone()));
+                        .insert(id, TypeVarState::Converged(self.resolve_type(ty)));
                 }
             }
         }
-        self.type_var_states
-            .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
+        self.change_log.extend(log_entries);
         /*
         self.type_var_states = self
             .type_var_states
@@ -408,7 +478,6 @@ impl InferenceAlgorithmState {
                 }
             })
             .collect();
-        self.change_log.extend(log_entries);
         */
     }
 
@@ -585,27 +654,6 @@ impl InferenceAlgorithmState {
         // TypeVarId must be Clone
         let updated_set = std::mem::take(&mut self.updated_type_vars);
         updated_set.into_iter().collect()
-    }
-
-    pub fn resolve_type(&self, typ: &Type) -> Type {
-        let mut typ = typ.clone();
-        loop {
-            let mut changed = false;
-
-            typ = typ.map(&mut |tv_id| match self
-                .get_type_var_state(tv_id)
-                .unwrap_or_else(|| panic!("Could not get type_var_state for {tv_id}"))
-            {
-                TypeVarState::Converged(ty) => {
-                    changed = true;
-                    ty.clone()
-                }
-                _ => Type::TypeVar(*tv_id),
-            });
-            if !changed {
-                break typ;
-            }
-        }
     }
 
     pub fn get_all_dependencies(&self, tv_id: &TypeVarId) -> HashSet<TypeVarId> {

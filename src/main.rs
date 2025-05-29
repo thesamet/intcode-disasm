@@ -234,7 +234,7 @@ fn types(input: String, function: Option<FunctionId>, _theme: String) {
 fn repl(input: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
     let model = analysis::binary_to_type_inference(prog).unwrap();
-    let _ = repl::repl(model);
+    let _ = repl::repl(&model);
 }
 
 fn flow_recovery(input: String) {

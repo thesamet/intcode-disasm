@@ -8,8 +8,8 @@ use super::{
 };
 
 use crate::disasm::v3::{
-    lir::Expression, ssa::SsaMemoryReference, type_inference::type_bounds_map::TypeVarRegistry,
-    FunctionId, InstructionId,
+    define_id_type, lir::Expression, ssa::SsaMemoryReference,
+    type_inference::type_bounds_map::TypeVarRegistry, FunctionId, InstructionId,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -34,9 +34,7 @@ pub enum ConstraintSource {
     },
 }
 
-/// A unique identifier for a constraint within a ConstraintStore.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ConstraintId(usize);
+define_id_type!(ConstraintId);
 
 /// Describes the reason a type constraint was generated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -70,7 +68,7 @@ pub enum ConstraintReason {
     AssignmentToDereferenceTarget, // `*ptr_expr = src` => type(ptr_expr) <: Pointer(type(src))
 
     // Tuples
-    TupleSubtype,
+    TupleElementSubtype(usize), // tuple[idx] <: type
     PointerSubtype,
     FunctionParamsSubtype,
     FunctionReturnsSubtype,
@@ -553,7 +551,7 @@ mod tests {
         }
 
         // Test derived constraint
-        let c2 = make_test_constraint(Bool, Int, ConstraintReason::TupleSubtype);
+        let c2 = make_test_constraint(Bool, Int, ConstraintReason::TupleElementSubtype(0));
         let (id2, _) =
             store.add_derived_constraint(c2.clone(), id1, BoundChangeReason::Test, &state);
 
