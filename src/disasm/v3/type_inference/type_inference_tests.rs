@@ -1015,7 +1015,7 @@ f1:
             goto @takes_pointer
             c2:
 
-            [R+1] = 3000
+            [R+1] = 4000
             [R+2] = @f3
             [R] = @c3
             goto @takes_pointer
@@ -1073,6 +1073,7 @@ f1:
             .type_inference_result()
             .query_engine
             .list_all_variables();
+        repl::repl(&ctx.model);
         assert!(false);
     }
 }

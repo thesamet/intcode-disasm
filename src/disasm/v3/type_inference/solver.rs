@@ -256,9 +256,12 @@ impl Solver {
                     constraint.origin_instruction_id,
                     ConstraintReason::PointerSubtype,
                 );
-                let (_, ch) = self
-                    .store
-                    .add_original_constraint(new_constraint, &self.state);
+                let (_, ch) = self.store.add_derived_constraint(
+                    new_constraint,
+                    *constraint_id,
+                    BoundChangeReason::Constraint(*constraint_id),
+                    &self.state,
+                );
                 changed |= ch;
             }
             (

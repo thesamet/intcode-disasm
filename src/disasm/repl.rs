@@ -7,8 +7,9 @@ use tabled::settings::{object::Columns, Span, Style, Width};
 use crate::disasm::v3::{
     common::formatting::ContextualPrettyPrint,
     type_inference::{
+        constraints::ConstraintSource,
         type_bounds_map::{BoundChangeReason, ChangeLogKind, TypeVarRegistry},
-        TypeInferenceResult, TypeVarState,
+        Constraint, TypeInferenceResult, TypeVarState,
     },
     FunctionId,
 };
@@ -302,21 +303,28 @@ fn constraint(
         sub_type: String,
         super_type: String,
         reason: String,
+        parent: String,
     }
 
     let mut data = Vec::new();
     let mut found = false;
-    for (constraint_id, constraint) in ti.constraint_store.iter().sorted_by_key(|c| c.0) {
-        if let Some(id_filter) = id {
-            if id_filter != *constraint_id {
-                continue;
-            }
-        }
-        if let Some(function_filter) = function {
-            if function_filter != constraint.origin_function_id {
-                continue;
-            }
-        }
+
+    let get_parent = |constraint_id: &ConstraintId| {
+        ti.constraint_store
+            .get_constraint_source(*constraint_id)
+            .and_then(|s| match s {
+                ConstraintSource::Derived {
+                    from_constraint, ..
+                } => Some(from_constraint),
+                _ => None,
+            })
+    };
+
+    let mut add_constraint = |constraint_id: &ConstraintId, constraint: &Constraint| {
+        let source = match get_parent(constraint_id) {
+            Some(from_constraint) => format!("{}", from_constraint),
+            None => "".to_string(),
+        };
 
         data.push(ConstraintRow {
             id: format!("{}", constraint_id),
@@ -325,8 +333,30 @@ fn constraint(
             sub_type: format!("{}", constraint.sub_type), // .display_with(ti)),
             super_type: format!("{}", constraint.super_type), // .display_with(ti)),
             reason: format!("{:?}", constraint.reason),
+            parent: source,
         });
-        found = true;
+    };
+
+    if let Some(id_filter) = id {
+        let mut current_id = id_filter;
+        while let Some(constraint) = ti.constraint_store.get_constraint_by_id(current_id) {
+            add_constraint(&current_id, constraint);
+            found = true;
+            match get_parent(&current_id) {
+                Some(parent_id) => current_id = *parent_id,
+                None => break,
+            }
+        }
+    } else {
+        for (constraint_id, constraint) in ti.constraint_store.iter().sorted_by_key(|c| c.0) {
+            if let Some(function_filter) = function {
+                if function_filter != constraint.origin_function_id {
+                    continue;
+                }
+            }
+            add_constraint(constraint_id, constraint);
+            found = true;
+        }
     }
 
     if !found {
