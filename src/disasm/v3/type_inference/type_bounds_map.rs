@@ -18,7 +18,7 @@ use crate::disasm::v3::{ssa::VersionedMemoryReference, FunctionId, InstructionId
 // and types.rs exposes these publicly or they are accessible via `crate::...`
 use super::{
     constraints::ConstraintId,
-    types::{Type, TypeVarId, TypeVarNode},
+    types::{Type, TypeVarId, TypeVarNode, GenericTypeVarId, GenericTypeVar, TypeBounds},
     TypeVarPath,
 }; // Use `super::` if types.rs is in the parent directory (type_inference)
    // TypeVarKind is imported separately in the tests module if needed.
@@ -200,6 +200,10 @@ pub struct InferenceAlgorithmState {
 
     iteration: usize,
     next_type_var_id_counter: usize,
+    
+    /// Generic type variables introduced during inference
+    generic_type_vars: HashMap<GenericTypeVarId, GenericTypeVar>,
+    next_generic_id_counter: usize,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -217,6 +221,7 @@ pub enum ConverganceType {
     ReplacedWithFunctionType,
     ReplacedWithTuple,
     ReplacedWithPointer,
+    ReplacedWithGeneric,
 }
 
 impl fmt::Display for ConverganceType {
@@ -229,6 +234,7 @@ impl fmt::Display for ConverganceType {
             ConverganceType::ReplacedWithFunctionType => write!(f, "ReplacedWithFunctionType"),
             ConverganceType::ReplacedWithTuple => write!(f, "ReplacedWithTuple"),
             ConverganceType::ReplacedWithPointer => write!(f, "ReplacedWithPointer"),
+            ConverganceType::ReplacedWithGeneric => write!(f, "ReplacedWithGeneric"),
         }
     }
 }
@@ -506,6 +512,9 @@ impl InferenceAlgorithmState {
 
             iteration: 0,
             vmr_to_type_var: HashMap::new(),
+            
+            generic_type_vars: HashMap::new(),
+            next_generic_id_counter: 0,
         }
     }
 
@@ -751,6 +760,27 @@ impl InferenceAlgorithmState {
             out.insert(v);
         }
         out
+    }
+    
+    /// Creates a new generic type variable
+    pub fn create_generic_type_var(&mut self, name: String, bounds: TypeBounds) -> GenericTypeVarId {
+        let id = GenericTypeVarId::new(self.next_generic_id_counter);
+        self.next_generic_id_counter += 1;
+        
+        let generic_var = GenericTypeVar { id, name, bounds };
+        self.generic_type_vars.insert(id, generic_var);
+        
+        id
+    }
+    
+    /// Gets a generic type variable by ID
+    pub fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
+        self.generic_type_vars.get(id)
+    }
+    
+    /// Get the current generic ID counter value
+    pub fn get_generic_id_counter(&self) -> usize {
+        self.next_generic_id_counter
     }
 }
 

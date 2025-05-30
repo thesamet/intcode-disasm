@@ -1069,6 +1069,7 @@ f1:
             "Pretty printed model with types (V3):\n{}",
             pretty_print_types(&ctx.model)
         );
+        ctx.model.type_inference_result().print_all_type_bounds();
         ctx.model
             .type_inference_result()
             .query_engine
