@@ -359,8 +359,6 @@ struct GenericOpportunity {
     concrete_types: Vec<Type>,
     /// The path of the refinement (e.g., PointerRefinement, TupleRefinement)
     refinement_path: TypeVarPath,
-    /// Functions that contribute to this pattern
-    source_functions: Vec<FunctionId>,
 }
 
 /// Solver for type inference.
@@ -472,17 +470,17 @@ impl Solver {
         loop {
             let generic_opportunities = self.detect_generic_patterns();
             if generic_opportunities.is_empty() {
-                println!("Iteration {}: No more generic opportunities detected", iteration);
+                debug!("Iteration {}: No more generic opportunities detected", iteration);
                 break;
             }
             
-            println!(
+            debug!(
                 "Iteration {}: Detected {} generic pattern opportunities",
                 iteration,
                 generic_opportunities.len()
             );
             for opportunity in &generic_opportunities {
-                println!("Generic opportunity: TypeVar {} ({:?}) with bounds {:?}", 
+                debug!("Generic opportunity: TypeVar {} ({:?}) with bounds {:?}", 
                     opportunity.refinement_tv_id,
                     opportunity.refinement_path,
                     opportunity.concrete_types.iter().map(|t| t.display_with(&self.state).to_string()).collect::<Vec<_>>()
@@ -492,11 +490,11 @@ impl Solver {
             // Transform detected patterns into generic types
             let transformed_count = self.apply_generic_transformations(generic_opportunities);
             
-            println!("Transformed {} type variables", transformed_count);
+            debug!("Transformed {} type variables", transformed_count);
             
             if transformed_count == 0 {
                 // No more transformations possible
-                println!("No more generic transformations possible");
+                debug!("No more generic transformations possible");
                 break;
             }
             
@@ -526,6 +524,7 @@ impl Solver {
         result.debug_markers = markers;
         result.query_engine = TypeInferenceQueryEngine::new(self.state.clone(), self.store.clone());
         result.constraint_store = self.store;
+        result.generic_type_vars = self.state.generic_type_vars();
         result.change_log = self.state.change_log;
 
         // 9. Finalize the result and embed it into a new model state.
@@ -1021,14 +1020,10 @@ impl Solver {
                         let generic_count = upper_bounds.iter().filter(|t| matches!(t, Type::Generic(_))).count();
                         
                         if potential_generic_types.len() >= 2 || (has_generic && generic_count == upper_bounds.len()) {
-                            // Find which functions contribute to this pattern
-                            let source_functions = self.find_source_functions(*tv_id);
-
                             opportunities.push(GenericOpportunity {
                                 refinement_tv_id: *tv_id,
                                 concrete_types: upper_bounds.iter().cloned().collect(), // Use all upper bounds
                                 refinement_path: node.path.clone(),
-                                source_functions,
                             });
                         }
                     }
@@ -1077,149 +1072,46 @@ impl Solver {
         }
     }
     
-    /// Traces back through constraints to find all functions that contribute to a type variable
-    fn find_source_functions(&self, tv_id: TypeVarId) -> Vec<FunctionId> {
-        let mut source_functions = HashSet::new();
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(tv_id);
-
-        while let Some(current_tv_id) = queue.pop_front() {
-            if !visited.insert(current_tv_id) {
-                continue;
-            }
-
-            // Look through all constraints that involve this type variable
-            for (_, constraint) in self.store.iter() {
-                let involves_tv = match (&constraint.sub_type, &constraint.super_type) {
-                    (Type::TypeVar(id), _) if *id == current_tv_id => true,
-                    (_, Type::TypeVar(id)) if *id == current_tv_id => true,
-                    _ => false,
-                };
-
-                if involves_tv {
-                    source_functions.insert(constraint.origin_function_id);
-
-                    // Add related type variables to the queue
-                    if let Type::TypeVar(related_id) = &constraint.sub_type {
-                        if *related_id != current_tv_id {
-                            queue.push_back(*related_id);
-                        }
-                    }
-                    if let Type::TypeVar(related_id) = &constraint.super_type {
-                        if *related_id != current_tv_id {
-                            queue.push_back(*related_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        source_functions.into_iter().collect()
-    }
-    
     /// Apply generic transformations to the detected opportunities
     /// Returns the number of type variables that were actually transformed
     fn apply_generic_transformations(&mut self, opportunities: Vec<GenericOpportunity>) -> usize {
-        // Keep track of which type variables we've already transformed in previous iterations
         let mut transformed_count = 0;
         
-        // Group opportunities by their original type variable to handle related refinements
-        let mut opportunities_by_origin: HashMap<TypeVarId, Vec<GenericOpportunity>> = HashMap::new();
-        
         for opportunity in opportunities {
-            // Extract the original type variable this refinement came from
-            if let Some(origin_tv_id) = self.extract_origin_type_var(&opportunity.refinement_path) {
-                opportunities_by_origin.entry(origin_tv_id).or_default().push(opportunity);
-            } else {
-                // If we can't find an origin, treat it as its own group
-                opportunities_by_origin.entry(opportunity.refinement_tv_id).or_default().push(opportunity);
-            }
-        }
-        
-        // Process each group of related refinements
-        // Use the existing generic counter from the state to ensure unique names across iterations
-        let mut generic_counter = self.state.get_generic_id_counter();
-        for (_origin_tv_id, related_opportunities) in opportunities_by_origin {
-            // Check if any of the specific refinements haven't been transformed yet
-            let untransformed_opportunities: Vec<_> = related_opportunities
-                .into_iter()
-                .filter(|opp| {
-                    // Check if this specific refinement has already been converged to a generic
-                    if let Some(TypeVarState::Converged(Type::Generic(_))) = 
-                        self.state.get_type_var_state(&opp.refinement_tv_id) {
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .collect();
-            
-            if untransformed_opportunities.is_empty() {
+            // Check if this specific refinement has already been converged to a generic
+            if let Some(TypeVarState::Converged(Type::Generic(_))) = 
+                self.state.get_type_var_state(&opportunity.refinement_tv_id) {
                 continue;
             }
             
-            // Create a generic type variable for this group
-            let generic_name = Self::generate_generic_name(generic_counter);
-            generic_counter += 1;
+            let all_bounds: HashSet<Type> = opportunity.concrete_types.iter().cloned().collect();
             
-            // Collect all bounds from all related refinements
-            let mut all_bounds = HashSet::new();
-            for opportunity in &untransformed_opportunities {
-                all_bounds.extend(opportunity.concrete_types.iter().cloned());
-            }
+            // Create the generic type variable - let the state handle ID assignment
+            let generic_bounds = TypeBounds::with_upper_bounds(all_bounds.clone());
+            let generic_id = self.state.create_generic_type_var_with_bounds(generic_bounds);
             
-            println!("Creating generic {} with bounds: {:?}", 
-                generic_name,
+            debug!("Created generic {} with bounds: {:?}", 
+                generic_id.display_with(&self.state),
                 all_bounds.iter().map(|t| t.display_with(&self.state).to_string()).collect::<Vec<_>>()
             );
             
-            // Create the generic type variable
-            let generic_bounds = TypeBounds::with_upper_bounds(all_bounds);
-            let generic_id = self.state.create_generic_type_var(generic_name.clone(), generic_bounds);
+            // Replace the refinement type variable with the generic type
+            self.state.converge(
+                &opportunity.refinement_tv_id,
+                Type::Generic(generic_id),
+                ConverganceType::ReplacedWithGeneric,
+            );
             
-            // Replace all related refinement type variables with the generic type
-            for opportunity in untransformed_opportunities {
-                self.state.converge(
-                    &opportunity.refinement_tv_id,
-                    Type::Generic(generic_id),
-                    ConverganceType::ReplacedWithGeneric,
-                );
-                
-                debug!(
-                    "Replaced TypeVar {} with generic type {}",
-                    opportunity.refinement_tv_id,
-                    generic_name
-                );
-                
-                transformed_count += 1;
-            }
+            debug!(
+                "Replaced TypeVar {} with generic type {}",
+                opportunity.refinement_tv_id,
+                generic_id.display_with(&self.state)
+            );
+            
+            transformed_count += 1;
         }
         
         transformed_count
     }
     
-    /// Extract the original type variable from a refinement path
-    fn extract_origin_type_var(&self, path: &TypeVarPath) -> Option<TypeVarId> {
-        match path {
-            TypeVarPath::PointerRefinement { original_type_var_id, .. } |
-            TypeVarPath::TupleRefinement { original_type_var_id, .. } |
-            TypeVarPath::FunctionArgsRefinement { original_type_var_id, .. } |
-            TypeVarPath::FunctionRetsRefinement { original_type_var_id, .. } => {
-                Some(*original_type_var_id)
-            }
-            _ => None,
-        }
-    }
-    
-    /// Generate a generic type variable name (T, U, V, etc.)
-    fn generate_generic_name(index: usize) -> String {
-        // Use T, U, V, W, X, Y, Z, then T1, T2, etc.
-        const GENERIC_NAMES: &[&str] = &["T", "U", "V", "W", "X", "Y", "Z"];
-        if index < GENERIC_NAMES.len() {
-            GENERIC_NAMES[index].to_string()
-        } else {
-            format!("T{}", index - GENERIC_NAMES.len() + 1)
-        }
-    }
 }

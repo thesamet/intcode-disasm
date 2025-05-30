@@ -8,7 +8,7 @@ use log::debug;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
-use super::types::{Type, TypeVarId, TypeVarNode, TypeVarPath};
+use super::types::{Type, TypeVarId, TypeVarNode};
 use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarState};
 
 /// Stores inferred type information for a single function.
@@ -43,6 +43,7 @@ pub struct TypeInferenceResult {
     pub query_engine: TypeInferenceQueryEngine,
     pub change_log: Vec<ChangeLogEntry>,
     pub constraint_store: ConstraintStore,
+    pub generic_type_vars: HashMap<super::types::GenericTypeVarId, super::types::GenericTypeVar>,
 }
 
 impl TypeInferenceResult {
@@ -133,5 +134,8 @@ impl TypeVarRegistry for TypeInferenceResult {
     }
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState> {
         self.type_var_states.get(tv_id)
+    }
+    fn get_generic_type_var(&self, id: &super::types::GenericTypeVarId) -> Option<&super::types::GenericTypeVar> {
+        self.generic_type_vars.get(id)
     }
 }

@@ -9,6 +9,18 @@ use crate::disasm::v3::{
 define_id_type!(TypeVarId);
 define_id_type!(GenericTypeVarId);
 
+impl GenericTypeVarId {
+    pub fn display_with<'a>(
+        &self,
+        registry: &'a (impl TypeVarRegistry + Sized),
+    ) -> DisplayableGenericTypeVarId<'a> {
+        DisplayableGenericTypeVarId {
+            id: *self,
+            registry,
+        }
+    }
+}
+
 impl TypeVarId {
     pub fn display_with<'a>(
         &self,
@@ -22,6 +34,21 @@ impl TypeVarId {
 
     pub fn to_type(&self) -> Type {
         Type::TypeVar(*self)
+    }
+}
+
+pub struct DisplayableGenericTypeVarId<'a> {
+    id: GenericTypeVarId,
+    registry: &'a dyn TypeVarRegistry,
+}
+
+impl<'a> fmt::Display for DisplayableGenericTypeVarId<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(generic_var) = self.registry.get_generic_type_var(&self.id) {
+            write!(f, "{}", generic_var.name)
+        } else {
+            write!(f, "G{}", self.id.0)
+        }
     }
 }
 
@@ -144,52 +171,12 @@ impl Type {
         }
     }
 
-    /*
-    fn resolve_bounds(&self, registry: &impl TypeVarRegistry) -> (Type, Type) {
-        let v = match self {
-            Type::Nothing | Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::Any => {
-                (self.clone(), self.clone())
-            }
-
-            Type::Function { params, returns } => {
-                let (lower_params, upper_params) = params.resolve_bounds(registry);
-                let (lower_returns, upper_returns) = returns.resolve_bounds(registry);
-                (
-                    Type::Function {
-                        params: Box::new(upper_params),
-                        returns: Box::new(lower_returns),
-                    },
-                    Type::Function {
-                        params: Box::new(lower_params),
-                        returns: Box::new(upper_returns),
-                    },
-                )
-            }
-            Type::TypeVar(type_var_id) => (
-                registry.lower_bound(type_var_id).resolve(registry),
-                registry.upper_bound(type_var_id).resolve(registry),
-            ),
-            Type::Tuple(items) => {
-                let mut lower_items = Vec::new();
-                let mut upper_items = Vec::new();
-                for item in items {
-                    let (lower, upper) = item.resolve_bounds(registry);
-                    lower_items.push(lower);
-                    upper_items.push(upper);
-                }
-                (Type::Tuple(lower_items), Type::Tuple(upper_items))
-            }
-            Type::Pointer(p) => {
-                let (lower, upper) = p.resolve_bounds(registry);
-                (
-                    Type::Pointer(Box::new(lower)),
-                    Type::Pointer(Box::new(upper)),
-                )
-            }
-        };
-        v
+    pub fn pointee(&self) -> Option<&Type> {
+        match self {
+            Type::Pointer(pointee) => Some(pointee),
+            _ => None,
+        }
     }
-    */
 
     pub fn is_subtype_of(&self, other: &Type, registry: &impl TypeVarRegistry) -> YesNoMaybe {
         let mut visited = HashSet::new();
@@ -707,7 +694,7 @@ impl fmt::Display for Type {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GenericTypeVar {
     pub id: GenericTypeVarId,
-    pub name: String,  // "T", "U", "V", etc.
+    pub name: String, // "T", "U", "V", etc.
     pub bounds: TypeBounds,
 }
 
@@ -725,7 +712,7 @@ impl TypeBounds {
             lower_bounds: HashSet::new(),
         }
     }
-    
+
     pub fn with_upper_bounds(bounds: HashSet<Type>) -> Self {
         Self {
             upper_bounds: bounds,
@@ -1310,6 +1297,10 @@ mod tests {
             &self,
             _tv_id: &TypeVarId,
         ) -> Option<&crate::disasm::v3::type_inference::TypeVarState> {
+            todo!()
+        }
+
+        fn get_generic_type_var(&self, _id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
             todo!()
         }
     }

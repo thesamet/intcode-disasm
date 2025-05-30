@@ -3,7 +3,6 @@
 use core::fmt;
 use std::collections::{HashMap, HashSet};
 
-use colored::Colorize;
 use itertools::Itertools;
 use log::trace;
 use petgraph::{
@@ -11,7 +10,7 @@ use petgraph::{
     Direction,
 };
 
-use crate::disasm::v3::{ssa::VersionedMemoryReference, FunctionId, InstructionId};
+use crate::disasm::v3::ssa::VersionedMemoryReference;
 
 // Import necessary types from your existing types.rs file.
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
@@ -131,6 +130,7 @@ fn transitive_upper_bound_inner<'a>(
 pub trait TypeVarRegistry {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode>;
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState>;
+    fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar>;
     fn lower_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
         match self.get_type_var_state(tv_id).unwrap() {
             TypeVarState::Bounds { lower_bounds, .. } => lower_bounds.iter().collect(),
@@ -178,6 +178,9 @@ impl TypeVarRegistry for InferenceAlgorithmState {
     }
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState> {
         self.type_var_states.get(tv_id)
+    }
+    fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
+        self.generic_type_vars.get(id)
     }
 }
 
@@ -773,6 +776,29 @@ impl InferenceAlgorithmState {
         id
     }
     
+    /// Creates a new generic type variable with automatic naming
+    pub fn create_generic_type_var_with_bounds(&mut self, bounds: TypeBounds) -> GenericTypeVarId {
+        let id = GenericTypeVarId::new(self.next_generic_id_counter);
+        let name = Self::generate_generic_name(self.next_generic_id_counter);
+        self.next_generic_id_counter += 1;
+        
+        let generic_var = GenericTypeVar { id, name, bounds };
+        self.generic_type_vars.insert(id, generic_var);
+        
+        id
+    }
+    
+    /// Generate a generic type variable name (T, U, V, etc.)
+    fn generate_generic_name(index: usize) -> String {
+        // Use T, U, V, W, X, Y, Z, then T1, T2, etc.
+        const GENERIC_NAMES: &[&str] = &["T", "U", "V", "W", "X", "Y", "Z"];
+        if index < GENERIC_NAMES.len() {
+            GENERIC_NAMES[index].to_string()
+        } else {
+            format!("T{}", index - GENERIC_NAMES.len() + 1)
+        }
+    }
+    
     /// Gets a generic type variable by ID
     pub fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
         self.generic_type_vars.get(id)
@@ -781,6 +807,16 @@ impl InferenceAlgorithmState {
     /// Get the current generic ID counter value
     pub fn get_generic_id_counter(&self) -> usize {
         self.next_generic_id_counter
+    }
+    
+    /// Set the generic ID counter value
+    pub fn set_generic_id_counter(&mut self, value: usize) {
+        self.next_generic_id_counter = value;
+    }
+    
+    /// Get all generic type variables
+    pub fn generic_type_vars(&self) -> HashMap<GenericTypeVarId, GenericTypeVar> {
+        self.generic_type_vars.clone()
     }
 }
 

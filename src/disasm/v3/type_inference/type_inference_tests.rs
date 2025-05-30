@@ -1029,11 +1029,11 @@ f1:
             ; ptr4 = [R-5]
             ; [6000] = *ptr4
             [R-2] = [R-2] * [R-1]
-            [R-2] = [R-5] + [R-2]
-            [R+1] = [R-5]
+            [R-2] = 'b [R-5] + [R-2]
+            [R+1] = 'c [R-5]
             [R+2] = 17
             [R] = @tpret
-            goto [R-4]
+            goto 'd [R-4]
         tpret:
             R-=6
             goto [R]
@@ -1041,14 +1041,14 @@ f1:
 
         f1:
             R += 2
-            ptr1 = [R-1]
+            ptr1 = 'e [R-1]
             output *ptr1
             R -= 2
             goto [R]
 
         f2:
             R += 2
-            ptr2 = [R-1]
+            ptr2 = 'f [R-1]
             if *ptr2 goto @fret2
             output 35
         fret2:
@@ -1057,7 +1057,7 @@ f1:
 
         f3:
             R += 3
-            ptr3 = [R-2]
+            ptr3 = 'g [R-2]
             [R-2] = *ptr3
             [R-2] = [R-2] * 7
             R -= 3
@@ -1070,11 +1070,103 @@ f1:
             pretty_print_types(&ctx.model)
         );
         ctx.model.type_inference_result().print_all_type_bounds();
-        ctx.model
-            .type_inference_result()
-            .query_engine
-            .list_all_variables();
-        assert_marker_type!(ctx, 'a', Type::Any); // Macro now uses ctx.model and stub helper
-                                                  // assert!(false);
+
+        // 'a' is the function pointer @f1, which has signature (Pointer<Char>) -> ()
+        assert_marker_type!(
+            ctx,
+            'a',
+            Type::function(Type::tuple(&[Type::pointer(Type::Char)]), Type::tuple(&[]))
+        );
+
+        // 'b' and 'c' are the first parameter to takes_pointer, which should be Pointer<Generic>
+        // We can't directly assert on generics, so let's check they are pointers
+        let b_type = get_marker_type_from_model(&ctx.model, 'b').unwrap();
+        let c_type = get_marker_type_from_model(&ctx.model, 'c').unwrap();
+        assert!(
+            matches!(b_type, Type::Pointer(_)),
+            "Expected 'b' to be a Pointer type, got {:?}",
+            b_type
+        );
+        assert!(
+            matches!(b_type.pointee(), Some(Type::Generic(_))),
+            "Expected 'b' to be a Pointer to a generic type, got {:?}",
+            b_type
+        );
+        assert!(
+            matches!(c_type, Type::Pointer(_)),
+            "Expected 'c' to be a Pointer type, got {:?}",
+            c_type
+        );
+        assert!(
+            matches!(c_type.pointee(), Some(Type::Generic(_))),
+            "Expected 'c' to be a Pointer to a generic type, got {:?}",
+            c_type
+        );
+
+        // 'd' is the second parameter to takes_pointer, which should be Function(Pointer<Generic>) -> ()
+        let d_type = get_marker_type_from_model(&ctx.model, 'd').unwrap();
+        if let Type::Function { params, returns } = &d_type {
+            // Check params
+            if let Type::Tuple(param_types) = params.as_ref() {
+                assert_eq!(
+                    param_types.len(),
+                    1,
+                    "Function 'd' params: expected 1, got {} in {:?}\nFull d_type: {:?}",
+                    param_types.len(),
+                    params,
+                    d_type
+                );
+
+                // Check first parameter: Pointer(Generic)
+                let first_param_type = &param_types[0];
+                if let Type::Pointer(pointee_type) = first_param_type {
+                    if !matches!(pointee_type.as_ref(), Type::Generic(_)) {
+                        panic!(
+                            "Function 'd' first param: expected Pointer(Generic), got Pointer({:?})\nFull d_type: {:?}",
+                            pointee_type.as_ref(), // Use as_ref() for content of Box
+                            d_type
+                        );
+                    }
+                } else {
+                    panic!(
+                        "Function 'd' first param: expected Pointer, got {:?}\nFull d_type: {:?}",
+                        first_param_type, d_type
+                    );
+                }
+            } else {
+                panic!(
+                    "Function 'd' params: expected Tuple, got {:?}\nFull d_type: {:?}",
+                    params, d_type
+                );
+            }
+
+            // Check returns
+            if let Type::Tuple(return_types) = returns.as_ref() {
+                assert_eq!(
+                    return_types.len(),
+                    0,
+                    "Function 'd' returns: expected Tuple([]), got {:?} (len {})\nFull d_type: {:?}",
+                    returns,
+                    return_types.len(),
+                    d_type
+                );
+            } else {
+                panic!(
+                    "Function 'd' returns: expected Tuple, got {:?}\nFull d_type: {:?}",
+                    returns, d_type
+                );
+            }
+        } else {
+            panic!("Expected 'd' to be a Function type, got {:?}", d_type);
+        }
+
+        // 'e' is the parameter in f1, should be Pointer<Char>
+        assert_marker_type!(ctx, 'e', Type::pointer(Type::Char));
+
+        // 'f' is the parameter in f2, should be Pointer<Truthy>
+        assert_marker_type!(ctx, 'f', Type::pointer(Type::Truthy));
+
+        // 'g' is the parameter in f3, should be Pointer<Int>
+        assert_marker_type!(ctx, 'g', Type::pointer(Type::Int));
     }
 }
