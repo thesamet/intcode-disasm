@@ -444,41 +444,6 @@ impl Solver {
                 changed |= self.try_classify_add_expression(&unclassified);
             }
 
-            /*
-            let ts = self
-                .state
-                .iter_all_type_states()
-                .map(|(x, y)| (*x, y.clone()))
-                .collect_vec();
-
-            for (t, ts) in ts {
-                if let TypeVarState::Bounds { .. } = ts {
-                    // FIXME: create dummy instruction id for constaint uniqueness around the typevar.
-                    let new_constraint = Constraint::new(
-                        Type::Int,
-                        Type::Bool,
-                        FunctionId::new(0),
-                        InstructionId::new(100000 + t.index()),
-                        ConstraintReason::FunctionSubtype,
-                    );
-                    let (cid, ch) = self
-                        .store
-                        .add_original_constraint(new_constraint.clone(), &self.state);
-                    let upper_bounds = self.state.transitive_upper_bounds(&t);
-                    changed |= ch;
-
-                    if upper_bounds.iter().any(|t| t.is_function()) {
-                        changed |= self.derive_when_subtype_of_function(
-                            &t,
-                            &generator_result.function_types,
-                            &cid,
-                            &new_constraint,
-                        );
-                    }
-                }
-            }
-            */
-
             if !changed {
                 changed |= self.try_solving();
             }
@@ -974,70 +939,6 @@ impl Solver {
                 }
             }
         }
-        /*
-        trace!("{}", "Refining concrete types".red());
-        trace!("*** Known constraints");
-        for c in self
-            .store
-            .iter()
-            .map(|c| (self.store.get_constraint_id(c).unwrap(), c))
-            .sorted_by_key(|x| x.0)
-        {
-            trace!("{:?}: {}", c.0, c.1.display_with(&self.state));
-        }
-
-        let type_states: Vec<(TypeVarId, TypeVarState)> = self
-            .state
-            .iter_all_type_states()
-            .map(|(id, state)| (*id, state.clone()))
-            .collect();
-            */
-
-        /*
-        for (tv_id, var) in type_states {
-            if let TypeInterval::Bounds {
-                lower_bound,
-                upper_bound,
-            } = var
-            {
-                if upper_bound.is_concrete_type() {
-                    self.state.update_lower_bound(
-                        &tv_id,
-                        &upper_bound,
-                        ChangeReason::ConcreteTypeRefinement,
-                    );
-                    return true;
-                }
-                if lower_bound.is_concrete_type() {
-                    self.state.update_upper_bound(
-                        &tv_id,
-                        &lower_bound,
-                        ChangeReason::ConcreteTypeRefinement,
-                    );
-                    return true;
-                }
-                if lower_bound == Type::Nothing && upper_bound == Type::Truthy {
-                    self.state.update_upper_bound(
-                        &tv_id,
-                        &Type::Bool,
-                        ChangeReason::ConcreteTypeRefinement,
-                    );
-                    self.state.update_lower_bound(
-                        &tv_id,
-                        &Type::Bool,
-                        ChangeReason::ConcreteTypeRefinement,
-                    );
-                    return true;
-                } else if upper_bound == Type::Truthy {
-                    self.state.update_lower_bound(
-                        &tv_id,
-                        &Type::Truthy,
-                        ChangeReason::ConcreteTypeRefinement,
-                    );
-                }
-            }
-        }
-        */
         false
     }
 }
