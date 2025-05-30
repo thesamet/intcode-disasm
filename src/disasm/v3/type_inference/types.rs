@@ -656,6 +656,14 @@ impl Type {
         matches!(self, Self::Tuple(..))
     }
 
+    /// Returns `true` if the type is [`Pointer`].
+    ///
+    /// [`Pointer`]: Type::Pointer
+    #[must_use]
+    pub fn is_pointer(&self) -> bool {
+        matches!(self, Self::Pointer(..))
+    }
+
     pub fn tuple_arity(&self) -> Option<usize> {
         match self {
             Type::Tuple(elements) => Some(elements.len()),
@@ -931,6 +939,10 @@ pub enum TypeVarPath {
         original_type_var_id: TypeVarId,
         index: usize,
     },
+    PointerRefinement {
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+    },
 }
 
 impl TypeVarPath {
@@ -954,7 +966,8 @@ impl TypeVarPath {
             | TypeVarPath::PhiAssignmentArg { function_id, .. }
             | TypeVarPath::FunctionArgsRefinement { function_id, .. }
             | TypeVarPath::FunctionRetsRefinement { function_id, .. }
-            | TypeVarPath::TupleRefinement { function_id, .. } => *function_id,
+            | TypeVarPath::TupleRefinement { function_id, .. }
+            | TypeVarPath::PointerRefinement { function_id, .. } => *function_id,
         }
     }
 
@@ -978,7 +991,8 @@ impl TypeVarPath {
             | TypeVarPath::FunctionDefRetTuple { .. }
             | TypeVarPath::FunctionArgsRefinement { .. }
             | TypeVarPath::FunctionRetsRefinement { .. }
-            | TypeVarPath::TupleRefinement { .. } => None,
+            | TypeVarPath::TupleRefinement { .. }
+            | TypeVarPath::PointerRefinement { .. } => None,
         }
     }
 
@@ -996,7 +1010,8 @@ impl TypeVarPath {
             | TypeVarPath::CallRetTuple { .. }
             | TypeVarPath::FunctionArgsRefinement { .. }
             | TypeVarPath::FunctionRetsRefinement { .. }
-            | TypeVarPath::TupleRefinement { .. } => None,
+            | TypeVarPath::TupleRefinement { .. }
+            | TypeVarPath::PointerRefinement { .. } => None,
             TypeVarPath::AssignmentSrc {
                 expression_path, ..
             }

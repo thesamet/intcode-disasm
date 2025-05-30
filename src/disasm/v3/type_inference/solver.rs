@@ -606,6 +606,10 @@ impl Solver {
         if changed {
             return true;
         }
+        changed |= self.refine_bounded_pointers(&vars);
+        if changed {
+            return true;
+        }
 
         for (tv_id, state) in vars {
             if let TypeVarState::Bounds {
@@ -861,6 +865,53 @@ impl Solver {
             );
             self.state
                 .converge(tv_id, new_tuple, ConverganceType::ReplacedWithTuple);
+
+            return true;
+        }
+        false
+    }
+
+    fn refine_bounded_pointers(&mut self, vars: &Vec<(TypeVarId, TypeVarState)>) -> bool {
+        for (tv_id, state) in vars {
+            if state.is_converged() {
+                continue;
+            }
+            let upper_pointer_bounds: HashSet<&Type> = self
+                .state
+                .upper_bounds(tv_id)
+                .iter()
+                .filter(|t| t.is_pointer())
+                .cloned()
+                .collect();
+            if upper_pointer_bounds.is_empty() {
+                continue;
+            }
+            let lower_pointer_bounds: HashSet<&Type> = self
+                .state
+                .lower_bounds(&tv_id)
+                .iter()
+                .filter(|t| t.is_pointer())
+                .cloned()
+                .collect();
+            let intersection = lower_pointer_bounds.intersection(&upper_pointer_bounds);
+            // Sanity check: if there was an intersection, the type should have converged in an earlier stage.
+            assert!(intersection.count() == 0);
+            let function_id = self
+                .state
+                .get_type_var_node(tv_id)
+                .unwrap()
+                .path
+                .function_id();
+            let pointee = self.state.add_type_var(TypeVarNode {
+                path: TypeVarPath::PointerRefinement {
+                    function_id,
+                    original_type_var_id: *tv_id,
+                },
+                vmr: None,
+            });
+            let pointer_type = Type::pointer(pointee.to_type());
+            self.state
+                .converge(tv_id, pointer_type, ConverganceType::ReplacedWithPointer);
 
             return true;
         }

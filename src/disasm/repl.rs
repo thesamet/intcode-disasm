@@ -200,6 +200,10 @@ fn format_path<'a>(
             original_type_var_id,
             ..
         } => format!("TupleRefinement[{}] for {}", index, original_type_var_id),
+        TypeVarPath::PointerRefinement {
+            original_type_var_id,
+            ..
+        } => format!("PointerRefinement for {}", original_type_var_id),
     };
     (role, expr)
 }

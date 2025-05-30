@@ -216,6 +216,7 @@ pub enum ConverganceType {
     NonConcreteConvergence,
     ReplacedWithFunctionType,
     ReplacedWithTuple,
+    ReplacedWithPointer,
 }
 
 impl fmt::Display for ConverganceType {
@@ -227,6 +228,7 @@ impl fmt::Display for ConverganceType {
             ConverganceType::NonConcreteConvergence => write!(f, "NonConcreteConvergence"),
             ConverganceType::ReplacedWithFunctionType => write!(f, "ReplacedWithFunctionType"),
             ConverganceType::ReplacedWithTuple => write!(f, "ReplacedWithTuple"),
+            ConverganceType::ReplacedWithPointer => write!(f, "ReplacedWithPointer"),
         }
     }
 }
