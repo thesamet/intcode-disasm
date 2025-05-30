@@ -3,7 +3,7 @@
 use itertools::Itertools;
 use log::{debug, trace};
 
-use crate::disasm::v3::lir::{instruction, BinaryOperator, Expression};
+use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::types::TypeVarNode;
@@ -11,8 +11,7 @@ use crate::disasm::v3::type_inference::{TypeInferenceResult, TypeVarPath};
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
 
-use std::any::Any;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
 use super::query_engine::TypeInferenceQueryEngine;
@@ -22,6 +21,334 @@ use super::{
     generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
     Type, TypeVarState,
 };
+
+/// Trait for compound type refinement strategies
+trait CompoundTypeRefinement {
+    /// Check if this strategy can refine the given type variable
+    fn can_refine(&self, tv_id: TypeVarId, state: &InferenceAlgorithmState) -> bool;
+
+    /// Create the refinement pattern for this type variable
+    fn create_pattern(
+        &self,
+        tv_id: TypeVarId,
+        state: &mut InferenceAlgorithmState,
+    ) -> CompoundTypePattern;
+
+    /// Get the convergence type for this refinement
+    fn convergence_type(&self) -> ConverganceType;
+}
+
+/// Declarative representation of how compound types decompose
+#[derive(Debug, Clone)]
+pub enum CompoundTypePattern {
+    Function {
+        args_tv_id: TypeVarId,
+        rets_tv_id: TypeVarId,
+    },
+    Tuple {
+        element_tv_ids: Vec<TypeVarId>,
+    },
+    Pointer {
+        pointee_tv_id: TypeVarId,
+    },
+}
+
+impl CompoundTypePattern {
+    /// Construct the actual Type from this pattern
+    fn into_type(self) -> Type {
+        match self {
+            CompoundTypePattern::Function {
+                args_tv_id,
+                rets_tv_id,
+            } => Type::function(args_tv_id.to_type(), rets_tv_id.to_type()),
+            CompoundTypePattern::Tuple { element_tv_ids } => Type::tuple(
+                &element_tv_ids
+                    .into_iter()
+                    .map(|id| id.to_type())
+                    .collect::<Vec<_>>(),
+            ),
+            CompoundTypePattern::Pointer { pointee_tv_id } => {
+                Type::pointer(pointee_tv_id.to_type())
+            }
+        }
+    }
+}
+
+/// Function refinement strategy
+struct FunctionRefinement;
+
+impl CompoundTypeRefinement for FunctionRefinement {
+    fn can_refine(&self, tv_id: TypeVarId, state: &InferenceAlgorithmState) -> bool {
+        if let Some(TypeVarState::Bounds {
+            upper_bounds,
+            lower_bounds,
+        }) = state.get_type_var_state(&tv_id)
+        {
+            let has_function_upper = upper_bounds.iter().any(|t| t.is_function());
+            let intersection_count = lower_bounds
+                .intersection(upper_bounds)
+                .filter(|t| t.is_function())
+                .count();
+
+            if intersection_count > 0 {
+                panic!("Function bounds intersection should have been resolved earlier");
+            }
+
+            // Only refine if we have function bounds
+            has_function_upper
+        } else {
+            false
+        }
+    }
+
+    fn create_pattern(
+        &self,
+        tv_id: TypeVarId,
+        state: &mut InferenceAlgorithmState,
+    ) -> CompoundTypePattern {
+        let function_id = state.get_type_var_node(&tv_id).unwrap().path.function_id();
+
+        let args_tv_id = state.add_type_var(TypeVarNode {
+            path: TypeVarPath::FunctionArgsRefinement {
+                function_id,
+                original_type_var_id: tv_id,
+            },
+            vmr: None,
+        });
+
+        let rets_tv_id = state.add_type_var(TypeVarNode {
+            path: TypeVarPath::FunctionRetsRefinement {
+                function_id,
+                original_type_var_id: tv_id,
+            },
+            vmr: None,
+        });
+
+        CompoundTypePattern::Function {
+            args_tv_id,
+            rets_tv_id,
+        }
+    }
+
+    fn convergence_type(&self) -> ConverganceType {
+        ConverganceType::ReplacedWithFunctionType
+    }
+}
+
+/// Tuple refinement strategy
+struct TupleRefinement;
+
+impl CompoundTypeRefinement for TupleRefinement {
+    fn can_refine(&self, tv_id: TypeVarId, state: &InferenceAlgorithmState) -> bool {
+        if let Some(TypeVarState::Bounds {
+            upper_bounds,
+            lower_bounds,
+        }) = state.get_type_var_state(&tv_id)
+        {
+            let has_tuple_upper = upper_bounds.iter().any(|t| t.is_tuple());
+            let intersection_count = lower_bounds
+                .intersection(upper_bounds)
+                .filter(|t| t.is_tuple())
+                .count();
+
+            if intersection_count > 0 {
+                panic!("Tuple bounds intersection should have been resolved earlier");
+            }
+
+            // Only refine if we have tuple bounds
+            has_tuple_upper
+        } else {
+            false
+        }
+    }
+
+    fn create_pattern(
+        &self,
+        tv_id: TypeVarId,
+        state: &mut InferenceAlgorithmState,
+    ) -> CompoundTypePattern {
+        let function_id = state.get_type_var_node(&tv_id).unwrap().path.function_id();
+        let upper_bounds = state.upper_bounds(&tv_id);
+
+        // Determine maximum arity from upper bounds
+        let max_arity = upper_bounds
+            .iter()
+            .filter_map(|t| t.tuple_arity())
+            .max()
+            .unwrap_or(0);
+
+        let element_tv_ids: Vec<TypeVarId> = (0..max_arity)
+            .map(|index| {
+                state.add_type_var(TypeVarNode {
+                    path: TypeVarPath::TupleRefinement {
+                        function_id,
+                        original_type_var_id: tv_id,
+                        index,
+                    },
+                    vmr: None,
+                })
+            })
+            .collect();
+
+        CompoundTypePattern::Tuple { element_tv_ids }
+    }
+
+    fn convergence_type(&self) -> ConverganceType {
+        ConverganceType::ReplacedWithTuple
+    }
+}
+
+/// Pointer refinement strategy
+struct PointerRefinement;
+
+impl CompoundTypeRefinement for PointerRefinement {
+    fn can_refine(&self, tv_id: TypeVarId, state: &InferenceAlgorithmState) -> bool {
+        if let Some(TypeVarState::Bounds {
+            upper_bounds,
+            lower_bounds,
+        }) = state.get_type_var_state(&tv_id)
+        {
+            let has_pointer_upper = upper_bounds.iter().any(|t| t.is_pointer());
+            let intersection_count = lower_bounds
+                .intersection(upper_bounds)
+                .filter(|t| t.is_pointer())
+                .count();
+
+            if intersection_count > 0 {
+                panic!("Pointer bounds intersection should have been resolved earlier");
+            }
+
+            // Only refine if we have pointer bounds
+            has_pointer_upper
+        } else {
+            false
+        }
+    }
+
+    fn create_pattern(
+        &self,
+        tv_id: TypeVarId,
+        state: &mut InferenceAlgorithmState,
+    ) -> CompoundTypePattern {
+        let function_id = state.get_type_var_node(&tv_id).unwrap().path.function_id();
+
+        let pointee_tv_id = state.add_type_var(TypeVarNode {
+            path: TypeVarPath::PointerRefinement {
+                function_id,
+                original_type_var_id: tv_id,
+            },
+            vmr: None,
+        });
+
+        CompoundTypePattern::Pointer { pointee_tv_id }
+    }
+
+    fn convergence_type(&self) -> ConverganceType {
+        ConverganceType::ReplacedWithPointer
+    }
+}
+
+/// Unified refinement engine for compound types
+struct CompoundTypeRefiner {
+    strategies: Vec<Box<dyn CompoundTypeRefinement>>,
+}
+
+impl CompoundTypeRefiner {
+    fn new() -> Self {
+        let strategies: Vec<Box<dyn CompoundTypeRefinement>> = vec![
+            Box::new(FunctionRefinement),
+            Box::new(TupleRefinement),
+            Box::new(PointerRefinement),
+        ];
+
+        Self { strategies }
+    }
+
+    fn refine_compound_types(
+        &self,
+        vars: &[(TypeVarId, TypeVarState)],
+        state: &mut InferenceAlgorithmState,
+        function_types: &HashMap<FunctionId, (Type, Type)>,
+        model: &Model<FoldedSsaComplete>,
+        store: &mut ConstraintStore,
+    ) -> bool {
+        for (tv_id, type_state) in vars {
+            if type_state.is_converged() {
+                continue;
+            }
+
+            // Try each strategy in order
+            for strategy in &self.strategies {
+                if strategy.can_refine(*tv_id, state) {
+                    let pattern = strategy.create_pattern(*tv_id, state);
+                    let refined_type = pattern.clone().into_type();
+                    let convergence_type = strategy.convergence_type();
+
+                    state.converge(tv_id, refined_type, convergence_type);
+
+                    // Handle special post-convergence logic
+                    self.handle_post_convergence(
+                        *tv_id,
+                        &pattern,
+                        state,
+                        function_types,
+                        model,
+                        store,
+                    );
+
+                    return true; // Early return on first change
+                }
+            }
+        }
+        false
+    }
+
+    fn handle_post_convergence(
+        &self,
+        tv_id: TypeVarId,
+        pattern: &CompoundTypePattern,
+        state: &mut InferenceAlgorithmState,
+        function_types: &HashMap<FunctionId, (Type, Type)>,
+        model: &Model<FoldedSsaComplete>,
+        store: &mut ConstraintStore,
+    ) {
+        // Handle special cases like function pointer derivation
+        if let CompoundTypePattern::Function { .. } = pattern {
+            let instruction_id = state
+                .get_type_var_node(&tv_id)
+                .unwrap()
+                .path
+                .instruction_id()
+                .unwrap_or(InstructionId::new(0));
+            let function_id = state.get_type_var_node(&tv_id).unwrap().path.function_id();
+
+            // Inline the derive_when_subtype_of_function logic
+            if let Some(Expression::Constant(addr)) = state
+                .get_type_var_node(&tv_id)
+                .unwrap()
+                .path
+                .expression_from_model(model)
+            {
+                if let Some((callee_arg_type, callee_ret_type)) =
+                    function_types.get(&FunctionId::new(*addr as usize))
+                {
+                    let func_type =
+                        Type::function(callee_arg_type.clone(), callee_ret_type.clone());
+                    store.add_original_equality_constraint(
+                        Constraint {
+                            sub_type: func_type,
+                            super_type: tv_id.to_type(),
+                            origin_function_id: function_id,
+                            origin_instruction_id: instruction_id,
+                            reason: ConstraintReason::ConstIsFunctionPointer,
+                        },
+                        state,
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Solver for type inference.
 ///
@@ -34,6 +361,7 @@ pub struct Solver {
     state: InferenceAlgorithmState,
     store: ConstraintStore,
     function_types: HashMap<FunctionId, (Type, Type)>,
+    compound_type_refiner: CompoundTypeRefiner,
 }
 
 impl Solver {
@@ -48,6 +376,7 @@ impl Solver {
             state: InferenceAlgorithmState::new(),
             store: ConstraintStore::new(),
             function_types: HashMap::new(),
+            compound_type_refiner: CompoundTypeRefiner::new(),
         }
     }
 
@@ -295,41 +624,6 @@ impl Solver {
                 changed |= ch1 || ch2;
             }
             _ => {}
-        }
-        changed
-    }
-
-    fn derive_when_subtype_of_function(
-        &mut self,
-        tv_id: &TypeVarId,
-        function_id: &FunctionId,
-        instruction_id: &InstructionId,
-    ) -> bool {
-        let Some(Expression::Constant(addr)) = self
-            .state
-            .get_type_var_node(tv_id)
-            .unwrap()
-            .path
-            .expression_from_model(&self.model)
-        else {
-            return false;
-        };
-        let mut changed = false;
-
-        if let Some((callee_arg_type, callee_ret_type)) =
-            self.function_types.get(&FunctionId::new(*addr as usize))
-        {
-            let func_type = Type::function(callee_arg_type.clone(), callee_ret_type.clone());
-            changed |= self.store.add_original_equality_constraint(
-                Constraint {
-                    sub_type: func_type,
-                    super_type: tv_id.to_type(),
-                    origin_function_id: *function_id,
-                    origin_instruction_id: *instruction_id,
-                    reason: ConstraintReason::ConstIsFunctionPointer,
-                },
-                &self.state,
-            )
         }
         changed
     }
@@ -598,15 +892,13 @@ impl Solver {
             .iter_all_type_states()
             .map(|(id, state)| (*id, state.clone()))
             .collect_vec();
-        changed |= self.refine_bounded_functions(&vars);
-        if changed {
-            return true;
-        }
-        changed |= self.refine_bounded_tuples(&vars);
-        if changed {
-            return true;
-        }
-        changed |= self.refine_bounded_pointers(&vars);
+        changed |= self.compound_type_refiner.refine_compound_types(
+            &vars,
+            &mut self.state,
+            &self.function_types,
+            &self.model,
+            &mut self.store,
+        );
         if changed {
             return true;
         }
@@ -746,175 +1038,6 @@ impl Solver {
             }
         }
         */
-        false
-    }
-
-    fn refine_bounded_functions(&mut self, vars: &Vec<(TypeVarId, TypeVarState)>) -> bool {
-        for (tv_id, state) in vars {
-            if state.is_converged() {
-                continue;
-            }
-            let upper_function_bounds: HashSet<&Type> = self
-                .state
-                .upper_bounds(tv_id)
-                .iter()
-                .filter(|t| t.is_function())
-                .cloned()
-                .collect();
-            if upper_function_bounds.is_empty() {
-                continue;
-            }
-            let lower_function_bounds: HashSet<&Type> = self
-                .state
-                .lower_bounds(&tv_id)
-                .iter()
-                .filter(|t| t.is_function())
-                .cloned()
-                .collect();
-            let intersection = lower_function_bounds.intersection(&upper_function_bounds);
-            // Sanity check: if there was an intersectin, the type should have converged in an earlier stage.
-            assert!(intersection.count() == 0);
-            let instruction_id = self
-                .state
-                .get_type_var_node(tv_id)
-                .unwrap()
-                .path
-                .instruction_id()
-                .unwrap_or(InstructionId::new(0));
-            let function_id = self
-                .state
-                .get_type_var_node(tv_id)
-                .unwrap()
-                .path
-                .function_id();
-            let args = self.state.add_type_var(TypeVarNode {
-                path: TypeVarPath::FunctionArgsRefinement {
-                    function_id,
-                    original_type_var_id: *tv_id,
-                },
-                vmr: None,
-            });
-
-            let rets = self.state.add_type_var(TypeVarNode {
-                path: TypeVarPath::FunctionRetsRefinement {
-                    function_id,
-                    original_type_var_id: *tv_id,
-                },
-                vmr: None,
-            });
-            let func_type = Type::function(args.to_type(), rets.to_type());
-            self.state
-                .converge(tv_id, func_type, ConverganceType::ReplacedWithFunctionType);
-            self.derive_when_subtype_of_function(tv_id, &function_id, &instruction_id);
-            return true;
-        }
-        false
-    }
-
-    fn refine_bounded_tuples(&mut self, vars: &Vec<(TypeVarId, TypeVarState)>) -> bool {
-        for (tv_id, state) in vars {
-            if state.is_converged() {
-                continue;
-            }
-            let upper_tuple_bounds: HashSet<&Type> = self
-                .state
-                .upper_bounds(tv_id)
-                .iter()
-                .filter(|t| t.is_tuple())
-                .cloned()
-                .collect();
-            if upper_tuple_bounds.is_empty() {
-                continue;
-            }
-            let lower_function_bounds: HashSet<&Type> = self
-                .state
-                .lower_bounds(&tv_id)
-                .iter()
-                .filter(|t| t.is_tuple())
-                .cloned()
-                .collect();
-            let intersection = lower_function_bounds.intersection(&upper_tuple_bounds);
-            // Sanity check: if there was an intersectin, the type should have converged in an earlier stage.
-            assert!(intersection.count() == 0);
-            let min_arity = upper_tuple_bounds
-                .iter()
-                .map(|t| t.tuple_arity())
-                .flatten()
-                .max();
-            let function_id = self
-                .state
-                .get_type_var_node(tv_id)
-                .unwrap()
-                .path
-                .function_id();
-            let new_tuple = Type::tuple(
-                &(0..min_arity.unwrap_or(0))
-                    .map(|index| {
-                        self.state
-                            .add_type_var(TypeVarNode {
-                                path: TypeVarPath::TupleRefinement {
-                                    function_id,
-                                    original_type_var_id: *tv_id,
-                                    index,
-                                },
-                                vmr: None,
-                            })
-                            .to_type()
-                    })
-                    .collect_vec(),
-            );
-            self.state
-                .converge(tv_id, new_tuple, ConverganceType::ReplacedWithTuple);
-
-            return true;
-        }
-        false
-    }
-
-    fn refine_bounded_pointers(&mut self, vars: &Vec<(TypeVarId, TypeVarState)>) -> bool {
-        for (tv_id, state) in vars {
-            if state.is_converged() {
-                continue;
-            }
-            let upper_pointer_bounds: HashSet<&Type> = self
-                .state
-                .upper_bounds(tv_id)
-                .iter()
-                .filter(|t| t.is_pointer())
-                .cloned()
-                .collect();
-            if upper_pointer_bounds.is_empty() {
-                continue;
-            }
-            let lower_pointer_bounds: HashSet<&Type> = self
-                .state
-                .lower_bounds(&tv_id)
-                .iter()
-                .filter(|t| t.is_pointer())
-                .cloned()
-                .collect();
-            let intersection = lower_pointer_bounds.intersection(&upper_pointer_bounds);
-            // Sanity check: if there was an intersection, the type should have converged in an earlier stage.
-            assert!(intersection.count() == 0);
-            let function_id = self
-                .state
-                .get_type_var_node(tv_id)
-                .unwrap()
-                .path
-                .function_id();
-            let pointee = self.state.add_type_var(TypeVarNode {
-                path: TypeVarPath::PointerRefinement {
-                    function_id,
-                    original_type_var_id: *tv_id,
-                },
-                vmr: None,
-            });
-            let pointer_type = Type::pointer(pointee.to_type());
-            self.state
-                .converge(tv_id, pointer_type, ConverganceType::ReplacedWithPointer);
-
-            return true;
-        }
         false
     }
 }
