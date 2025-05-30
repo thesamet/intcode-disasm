@@ -7,6 +7,7 @@ use crate::disasm::v3::{
 };
 
 define_id_type!(TypeVarId);
+define_id_type!(GenericTypeVarId);
 
 impl TypeVarId {
     pub fn display_with<'a>(
@@ -76,6 +77,8 @@ pub enum Type {
     },
     /// Type variable used during inference
     TypeVar(TypeVarId),
+    /// Generic type variable (T, U, V, etc.)
+    Generic(GenericTypeVarId),
     /// Nothing type (bottom of the lattice, subtype of all types)
     Nothing,
 }
@@ -123,6 +126,7 @@ impl Type {
             }
             Type::Tuple(elements) => elements.iter().all(|e| e.is_concrete_type()),
             Type::TypeVar(_) => false,
+            Type::Generic(_) => false,
         }
     }
 
@@ -269,6 +273,8 @@ impl Type {
                 }
                 YesNoMaybe::Maybe
             }
+            // Generic types are handled similarly to TypeVar for now
+            (Type::Generic(_), _) | (_, Type::Generic(_)) => YesNoMaybe::Maybe,
             (Type::NumericLiteral, Type::Truthy) => true.into(),
             (Type::Char, Type::Truthy) => true.into(),
             (Type::Char, Type::NumericLiteral) => true.into(),
@@ -348,6 +354,7 @@ impl Type {
             Type::NumericLiteral => Type::NumericLiteral,
             Type::Truthy => Type::Truthy,
             Type::Any => Type::Any,
+            Type::Generic(id) => Type::Generic(*id),
         }
     }
 
@@ -604,7 +611,8 @@ impl Type {
             | Type::Char
             | Type::NumericLiteral
             | Type::Truthy
-            | Type::Any => {
+            | Type::Any
+            | Type::Generic(_) => {
                 // No nested type vars
             }
         }
@@ -619,6 +627,7 @@ impl Type {
     pub fn is_var_free(&self) -> bool {
         match self {
             Type::TypeVar(_) => false,
+            Type::Generic(_) => false,
             Type::Tuple(elements) => elements.iter().all(|e| e.is_var_free()),
             Type::Function { params, returns } => params.is_var_free() && returns.is_var_free(),
             Type::Nothing
@@ -682,6 +691,7 @@ impl fmt::Display for Type {
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
             Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
             Type::TypeVar(id) => write!(f, "{}", id),
+            Type::Generic(id) => write!(f, "T{}", id.0),
             Type::Tuple(elements) => {
                 let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
                 write!(f, "({})", elements_str.join(", "))
@@ -689,6 +699,37 @@ impl fmt::Display for Type {
             Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
             Type::Any => write!(f, "Any"),
+        }
+    }
+}
+
+/// Represents a generic type variable (T, U, V, etc.)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenericTypeVar {
+    pub id: GenericTypeVarId,
+    pub name: String,  // "T", "U", "V", etc.
+    pub bounds: TypeBounds,
+}
+
+/// Bounds for a generic type variable
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeBounds {
+    pub upper_bounds: HashSet<Type>,
+    pub lower_bounds: HashSet<Type>,
+}
+
+impl TypeBounds {
+    pub fn new() -> Self {
+        Self {
+            upper_bounds: HashSet::new(),
+            lower_bounds: HashSet::new(),
+        }
+    }
+    
+    pub fn with_upper_bounds(bounds: HashSet<Type>) -> Self {
+        Self {
+            upper_bounds: bounds,
+            lower_bounds: HashSet::new(),
         }
     }
 }
@@ -1205,6 +1246,7 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
             Type::Any => write!(f, "Any"),
+            Type::Generic(id) => write!(f, "T{}", id.0),
         }
     }
 }
