@@ -3,13 +3,15 @@
 use itertools::Itertools;
 use log::{debug, trace};
 
-use crate::disasm::v3::lir::{BinaryOperator, Expression};
+use crate::disasm::v3::lir::{instruction, BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
-use crate::disasm::v3::type_inference::TypeInferenceResult;
+use crate::disasm::v3::type_inference::types::TypeVarNode;
+use crate::disasm::v3::type_inference::{TypeInferenceResult, TypeVarPath};
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
@@ -31,6 +33,7 @@ pub struct Solver {
     model: Model<FoldedSsaComplete>,
     state: InferenceAlgorithmState,
     store: ConstraintStore,
+    function_types: HashMap<FunctionId, (Type, Type)>,
 }
 
 impl Solver {
@@ -44,6 +47,7 @@ impl Solver {
             model,
             state: InferenceAlgorithmState::new(),
             store: ConstraintStore::new(),
+            function_types: HashMap::new(),
         }
     }
 
@@ -78,6 +82,7 @@ impl Solver {
         let generator_result = generate_constraints(&self.model);
         self.store = generator_result.store;
         self.state = generator_result.state;
+        self.function_types = generator_result.function_types;
         let markers = generator_result.markers;
 
         //
@@ -98,11 +103,7 @@ impl Solver {
             let mut changed = false;
 
             while let Some((constraint_id, constraint)) = worklist.pop_front() {
-                changed |= self.apply_constraint(
-                    &constraint_id,
-                    &constraint,
-                    &generator_result.function_types,
-                );
+                changed |= self.apply_constraint(&constraint_id, &constraint);
             }
 
             let e = self
@@ -114,13 +115,13 @@ impl Solver {
                 changed |= self.try_classify_add_expression(&unclassified);
             }
 
+            /*
             let ts = self
                 .state
                 .iter_all_type_states()
                 .map(|(x, y)| (*x, y.clone()))
                 .collect_vec();
 
-            /*
             for (t, ts) in ts {
                 if let TypeVarState::Bounds { .. } = ts {
                     // FIXME: create dummy instruction id for constaint uniqueness around the typevar.
@@ -191,12 +192,7 @@ impl Solver {
         Ok(result_model)
     }
 
-    fn apply_constraint(
-        &mut self,
-        constraint_id: &ConstraintId,
-        constraint: &Constraint,
-        function_types: &HashMap<FunctionId, (Type, Type)>,
-    ) -> bool {
+    fn apply_constraint(&mut self, constraint_id: &ConstraintId, constraint: &Constraint) -> bool {
         let mut changed = false;
         let sub_type = self.state.resolve_type(&constraint.sub_type);
         let super_type = self.state.resolve_type(&constraint.super_type);
@@ -298,14 +294,6 @@ impl Solver {
                 );
                 changed |= ch1 || ch2;
             }
-            (Type::TypeVar(tv_id), Type::Function { .. }) => {
-                changed |= self.derive_when_subtype_of_function(
-                    tv_id,
-                    function_types,
-                    constraint_id,
-                    constraint,
-                );
-            }
             _ => {}
         }
         changed
@@ -314,9 +302,8 @@ impl Solver {
     fn derive_when_subtype_of_function(
         &mut self,
         tv_id: &TypeVarId,
-        function_types: &HashMap<FunctionId, (Type, Type)>,
-        constraint_id: &ConstraintId,
-        constraint: &Constraint,
+        function_id: &FunctionId,
+        instruction_id: &InstructionId,
     ) -> bool {
         let Some(Expression::Constant(addr)) = self
             .state
@@ -330,19 +317,17 @@ impl Solver {
         let mut changed = false;
 
         if let Some((callee_arg_type, callee_ret_type)) =
-            function_types.get(&FunctionId::new(*addr as usize))
+            self.function_types.get(&FunctionId::new(*addr as usize))
         {
             let func_type = Type::function(callee_arg_type.clone(), callee_ret_type.clone());
-            changed |= self.store.add_derived_equality_constraint(
+            changed |= self.store.add_original_equality_constraint(
                 Constraint {
                     sub_type: func_type,
                     super_type: tv_id.to_type(),
-                    origin_function_id: constraint.origin_function_id,
-                    origin_instruction_id: constraint.origin_instruction_id,
+                    origin_function_id: *function_id,
+                    origin_instruction_id: *instruction_id,
                     reason: ConstraintReason::ConstIsFunctionPointer,
                 },
-                *constraint_id,
-                BoundChangeReason::Constraint(*constraint_id),
                 &self.state,
             )
         }
@@ -582,7 +567,8 @@ impl Solver {
                     } else if let Some(item) =
                         intersection.iter().filter(|t| !t.is_concrete_type()).next()
                     {
-                        // The case of exactly one concrete convergence is handle above. We don't want to pocess here cases of two or more concrete convergences.
+                        // The case of exactly one concrete convergence is handle above. We don't want to pocess here cases of two or more concrete convergences -
+                        // since it is potentially a generic type or a conflict.
                         conv.insert(*tv_id, (*item).clone());
                     }
                 }
@@ -607,8 +593,21 @@ impl Solver {
             return true;
         }
 
-        let vars = self.state.iter_all_type_states().collect_vec();
-        for (&tv_id, state) in vars {
+        let vars = self
+            .state
+            .iter_all_type_states()
+            .map(|(id, state)| (*id, state.clone()))
+            .collect_vec();
+        changed |= self.refine_bounded_functions(&vars);
+        if changed {
+            return true;
+        }
+        changed |= self.refine_bounded_tuples(&vars);
+        if changed {
+            return true;
+        }
+
+        for (tv_id, state) in vars {
             if let TypeVarState::Bounds {
                 lower_bounds,
                 upper_bounds,
@@ -743,6 +742,128 @@ impl Solver {
             }
         }
         */
+        false
+    }
+
+    fn refine_bounded_functions(&mut self, vars: &Vec<(TypeVarId, TypeVarState)>) -> bool {
+        for (tv_id, state) in vars {
+            if state.is_converged() {
+                continue;
+            }
+            let upper_function_bounds: HashSet<&Type> = self
+                .state
+                .upper_bounds(tv_id)
+                .iter()
+                .filter(|t| t.is_function())
+                .cloned()
+                .collect();
+            if upper_function_bounds.is_empty() {
+                continue;
+            }
+            let lower_function_bounds: HashSet<&Type> = self
+                .state
+                .lower_bounds(&tv_id)
+                .iter()
+                .filter(|t| t.is_function())
+                .cloned()
+                .collect();
+            let intersection = lower_function_bounds.intersection(&upper_function_bounds);
+            // Sanity check: if there was an intersectin, the type should have converged in an earlier stage.
+            assert!(intersection.count() == 0);
+            let instruction_id = self
+                .state
+                .get_type_var_node(tv_id)
+                .unwrap()
+                .path
+                .instruction_id()
+                .unwrap_or(InstructionId::new(0));
+            let function_id = self
+                .state
+                .get_type_var_node(tv_id)
+                .unwrap()
+                .path
+                .function_id();
+            let args = self.state.add_type_var(TypeVarNode {
+                path: TypeVarPath::FunctionArgsRefinement {
+                    function_id,
+                    original_type_var_id: *tv_id,
+                },
+                vmr: None,
+            });
+
+            let rets = self.state.add_type_var(TypeVarNode {
+                path: TypeVarPath::FunctionRetsRefinement {
+                    function_id,
+                    original_type_var_id: *tv_id,
+                },
+                vmr: None,
+            });
+            let func_type = Type::function(args.to_type(), rets.to_type());
+            self.state
+                .converge(tv_id, func_type, ConverganceType::ReplacedWithFunctionType);
+            self.derive_when_subtype_of_function(tv_id, &function_id, &instruction_id);
+            return true;
+        }
+        false
+    }
+
+    fn refine_bounded_tuples(&mut self, vars: &Vec<(TypeVarId, TypeVarState)>) -> bool {
+        for (tv_id, state) in vars {
+            if state.is_converged() {
+                continue;
+            }
+            let upper_tuple_bounds: HashSet<&Type> = self
+                .state
+                .upper_bounds(tv_id)
+                .iter()
+                .filter(|t| t.is_tuple())
+                .cloned()
+                .collect();
+            if upper_tuple_bounds.is_empty() {
+                continue;
+            }
+            let lower_function_bounds: HashSet<&Type> = self
+                .state
+                .lower_bounds(&tv_id)
+                .iter()
+                .filter(|t| t.is_tuple())
+                .cloned()
+                .collect();
+            let intersection = lower_function_bounds.intersection(&upper_tuple_bounds);
+            // Sanity check: if there was an intersectin, the type should have converged in an earlier stage.
+            assert!(intersection.count() == 0);
+            let min_arity = upper_tuple_bounds
+                .iter()
+                .map(|t| t.tuple_arity())
+                .flatten()
+                .max();
+            let function_id = self
+                .state
+                .get_type_var_node(tv_id)
+                .unwrap()
+                .path
+                .function_id();
+            let new_tuple = Type::tuple(
+                &(0..min_arity.unwrap_or(0))
+                    .map(|index| {
+                        self.state
+                            .add_type_var(TypeVarNode {
+                                path: TypeVarPath::TupleRefinement {
+                                    function_id,
+                                    original_type_var_id: *tv_id,
+                                    index,
+                                },
+                                vmr: None,
+                            })
+                            .to_type()
+                    })
+                    .collect_vec(),
+            );
+            self.state
+                .converge(tv_id, new_tuple, ConverganceType::ReplacedWithTuple);
+
+            return true;
+        }
         false
     }
 }

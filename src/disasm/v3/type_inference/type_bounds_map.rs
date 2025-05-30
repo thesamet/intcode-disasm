@@ -11,12 +11,15 @@ use petgraph::{
     Direction,
 };
 
+use crate::disasm::v3::{ssa::VersionedMemoryReference, FunctionId, InstructionId};
+
 // Import necessary types from your existing types.rs file.
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
 // and types.rs exposes these publicly or they are accessible via `crate::...`
 use super::{
     constraints::ConstraintId,
     types::{Type, TypeVarId, TypeVarNode},
+    TypeVarPath,
 }; // Use `super::` if types.rs is in the parent directory (type_inference)
    // TypeVarKind is imported separately in the tests module if needed.
 
@@ -185,6 +188,10 @@ pub struct InferenceAlgorithmState {
     /// Stores the state for each TypeVarId.
     type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
     type_var_states: HashMap<TypeVarId, TypeVarState>,
+    // Maps a VersionedMemoryReference to a TypeVarId.
+    // This ensures that each unique versioned memory reference gets one TypeVar.
+    vmr_to_type_var: HashMap<VersionedMemoryReference, TypeVarId>,
+
     dependents: HashMap<TypeVarId, HashSet<TypeVarId>>,
 
     /// Tracks TypeVarIds whose bounds have changed since the last `take_updated_vars` call.
@@ -192,6 +199,7 @@ pub struct InferenceAlgorithmState {
     pub change_log: Vec<ChangeLogEntry>,
 
     iteration: usize,
+    next_type_var_id_counter: usize,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -206,6 +214,8 @@ pub enum ConverganceType {
     ConvergeToLUB,
     ConvergeToGLB,
     NonConcreteConvergence,
+    ReplacedWithFunctionType,
+    ReplacedWithTuple,
 }
 
 impl fmt::Display for ConverganceType {
@@ -215,6 +225,8 @@ impl fmt::Display for ConverganceType {
             ConverganceType::ConvergeToLUB => write!(f, "ConvergeToLUB"),
             ConverganceType::ConvergeToGLB => write!(f, "ConvergeToGLB"),
             ConverganceType::NonConcreteConvergence => write!(f, "NonConcreteConvergence"),
+            ConverganceType::ReplacedWithFunctionType => write!(f, "ReplacedWithFunctionType"),
+            ConverganceType::ReplacedWithTuple => write!(f, "ReplacedWithTuple"),
         }
     }
 }
@@ -488,7 +500,10 @@ impl InferenceAlgorithmState {
             dependents: HashMap::new(),
             updated_type_vars: HashSet::new(),
             change_log: Vec::new(),
+            next_type_var_id_counter: 0,
+
             iteration: 0,
+            vmr_to_type_var: HashMap::new(),
         }
     }
 
@@ -518,9 +533,63 @@ impl InferenceAlgorithmState {
     /// Initializes with bounds Type::Nothing and Type::Any.
     /// If the TypeVarId already exists, this function will not overwrite it or error.
     /// Modify if different behavior (e.g., update node_info, error) is desired for existing keys.
-    pub fn add_type_var(&mut self, tv_id: TypeVarId, node_info: TypeVarNode) {
+    pub fn add_type_var(&mut self, node_info: TypeVarNode) -> TypeVarId {
+        let tv_id = self.fresh_type_var_id();
         trace!("Adding variable {}: {}", tv_id, node_info);
         self.ensure_type_var_exists(tv_id, || node_info);
+        tv_id
+    }
+
+    fn fresh_type_var_id(&mut self) -> TypeVarId {
+        let id = self.next_type_var_id_counter;
+        self.next_type_var_id_counter += 1;
+        TypeVarId::new(id)
+    }
+
+    /// Gets or creates a TypeVar for a VersionedMemoryReference within a specific function.
+    pub fn get_or_create_type_var_for_vmr(
+        &mut self,
+        vmr: &VersionedMemoryReference,
+        path: TypeVarPath,
+    ) -> TypeVarId {
+        if let Some(tv_id) = self.vmr_to_type_var.get(vmr) {
+            return *tv_id;
+        }
+
+        // When creating a TypeVar for a VMR, its kind is MemoryReference.
+        // We wrap the VMR in SsaMemoryReference::Versioned for the TypeVarKind.
+        let new_tv_id = self.create_memory_reference_type_var(path, *vmr);
+        self.vmr_to_type_var.insert(*vmr, new_tv_id);
+        new_tv_id
+    }
+
+    /// Creates a new TypeVar for an expression result or intermediate value.
+    pub fn make_expression_type_var(&mut self, type_var_path: TypeVarPath) -> TypeVarId {
+        let node_info = TypeVarNode {
+            path: type_var_path,
+            vmr: None,
+        };
+        self.add_type_var(node_info)
+    }
+
+    pub fn make_const_type_var(&mut self, type_var_path: TypeVarPath) -> TypeVarId {
+        let node_info = TypeVarNode {
+            path: type_var_path,
+            vmr: None,
+        };
+        self.add_type_var(node_info)
+    }
+
+    fn create_memory_reference_type_var(
+        &mut self,
+        type_var_path: TypeVarPath,
+        vmr: VersionedMemoryReference,
+    ) -> TypeVarId {
+        let node_info = TypeVarNode {
+            path: type_var_path,
+            vmr: Some(vmr),
+        };
+        self.add_type_var(node_info)
     }
 
     /// Updates the lower bound for a given TypeVarId.
@@ -645,6 +714,12 @@ impl InferenceAlgorithmState {
 
     pub fn iter_all_type_states(&self) -> impl Iterator<Item = (&TypeVarId, &TypeVarState)> {
         self.type_var_states.iter()
+    }
+
+    pub fn iter_all_vmr_to_type_var_id(
+        &self,
+    ) -> impl Iterator<Item = (&VersionedMemoryReference, &TypeVarId)> {
+        self.vmr_to_type_var.iter()
     }
 
     /// Returns a `Vec` of `TypeVarId`s whose bounds have been updated since the last
@@ -783,26 +858,18 @@ mod tests {
     fn test_bound_updates_and_tracking() {
         init_logging();
         let mut state = InferenceAlgorithmState::new();
-        let tv1_id: TypeVarId = TypeVarId::new(1);
-        let tv2_id: TypeVarId = TypeVarId::new(2);
 
-        state.add_type_var(
-            tv1_id,
-            make_node(
-                TypeVarKind::Expression(build_expr!(1)),
-                InstructionId::new(1),
-                FunctionId::new(0),
-            ),
-        );
+        let tv1_id = state.add_type_var(make_node(
+            TypeVarKind::Expression(build_expr!(1)),
+            InstructionId::new(1),
+            FunctionId::new(0),
+        ));
 
-        state.add_type_var(
-            tv2_id,
-            make_node(
-                TypeVarKind::Expression(build_expr!(2)),
-                InstructionId::new(2),
-                FunctionId::new(0),
-            ),
-        );
+        let tv2_id = state.add_type_var(make_node(
+            TypeVarKind::Expression(build_expr!(2)),
+            InstructionId::new(2),
+            FunctionId::new(0),
+        ));
 
         // Initial updates
         assert!(state.update_lower_bound(&tv1_id, &Type::Int, BoundChangeReason::Test));

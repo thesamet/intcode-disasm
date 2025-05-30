@@ -187,6 +187,19 @@ fn format_path<'a>(
         TypeVarPath::PhiAssignmentArg { index, .. } => {
             format!("PhiAssignmentArg: {}", index)
         }
+        TypeVarPath::FunctionArgsRefinement {
+            original_type_var_id,
+            ..
+        } => format!("FunctionArgsRefinement for {}", original_type_var_id),
+        TypeVarPath::FunctionRetsRefinement {
+            original_type_var_id,
+            ..
+        } => format!("FunctionRetsRefinement for {}", original_type_var_id),
+        TypeVarPath::TupleRefinement {
+            index,
+            original_type_var_id,
+            ..
+        } => format!("TupleRefinement[{}] for {}", index, original_type_var_id),
     };
     (role, expr)
 }

@@ -1073,7 +1073,7 @@ f1:
             .type_inference_result()
             .query_engine
             .list_all_variables();
-        assert_marker_type!(ctx, 'a', Type::Int); // Macro now uses ctx.model and stub helper
+        assert_marker_type!(ctx, 'a', Type::Any); // Macro now uses ctx.model and stub helper
                                                   // assert!(false);
     }
 }

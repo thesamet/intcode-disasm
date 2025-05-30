@@ -1,7 +1,7 @@
 use crate::disasm::v3::{
     define_id_type,
     lir::{Expression, Instruction, InstructionNode},
-    model::{HasFoldedSsaResult, HasTypeInferenceResult, Model, ModelState},
+    model::{HasFoldedSsaResult, Model, ModelState},
     ssa::{SsaMemoryReference, VersionedMemoryReference},
     FunctionId, InstructionId,
 };
@@ -647,6 +647,21 @@ impl Type {
     pub fn is_numeric_literal(&self) -> bool {
         matches!(self, Self::NumericLiteral)
     }
+
+    /// Returns `true` if the type is [`Tuple`].
+    ///
+    /// [`Tuple`]: Type::Tuple
+    #[must_use]
+    pub fn is_tuple(&self) -> bool {
+        matches!(self, Self::Tuple(..))
+    }
+
+    pub fn tuple_arity(&self) -> Option<usize> {
+        match self {
+            Type::Tuple(elements) => Some(elements.len()),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -899,6 +914,23 @@ pub enum TypeVarPath {
         instruction_id: InstructionId,
         index: usize,
     },
+
+    // When we discover that a type var has a function type as an upper bound, we converge it to a function type.
+    // with args and returns typles. The path of these new type vars is FunctionsArgsRefinement and FunctionsRetsRefinement.
+    FunctionArgsRefinement {
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+    },
+    FunctionRetsRefinement {
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+    },
+    /// When we are inferring a type has a tuple as an upper bound, it means it is also a tuple with arity as least as the upper bound.
+    TupleRefinement {
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+        index: usize,
+    },
 }
 
 impl TypeVarPath {
@@ -919,7 +951,10 @@ impl TypeVarPath {
             | TypeVarPath::CallRet { function_id, .. }
             | TypeVarPath::CallRetTuple { function_id, .. }
             | TypeVarPath::PhiAssignment { function_id, .. }
-            | TypeVarPath::PhiAssignmentArg { function_id, .. } => *function_id,
+            | TypeVarPath::PhiAssignmentArg { function_id, .. }
+            | TypeVarPath::FunctionArgsRefinement { function_id, .. }
+            | TypeVarPath::FunctionRetsRefinement { function_id, .. }
+            | TypeVarPath::TupleRefinement { function_id, .. } => *function_id,
         }
     }
 
@@ -940,7 +975,10 @@ impl TypeVarPath {
             TypeVarPath::FunctionDefArg { .. }
             | TypeVarPath::FunctionDefArgTuple { .. }
             | TypeVarPath::FunctionDefRet { .. }
-            | TypeVarPath::FunctionDefRetTuple { .. } => None,
+            | TypeVarPath::FunctionDefRetTuple { .. }
+            | TypeVarPath::FunctionArgsRefinement { .. }
+            | TypeVarPath::FunctionRetsRefinement { .. }
+            | TypeVarPath::TupleRefinement { .. } => None,
         }
     }
 
@@ -955,7 +993,10 @@ impl TypeVarPath {
             | TypeVarPath::CallRet { .. }
             | TypeVarPath::PhiAssignment { .. }
             | TypeVarPath::PhiAssignmentArg { .. }
-            | TypeVarPath::CallRetTuple { .. } => None,
+            | TypeVarPath::CallRetTuple { .. }
+            | TypeVarPath::FunctionArgsRefinement { .. }
+            | TypeVarPath::FunctionRetsRefinement { .. }
+            | TypeVarPath::TupleRefinement { .. } => None,
             TypeVarPath::AssignmentSrc {
                 expression_path, ..
             }
