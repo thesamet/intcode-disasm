@@ -7,16 +7,16 @@ use crate::disasm::v3::lir::{BinaryOperator, Expression};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::types::TypeVarNode;
-use crate::disasm::v3::type_inference::{TypeInferenceResult, TypeVarPath};
+use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
 use crate::disasm::Error; // Assuming a general error type for the project
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
 use super::query_engine::TypeInferenceQueryEngine;
 use super::type_bounds_map::{BoundChangeReason, TypeVarRegistry};
-use super::types::TypeVarId;
+use super::types::{TypeVarId, TypeVarPath};
 use super::{
     generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
     Type, TypeVarState,
@@ -350,6 +350,19 @@ impl CompoundTypeRefiner {
     }
 }
 
+/// Represents a detected opportunity for generic type introduction
+#[derive(Debug, Clone)]
+struct GenericOpportunity {
+    /// The refinement type variable that could become generic
+    refinement_tv_id: TypeVarId,
+    /// The concrete types that appear in the upper bounds
+    concrete_types: Vec<Type>,
+    /// The path of the refinement (e.g., PointerRefinement, TupleRefinement)
+    refinement_path: TypeVarPath,
+    /// Functions that contribute to this pattern
+    source_functions: Vec<FunctionId>,
+}
+
 /// Solver for type inference.
 ///
 /// The solver takes a model with folded SSA results and attempts to infer types
@@ -450,6 +463,18 @@ impl Solver {
 
             if !changed {
                 break;
+            }
+        }
+
+        // Phase 2: Detect generic patterns after main solving loop
+        let generic_opportunities = self.detect_generic_patterns();
+        if !generic_opportunities.is_empty() {
+            debug!(
+                "Detected {} generic pattern opportunities",
+                generic_opportunities.len()
+            );
+            for opportunity in &generic_opportunities {
+                debug!("Generic opportunity: {:?}", opportunity);
             }
         }
 
@@ -940,5 +965,122 @@ impl Solver {
             }
         }
         false
+    }
+
+    /// Detects patterns in refinement type variables that could benefit from generics
+    fn detect_generic_patterns(&self) -> Vec<GenericOpportunity> {
+        let mut opportunities = Vec::new();
+
+        for (tv_id, state) in self.state.iter_all_type_states() {
+            if let TypeVarState::Bounds {
+                upper_bounds,
+                lower_bounds: _,
+            } = state
+            {
+                // Look for patterns like ty59: upper bounds {Char, Truthy, Int}
+                // Include all types that could represent different concrete types
+                let potential_generic_types: Vec<_> = upper_bounds
+                    .iter()
+                    .filter(|t| self.is_potential_generic_type(t))
+                    .cloned()
+                    .collect();
+
+                // We need at least 2 different types to consider it generic
+                if potential_generic_types.len() >= 2 {
+                    // Check if this is a refinement type variable
+                    if let Some(node) = self.state.get_type_var_node(tv_id) {
+                        if self.is_refinement_path(&node.path) {
+                            // Find which functions contribute to this pattern
+                            let source_functions = self.find_source_functions(*tv_id);
+
+                            opportunities.push(GenericOpportunity {
+                                refinement_tv_id: *tv_id,
+                                concrete_types: potential_generic_types,
+                                refinement_path: node.path.clone(),
+                                source_functions,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        opportunities
+    }
+
+    /// Checks if a TypeVarPath represents a refinement that could be made generic
+    fn is_refinement_path(&self, path: &TypeVarPath) -> bool {
+        matches!(
+            path,
+            TypeVarPath::PointerRefinement { .. }
+                | TypeVarPath::TupleRefinement { .. }
+                | TypeVarPath::FunctionArgsRefinement { .. }
+                | TypeVarPath::FunctionRetsRefinement { .. }
+        )
+    }
+
+    /// Determines if a type could represent different concrete types and thus be part of a generic pattern
+    fn is_potential_generic_type(&self, ty: &Type) -> bool {
+        match ty {
+            // Concrete types that could vary
+            Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
+            
+            // Any might represent unconverged types
+            Type::Any => true,
+            
+            // Type variables could resolve to different types
+            Type::TypeVar(_) => true,
+            
+            // Recursively check compound types
+            Type::Pointer(inner) => self.is_potential_generic_type(inner),
+            Type::Function { params, returns } => {
+                self.is_potential_generic_type(params) || self.is_potential_generic_type(returns)
+            }
+            Type::Tuple(elements) => elements.iter().any(|e| self.is_potential_generic_type(e)),
+            
+            // These are not considered generic
+            Type::NumericLiteral | Type::Nothing | Type::Generic(_) => false,
+        }
+    }
+    
+    /// Traces back through constraints to find all functions that contribute to a type variable
+    fn find_source_functions(&self, tv_id: TypeVarId) -> Vec<FunctionId> {
+        let mut source_functions = HashSet::new();
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(tv_id);
+
+        while let Some(current_tv_id) = queue.pop_front() {
+            if !visited.insert(current_tv_id) {
+                continue;
+            }
+
+            // Look through all constraints that involve this type variable
+            for (_, constraint) in self.store.iter() {
+                let involves_tv = match (&constraint.sub_type, &constraint.super_type) {
+                    (Type::TypeVar(id), _) if *id == current_tv_id => true,
+                    (_, Type::TypeVar(id)) if *id == current_tv_id => true,
+                    _ => false,
+                };
+
+                if involves_tv {
+                    source_functions.insert(constraint.origin_function_id);
+
+                    // Add related type variables to the queue
+                    if let Type::TypeVar(related_id) = &constraint.sub_type {
+                        if *related_id != current_tv_id {
+                            queue.push_back(*related_id);
+                        }
+                    }
+                    if let Type::TypeVar(related_id) = &constraint.super_type {
+                        if *related_id != current_tv_id {
+                            queue.push_back(*related_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        source_functions.into_iter().collect()
     }
 }
