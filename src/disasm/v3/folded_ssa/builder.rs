@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use super::result::{FoldedSsaBlock, FoldedSsaResult};
 use crate::disasm::v3::common::fixed_point_mut;
-use crate::disasm::v3::control_flow::FunctionView;
+use crate::disasm::v3::cfg::FunctionView;
 use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNode is needed for transformation logic
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::ssa::types::SsaMemoryReference;

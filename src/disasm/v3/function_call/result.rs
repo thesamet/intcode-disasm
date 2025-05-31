@@ -82,7 +82,7 @@ add_block_view_when!(FunctionCallAnalysis, call_site_info, CallSiteInfo);
 macro_rules! add_function_view_when {
      ($result_type:ident, $result_var:ident, $info_type:ty) => {
          paste::paste! {
-             impl<'a, S: crate::disasm::v3::model::ModelState> crate::disasm::v3::control_flow::FunctionView<'a, S>
+             impl<'a, S: crate::disasm::v3::model::ModelState> crate::disasm::v3::cfg::FunctionView<'a, S>
              where
                  S: crate::disasm::v3::model::[<Has $result_type Result>],
              {

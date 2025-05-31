@@ -15,7 +15,7 @@ use crate::disasm::v3::{
 };
 
 use super::v3::{
-    control_flow::FunctionView,
+    cfg::FunctionView,
     lir::Expression,
     model::{Model, TypeInferenceComplete},
     ssa::SsaMemoryReference,

@@ -1,4 +1,4 @@
-use crate::disasm::v3::control_flow::ControlFlowGraphResult;
+use crate::disasm::v3::cfg::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
 use crate::disasm::v3::folded_ssa::FoldedSsaResult; // Import FoldedSsaBlock if directly used, for now FoldedSsaResult is enough
 use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
@@ -65,7 +65,7 @@ macro_rules! add_block_view_when {
     };
     ($result_type:ident, $result_var:ident, $block_type:ty) => {
         paste::paste! {
-            impl<'a, S: crate::disasm::v3::model::ModelState> crate::disasm::v3::control_flow::BlockView<'a, S>
+            impl<'a, S: crate::disasm::v3::model::ModelState> crate::disasm::v3::cfg::BlockView<'a, S>
             where
                 S: crate::disasm::v3::model::[<Has $result_type Result>],
             {
@@ -90,7 +90,7 @@ macro_rules! add_block_view_when {
 pub(crate) use add_block_view_when;
 
 use super::variable_analyzer::VariableMergerResult;
-use super::{control_flow::BlockView, FunctionId};
+use super::{cfg::BlockView, FunctionId};
 
 impl<S: ModelState> Model<S>
 where

@@ -31,7 +31,7 @@ use petgraph::visit::IntoNeighbors;
 use std::convert::From;
 
 use crate::disasm;
-use crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns;
+use crate::disasm::v3::cfg::PredecessorKind::FunctionCallReturns;
 use crate::disasm::v3::data_flow::OriginationPoint;
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
@@ -39,7 +39,7 @@ use crate::disasm::{
     v2::model::{BlockId, FunctionId},
     v3::{
         self,
-        control_flow::FunctionView,
+        cfg::FunctionView,
         lir::{Expression, MemoryReference, MemoryReferenceInfo},
     },
 };
@@ -66,7 +66,7 @@ pub struct PhiFunction {
     /// The key is the v3 PredecessorKind corresponding to the incoming edge, but with SsaMemoryReference.
     /// The value is the VersionedMemoryReference representing the value coming from that source.
     pub inputs: HashMap<
-        disasm::v3::control_flow::PredecessorKind<SsaMemoryReference>,
+        disasm::v3::cfg::PredecessorKind<SsaMemoryReference>,
         VersionedMemoryReference,
     >,
 }
@@ -371,7 +371,7 @@ impl<'a> SSAConversionState<'a> {
                 && !predecessors.iter().any(|pred| {
                     matches!(
                         pred,
-                        crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_)
+                        crate::disasm::v3::cfg::PredecessorKind::FunctionCallReturns(_)
                     )
                 })
             // Use v3 type
@@ -533,7 +533,7 @@ impl<'a> SSAConversionState<'a> {
                 start_state,
                 end_state,
                 // Initialize next/predecessors, will be populated in populate_reads_and_phis
-                next: disasm::v3::control_flow::NextKind::Unknown,
+                next: disasm::v3::cfg::NextKind::Unknown,
                 predecessors: vec![],
             };
 
@@ -657,7 +657,7 @@ impl<'a> SSAConversionState<'a> {
                     // Special handling for return values from function calls
                     if matches!(
                         pred,
-                        crate::disasm::v3::control_flow::PredecessorKind::FunctionCallReturns(_)
+                        crate::disasm::v3::cfg::PredecessorKind::FunctionCallReturns(_)
                     ) && (&phi.result.kind)
                         .as_stack_relative()
                         .is_some_and(|x| x > 0)
@@ -729,21 +729,21 @@ impl<'a> SSAConversionState<'a> {
 
             // Update predecessors of successor blocks using the v3 NextKind (ssa_block_next)
             match &ssa_block_next {
-                disasm::v3::control_flow::NextKind::Follows(target_id) => {
+                disasm::v3::cfg::NextKind::Follows(target_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_id) {
                         successor_block.predecessors.push(
-                            disasm::v3::control_flow::PredecessorKind::FollowsFrom(block_id),
+                            disasm::v3::cfg::PredecessorKind::FollowsFrom(block_id),
                         ); // Use block_id directly
                     }
                 }
-                disasm::v3::control_flow::NextKind::Goto(target_block_id) => {
+                disasm::v3::cfg::NextKind::Goto(target_block_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_block_id) {
                         successor_block.predecessors.push(
-                            disasm::v3::control_flow::PredecessorKind::GotoFrom(block_id),
+                            disasm::v3::cfg::PredecessorKind::GotoFrom(block_id),
                         ); // Use block_id directly
                     }
                 }
-                disasm::v3::control_flow::NextKind::FunctionCall(call) => {
+                disasm::v3::cfg::NextKind::FunctionCall(call) => {
                     // 'call' is already v3::FunctionCall<SsaMemoryReference>
                     if let Some(successor_block) = ssa_blocks.get_mut(&call.return_block) {
                         successor_block
@@ -751,26 +751,26 @@ impl<'a> SSAConversionState<'a> {
                             .push(FunctionCallReturns(call.clone()));
                     }
                 }
-                disasm::v3::control_flow::NextKind::Condition(cond) => {
+                disasm::v3::cfg::NextKind::Condition(cond) => {
                     // 'cond' is already v3::Condition<SsaMemoryReference>
                     if let Some(target_block) = ssa_blocks.get_mut(&cond.target_block) {
                         target_block.predecessors.push(
-                            disasm::v3::control_flow::PredecessorKind::ConditionalJump(
+                            disasm::v3::cfg::PredecessorKind::ConditionalJump(
                                 cond.clone(),
                             ),
                         );
                     }
                     if let Some(follows_block) = ssa_blocks.get_mut(&cond.follows_block) {
                         follows_block.predecessors.push(
-                            disasm::v3::control_flow::PredecessorKind::ConditionalFollow(
+                            disasm::v3::cfg::PredecessorKind::ConditionalFollow(
                                 cond.clone(),
                             ),
                         );
                     }
                 }
-                disasm::v3::control_flow::NextKind::Return
-                | disasm::v3::control_flow::NextKind::Halt
-                | disasm::v3::control_flow::NextKind::Unknown => { /* No successors */ }
+                disasm::v3::cfg::NextKind::Return
+                | disasm::v3::cfg::NextKind::Halt
+                | disasm::v3::cfg::NextKind::Unknown => { /* No successors */ }
             }
             // Store the final v3 NextKind in the block
             let ssa_block = ssa_blocks.get_mut(&block_id).unwrap(); // Need mutable borrow later

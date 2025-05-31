@@ -4,7 +4,7 @@ use itertools::Itertools;
 use log::trace;
 
 use crate::disasm;
-use crate::disasm::v3::control_flow::BlockView;
+use crate::disasm::v3::cfg::BlockView;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;

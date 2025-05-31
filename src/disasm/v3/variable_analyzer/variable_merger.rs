@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::disasm::{
     v3::{
-        control_flow::FunctionView,
+        cfg::FunctionView,
         define_id_type,
         lir::{Instruction, MemoryReferenceInfo},
         model::{Model, TypeInferenceComplete, VariableMergerComplete},

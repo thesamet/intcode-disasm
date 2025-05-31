@@ -4,7 +4,7 @@ use super::{
     parser,
     v3::{
         analysis,
-        control_flow::FunctionView,
+        cfg::FunctionView,
         model::{
             ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
             FunctionCallAnalysisComplete, HasControlFlowGraphResult, ImageScannerComplete, Model,

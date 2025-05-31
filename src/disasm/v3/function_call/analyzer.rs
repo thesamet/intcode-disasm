@@ -5,7 +5,7 @@ use log::info;
 
 use crate::disasm::{
     v3::{
-        control_flow::FunctionView,
+        cfg::FunctionView,
         data_flow::OriginationPoint,
         function_call::result::{CallSiteInfo, CalleeInfo},
         lir::{memory_reference::MemoryReferenceInfo, Expression, MemoryReference, ReadAddressExtractor},

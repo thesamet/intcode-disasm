@@ -5,7 +5,7 @@ mod tests {
         parser,
         test_utils::{init_logging, TestContextBuilder},
         v3::{
-            control_flow::ControlFlowGraphBuilder, // v3 CFG Builder
+            cfg::ControlFlowGraphBuilder, // v3 CFG Builder
             data_flow::{analyzer::DataFlowAnalyzer, block::OriginationPoint, DataFlowBlock},
             id_types::{BlockId, PointerId},     // v3 IDs
             image_scanner::ImageScanner,        // v3 Image Scanner

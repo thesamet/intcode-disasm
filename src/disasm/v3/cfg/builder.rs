@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 // Use v3 types consistently
 use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types
-use crate::disasm::v3::control_flow::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
+use crate::disasm::v3::cfg::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
 use crate::disasm::v3::lir::{
     Instruction,
     InstructionNode,

@@ -2,7 +2,7 @@ use super::converter::MarkerSearchResult;
 use super::*;
 use crate::disasm::test_utils::TestContextBuilder;
 use crate::disasm::v2::instructions::{BinaryOperator, Instruction};
-use crate::disasm::v3::control_flow::FunctionView;
+use crate::disasm::v3::cfg::FunctionView;
 // Import v3 analyzers and model states for test setup
 use crate::disasm::v3::lir::Expression;
 use crate::disasm::v3::model::SsaComplete;

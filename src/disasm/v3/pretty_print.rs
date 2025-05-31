@@ -13,7 +13,7 @@ use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::type_inference::TypeVarId;
 use crate::disasm::v3::{
     common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
-    control_flow::{BlockView, FunctionView},
+    cfg::{BlockView, FunctionView},
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
     },

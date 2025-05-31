@@ -1,7 +1,7 @@
 use crate::disasm::Error;
 
 use super::{
-    control_flow::ControlFlowGraphBuilder,
+    cfg::ControlFlowGraphBuilder,
     data_flow::DataFlowAnalyzer,
     folded_ssa::FoldedSsaBuilder,
     function_call::FunctionCallAnalyzer,

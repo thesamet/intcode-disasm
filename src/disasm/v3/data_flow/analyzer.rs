@@ -3,7 +3,7 @@ use log::debug;
 use std::collections::{HashMap, HashSet};
 
 use crate::disasm::v3::common::FunctionCall; // Keep FunctionCall from common
-use crate::disasm::v3::control_flow::{BlockView, FunctionView, NextKind};
+use crate::disasm::v3::cfg::{BlockView, FunctionView, NextKind};
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo}; // Use LIR types
 use crate::disasm::v3::model::{ControlFlowGraphComplete, DataFlowComplete, Model};
