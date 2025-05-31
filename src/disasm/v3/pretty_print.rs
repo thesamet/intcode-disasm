@@ -295,13 +295,11 @@ fn format_signature<S: ModelState + 'static>(
             .join(&", ".color(ctx.colors().unwrap().low_prio).to_string());
         let rets = model
             .function_call_analysis_result()
-            .functions
-            .get(&function.function_id())
-            .unwrap()
-            .return_writes
-            .values()
-            .sorted_by_key(|v| v.as_stack_relative().unwrap())
-            .map(|v| {
+            .get_effective_return_values(function.function_id())
+            .unwrap_or_default()
+            .iter()
+            .sorted_by_key(|(v, _)| v)
+            .map(|(_, v)| {
                 (
                     v,
                     res.get_type_for((*v).into()),

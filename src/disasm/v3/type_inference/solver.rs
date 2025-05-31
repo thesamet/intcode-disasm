@@ -1009,22 +1009,53 @@ impl Solver {
                     .cloned()
                     .collect();
 
-                // Check if this is a refinement type variable
+                // Check if this is a refinement type variable OR has generic bounds
                 if let Some(node) = self.state.get_type_var_node(tv_id) {
+                    let has_generic = upper_bounds.iter().any(|t| matches!(t, Type::Generic(_)));
+                    let generic_count = upper_bounds.iter().filter(|t| matches!(t, Type::Generic(_))).count();
+                    
                     if self.is_refinement_path(&node.path) {
-                        // Two cases to consider:
-                        // 1. Multiple concrete types or unconverged types (original logic)
-                        // 2. Contains a single generic type (should become a new generic with that as upper bound)
-                        
-                        let has_generic = upper_bounds.iter().any(|t| matches!(t, Type::Generic(_)));
-                        let generic_count = upper_bounds.iter().filter(|t| matches!(t, Type::Generic(_))).count();
-                        
+                        // Original logic for refinement paths
                         if potential_generic_types.len() >= 2 || (has_generic && generic_count == upper_bounds.len()) {
                             opportunities.push(GenericOpportunity {
                                 refinement_tv_id: *tv_id,
-                                concrete_types: upper_bounds.iter().cloned().collect(), // Use all upper bounds
+                                concrete_types: upper_bounds.iter().cloned().collect(),
                                 refinement_path: node.path.clone(),
                             });
+                        }
+                    } else if has_generic && upper_bounds.len() > 1 {
+                        // New case: Non-refinement paths with generic + other types
+                        // This handles cases like ty581 with bounds {T, Int}
+                        // Check if all non-generic bounds are compatible with the generic's bounds
+                        let generics_in_bounds: Vec<_> = upper_bounds
+                            .iter()
+                            .filter(|t| matches!(t, Type::Generic(_)))
+                            .collect();
+                        
+                        if generics_in_bounds.len() == 1 {
+                            if let Type::Generic(generic_id) = generics_in_bounds[0] {
+                                if let Some(generic_var) = self.state.get_generic_type_var(generic_id) {
+                                    let non_generic_bounds: Vec<_> = upper_bounds
+                                        .iter()
+                                        .filter(|t| !matches!(t, Type::Generic(_)))
+                                        .collect();
+                                    
+                                    // Check if all non-generic bounds are subtypes of the generic's bounds
+                                    let all_compatible = non_generic_bounds.iter().all(|other_type| {
+                                        generic_var.bounds.upper_bounds.iter().any(|generic_bound| {
+                                            other_type.is_subtype_of(generic_bound, &self.state).is_yes()
+                                        })
+                                    });
+                                    
+                                    if all_compatible {
+                                        opportunities.push(GenericOpportunity {
+                                            refinement_tv_id: *tv_id,
+                                            concrete_types: upper_bounds.iter().cloned().collect(),
+                                            refinement_path: node.path.clone(),
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
                 }
