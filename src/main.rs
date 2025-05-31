@@ -66,6 +66,8 @@ enum Command {
         list_themes: bool,
         #[arg(long, help = "Function ID to print types for", default_value_t = usize::MAX)]
         function: usize,
+        #[arg(long, help = "Show variable IDs")]
+        show_var_ids: bool,
     },
     Repl {
         input: Option<String>,
@@ -103,6 +105,7 @@ fn main() {
             theme,
             list_themes,
             function,
+            show_var_ids,
         } => {
             if list_themes {
                 list_available_themes();
@@ -112,6 +115,7 @@ fn main() {
             types(
                 input.unwrap(),
                 (function != usize::MAX).then(|| FunctionId::new(function)),
+                show_var_ids,
                 theme,
             )
         }
@@ -217,7 +221,7 @@ fn folded_ssa(input: String, theme: String) {
     println!("{}", pretty_print_folded_ssa_with_config(&model, config));
 }
 
-fn types(input: String, function: Option<FunctionId>, _theme: String) {
+fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
     let model = analysis::binary_to_type_inference(prog).unwrap();
     if let Some(function_id) = function {
@@ -227,7 +231,8 @@ fn types(input: String, function: Option<FunctionId>, _theme: String) {
         qe.list_function_variables(&function_id);
         qe.list_variable_changes(TypeVarId::new(7));
     } else {
-        pretty_print_with_types_stdout(&model);
+        let config = PrettyPrintConfig::default().with_show_types_var_ids(show_var_ids);
+        println!("{}", model.pretty_print_with_config(&config));
     }
 }
 

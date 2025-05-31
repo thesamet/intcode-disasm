@@ -10,6 +10,7 @@ use crate::disasm::v3::model::{
     FoldedSsaComplete, HasFunctionCallAnalysisResult, HasTypeInferenceResult, TypeInferenceComplete,
 };
 use crate::disasm::v3::ssa::converter::PhiFunction;
+use crate::disasm::v3::type_inference::TypeVarId;
 use crate::disasm::v3::{
     common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
     control_flow::{BlockView, FunctionView},
@@ -260,6 +261,14 @@ fn format_signature<S: ModelState + 'static>(
         T: HasFunctionCallAnalysisResult,
     {
         let res = model.type_inference_result();
+        let show_var_ids = ctx.config.show_types_var_ids;
+        let var_id = |tv_id: &TypeVarId| -> String {
+            if show_var_ids {
+                format!("[{}] ", tv_id)
+            } else {
+                String::new()
+            }
+        };
         let args = model
             .function_call_analysis_result()
             .functions
@@ -277,8 +286,8 @@ fn format_signature<S: ModelState + 'static>(
             })
             .map(|(v, t, tv_id)| {
                 format!(
-                    "[{}] {}: {}",
-                    tv_id,
+                    "{}{}: {}",
+                    var_id(&tv_id),
                     v.pretty_print_with_context(ctx),
                     t.display_with(res)
                 )
@@ -301,8 +310,8 @@ fn format_signature<S: ModelState + 'static>(
             })
             .map(|(v, t, tv_id)| {
                 format!(
-                    "[{}] {}: {}",
-                    tv_id,
+                    "{}{}: {}",
+                    var_id(&tv_id),
                     v.pretty_print_with_context(ctx),
                     t.display_with(res)
                 )

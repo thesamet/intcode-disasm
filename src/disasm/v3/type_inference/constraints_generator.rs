@@ -193,7 +193,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 },
             );
 
-            self.result.store.add_original_constraint(
+            self.result.store.add_original_equality_constraint(
                 Constraint::new(
                     incoming_tv_id.to_type(),
                     dest_tv_id.to_type(),
