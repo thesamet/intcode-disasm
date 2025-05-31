@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
+use crate::disasm::{v2::model::FunctionId, v3::type_inference::Type};
 
 use super::{
     ast::{HlrAssignmentTarget, HlrExpression, HlrFunction, HlrStatement, HlrVariable, Scope},
@@ -124,7 +124,6 @@ pub fn replace_variable(
 mod tests {
     use super::*;
     use crate::disasm::hlr::ast::{test_utils::*, BinaryOperator};
-    use crate::disasm::v2::type_inference::types::Type;
 
     #[test]
     fn test_delete_statement() {

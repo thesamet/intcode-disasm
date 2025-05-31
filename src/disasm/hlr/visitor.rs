@@ -371,8 +371,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disasm::hlr::ast::{test_utils, HlrStatement};
-    use crate::disasm::v2::type_inference::types::Type;
+    use crate::disasm::{
+        hlr::ast::{test_utils, HlrStatement},
+        v3::type_inference::Type,
+    };
     use test_utils::*;
 
     #[derive(Debug, PartialEq)]

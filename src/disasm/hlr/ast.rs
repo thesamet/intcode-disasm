@@ -1,10 +1,5 @@
 use std::fmt::Display;
 
-use colored::{Color, ColoredString, Colorize};
-use itertools::Itertools;
-
-use crate::disasm::v2::{model::FunctionId, type_inference::types::Type};
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Scope {
     Local,
@@ -50,11 +45,21 @@ pub enum HlrStatement {
     Nop,
 }
 
+/*
 impl Display for HlrStatement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut cp = CodePrinter::new();
         pretty_print_statement(&mut cp.single_line_mode(), self);
         f.write_str(&cp.result())
+    }
+}
+
+*/
+
+impl Display for HlrExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TODO")
+        // f.write_str(&pretty_print_expression(self))
     }
 }
 
@@ -82,12 +87,6 @@ pub enum HlrExpression {
     },
     FunctionCall(Box<HlrExpression>, Vec<HlrExpression>),
     Input(),
-}
-
-impl Display for HlrExpression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&pretty_print_expression(self))
-    }
 }
 
 impl HlrExpression {
@@ -196,9 +195,10 @@ pub enum UnaryOperator {
     Minus,
 }
 
-use crate::disasm::code_printer::{CodePrinter, CodeWriter};
-use crate::line;
+use crate::disasm::v3::type_inference::Type;
+use crate::disasm::v3::FunctionId;
 
+/*
 fn keyword(text: &str) -> ColoredString {
     text.to_string().color(SyntaxColors::keyword())
 }
@@ -502,6 +502,7 @@ fn pretty_print_expression(expr: &HlrExpression) -> String {
         ),
     }
 }
+*/
 
 impl Display for BinaryOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

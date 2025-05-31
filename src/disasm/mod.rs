@@ -1,4 +1,4 @@
-// pub mod hlr;
+pub mod hlr;
 pub mod parser;
 pub mod repl;
 pub mod v2;
