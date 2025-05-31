@@ -1042,6 +1042,8 @@ impl Solver {
                 | TypeVarPath::TupleRefinement { .. }
                 | TypeVarPath::FunctionArgsRefinement { .. }
                 | TypeVarPath::FunctionRetsRefinement { .. }
+                | TypeVarPath::FunctionDefArg { .. }
+                | TypeVarPath::FunctionDefRet { .. }
         )
     }
 
