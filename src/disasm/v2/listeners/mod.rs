@@ -3,4 +3,3 @@
 // pub mod function_call_analyzer;
 // pub mod hlr_optimization;
 // pub mod hlr_optimizer;
-pub mod variable_analyzer;

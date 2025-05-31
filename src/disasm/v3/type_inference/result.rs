@@ -104,14 +104,14 @@ impl TypeInferenceResult {
         }
     }
 
-    pub fn get_type_id_for(&self, t: SsaMemoryReference) -> TypeVarId {
+    pub fn get_type_id_for(&self, t: &SsaMemoryReference) -> TypeVarId {
         self.mem_ref_to_type_var_id
-            .get(&t)
+            .get(t)
             .cloned()
             .unwrap_or_else(|| panic!("No type var for {}", t))
     }
 
-    pub fn get_type_for(&self, t: SsaMemoryReference) -> Type {
+    pub fn get_type_for(&self, t: &SsaMemoryReference) -> Type {
         let tv_id = self.get_type_id_for(t);
         self.get_type_for_id(tv_id)
     }
@@ -135,7 +135,10 @@ impl TypeVarRegistry for TypeInferenceResult {
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState> {
         self.type_var_states.get(tv_id)
     }
-    fn get_generic_type_var(&self, id: &super::types::GenericTypeVarId) -> Option<&super::types::GenericTypeVar> {
+    fn get_generic_type_var(
+        &self,
+        id: &super::types::GenericTypeVarId,
+    ) -> Option<&super::types::GenericTypeVar> {
         self.generic_type_vars.get(id)
     }
 }

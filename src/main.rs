@@ -4,7 +4,6 @@ use disasm::disasm::v3::analysis::{self};
 use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, PrettyPrintConfig};
 use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
-    pretty_print_with_types_stdout,
 };
 use disasm::disasm::v3::type_inference::TypeVarId;
 use disasm::disasm::v3::FunctionId;

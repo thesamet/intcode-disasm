@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod type_inference_tests {
 
-    use crate::disasm::repl::{self, repl};
+    use crate::disasm::repl::{repl};
     use crate::disasm::test_utils::TestContextBuilder;
 
     use crate::disasm::v3::model::{Model, TypeInferenceComplete}; // Added more for pretty_print

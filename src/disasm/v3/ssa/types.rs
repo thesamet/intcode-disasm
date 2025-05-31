@@ -138,6 +138,22 @@ impl VersionableMemoryKind {
             MemoryReference::Deref(expr) => Either::Right(expr),
         }
     }
+
+    pub fn as_memory(&self) -> Option<&usize> {
+        if let Self::Memory(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_pointer(&self) -> Option<&PointerId> {
+        if let Self::Pointer(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
 }
 
 impl TryFrom<&MemoryReference> for VersionableMemoryKind {

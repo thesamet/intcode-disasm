@@ -13,6 +13,7 @@ pub mod native;
 pub mod pretty_print;
 pub mod ssa;
 pub mod type_inference;
+pub mod variable_analyzer;
 
 // Re-export common types (Removed LIR types)
 pub use common::Span; // Keep Span if it's truly common

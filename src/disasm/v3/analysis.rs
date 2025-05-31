@@ -9,10 +9,11 @@ use super::{
     model::{
         ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
         FunctionCallAnalysisComplete, ImageScannerComplete, Model, SsaComplete,
-        TypeInferenceComplete,
+        TypeInferenceComplete, VariableMergerComplete,
     },
     ssa::SsaConverter,
     type_inference::Solver,
+    variable_analyzer::VariableMerger,
 };
 
 pub fn binary_to_scanned_image(binary: Vec<i128>) -> Result<Model<ImageScannerComplete>, Error> {
@@ -52,3 +53,9 @@ pub fn binary_to_type_inference(binary: Vec<i128>) -> Result<Model<TypeInference
     Solver::run(model)
 }
 
+pub fn binary_to_variable_merger(
+    binary: Vec<i128>,
+) -> Result<Model<VariableMergerComplete>, Error> {
+    let model = binary_to_type_inference(binary)?;
+    VariableMerger::run(model)
+}

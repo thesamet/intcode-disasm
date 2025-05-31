@@ -1,4 +1,3 @@
-
 use crate::disasm::v3::control_flow::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
 use crate::disasm::v3::folded_ssa::FoldedSsaResult; // Import FoldedSsaBlock if directly used, for now FoldedSsaResult is enough
@@ -30,6 +29,7 @@ enum ModelState {
     FunctionCallAnalysisComplete(FunctionCallAnalysisResult),
     FoldedSsaComplete(FoldedSsaResult),
     TypeInferenceComplete(TypeInferenceResult),
+    VariableMergerComplete(VariableMergerResult),
 }
 
 #[model]
@@ -89,6 +89,7 @@ macro_rules! add_block_view_when {
 }
 pub(crate) use add_block_view_when;
 
+use super::variable_analyzer::VariableMergerResult;
 use super::{control_flow::BlockView, FunctionId};
 
 impl<S: ModelState> Model<S>

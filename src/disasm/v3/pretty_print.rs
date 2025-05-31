@@ -280,8 +280,8 @@ fn format_signature<S: ModelState + 'static>(
             .map(|v| {
                 (
                     v,
-                    res.get_type_for((*v).into()),
-                    res.get_type_id_for((*v).into()),
+                    res.get_type_for(&v.clone().into()),
+                    res.get_type_id_for(&v.clone().into()),
                 )
             })
             .map(|(v, t, tv_id)| {
@@ -302,8 +302,8 @@ fn format_signature<S: ModelState + 'static>(
             .map(|(_, v)| {
                 (
                     v,
-                    res.get_type_for((*v).into()),
-                    res.get_type_id_for((*v).into()),
+                    res.get_type_for(&v.clone().into()),
+                    res.get_type_id_for(&v.clone().into()),
                 )
             })
             .map(|(v, t, tv_id)| {

@@ -8,7 +8,7 @@ use super::{
         model::{
             ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
             FunctionCallAnalysisComplete, HasControlFlowGraphResult, ImageScannerComplete, Model,
-            ModelState, SsaComplete, TypeInferenceComplete,
+            ModelState, SsaComplete, TypeInferenceComplete, VariableMergerComplete,
         },
         FunctionId,
     },
@@ -103,6 +103,15 @@ impl TestContextBuilder<TypeInferenceComplete> for TypeInferenceComplete {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_type_inference(binary)?;
+        Ok(TestContext { model })
+    }
+}
+
+impl TestContextBuilder<VariableMergerComplete> for VariableMergerComplete {
+    fn test_context(asm: &str) -> Result<TestContext<VariableMergerComplete>, Error> {
+        init_logging();
+        let binary = parser::compile(asm);
+        let model = analysis::binary_to_variable_merger(binary)?;
         Ok(TestContext { model })
     }
 }
