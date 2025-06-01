@@ -8,6 +8,7 @@ use disasm::disasm::v3::pretty_print::{
 };
 use disasm::disasm::v3::type_inference::TypeVarId;
 use disasm::disasm::v3::FunctionId;
+use disasm::disasm::SymbolRenaming;
 use itertools::Itertools;
 use std::process;
 
@@ -64,6 +65,8 @@ enum Command {
         theme: String,
         #[arg(long, help = "List all available color themes")]
         list_themes: bool,
+        #[arg(long, help = "Symbol renaming rules files")]
+        symbols: Option<String>,
     },
     Types {
         #[arg(required_unless_present = "list_themes")]
@@ -148,6 +151,7 @@ fn main() {
         Command::Hlr {
             input,
             theme,
+            symbols,
             list_themes,
         } => {
             if list_themes {
@@ -155,7 +159,7 @@ fn main() {
                 return;
             }
             validate_theme(&theme);
-            hlr(input.unwrap(), theme)
+            hlr(input.unwrap(), symbols, theme)
         }
     }
 }
@@ -272,9 +276,15 @@ fn flow_recovery(input: String) {
     println!("Flow recovery not yet implemented");
 }
 
-fn hlr(input: String, theme: String) {
+fn hlr(input: String, symbols: Option<String>, theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let model = analysis::binary_to_hlr(prog).unwrap();
+    let symbol_renaming = if let Some(symbols) = symbols {
+        let symbols = std::fs::read_to_string(symbols).unwrap();
+        SymbolRenaming::from_lines(&symbols).unwrap()
+    } else {
+        SymbolRenaming::new()
+    };
+    let model = analysis::binary_to_hlr(prog, symbol_renaming).unwrap();
 
     if theme == "default" {
         // For default theme, use the HLR program directly
@@ -284,9 +294,13 @@ fn hlr(input: String, theme: String) {
     }
 
     let config = get_theme_config(&theme, false);
+
     // For custom themes, pass config to the HLR program's pretty printer
     let hlr_program = model.hlr_program();
-    println!("{}", hlr::pretty_print::pretty_print_hlr_with_config(hlr_program, &config));
+    println!(
+        "{}",
+        hlr::pretty_print::pretty_print_hlr_with_config(hlr_program, &config)
+    );
 }
 
 fn get_theme_config(theme: &str, show_types: bool) -> PrettyPrintConfig {

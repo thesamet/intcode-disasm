@@ -16,7 +16,7 @@ use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 use crate::disasm::v3::type_inference::Type;
 use crate::disasm::v3::{BlockId, NextKind};
-use crate::disasm::Error;
+use crate::disasm::{symbol_renaming, Error, SymbolRenaming};
 
 type Function<'a> = FunctionView<'a, VariableMergerComplete>;
 
@@ -51,17 +51,22 @@ struct LoopStructure {
 
 pub struct ControlFlowStructureAnalyzer {
     model: Model<VariableMergerComplete>,
+    symbol_renaming: SymbolRenaming,
 }
 
 impl ControlFlowStructureAnalyzer {
-    fn new(model: Model<VariableMergerComplete>) -> Self {
-        Self { model }
+    fn new(model: Model<VariableMergerComplete>, symbol_renaming: SymbolRenaming) -> Self {
+        Self {
+            model,
+            symbol_renaming,
+        }
     }
 
     pub fn run(
         model: Model<VariableMergerComplete>,
+        symbol_renaming: SymbolRenaming,
     ) -> Result<Model<HlrConstructionComplete>, Error> {
-        Ok(ControlFlowStructureAnalyzer::new(model).recover_structures()?)
+        Ok(ControlFlowStructureAnalyzer::new(model, symbol_renaming).recover_structures()?)
     }
 
     /// Recovers high-level control flow structures for the entire program.
@@ -177,9 +182,16 @@ impl ControlFlowStructureAnalyzer {
             .map(|(t, _, _)| self.hlr_var(t))
             .collect_vec();
 
+        let name = self
+            .symbol_renaming
+            .function_names
+            .get(&func.function_id())
+            .cloned()
+            .unwrap_or_else(|| format!("{}", func.function_id()));
+
         let hlr = HlrFunction {
             original_id: func.function_id(),
-            name: format!("{}", func.function_id()), // Generate a placeholder name
+            name,
             args,
             return_type,
             body: stmts,

@@ -8,6 +8,7 @@ mod symbol_renaming;
 #[cfg(test)]
 mod test_utils;
 
+pub use symbol_renaming::SymbolRenaming;
 use thiserror::Error;
 /*
 use v2::type_inference::{

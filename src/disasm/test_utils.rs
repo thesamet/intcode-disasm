@@ -12,7 +12,7 @@ use super::{
         },
         FunctionId,
     },
-    Error,
+    Error, SymbolRenaming,
 };
 pub fn init_logging() {
     use std::io::Write;
@@ -111,7 +111,7 @@ impl TestContextBuilder<VariableMergerComplete> for VariableMergerComplete {
     fn test_context(asm: &str) -> Result<TestContext<VariableMergerComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_variable_merger(binary)?;
+        let model = analysis::binary_to_variable_merger(binary, SymbolRenaming::new())?;
         Ok(TestContext { model })
     }
 }

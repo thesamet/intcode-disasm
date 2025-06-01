@@ -19,12 +19,9 @@ use super::{
     constraints::ConstraintId,
     types::{GenericTypeVar, GenericTypeVarId, Type, TypeBounds, TypeVarId, TypeVarNode},
     TypeVarPath,
-}; // Use `super::` if types.rs is in the parent directory (type_inference)
-   // TypeVarKind is imported separately in the tests module if needed.
+};
 
-/// Holds the data associated with a single TypeVarId.
-/// It includes the TypeVarNode information and its current best bounds.
-
+/// Holds the best bounds for a single TypeVarId.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeVarState {
     Bounds {
@@ -458,50 +455,6 @@ impl InferenceAlgorithmState {
             }
         }
         self.change_log.extend(log_entries);
-        /*
-        self.type_var_states = self
-            .type_var_states
-            .iter()
-            .map(|(id, v)| match (id, v) {
-                (id, _) if id == tv_id => (*id, TypeVarState::Converged(new_bound.clone())),
-                (
-                    id,
-                    TypeVarState::Bounds {
-                        lower_bounds,
-                        upper_bounds,
-                    },
-                ) => {
-                    let new_lower_bounds: HashSet<Type> = lower_bounds
-                        .iter()
-                        .filter(|l| **l != tv_id.to_type())
-                        .map(|l| self.resolve_type(l))
-                        .collect();
-                    let new_upper_bounds: HashSet<Type> = upper_bounds
-                        .iter()
-                        .filter(|u| **u != tv_id.to_type())
-                        .map(|u| self.resolve_type(u))
-                        .collect();
-                    if new_lower_bounds != *lower_bounds || new_upper_bounds != *upper_bounds {
-                        log_entries.push(ChangeLogEntry {
-                            iteration: self.iteration,
-                            tv_id: *id,
-                            kind: kind(),
-                        });
-                    }
-                    (
-                        *id,
-                        TypeVarState::Bounds {
-                            lower_bounds: new_lower_bounds,
-                            upper_bounds: new_upper_bounds,
-                        },
-                    )
-                }
-                (id, TypeVarState::Converged(ty)) => {
-                    (*id, TypeVarState::Converged(self.resolve_type(ty)))
-                }
-            })
-            .collect();
-        */
     }
 
     pub fn new() -> Self {
@@ -570,8 +523,6 @@ impl InferenceAlgorithmState {
             return *tv_id;
         }
 
-        // When creating a TypeVar for a VMR, its kind is MemoryReference.
-        // We wrap the VMR in SsaMemoryReference::Versioned for the TypeVarKind.
         let new_tv_id = self.create_memory_reference_type_var(path, *vmr);
         self.vmr_to_type_var.insert(*vmr, new_tv_id);
         new_tv_id
@@ -637,79 +588,6 @@ impl InferenceAlgorithmState {
     ) -> bool {
         self.update_bound_internal(tv_id, new_upper_constraint, BoundDirection::Upper, reason)
     }
-
-    /*
-    pub fn handle_convergence(&mut self, tv_id: &TypeVarId, reason: &ChangeReason) {
-    let intersection = lower_bounds
-        .intersection(upper_bounds)
-        .cloned()
-        .collect_vec();
-    assert!(
-        intersection.len() <= 1,
-        "Lower and upper bound have multiple shared elements"
-    );
-    if intersection.len() == 1 {
-        *state = TypeVarState::Converged(intersection[0].clone());
-        self.handle_convergence(tv_id, &reason);
-        changed = true;
-    }
-        let state = self.type_var_states.remove(tv_id).unwrap();
-        let TypeVarState::Converged(new_value) = state else {
-            panic!("TypeVarState has not converged");
-        };
-        let msg = format!(
-            "CONVERGENCE: {} ==> {}    Reason: {}",
-            tv_id.display_with(self),
-            new_value.display_with(self),
-            reason.display_with(self)
-        );
-        trace!("{}", msg.green());
-        self.change_log.push(ChangeLogEntry {
-            tv_id: *tv_id,
-            state: TypeVarState::Converged(new_value.clone()),
-            reason: ChangeReason::ConvergenceOf(*tv_id),
-        });
-        let mut tvs = HashMap::new();
-        for (id, state) in self.type_var_states.iter() {
-            match state {
-                TypeVarState::Bounds {
-                    lower_bounds,
-                    upper_bounds,
-                } => {
-                    let new_lower_bounds =
-                        lower_bounds.iter().map(|t| self.resolve_type(t)).collect();
-                    let new_upper_bounds =
-                        upper_bounds.iter().map(|t| self.resolve_type(t)).collect();
-                    tvs.insert(
-                        *id,
-                        TypeVarState::Bounds {
-                            lower_bounds: new_lower_bounds,
-                            upper_bounds: new_upper_bounds,
-                        },
-                    );
-                    if tvs[id] != self.type_var_states[id] {
-                        self.change_log.push(ChangeLogEntry {
-                            tv_id: *id,
-                            state: tvs[id].clone(),
-                            reason: ChangeReason::ConvergenceOf(*tv_id),
-                        });
-                    }
-                }
-                TypeVarState::Converged(t) => {
-                    tvs.insert(*id, TypeVarState::Converged(self.resolve_type(t)));
-                    if tvs[id] != self.type_var_states[id] {
-                        self.change_log.push(ChangeLogEntry {
-                            tv_id: *id,
-                            state: tvs[id].clone(),
-                            reason: ChangeReason::ConvergenceOf(*tv_id),
-                        });
-                    }
-                }
-            }
-        }
-        self.type_var_states = tvs;
-    }
-    */
 
     pub fn has_type_var(&self, tv_id: &TypeVarId) -> bool {
         self.type_var_nodes.contains_key(tv_id)
@@ -904,8 +782,6 @@ mod tests {
             FunctionId, InstructionId,
         },
     };
-    // Explicitly import TypeVarKind for the test module from the correct path.
-    // `super` (type_bounds_map) -> `super` (type_inference) -> `types` (types.rs module)
 
     // Mock/dummy TypeVarNode creation for tests
     // Ensure this is compatible with the actual TypeVarNode structure.

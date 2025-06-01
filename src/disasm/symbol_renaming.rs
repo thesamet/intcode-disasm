@@ -20,7 +20,7 @@ use super::v3::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolRenaming {
     pub function_names: HashMap<FunctionId, String>,
-    pub variable_names: HashMap<(FunctionId, VersionedMemoryReference), String>,
+    pub variable_names: HashMap<VersionedMemoryReference, String>,
 }
 
 impl SymbolRenaming {
@@ -35,14 +35,8 @@ impl SymbolRenaming {
         self.function_names.insert(function_id, name);
     }
 
-    fn add_variable_name(
-        &mut self,
-        function_id: FunctionId,
-        variable: &VersionedMemoryReference,
-        name: String,
-    ) {
-        self.variable_names
-            .insert((function_id, variable.clone()), name);
+    fn add_variable_name(&mut self, variable: &VersionedMemoryReference, name: String) {
+        self.variable_names.insert(variable.clone(), name);
     }
 
     pub fn from_lines(lines: &str) -> Result<Self, String> {
@@ -61,8 +55,8 @@ impl SymbolRenaming {
                     SymbolRenamingLine::Function(function_id, name) => {
                         symbol_renaming.add_function_name(function_id, name);
                     }
-                    SymbolRenamingLine::Variable(function_id, variable, name) => {
-                        symbol_renaming.add_variable_name(function_id, &variable, name);
+                    SymbolRenamingLine::Variable(variable, name) => {
+                        symbol_renaming.add_variable_name(&variable, name);
                     }
                 },
                 Err(err) => {
@@ -157,7 +151,7 @@ fn parse_rest_of_line_as_name(input: &str) -> IResult<&str, String> {
 }
 enum SymbolRenamingLine {
     Function(FunctionId, String),
-    Variable(FunctionId, VersionedMemoryReference, String),
+    Variable(VersionedMemoryReference, String),
 }
 
 //
@@ -194,7 +188,7 @@ impl SymbolRenamingLine {
                         function_id: fid,
                         version: vmr_parts.version,
                     };
-                    SymbolRenamingLine::Variable(fid, vmr, name)
+                    SymbolRenamingLine::Variable(vmr, name)
                 },
             ),
         ))
@@ -228,8 +222,8 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Variable(fid, vmr, name) => {
-                assert_eq!(fid, FunctionId::new(5678));
+            SymbolRenamingLine::Variable(vmr, name) => {
+                assert_eq!(vmr.function_id, FunctionId::new(5678));
                 assert_eq!(vmr.kind, VersionableMemoryKind::RelativeMemory(-4));
                 assert_eq!(vmr.version, 2);
                 assert_eq!(name, "variable_name");
@@ -245,8 +239,8 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Variable(fid, vmr, name) => {
-                assert_eq!(fid, FunctionId::new(5678));
+            SymbolRenamingLine::Variable(vmr, name) => {
+                assert_eq!(vmr.function_id, FunctionId::new(5678));
                 assert_eq!(vmr.kind, VersionableMemoryKind::Memory(100));
                 assert_eq!(vmr.version, 2);
                 assert_eq!(name, "variable_name");
@@ -262,8 +256,8 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Variable(fid, vmr, name) => {
-                assert_eq!(fid, FunctionId::new(5678));
+            SymbolRenamingLine::Variable(vmr, name) => {
+                assert_eq!(vmr.function_id, FunctionId::new(5678));
                 assert_eq!(vmr.kind, VersionableMemoryKind::Pointer(PointerId::new(10)));
                 assert_eq!(vmr.version, 2);
                 assert_eq!(name, "variable_name");
@@ -340,9 +334,7 @@ mod tests {
             version: 2,
         };
         assert_eq!(
-            symbol_renaming
-                .variable_names
-                .get(&(FunctionId::new(5678), vmr)),
+            symbol_renaming.variable_names.get(&vmr),
             Some(&"variable_name".to_string())
         );
     }

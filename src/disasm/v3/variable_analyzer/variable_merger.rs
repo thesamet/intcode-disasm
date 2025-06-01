@@ -12,7 +12,7 @@ use crate::disasm::{
         type_inference::Type,
         FunctionId,
     },
-    Error,
+    Error, SymbolRenaming,
 };
 
 use super::disjoint_set::{DisjointSet, SetId};
@@ -55,6 +55,7 @@ pub struct VariableMerger {
 
     function_state: HashMap<FunctionId, FunctionVarNamingState>,
     model: Model<TypeInferenceComplete>,
+    symbol_renaming: SymbolRenaming,
 }
 
 #[expect(dead_code)]
@@ -80,20 +81,22 @@ impl FunctionVarNamingState {
 
 impl VariableMerger {
     /// Creates a new VariableclusterAnalyzer
-    fn new(model: Model<TypeInferenceComplete>) -> VariableMerger {
+    fn new(model: Model<TypeInferenceComplete>, symbol_renaming: SymbolRenaming) -> VariableMerger {
         VariableMerger {
             variable_to_cluster: HashMap::new(),
             clusters: HashMap::new(),
             function_state: HashMap::new(),
             next_cluster_id: 0,
             model,
+            symbol_renaming,
         }
     }
 
     pub fn run(
         model: Model<TypeInferenceComplete>,
+        symbol_renaming: SymbolRenaming,
     ) -> Result<Model<VariableMergerComplete>, Error> {
-        let mut merger = Self::new(model);
+        let mut merger = Self::new(model, symbol_renaming);
         merger.build_clusters()?;
 
         Ok(merger.result())
@@ -234,6 +237,17 @@ impl VariableMerger {
         vars: &HashSet<VersionedMemoryReference>,
         globals: &HashMap<usize, SetId>,
     ) -> Option<String> {
+        for var in vars.iter() {
+            if self.symbol_renaming.variable_names.contains_key(var) {
+                return Some(
+                    self.symbol_renaming
+                        .variable_names
+                        .get(var)
+                        .unwrap()
+                        .clone(),
+                );
+            }
+        }
         let rep = vars.iter().next().unwrap();
         let function_id = rep.function_id;
         let params = &self
