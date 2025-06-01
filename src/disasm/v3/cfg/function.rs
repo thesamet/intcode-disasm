@@ -1,4 +1,8 @@
-use petgraph::visit::{GraphBase, IntoNeighbors, Visitable};
+use itertools::Itertools;
+use petgraph::{
+    visit::{GraphBase, GraphRef, IntoNeighbors, IntoNeighborsDirected, Visitable},
+    Direction,
+};
 
 use super::block::{Block, BlockView};
 use crate::disasm::v3::{
@@ -98,7 +102,7 @@ impl<'a, S: ModelState> GraphBase for FunctionView<'a, S> {
     type NodeId = BlockId;
 }
 
-impl<'a, S: ModelState> IntoNeighbors for &FunctionView<'a, S> {
+impl<'a, S: ModelState> IntoNeighbors for FunctionView<'a, S> {
     type Neighbors = std::vec::IntoIter<Self::NodeId>;
 
     #[doc = r" Return an iterator of the neighbors of node `a`."]
@@ -106,6 +110,25 @@ impl<'a, S: ModelState> IntoNeighbors for &FunctionView<'a, S> {
         self.block(&a).next().successors().into_iter()
     }
 }
+
+impl<'a, S: ModelState> IntoNeighborsDirected for FunctionView<'a, S> {
+    type NeighborsDirected = std::vec::IntoIter<BlockId>;
+
+    fn neighbors_directed(self, n: Self::NodeId, d: Direction) -> Self::NeighborsDirected {
+        match d {
+            Direction::Outgoing => self.block(&n).next().successors().into_iter(),
+            Direction::Incoming => self
+                .block(&n)
+                .predecessors()
+                .iter()
+                .map(|pred| pred.source_block_id())
+                .collect_vec()
+                .into_iter(),
+        }
+    }
+}
+
+impl<'a, S: ModelState> GraphRef for FunctionView<'a, S> {}
 
 impl<'a, S: ModelState> Visitable for FunctionView<'a, S> {
     type Map = HashSet<Self::NodeId>;

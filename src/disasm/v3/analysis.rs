@@ -2,14 +2,15 @@ use crate::disasm::Error;
 
 use super::{
     cfg::ControlFlowGraphBuilder,
+    control_flow::ControlFlowStructureAnalyzer,
     data_flow::DataFlowAnalyzer,
     folded_ssa::FoldedSsaBuilder,
     function_call::FunctionCallAnalyzer,
     image_scanner::ImageScanner,
     model::{
         ControlFlowGraphComplete, DataFlowComplete, FoldedSsaComplete,
-        FunctionCallAnalysisComplete, ImageScannerComplete, Model, SsaComplete,
-        TypeInferenceComplete, VariableMergerComplete,
+        FunctionCallAnalysisComplete, HlrConstructionComplete, ImageScannerComplete, Model,
+        SsaComplete, TypeInferenceComplete, VariableMergerComplete,
     },
     ssa::SsaConverter,
     type_inference::Solver,
@@ -58,4 +59,9 @@ pub fn binary_to_variable_merger(
 ) -> Result<Model<VariableMergerComplete>, Error> {
     let model = binary_to_type_inference(binary)?;
     VariableMerger::run(model)
+}
+
+pub fn binary_to_hlr(binary: Vec<i128>) -> Result<Model<HlrConstructionComplete>, Error> {
+    let model = binary_to_variable_merger(binary)?;
+    ControlFlowStructureAnalyzer::run(model)
 }

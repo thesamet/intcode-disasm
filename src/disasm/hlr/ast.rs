@@ -45,24 +45,6 @@ pub enum HlrStatement {
     Nop,
 }
 
-/*
-impl Display for HlrStatement {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut cp = CodePrinter::new();
-        pretty_print_statement(&mut cp.single_line_mode(), self);
-        f.write_str(&cp.result())
-    }
-}
-
-*/
-
-impl Display for HlrExpression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("TODO")
-        // f.write_str(&pretty_print_expression(self))
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct HlrProgram {
     pub functions: Vec<HlrFunction>,

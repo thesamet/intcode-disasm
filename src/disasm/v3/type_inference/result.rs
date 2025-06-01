@@ -5,32 +5,17 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
+use crate::disasm::v3::FunctionId;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
 use super::types::{Type, TypeVarId, TypeVarNode};
 use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarState};
 
-/// Stores inferred type information for a single function.
-#[derive(Debug, Clone)]
-pub struct FunctionTypeInfo {
-    /// Maps SSA variables to their inferred types.
-    pub _var_types: HashMap<SsaMemoryReference, Type>,
-}
-
-impl FunctionTypeInfo {
-    /// Creates a new empty `FunctionTypeInfo`.
-    pub fn new() -> Self {
-        Self {
-            _var_types: HashMap::new(),
-        }
-    }
-}
-
-impl Default for FunctionTypeInfo {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug, Clone, Default)]
+pub struct FunctionSignature {
+    pub args: Vec<(VersionedMemoryReference, Type, TypeVarId)>,
+    pub returns: Vec<(VersionedMemoryReference, Type, TypeVarId)>,
 }
 
 /// Result of the type inference analysis.
@@ -44,6 +29,7 @@ pub struct TypeInferenceResult {
     pub change_log: Vec<ChangeLogEntry>,
     pub constraint_store: ConstraintStore,
     pub generic_type_vars: HashMap<super::types::GenericTypeVarId, super::types::GenericTypeVar>,
+    pub function_signatures: HashMap<FunctionId, FunctionSignature>,
 }
 
 impl TypeInferenceResult {

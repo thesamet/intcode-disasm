@@ -7,13 +7,14 @@ use itertools::Itertools;
 use crate::derive_display;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{
-    FoldedSsaComplete, HasFunctionCallAnalysisResult, HasTypeInferenceResult, TypeInferenceComplete,
+    FoldedSsaComplete, HasFoldedSsaResult, HasFunctionCallAnalysisResult, HasHlrProgram,
+    HasTypeInferenceResult, TypeInferenceComplete,
 };
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::type_inference::TypeVarId;
 use crate::disasm::v3::{
-    common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
     cfg::{BlockView, FunctionView},
+    common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
     },
@@ -28,7 +29,6 @@ use crate::disasm::v2::{
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
 use super::common::formatting::{ContextualPrettyPrint, SemanticColor};
-use super::model::HasFoldedSsaResult;
 
 // --- Operator Precedence Helpers ---
 fn binary_op_precedence(op: &BinaryOperator) -> u8 {
@@ -269,21 +269,9 @@ fn format_signature<S: ModelState + 'static>(
                 String::new()
             }
         };
-        let args = model
-            .function_call_analysis_result()
-            .functions
-            .get(&function.function_id())
-            .unwrap()
-            .parameter_entry_vars
-            .values()
-            .sorted_by_key(|v| v.as_stack_relative().unwrap())
-            .map(|v| {
-                (
-                    v,
-                    res.get_type_for(&v.clone().into()),
-                    res.get_type_id_for(&v.clone().into()),
-                )
-            })
+        let args = model.type_inference_result().function_signatures[&function.function_id()]
+            .args
+            .iter()
             .map(|(v, t, tv_id)| {
                 format!(
                     "{}{}: {}",
@@ -293,19 +281,9 @@ fn format_signature<S: ModelState + 'static>(
                 )
             })
             .join(&", ".color(ctx.colors().unwrap().low_prio).to_string());
-        let rets = model
-            .function_call_analysis_result()
-            .get_effective_return_values(function.function_id())
-            .unwrap_or_default()
+        let rets = model.type_inference_result().function_signatures[&function.function_id()]
+            .returns
             .iter()
-            .sorted_by_key(|(v, _)| v)
-            .map(|(_, v)| {
-                (
-                    v,
-                    res.get_type_for(&v.clone().into()),
-                    res.get_type_id_for(&v.clone().into()),
-                )
-            })
             .map(|(v, t, tv_id)| {
                 format!(
                     "{}{}: {}",
@@ -773,4 +751,35 @@ where
     S: HasTypeInferenceResult + HasControlFlowGraphResult,
 {
     println!("{}", pretty_print_types(model));
+}
+
+// --- HLR pretty print functions ---
+
+pub fn pretty_print_hlr_with_config<S: ModelState + 'static>(
+    model: &Model<S>,
+    config: PrettyPrintConfig,
+) -> String
+where
+    S: HasHlrProgram,
+{
+    // Get the HLR program and use the implemented pretty print function
+    let hlr_program = model.hlr_program();
+    crate::disasm::hlr::pretty_print::pretty_print_hlr_with_config(hlr_program, &config)
+}
+
+pub fn pretty_print_hlr<S: ModelState + 'static>(model: &Model<S>) -> String
+where
+    S: HasHlrProgram,
+{
+    let config = PrettyPrintConfig::default()
+        .with_show_types(false)
+        .with_show_vars(false);
+    pretty_print_hlr_with_config(model, config)
+}
+
+pub fn pretty_print_hlr_stdout<S: ModelState + 'static>(model: &Model<S>)
+where
+    S: HasHlrProgram,
+{
+    println!("{}", pretty_print_hlr(model));
 }

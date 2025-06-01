@@ -1,6 +1,7 @@
+use crate::disasm::hlr::ast::HlrProgram;
 use crate::disasm::v3::cfg::ControlFlowGraphResult;
 use crate::disasm::v3::data_flow::DataFlowResult;
-use crate::disasm::v3::folded_ssa::FoldedSsaResult; // Import FoldedSsaBlock if directly used, for now FoldedSsaResult is enough
+use crate::disasm::v3::folded_ssa::FoldedSsaResult;
 use crate::disasm::v3::function_call::FunctionCallAnalysisResult;
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::image_scanner::ImageScannerResult;
@@ -30,6 +31,7 @@ enum ModelState {
     FoldedSsaComplete(FoldedSsaResult),
     TypeInferenceComplete(TypeInferenceResult),
     VariableMergerComplete(VariableMergerResult),
+    HlrConstructionComplete(HlrProgram),
 }
 
 #[model]
@@ -49,12 +51,6 @@ impl<S: ModelState> Model<S> {
     {
         &self.input_binary().image
     }
-
-    /*
-    pub fn variable_merger_result(&self) -> Option<&VariableMergerResult> {
-        None
-    }
-    */
 }
 
 macro_rules! add_block_view_when {

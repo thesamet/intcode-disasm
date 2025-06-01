@@ -205,9 +205,6 @@ impl VariableMerger {
         // Process each block to find data flow relationships
         for (_, block) in function.blocks() {
             for instr in &block.folded_ssa().instructions {
-                let Instruction::Assign { ref target, .. } = instr.kind else {
-                    continue;
-                };
                 let reads = instr
                     .kind
                     .collect_read_addresses()
@@ -217,12 +214,16 @@ impl VariableMerger {
                 for i in &reads {
                     insert_var(ds, **i);
                 }
-                if let Some(target) = target.as_versioned() {
-                    insert_var(ds, *target);
-                    for r in reads.iter().filter(|r| r.kind == target.kind) {
-                        ds.join(*target, **r);
+                if let Instruction::Assign { ref target, .. } = instr.kind {
+                    if let Some(target) = target.as_versioned() {
+                        insert_var(ds, *target);
+                        for r in reads.iter().filter(|r| r.kind == target.kind) {
+                            ds.join(*target, **r);
+                        }
                     }
-                }
+                } else {
+                    continue;
+                };
             }
         }
     }
@@ -252,7 +253,11 @@ impl VariableMerger {
             state.next_pointer += 1;
             format!("ptr{}", n)
         } else if vars.iter().any(|v| v.kind.as_memory().is_some()) {
-            unreachable!("Memory variables are either pointers or globals at this point.");
+            format!(
+                "UnexpectedMemory{}",
+                vars.iter().find(|v| v.kind.as_memory().is_some()).unwrap()
+            )
+            // unreachable!("Memory variables are either pointers or globals at this point.");
         } else if vars.iter().any(|v| params.values().contains(v)) {
             let n = state.next_input;
             state.next_input += 1;
