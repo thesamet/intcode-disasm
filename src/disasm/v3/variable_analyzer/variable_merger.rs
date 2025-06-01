@@ -275,18 +275,4 @@ impl VariableMerger {
         let rep = vars.iter().max().unwrap();
         ti.get_type_for(&SsaMemoryReference::Versioned(rep.clone()))
     }
-
-    fn global_memory(v: &SsaMemoryReference) -> Option<usize> {
-        v.as_versioned().and_then(|v| v.kind.as_memory()).cloned()
-    }
-
-    fn are_related(a: &SsaMemoryReference, b: &SsaMemoryReference) -> bool {
-        if let Some(addr) = Self::global_memory(a) {
-            return Self::global_memory(b) == Some(addr);
-        }
-        if Self::global_memory(b).is_some() {
-            return false;
-        }
-        true
-    }
 }

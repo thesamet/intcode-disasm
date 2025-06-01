@@ -17,7 +17,7 @@ use crate::disasm::v3::ssa::VersionedMemoryReference;
 // and types.rs exposes these publicly or they are accessible via `crate::...`
 use super::{
     constraints::ConstraintId,
-    types::{Type, TypeVarId, TypeVarNode, GenericTypeVarId, GenericTypeVar, TypeBounds},
+    types::{GenericTypeVar, GenericTypeVarId, Type, TypeBounds, TypeVarId, TypeVarNode},
     TypeVarPath,
 }; // Use `super::` if types.rs is in the parent directory (type_inference)
    // TypeVarKind is imported separately in the tests module if needed.
@@ -203,7 +203,7 @@ pub struct InferenceAlgorithmState {
 
     iteration: usize,
     next_type_var_id_counter: usize,
-    
+
     /// Generic type variables introduced during inference
     generic_type_vars: HashMap<GenericTypeVarId, GenericTypeVar>,
     next_generic_id_counter: usize,
@@ -515,7 +515,7 @@ impl InferenceAlgorithmState {
 
             iteration: 0,
             vmr_to_type_var: HashMap::new(),
-            
+
             generic_type_vars: HashMap::new(),
             next_generic_id_counter: 0,
         }
@@ -764,30 +764,34 @@ impl InferenceAlgorithmState {
         }
         out
     }
-    
+
     /// Creates a new generic type variable
-    pub fn create_generic_type_var(&mut self, name: String, bounds: TypeBounds) -> GenericTypeVarId {
+    pub fn create_generic_type_var(
+        &mut self,
+        name: String,
+        bounds: TypeBounds,
+    ) -> GenericTypeVarId {
         let id = GenericTypeVarId::new(self.next_generic_id_counter);
         self.next_generic_id_counter += 1;
-        
+
         let generic_var = GenericTypeVar { id, name, bounds };
         self.generic_type_vars.insert(id, generic_var);
-        
+
         id
     }
-    
+
     /// Creates a new generic type variable with automatic naming
     pub fn create_generic_type_var_with_bounds(&mut self, bounds: TypeBounds) -> GenericTypeVarId {
         let id = GenericTypeVarId::new(self.next_generic_id_counter);
         let name = Self::generate_generic_name(self.next_generic_id_counter);
         self.next_generic_id_counter += 1;
-        
+
         let generic_var = GenericTypeVar { id, name, bounds };
         self.generic_type_vars.insert(id, generic_var);
-        
+
         id
     }
-    
+
     /// Generate a generic type variable name (T, U, V, etc.)
     fn generate_generic_name(index: usize) -> String {
         // Use T, U, V, W, X, Y, Z, then T1, T2, etc.
@@ -798,22 +802,22 @@ impl InferenceAlgorithmState {
             format!("T{}", index - GENERIC_NAMES.len() + 1)
         }
     }
-    
+
     /// Gets a generic type variable by ID
     pub fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
         self.generic_type_vars.get(id)
     }
-    
+
     /// Get the current generic ID counter value
     pub fn get_generic_id_counter(&self) -> usize {
         self.next_generic_id_counter
     }
-    
+
     /// Set the generic ID counter value
     pub fn set_generic_id_counter(&mut self, value: usize) {
         self.next_generic_id_counter = value;
     }
-    
+
     /// Get all generic type variables
     pub fn generic_type_vars(&self) -> HashMap<GenericTypeVarId, GenericTypeVar> {
         self.generic_type_vars.clone()
@@ -891,7 +895,6 @@ impl Visitable for TypeVarDependencyGraph<'_> {
 
 #[cfg(test)]
 mod tests {
-    use dsl_macros_impl::build_expr;
 
     use super::*;
     use crate::disasm::{
@@ -903,15 +906,10 @@ mod tests {
     };
     // Explicitly import TypeVarKind for the test module from the correct path.
     // `super` (type_bounds_map) -> `super` (type_inference) -> `types` (types.rs module)
-    use super::super::types::TypeVarKind;
 
     // Mock/dummy TypeVarNode creation for tests
     // Ensure this is compatible with the actual TypeVarNode structure.
-    fn make_node(
-        kind: TypeVarKind,
-        instruction_id: InstructionId,
-        function_id: FunctionId,
-    ) -> TypeVarNode {
+    fn make_node(instruction_id: InstructionId, function_id: FunctionId) -> TypeVarNode {
         TypeVarNode {
             path: TypeVarPath::Output {
                 function_id,
@@ -927,17 +925,9 @@ mod tests {
         init_logging();
         let mut state = InferenceAlgorithmState::new();
 
-        let tv1_id = state.add_type_var(make_node(
-            TypeVarKind::Expression(build_expr!(1)),
-            InstructionId::new(1),
-            FunctionId::new(0),
-        ));
+        let tv1_id = state.add_type_var(make_node(InstructionId::new(1), FunctionId::new(0)));
 
-        let tv2_id = state.add_type_var(make_node(
-            TypeVarKind::Expression(build_expr!(2)),
-            InstructionId::new(2),
-            FunctionId::new(0),
-        ));
+        let tv2_id = state.add_type_var(make_node(InstructionId::new(2), FunctionId::new(0)));
 
         // Initial updates
         assert!(state.update_lower_bound(&tv1_id, &Type::Int, BoundChangeReason::Test));
