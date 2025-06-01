@@ -4,6 +4,7 @@ pub mod repl;
 pub mod v2;
 pub mod v3;
 
+mod symbol_renaming;
 #[cfg(test)]
 mod test_utils;
 
