@@ -315,6 +315,9 @@ impl Expression<SsaMemoryReference> {
                     rhs: Box::new(rhs_expr),
                 })
             },
+            !(!$arg:expr) => {
+                arg.simplify().or_else(|| Some(arg.clone()))
+            },
             !$arg:expr => {
                 arg.simplify().map(|simplified_arg| build_expr!(!#simplified_arg))
             },
@@ -356,22 +359,6 @@ pub enum BinaryOperator {
     Equals,
     /// Inequality comparison (!=).
     NotEquals,
-}
-
-impl BinaryOperator {
-    pub fn logical_negate(&self) -> Option<BinaryOperator> {
-        match self {
-            BinaryOperator::Add => None,
-            BinaryOperator::Mul => None,
-            BinaryOperator::Sub => None,
-            BinaryOperator::LessThan => Some(BinaryOperator::GreaterThanOrEqual),
-            BinaryOperator::LessThanOrEqual => Some(BinaryOperator::GreaterThan),
-            BinaryOperator::GreaterThan => Some(BinaryOperator::LessThanOrEqual),
-            BinaryOperator::GreaterThanOrEqual => Some(BinaryOperator::LessThan),
-            BinaryOperator::Equals => Some(BinaryOperator::NotEquals),
-            BinaryOperator::NotEquals => Some(BinaryOperator::Equals),
-        }
-    }
 }
 
 impl Display for BinaryOperator {
@@ -579,6 +566,7 @@ mod tests {
             build_expr! { !(([R+1].0 + 0) < ([R+2].0 + 0)) },
             "[R+1]_0 >= [R+2]_0"
         );
+        assert_simplifies_to!(build_expr! { !![R+1].0 }, "[R+1]_0");
     }
 
     #[test]

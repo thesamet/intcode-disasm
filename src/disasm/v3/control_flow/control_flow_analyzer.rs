@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use dsl_macros_impl::build_expr;
 use itertools::Itertools;
 use log::trace;
 use petgraph::visit::{depth_first_search, Control, IntoNeighbors};
@@ -361,7 +362,14 @@ impl ControlFlowStructureAnalyzer {
                         let false_branch =
                             self.analyze_block(func, context, *else_addr, Some(merge_point));
                         context.in_if.pop();
-                        statements.push(HlrStatement::If(cond_expr, true_branch, false_branch));
+                        if !true_branch.is_empty() {
+                            statements.push(HlrStatement::If(cond_expr, true_branch, false_branch));
+                        } else {
+                            let cond = cond.clone();
+                            let cond = build_expr! { !#cond };
+                            let cond = self.op_expr(&cond.simplify().unwrap_or_else(|| cond));
+                            statements.push(HlrStatement::If(cond, false_branch, true_branch));
+                        }
                         current = merge_point;
                         continue;
                     }
