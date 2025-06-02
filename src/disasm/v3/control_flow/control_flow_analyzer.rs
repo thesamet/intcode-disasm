@@ -16,7 +16,7 @@ use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 use crate::disasm::v3::type_inference::{ExpressionPathElement, Type, TypeVarPath};
 use crate::disasm::v3::{BlockId, FunctionId, InstructionId, NextKind};
-use crate::disasm::{symbol_renaming, Error, SymbolRenaming};
+use crate::disasm::{Error, SymbolRenaming};
 
 type Function<'a> = FunctionView<'a, VariableMergerComplete>;
 

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
+use crate::disasm::v3::ssa::VersionedMemoryReference;
 use crate::disasm::v3::FunctionId;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};

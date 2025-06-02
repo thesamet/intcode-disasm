@@ -8,7 +8,7 @@ use crate::disasm::{
         define_id_type,
         lir::{Instruction, MemoryReferenceInfo},
         model::{Model, TypeInferenceComplete, VariableMergerComplete},
-        ssa::{types::VersionableMemoryKind, SsaMemoryReference, VersionedMemoryReference},
+        ssa::{types::VersionableMemoryKind, VersionedMemoryReference},
         type_inference::Type,
         FunctionId,
     },
