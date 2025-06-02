@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{digit1, space1},
+    character::complete::{digit1, space0, space1},
     combinator::{map, map_res, opt, recognize},
     sequence::{delimited, preceded},
     IResult,
@@ -19,8 +19,8 @@ use super::v3::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolRenaming {
-    pub function_names: HashMap<FunctionId, String>,
-    pub variable_names: HashMap<VersionedMemoryReference, String>,
+    functions: HashMap<FunctionId, (String, Vec<String>)>,
+    variable_names: HashMap<VersionedMemoryReference, String>,
 }
 
 impl Default for SymbolRenaming {
@@ -32,17 +32,21 @@ impl Default for SymbolRenaming {
 impl SymbolRenaming {
     pub fn new() -> Self {
         Self {
-            function_names: HashMap::new(),
+            functions: HashMap::new(),
             variable_names: HashMap::new(),
         }
     }
 
-    fn add_function_name(&mut self, function_id: FunctionId, name: String) {
-        self.function_names.insert(function_id, name);
+    fn add_function(&mut self, function_id: FunctionId, name: String, args: Vec<String>) {
+        self.functions.insert(function_id, (name, args));
     }
 
     fn add_variable_name(&mut self, variable: &VersionedMemoryReference, name: String) {
         self.variable_names.insert(*variable, name);
+    }
+
+    pub fn get_variable_name(&self, variable: &VersionedMemoryReference) -> Option<&String> {
+        self.variable_names.get(variable)
     }
 
     pub fn from_lines(lines: &str) -> Result<Self, String> {
@@ -58,8 +62,8 @@ impl SymbolRenaming {
 
             match SymbolRenamingLine::parse(trimmed_line) {
                 Ok((_, symbol_renaming_line)) => match symbol_renaming_line {
-                    SymbolRenamingLine::Function(function_id, name) => {
-                        symbol_renaming.add_function_name(function_id, name);
+                    SymbolRenamingLine::Function(function_id, name, args) => {
+                        symbol_renaming.add_function(function_id, name, args);
                     }
                     SymbolRenamingLine::Variable(variable, name) => {
                         symbol_renaming.add_variable_name(&variable, name);
@@ -72,6 +76,14 @@ impl SymbolRenaming {
         }
 
         Ok(symbol_renaming)
+    }
+
+    pub fn get_function_name(&self, function_id: FunctionId) -> Option<&String> {
+        self.functions.get(&function_id).map(|(name, _)| name)
+    }
+
+    pub fn get_function_args(&self, function_id: FunctionId) -> Option<&Vec<String>> {
+        self.functions.get(&function_id).map(|(_, args)| args)
     }
 }
 
@@ -145,7 +157,7 @@ fn parse_vmr_parts(input: &str) -> IResult<&str, ParsedVmrParts> {
     Ok((input, ParsedVmrParts { kind, version }))
 }
 
-fn parse_rest_of_line_as_name(input: &str) -> IResult<&str, String> {
+fn parse_identifier(input: &str) -> IResult<&str, String> {
     // Parse what looks like an identifier (letters, numbers, underscores)
     let identifier = recognize(nom::multi::many1(alt((
         nom::character::complete::alpha1,
@@ -156,7 +168,7 @@ fn parse_rest_of_line_as_name(input: &str) -> IResult<&str, String> {
     map(identifier, |s: &str| s.trim().to_string()).parse(input)
 }
 enum SymbolRenamingLine {
-    Function(FunctionId, String),
+    Function(FunctionId, String, Vec<String>),
     Variable(VersionedMemoryReference, String),
 }
 
@@ -174,9 +186,17 @@ impl SymbolRenamingLine {
                     space1,
                     parse_function_id,
                     space1,
-                    parse_rest_of_line_as_name,
+                    parse_identifier,
+                    opt(delimited(
+                        tag("("),
+                        nom::multi::separated_list0((tag(","), space0), parse_identifier),
+                        tag(")"),
+                    )),
                 ),
-                |(_, _, fid, _, name)| SymbolRenamingLine::Function(fid, name),
+                |(_, _, fid, _, name, args_opt)| {
+                    let args = args_opt.unwrap_or_default();
+                    SymbolRenamingLine::Function(fid, name, args)
+                },
             ),
             map(
                 (
@@ -186,7 +206,7 @@ impl SymbolRenamingLine {
                     space1,
                     parse_vmr_parts,
                     space1,
-                    parse_rest_of_line_as_name,
+                    parse_identifier,
                 ),
                 |(_, _, fid, _, vmr_parts, _, name)| {
                     let vmr = VersionedMemoryReference {
@@ -213,7 +233,7 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Function(fid, name) => {
+            SymbolRenamingLine::Function(fid, name, _) => {
                 assert_eq!(fid, FunctionId::new(1234));
                 assert_eq!(name, "function_name");
             }
@@ -235,6 +255,57 @@ mod tests {
                 assert_eq!(name, "variable_name");
             }
             _ => panic!("Expected a variable line"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_line_with_empty_args() {
+        let input = "F 1234 function_name()";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok());
+        let (_, line) = result.unwrap();
+        match line {
+            SymbolRenamingLine::Function(fid, name, args) => {
+                assert_eq!(fid, FunctionId::new(1234));
+                assert_eq!(name, "function_name");
+                assert_eq!(args, Vec::<String>::new());
+            }
+            _ => panic!("Expected a function line"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_line_with_one_arg() {
+        let input = "F 1234 function_name(arg1)";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok());
+        let (_, line) = result.unwrap();
+        match line {
+            SymbolRenamingLine::Function(fid, name, args) => {
+                assert_eq!(fid, FunctionId::new(1234));
+                assert_eq!(name, "function_name");
+                assert_eq!(args, vec!["arg1".to_string()]);
+            }
+            _ => panic!("Expected a function line"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_line_with_multiple_args() {
+        let input = "F 1234 function_name(arg1,arg2, arg3)";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok());
+        let (_, line) = result.unwrap();
+        match line {
+            SymbolRenamingLine::Function(fid, name, args) => {
+                assert_eq!(fid, FunctionId::new(1234));
+                assert_eq!(name, "function_name");
+                assert_eq!(
+                    args,
+                    vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()]
+                );
+            }
+            _ => panic!("Expected a function line"),
         }
     }
 
@@ -304,7 +375,7 @@ mod tests {
         let result = SymbolRenaming::from_lines(input);
         assert!(result.is_ok());
         let symbol_renaming = result.unwrap();
-        assert!(symbol_renaming.function_names.is_empty());
+        assert!(symbol_renaming.functions.is_empty());
         assert!(symbol_renaming.variable_names.is_empty());
     }
 
@@ -314,9 +385,9 @@ mod tests {
         let result = SymbolRenaming::from_lines(input);
         assert!(result.is_ok());
         let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.function_names.len(), 1);
+        assert_eq!(symbol_renaming.functions.len(), 1);
         assert_eq!(
-            symbol_renaming.function_names.get(&FunctionId::new(1234)),
+            symbol_renaming.functions.get(&FunctionId::new(1234)),
             Some(&"function_name".to_string())
         );
         assert!(symbol_renaming.variable_names.is_empty());
@@ -328,9 +399,9 @@ mod tests {
         let result = SymbolRenaming::from_lines(input);
         assert!(result.is_ok());
         let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.function_names.len(), 1);
+        assert_eq!(symbol_renaming.functions.len(), 1);
         assert_eq!(
-            symbol_renaming.function_names.get(&FunctionId::new(1234)),
+            symbol_renaming.functions.get(&FunctionId::new(1234)),
             Some(&"function_name".to_string())
         );
         assert_eq!(symbol_renaming.variable_names.len(), 1);

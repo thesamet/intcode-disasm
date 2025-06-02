@@ -184,8 +184,7 @@ impl ControlFlowStructureAnalyzer {
 
         let name = self
             .symbol_renaming
-            .function_names
-            .get(&func.function_id())
+            .get_function_name(func.function_id())
             .cloned()
             .unwrap_or_else(|| format!("{}", func.function_id()));
 
@@ -488,8 +487,7 @@ impl ControlFlowStructureAnalyzer {
                 if typ.is_function() {
                     let name = self
                         .symbol_renaming
-                        .function_names
-                        .get(&function_id)
+                        .get_function_name(function_id)
                         .cloned()
                         .unwrap_or_else(|| format!("{}", function_id));
                     HlrExpression::StaticFunctionReference(name)

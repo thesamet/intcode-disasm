@@ -238,14 +238,27 @@ impl VariableMerger {
         globals: &HashMap<usize, SetId>,
     ) -> Option<String> {
         for var in vars.iter() {
-            if self.symbol_renaming.variable_names.contains_key(var) {
-                return Some(
-                    self.symbol_renaming
-                        .variable_names
-                        .get(var)
-                        .unwrap()
-                        .clone(),
-                );
+            let function_id = vars.iter().next().unwrap().function_id;
+            if let Some(args) = self.symbol_renaming.get_function_args(function_id) {
+                if let Some(arg_name) = args
+                    .iter()
+                    .zip(
+                        self.model
+                            .function(&function_id)
+                            .callee_info()
+                            .parameter_entry_vars
+                            .iter()
+                            .sorted_by_key(|v| v.0)
+                            .map(|(_, v)| v),
+                    )
+                    .find(|(_, v)| *v == var)
+                    .map(|(arg_name, _)| arg_name.clone())
+                {
+                    return Some(arg_name);
+                }
+            }
+            if let Some(name) = self.symbol_renaming.get_variable_name(var) {
+                return Some(name.clone());
             }
         }
         let rep = vars.iter().next().unwrap();

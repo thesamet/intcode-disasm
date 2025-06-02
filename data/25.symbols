@@ -1,5 +1,12 @@
-F 1130 best_func
-V 1130 [R-6]_0 processor
-V 1130 [R-2]_2 best_var
+F 1130 map_array(list, length, item_size, handle_function)
+V 1130 [R-2]_2 index
+
+F 1174 map_length_encoded(array, mapper)
+V 1174 [R-2]_1 length
+V 1174 [R-3]_1 index
+
+F 1234 print_encoded_string(encoded_string)
+
+F 1256 output_sum(a, b, c)
 
 F 2329 coolio2329
