@@ -287,6 +287,6 @@ impl VariableMerger {
     fn infer_type(&self, vars: &HashSet<VersionedMemoryReference>) -> Type {
         let ti = self.model.type_inference_result();
         let rep = vars.iter().max().unwrap();
-        ti.get_type_for(&SsaMemoryReference::Versioned(rep.clone()))
+        ti.get_type_for(rep)
     }
 }

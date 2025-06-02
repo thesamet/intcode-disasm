@@ -520,6 +520,7 @@ impl InferenceAlgorithmState {
         path: TypeVarPath,
     ) -> TypeVarId {
         if let Some(tv_id) = self.vmr_to_type_var.get(vmr) {
+            // Create the path alias to this id
             return *tv_id;
         }
 

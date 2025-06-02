@@ -2,8 +2,8 @@ use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 
 // Use v3 types consistently
-use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types
 use crate::disasm::v3::cfg::block::{Condition, NextKind, PredecessorKind}; // v3 NextKind, PredecessorKind
+use crate::disasm::v3::common::{FunctionCall, Span}; // Keep common types
 use crate::disasm::v3::lir::{
     Instruction,
     InstructionNode,
@@ -260,26 +260,14 @@ impl ControlFlowGraphBuilder {
                         self.blocks.contains_key(&false_branch), // Pass &BlockId
                         "Block {false_branch} not found"
                     );
-                    predecessors_map.entry(true_branch).or_default().push(
-                        // Keep as value for entry
-                        PredecessorKind::ConditionalJump(Condition {
-                            from_block: *block_id,
-                            condition_operand: condition.condition_operand.clone(),
-                            jump_if_true: true,
-                            target_block: true_branch,
-                            follows_block: false_branch,
-                        }),
-                    );
-                    predecessors_map.entry(false_branch).or_default().push(
-                        // Keep as value for entry
-                        PredecessorKind::ConditionalFollow(Condition {
-                            from_block: *block_id,
-                            condition_operand: condition.condition_operand.clone(),
-                            jump_if_true: true,
-                            target_block: true_branch,
-                            follows_block: false_branch,
-                        }),
-                    );
+                    predecessors_map
+                        .entry(true_branch)
+                        .or_default()
+                        .push(PredecessorKind::ConditionalJump(condition.clone()));
+                    predecessors_map
+                        .entry(false_branch)
+                        .or_default()
+                        .push(PredecessorKind::ConditionalFollow(condition.clone()));
                 }
                 NextKind::Return | NextKind::Halt | NextKind::Unknown => { /* No successors */ }
             };
@@ -338,7 +326,12 @@ impl ControlFlowGraphBuilder {
             Instruction::Goto(target_addr) => NextKind::Goto(*target_addr),
             Instruction::Call {
                 addr, return_to, ..
-            } => NextKind::FunctionCall(FunctionCall::new(block_id, addr.clone(), *return_to)),
+            } => NextKind::FunctionCall(FunctionCall::new(
+                block_id,
+                addr.clone(),
+                *return_to,
+                last_instr.id,
+            )),
             Instruction::Return => NextKind::Return,
             Instruction::If {
                 cond,
@@ -350,6 +343,7 @@ impl ControlFlowGraphBuilder {
                 jump_if_true: true,
                 target_block: (*then_addr),
                 follows_block: (*else_addr),
+                instruction_id: last_instr.id,
             }),
             _ => {
                 // Find the next block by address

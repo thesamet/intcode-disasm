@@ -526,9 +526,11 @@ impl Solver {
                 }
             }
             result.type_var_states.insert(*id, state.clone());
-            if let Some(mem_ref) = self.state.get_type_var_node(id).unwrap().vmr {
-                result.mem_ref_to_type_var_id.insert(mem_ref.into(), *id);
+            let node = self.state.get_type_var_node(id).unwrap();
+            if let Some(vmr) = node.vmr {
+                result.vmr_to_type_var_id.insert(vmr, *id);
             }
+            result.path_to_type_var_id.insert(node.path.clone(), *id);
         }
         result.debug_markers = markers;
         result.query_engine = TypeInferenceQueryEngine::new(self.state.clone(), self.store.clone());
@@ -544,7 +546,7 @@ impl Solver {
                     (
                         *v,
                         result.get_type_for(&v.clone().into()),
-                        result.get_type_id_for(&v.clone().into()),
+                        result.get_type_id_for_vmr(&v.clone().into()),
                     )
                 })
                 .collect_vec();
@@ -559,7 +561,7 @@ impl Solver {
                     (
                         *v,
                         result.get_type_for(&v.clone().into()),
-                        result.get_type_id_for(&v.clone().into()),
+                        result.get_type_id_for_vmr(&v.clone().into()),
                     )
                 })
                 .collect_vec();

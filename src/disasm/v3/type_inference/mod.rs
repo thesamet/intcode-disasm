@@ -15,6 +15,7 @@ pub use query_engine::TypeInferenceQueryEngine;
 pub use result::TypeInferenceResult;
 pub use solver::Solver;
 pub use type_bounds_map::{InferenceAlgorithmState, TypeVarState};
+pub use types::ExpressionPathElement;
 pub use types::Type;
 pub use types::{TypeVarId, TypeVarPath};
 

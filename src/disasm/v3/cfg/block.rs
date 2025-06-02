@@ -8,6 +8,7 @@ use crate::disasm::v3::lir::{
     ReadAddressExtractor, // Use LIR types
 };
 use crate::disasm::v3::model::{Model, ModelState};
+use crate::disasm::v3::InstructionId;
 
 // use crate::disasm::v3::native::NativeInstruction; // Removed - unresolved
 
@@ -210,6 +211,7 @@ pub struct Condition<T> {
     pub jump_if_true: bool,               // True for `if x`, False for `if !x`
     pub target_block: BlockId,            // Block jumped to if condition met
     pub follows_block: BlockId,           // Block fallen through to if condition not met
+    pub instruction_id: InstructionId,    // The instructin id of this condition.
 }
 
 impl<T> Condition<T> {
@@ -224,6 +226,7 @@ impl<T> Condition<T> {
             jump_if_true: self.jump_if_true,
             target_block: self.target_block,
             follows_block: self.follows_block,
+            instruction_id: self.instruction_id,
         }
     }
 }

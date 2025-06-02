@@ -895,6 +895,191 @@ pub enum TypeVarPath {
 }
 
 impl TypeVarPath {
+    #[must_use]
+    pub fn function_def_arg(function_id: FunctionId, index: usize) -> Self {
+        Self::FunctionDefArg { function_id, index }
+    }
+
+    #[must_use]
+    pub fn function_def_arg_tuple(function_id: FunctionId) -> Self {
+        Self::FunctionDefArgTuple { function_id }
+    }
+
+    #[must_use]
+    pub fn function_def_ret(function_id: FunctionId, index: usize) -> Self {
+        Self::FunctionDefRet { function_id, index }
+    }
+
+    #[must_use]
+    pub fn function_def_ret_tuple(function_id: FunctionId) -> Self {
+        Self::FunctionDefRetTuple { function_id }
+    }
+
+    #[must_use]
+    pub fn assignment_target_versioned(
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        vmr: VersionedMemoryReference,
+    ) -> Self {
+        Self::AssignmentTargetVersioned {
+            function_id,
+            instruction_id,
+            vmr,
+        }
+    }
+
+    #[must_use]
+    pub fn assignment_target_deref(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::AssignmentTargetDeref {
+            function_id,
+            instruction_id,
+            expression_path: ExpressionPath::root(),
+        }
+    }
+
+    #[must_use]
+    pub fn assignment_src(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::AssignmentSrc {
+            function_id,
+            instruction_id,
+            expression_path: ExpressionPath::root(),
+        }
+    }
+
+    #[must_use]
+    pub fn if_cond(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::IfCond {
+            function_id,
+            instruction_id,
+            expression_path: ExpressionPath::root(),
+        }
+    }
+
+    #[must_use]
+    pub fn output(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::Output {
+            function_id,
+            instruction_id,
+            expression_path: ExpressionPath::root(),
+        }
+    }
+
+    #[must_use]
+    pub fn call_address(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::CallAddress {
+            function_id,
+            instruction_id,
+            expression_path: ExpressionPath::root(),
+        }
+    }
+
+    #[must_use]
+    pub fn call_arg_tuple(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::CallArgTuple {
+            function_id,
+            instruction_id,
+        }
+    }
+
+    #[must_use]
+    pub fn call_arg(function_id: FunctionId, instruction_id: InstructionId, index: usize) -> Self {
+        Self::CallArg {
+            function_id,
+            instruction_id,
+            index,
+            expression_path: ExpressionPath::root(),
+        }
+    }
+
+    #[must_use]
+    pub fn call_ret_tuple(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::CallRetTuple {
+            function_id,
+            instruction_id,
+        }
+    }
+
+    #[must_use]
+    pub fn call_ret(
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        index: usize,
+        vmr: VersionedMemoryReference,
+    ) -> Self {
+        Self::CallRet {
+            function_id,
+            instruction_id,
+            index,
+            vmr,
+        }
+    }
+
+    #[must_use]
+    pub fn phi_assignment(function_id: FunctionId, instruction_id: InstructionId) -> Self {
+        Self::PhiAssignment {
+            function_id,
+            instruction_id,
+        }
+    }
+
+    #[must_use]
+    pub fn phi_assignment_arg(
+        function_id: FunctionId,
+        instruction_id: InstructionId,
+        index: usize,
+    ) -> Self {
+        Self::PhiAssignmentArg {
+            function_id,
+            instruction_id,
+            index,
+        }
+    }
+
+    #[must_use]
+    pub fn function_args_refinement(
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+    ) -> Self {
+        Self::FunctionArgsRefinement {
+            function_id,
+            original_type_var_id,
+        }
+    }
+
+    #[must_use]
+    pub fn function_rets_refinement(
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+    ) -> Self {
+        Self::FunctionRetsRefinement {
+            function_id,
+            original_type_var_id,
+        }
+    }
+
+    #[must_use]
+    pub fn tuple_refinement(
+        function_id: FunctionId,
+        original_type_var_id: TypeVarId,
+        index: usize,
+    ) -> Self {
+        Self::TupleRefinement {
+            function_id,
+            original_type_var_id,
+            index,
+        }
+    }
+
+    #[must_use]
+    pub fn pointer_refinement(function_id: FunctionId, original_type_var_id: TypeVarId) -> Self {
+        Self::PointerRefinement {
+            function_id,
+            original_type_var_id,
+        }
+    }
+}
+
+impl TypeVarPath {
     pub fn function_id(&self) -> FunctionId {
         match self {
             TypeVarPath::FunctionDefArg { function_id, .. }

@@ -14,8 +14,8 @@ use crate::disasm::v3::lir::{Expression, Instruction};
 use crate::disasm::v3::model::{HlrConstructionComplete, Model, VariableMergerComplete};
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
-use crate::disasm::v3::type_inference::Type;
-use crate::disasm::v3::{BlockId, NextKind};
+use crate::disasm::v3::type_inference::{ExpressionPathElement, Type, TypeVarPath};
+use crate::disasm::v3::{BlockId, FunctionId, InstructionId, NextKind};
 use crate::disasm::{symbol_renaming, Error, SymbolRenaming};
 
 type Function<'a> = FunctionView<'a, VariableMergerComplete>;
@@ -237,7 +237,13 @@ impl ControlFlowStructureAnalyzer {
                                 loop_body,
                                 HlrExpression::BinaryOp {
                                     op,
-                                    left: Box::new(self.op_expr(&cond.condition_operand)),
+                                    left: Box::new(self.expr_to_hlr(
+                                        &cond.condition_operand,
+                                        TypeVarPath::if_cond(
+                                            func.function_id(),
+                                            cond.instruction_id,
+                                        ),
+                                    )),
                                     right: Box::new(HlrExpression::Constant(0, Type::Int)),
                                     result_type: Type::Bool,
                                 },
@@ -251,7 +257,9 @@ impl ControlFlowStructureAnalyzer {
                     }
                 }
             }
-            if let Err(e) = self.translate_statements(context, block, &mut statements) {
+            if let Err(e) =
+                self.translate_statements(context, func.function_id(), block, &mut statements)
+            {
                 panic!("Error translating statements: {}", e);
             }
             if let Some(in_loop) = context.in_loop {
@@ -298,13 +306,34 @@ impl ControlFlowStructureAnalyzer {
                         .unwrap();
                     let Instruction::Call {
                         ref addr, ref args, ..
-                    } = block.folded_ssa().instructions.last().unwrap().kind
+                    } = block
+                        .folded_ssa()
+                        .instructions
+                        .iter()
+                        .find(|i| i.id == call.instruction_id)
+                        .unwrap()
+                        .kind
                     else {
                         panic!("Expected function call instruction");
                     };
                     let fcall = HlrExpression::FunctionCall(
-                        Box::new(self.op_expr(addr)),
-                        args.iter().map(|e| self.op_expr(e)).collect_vec(),
+                        Box::new(self.expr_to_hlr(
+                            addr,
+                            TypeVarPath::call_address(func.function_id(), call.instruction_id),
+                        )),
+                        args.iter()
+                            .enumerate()
+                            .map(|(index, e)| {
+                                self.expr_to_hlr(
+                                    e,
+                                    TypeVarPath::call_arg(
+                                        func.function_id(),
+                                        call.instruction_id,
+                                        index,
+                                    ),
+                                )
+                            })
+                            .collect_vec(),
                     );
                     if csi.return_reads.is_empty() {
                         statements.push(HlrStatement::Assignment(
@@ -323,7 +352,7 @@ impl ControlFlowStructureAnalyzer {
 
                     current = call.return_block;
                 }
-                NextKind::Condition(_) => {
+                NextKind::Condition(next_kind_cond) => {
                     let Instruction::If {
                         ref cond,
                         ref then_addr,
@@ -333,7 +362,10 @@ impl ControlFlowStructureAnalyzer {
                     else {
                         panic!("Expected if instruction");
                     };
-                    let cond_expr = self.op_expr(cond);
+                    let cond_expr = self.expr_to_hlr(
+                        cond,
+                        TypeVarPath::if_cond(func.function_id(), next_kind_cond.instruction_id),
+                    );
                     if let Some(in_loop) = context.in_loop {
                         if current != in_loop.jump_back {
                             // since it is not the final jump back in the block (caller handled that),
@@ -379,7 +411,15 @@ impl ControlFlowStructureAnalyzer {
                         } else {
                             let cond = cond.clone();
                             let cond = build_expr! { !#cond };
-                            let cond = self.op_expr(&cond.simplify().unwrap_or_else(|| cond));
+                            let cond = self.expr_to_hlr(
+                                &cond.simplify().unwrap_or_else(|| cond),
+                                // TODO: This is likely wrong, if the expression has been simplified, the path may be out of sync with the expression
+                                // used in the typevar.
+                                TypeVarPath::if_cond(
+                                    func.function_id(),
+                                    next_kind_cond.instruction_id,
+                                ),
+                            );
                             statements.push(HlrStatement::If(cond, false_branch, true_branch));
                         }
                         current = merge_point;
@@ -425,41 +465,70 @@ impl ControlFlowStructureAnalyzer {
         }
     }
 
-    fn op_expr(&self, op: &Expression<SsaMemoryReference>) -> HlrExpression {
-        match op {
-            Expression::Constant(c) => HlrExpression::Constant(*c, Type::Int),
-            Expression::Addressable(a) => match a {
-                SsaMemoryReference::Versioned(a) => HlrExpression::Variable(self.hlr_var(&a)),
-                SsaMemoryReference::Deref(a) => HlrExpression::Deref(Box::new(self.op_expr(a))),
-            },
-            Expression::Binary { op, lhs, rhs } => {
-                HlrExpression::BinaryOp {
-                    op: match op {
-                        crate::disasm::v3::lir::BinaryOperator::Add => BinaryOperator::Add,
-                        crate::disasm::v3::lir::BinaryOperator::Mul => BinaryOperator::Mul,
-                        crate::disasm::v3::lir::BinaryOperator::Sub => BinaryOperator::Sub,
-                        crate::disasm::v3::lir::BinaryOperator::LessThan => {
-                            BinaryOperator::LessThan
-                        }
-                        crate::disasm::v3::lir::BinaryOperator::LessThanOrEqual => {
-                            BinaryOperator::LessThanOrEqual
-                        }
-                        crate::disasm::v3::lir::BinaryOperator::GreaterThan => {
-                            BinaryOperator::GreaterThan
-                        }
-                        crate::disasm::v3::lir::BinaryOperator::GreaterThanOrEqual => {
-                            BinaryOperator::GreaterThanOrEqual
-                        }
-                        crate::disasm::v3::lir::BinaryOperator::Equals => BinaryOperator::Equals,
-                        crate::disasm::v3::lir::BinaryOperator::NotEquals => {
-                            BinaryOperator::NotEquals
-                        }
-                    },
-                    left: Box::new(self.op_expr(lhs)),
-                    right: Box::new(self.op_expr(rhs)),
-                    result_type: Type::Int, //Infer type
+    fn expr_to_hlr(
+        &self,
+        expr: &Expression<SsaMemoryReference>,
+        path: TypeVarPath,
+    ) -> HlrExpression {
+        let tv_id = match expr {
+            // VMRs have unique type var ids. If this VMR was first used outside this expression, it's not associated with this path.
+            Expression::Addressable(SsaMemoryReference::Versioned(vmr)) => {
+                self.model.type_inference_result().get_type_id_for_vmr(vmr)
+            }
+            _ => self
+                .model
+                .type_inference_result()
+                .get_type_id_for_path(&path),
+        };
+        let typ = self.model.type_inference_result().get_type_for_id(tv_id);
+
+        match expr {
+            Expression::Constant(c) => {
+                let function_id = FunctionId::new(*c as usize);
+                if typ.is_function() {
+                    let name = self
+                        .symbol_renaming
+                        .function_names
+                        .get(&function_id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("{}", function_id));
+                    HlrExpression::StaticFunctionReference(name)
+                } else {
+                    HlrExpression::Constant(*c, typ)
                 }
             }
+            Expression::Addressable(a) => match a {
+                SsaMemoryReference::Versioned(a) => HlrExpression::Variable(self.hlr_var(&a)),
+                SsaMemoryReference::Deref(a) => HlrExpression::Deref(Box::new(
+                    self.expr_to_hlr(a, path.extending_path(ExpressionPathElement::Deref)),
+                )),
+            },
+            Expression::Binary { op, lhs, rhs } => HlrExpression::BinaryOp {
+                op: match op {
+                    crate::disasm::v3::lir::BinaryOperator::Add => BinaryOperator::Add,
+                    crate::disasm::v3::lir::BinaryOperator::Mul => BinaryOperator::Mul,
+                    crate::disasm::v3::lir::BinaryOperator::Sub => BinaryOperator::Sub,
+                    crate::disasm::v3::lir::BinaryOperator::LessThan => BinaryOperator::LessThan,
+                    crate::disasm::v3::lir::BinaryOperator::LessThanOrEqual => {
+                        BinaryOperator::LessThanOrEqual
+                    }
+                    crate::disasm::v3::lir::BinaryOperator::GreaterThan => {
+                        BinaryOperator::GreaterThan
+                    }
+                    crate::disasm::v3::lir::BinaryOperator::GreaterThanOrEqual => {
+                        BinaryOperator::GreaterThanOrEqual
+                    }
+                    crate::disasm::v3::lir::BinaryOperator::Equals => BinaryOperator::Equals,
+                    crate::disasm::v3::lir::BinaryOperator::NotEquals => BinaryOperator::NotEquals,
+                },
+                left: Box::new(
+                    self.expr_to_hlr(lhs, path.extending_path(ExpressionPathElement::BinaryLeft)),
+                ),
+                right: Box::new(
+                    self.expr_to_hlr(rhs, path.extending_path(ExpressionPathElement::BinaryRight)),
+                ),
+                result_type: typ,
+            },
             Expression::Unary { op, arg } => HlrExpression::UnaryOperator {
                 op: match op {
                     crate::disasm::v3::lir::UnaryOperator::Not => {
@@ -469,31 +538,12 @@ impl ControlFlowStructureAnalyzer {
                         crate::disasm::hlr::ast::UnaryOperator::Minus
                     }
                 },
-                expr: Box::new(self.op_expr(arg)),
+                expr: Box::new(
+                    self.expr_to_hlr(arg, path.extending_path(ExpressionPathElement::Unary)),
+                ),
             },
             Expression::Input() => HlrExpression::Input(),
-            Expression::DebugMarker(_, e) => self.op_expr(e),
-            /*
-            SsaOperandKind::Constant(val) => {
-                match self
-                    .model
-                    .get_type_inference_result()
-                    .unwrap()
-                    .get_type_for_ssaoperand(op)
-                    .unwrap_or(&Type::Int)
-                {
-                    Type::Int => HlrExpression::Constant(val, Type::Int),
-                    Type::Bool => HlrExpression::Constant(val, Type::Bool),
-                    Type::Char => HlrExpression::Constant(val, Type::Char),
-                    Type::Function { .. } => {
-                        HlrExpression::StaticFunctionReference(format!("fu{}", val.to_string()))
-                    }
-                    _ => HlrExpression::Constant(val, Type::Int),
-                }
-            }
-            SsaOperandKind::Variable(var) => self.var_expr(&var),
-            SsaOperandKind::Deref(var) => HlrExpression::Deref(Box::new(self.var_expr(&var))),
-            */
+            Expression::DebugMarker(_, e) => self.expr_to_hlr(e, path),
         }
     }
 
@@ -507,6 +557,7 @@ impl ControlFlowStructureAnalyzer {
     fn translate_statements(
         &self,
         context: &mut FunctionAnalysisContext, // Mark context as potentially unused for now
+        function_id: FunctionId,
         block: BlockView<'_, VariableMergerComplete>,
         statements: &mut Vec<HlrStatement>,
     ) -> Result<(), Error> {
@@ -514,111 +565,21 @@ impl ControlFlowStructureAnalyzer {
 
         for instr in &block.folded_ssa().instructions {
             let stmt = match &instr.kind {
-                Instruction::Assign { target, src, .. } => {
-                    self.assign_or_def(context, target, self.op_expr(src))
-                }
-                Instruction::Output(a) => HlrStatement::Output(self.op_expr(a)),
+                Instruction::Assign { target, src, .. } => self.assign_or_def(
+                    context,
+                    function_id,
+                    instr.id,
+                    target,
+                    self.expr_to_hlr(src, TypeVarPath::assignment_src(function_id, instr.id)),
+                ),
+                Instruction::Output(a) => HlrStatement::Output(
+                    self.expr_to_hlr(a, TypeVarPath::output(function_id, instr.id)),
+                ),
                 Instruction::Call { .. }
                 | Instruction::If { .. }
                 | Instruction::Goto(_)
                 | Instruction::Return
-                | Instruction::Halt => continue, /*
-                                                 </rewrite_this>
-                                                                                                   NativeInstructionKind::Add(a, b, c) => {
-                                                                                                       let result_var = c.as_variable().ok_or_else(|| {
-                                                                                                           Error::AnalysisFailure("Add instruction expects variable target".to_string())
-                                                                                                       })?;
-                                                                                                       self.assign_or_def(context,result_var,
-                                                                                                           HlrExpression::BinaryOp {
-                                                                                                               op: BinaryOperator::Add,
-                                                                                                               left: Box::new(self.op_expr(a)),
-                                                                                                               right: Box::new(self.op_expr(b)),
-                                                                                                               result_type: self.var_type(result_var), // Use var_type of the result var
-                                                                                                           },
-                                                                                                       )
-                                                                                                   }
-                                                                                                   NativeInstructionKind::Mul(a, b, c) => {
-                                                                                                       let result_var = c.as_variable().ok_or_else(|| {
-                                                                                                           Error::AnalysisFailure("Mul instruction expects variable target".to_string())
-                                                                                                       })?;
-                                                                                                       self.assign_or_def(context, result_var, HlrExpression::BinaryOp {
-                                                                                                           op: BinaryOperator::Mul,
-                                                                                                           left: Box::new(self.op_expr(a)),
-                                                                                                           right: Box::new(self.op_expr(b)),
-                                                                                                           result_type: self.var_type(result_var), // Use var_type of the result var
-                                                                                                       })
-                                                                                                   }
-                                                                                                   NativeInstructionKind::Input(a) => {
-                                                                                                       let result_var = a.as_variable().ok_or_else(|| {
-                                                                                                           Error::AnalysisFailure("Input instruction expects variable target".to_string())
-                                                                                                       })?;
-                                                                                                       self.assign_or_def(context, result_var, HlrExpression::Input())
-                                                                                                   }
-                                                                                                   NativeInstructionKind::Output(a) => HlrStatement::Output(self.op_expr(a)),
-                                                                                                   NativeInstructionKind::LessThan(a, b, c) => {
-                                                                                                       let result_var = c.as_variable().ok_or_else(|| Error::AnalysisFailure(
-                                                                                                           "LessThan instruction expects variable target".to_string(),
-                                                                                                       ))?;
-                                                                                                       self.assign_or_def(context,result_var, HlrExpression::BinaryOp {
-                                                                                                           op: BinaryOperator::LessThan,
-                                                                                                           left: Box::new(self.op_expr(a)),
-                                                                                                           right: Box::new(self.op_expr(b)),
-                                                                                                           result_type: Type::Bool, // Comparison result is Bool
-                                                                                                       })
-                                                                                                   }
-                                                                                                   NativeInstructionKind::Equals(a, b, c) => {
-                                                                                                       let result_var = c.as_variable().ok_or_else(|| {
-                                                                                                           Error::AnalysisFailure("Equals instruction expects variable target".to_string())
-                                                                                                       })?;
-                                                                                                       self.assign_or_def(context,result_var, HlrExpression::BinaryOp {
-                                                                                                           op: BinaryOperator::Equals,
-                                                                                                           left: Box::new(self.op_expr(a)),
-                                                                                                           right: Box::new(self.op_expr(b)),
-                                                                                                           result_type: Type::Bool, // Comparison result is Bool
-                                                                                                       })
-                                                                                                   }
-                                                                                                   NativeInstructionKind::Assign(dst, src) => {
-                                                                                                       let src = self.op_expr(src);
-                                                                                                       match dst.kind {
-                                                                                                           SsaOperandKind::Deref(var) =>
-                                                                                                                   HlrStatement::Assignment(
-                                                                                                                       HlrAssignmentTarget::Deref(self.var_expr(&var)),
-                                                                                                                       src,
-                                                                                                                   ),
-                                                                                                           SsaOperandKind::Constant(_) => {
-                                                                                                               return Err(Error::AnalysisFailure(
-                                                                                                                   "Cannot assign into a constant".to_string(),
-                                                                                                               ))
-                                                                                                           }
-                                                                                                           SsaOperandKind::Variable(target_ssa_var) => {
-                                                                                                               if target_ssa_var.get_relative_memory() == Some(0) {
-                                                                                                                   // We skip adjustments to R, not relevant in this level of abstraction
-                                                                                                                   continue;
-                                                                                                               }
-                                                                                                               let hlr_target_var = self.hlr_var(&target_ssa_var);
-                                                                                                               if let HlrExpression::Variable(src_var) = &src {
-                                                                                                                   if *src_var == hlr_target_var {
-                                                                                                                       continue;
-                                                                                                                   }
-                                                                                                               }
-                                                                                                               self.assign_or_def(context, &target_ssa_var, src)
-                                                                                                           }
-                                                                                                       }
-                                                                                                   },
-                                                                                                   NativeInstructionKind::Data(_) => {
-                                                                                                      // Data instructions are not executable code, skip.
-                                                                                                      continue;
-                                                                                                   }
-                                                                                                    // Control flow instructions are handled by the block's `next` field analysis, skip here.
-                                                                                                   NativeInstructionKind::JumpIfTrue(_, _)
-                                                                                                   | NativeInstructionKind::JumpIfFalse(_, _)
-                                                                                                   | NativeInstructionKind::AdjustRelativeBase(_) // This might become an assignment, needs careful handling
-                                                                                                   | NativeInstructionKind::Goto(_)
-                                                                                                   | NativeInstructionKind::Halt => {
-                                                                                                       continue; // Handled by block terminators or structure analysis
-                                                                                                   }
-                                                                                               };
-                                                                                               */
+                | Instruction::Halt => continue,
             };
             statements.push(stmt);
         }
@@ -648,6 +609,8 @@ impl ControlFlowStructureAnalyzer {
     fn assign_or_def(
         &self,
         context: &mut FunctionAnalysisContext,
+        function_id: FunctionId,
+        instruction_id: InstructionId,
         var: &SsaMemoryReference,
         expr: HlrExpression,
     ) -> HlrStatement {
@@ -661,9 +624,13 @@ impl ControlFlowStructureAnalyzer {
                     HlrStatement::VarDef(vec![hlr], expr)
                 }
             }
-            SsaMemoryReference::Deref(var) => {
-                HlrStatement::Assignment(HlrAssignmentTarget::Deref(self.op_expr(var)), expr)
-            }
+            SsaMemoryReference::Deref(deref_expr) => HlrStatement::Assignment(
+                HlrAssignmentTarget::Deref(self.expr_to_hlr(
+                    deref_expr,
+                    TypeVarPath::assignment_target_deref(function_id, instruction_id),
+                )),
+                expr,
+            ),
         }
     }
 }

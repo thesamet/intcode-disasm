@@ -10,7 +10,7 @@ use crate::disasm::v3::FunctionId;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
 use super::types::{Type, TypeVarId, TypeVarNode};
-use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarState};
+use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarPath, TypeVarState};
 
 #[derive(Debug, Clone, Default)]
 pub struct FunctionSignature {
@@ -23,7 +23,8 @@ pub struct FunctionSignature {
 pub struct TypeInferenceResult {
     pub type_var_states: HashMap<TypeVarId, TypeVarState>,
     pub type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
-    pub mem_ref_to_type_var_id: HashMap<SsaMemoryReference, TypeVarId>,
+    pub vmr_to_type_var_id: HashMap<VersionedMemoryReference, TypeVarId>,
+    pub path_to_type_var_id: HashMap<TypeVarPath, TypeVarId>,
     pub debug_markers: HashMap<char, TypeVarId>,
     pub query_engine: TypeInferenceQueryEngine,
     pub change_log: Vec<ChangeLogEntry>,
@@ -90,15 +91,26 @@ impl TypeInferenceResult {
         }
     }
 
-    pub fn get_type_id_for(&self, t: &SsaMemoryReference) -> TypeVarId {
-        self.mem_ref_to_type_var_id
+    pub fn get_type_id_for_vmr(&self, t: &VersionedMemoryReference) -> TypeVarId {
+        self.vmr_to_type_var_id
             .get(t)
             .cloned()
             .unwrap_or_else(|| panic!("No type var for {}", t))
     }
 
-    pub fn get_type_for(&self, t: &SsaMemoryReference) -> Type {
-        let tv_id = self.get_type_id_for(t);
+    pub fn get_type_id_for_path(&self, t: &TypeVarPath) -> TypeVarId {
+        *self.path_to_type_var_id.get(t).unwrap_or_else(|| {
+            for p in self.path_to_type_var_id.keys() {
+                if p.function_id() == t.function_id() && p.instruction_id() == t.instruction_id() {
+                    println!("Found path {:?} :", p);
+                }
+            }
+            panic!("No type var for {:?}", t)
+        })
+    }
+
+    pub fn get_type_for(&self, t: &VersionedMemoryReference) -> Type {
+        let tv_id = self.get_type_id_for_vmr(t);
         self.get_type_for_id(tv_id)
     }
 
