@@ -302,8 +302,8 @@ fn _quote_versioned_match_code(
     let versionable_mem_kind_path = _path_ssa_types_versionable_mem_kind(v3_path);
 
     match &pattern_ve.kind {
-        crate::dsl::VersionedElementKind::Relative { sign, .. } => {
-            let offset = sign * pattern_offset_val;
+        crate::dsl::VersionedElementKind::Relative { .. } => {
+            let offset = pattern_offset_val;
             quote! {
                 if !matches!(#target_path, #lir_expr_addressable_path(#ssa_mem_ref_versioned_path(#ssa_types_versioned_mem_ref_path {
                     kind: #versionable_mem_kind_path::RelativeMemory(#offset),
@@ -1031,9 +1031,8 @@ mod tests {
                 // Can check ve.kind and ve.version if LitInt had an easy way to get value
                 // For now, this structural match is good.
                 match &ve.kind {
-                    crate::dsl::VersionedElementKind::Relative { offset, sign } => {
+                    crate::dsl::VersionedElementKind::Relative { offset } => {
                         assert_eq!(offset.base10_digits(), "123");
-                        assert_eq!(*sign, 1);
                     }
                     _ => panic!("Expected Relative kind, got {:?}", ve.kind),
                 }

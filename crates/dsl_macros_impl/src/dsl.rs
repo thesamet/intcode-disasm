@@ -52,7 +52,7 @@ pub fn v3_path() -> TokenStream2 {
 #[derive(Debug, Clone)]
 pub enum VersionedElementKind {
     Absolute(LitInt),
-    Relative { sign: i128, offset: LitInt },
+    Relative { offset: LitInt },
     Pointer(LitInt),
 }
 
@@ -71,13 +71,11 @@ impl Parse for VersionedElement {
         let kind = match first_ident_result {
             Ok(first) if first == "R" => {
                 // Parse relative memory reference [R+/-offset]
-                let sign: i128 = content
-                    .parse::<token::Plus>()
-                    .map(|_| 1)
-                    .or_else(|_| content.parse::<token::Minus>().map(|_| -1))
-                    .map_err(|_| content.error("Expected `+` or `-` sign"))?;
+                if content.peek(Token![+]) {
+                    content.parse::<Token![+]>()?;
+                }
                 let offset = content.parse::<LitInt>()?;
-                VersionedElementKind::Relative { sign, offset }
+                VersionedElementKind::Relative { offset }
             }
             Ok(first) if first == "P" => {
                 // Parse pointer reference [P<id>]
@@ -91,7 +89,9 @@ impl Parse for VersionedElement {
                     Ok(offset) => VersionedElementKind::Absolute(offset),
                     Err(_) => {
                         let first = first_ident_result?;
-                        return Err(content.error(format!("Expected `R`, `P`, or a number, got {}", first)));
+                        return Err(
+                            content.error(format!("Expected `R`, `P`, or a number, got {}", first))
+                        );
                     }
                 }
             }
@@ -100,10 +100,7 @@ impl Parse for VersionedElement {
         let _dot: token::Dot = input.parse()?;
         let version: LitInt = input.parse()?;
 
-        Ok(VersionedElement {
-            kind,
-            version,
-        })
+        Ok(VersionedElement { kind, version })
     }
 }
 
@@ -116,8 +113,8 @@ impl VersionedElement {
             VersionedElementKind::Absolute(offset) => {
                 quote!(#v3_path::ssa::types::VersionableMemoryKind::Memory(#offset))
             }
-            VersionedElementKind::Relative { sign, offset } => {
-                quote!(#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset * #sign))
+            VersionedElementKind::Relative { offset } => {
+                quote!(#v3_path::ssa::types::VersionableMemoryKind::RelativeMemory(#offset))
             }
             VersionedElementKind::Pointer(id) => {
                 quote!(#v3_path::ssa::types::VersionableMemoryKind::Pointer(#v3_path::PointerId::new(#id)))

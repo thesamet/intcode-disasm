@@ -1,7 +1,6 @@
 //! Macros for defining model states and models that progress through those states.
 use heck::AsSnakeCase;
 use proc_macro::TokenStream;
-use proc_macro2;
 use quote::{format_ident, quote};
 use std::{
     collections::HashMap,
