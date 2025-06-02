@@ -1,9 +1,12 @@
-use crate::disasm::v3::{
-    define_id_type,
-    lir::{Expression, Instruction, InstructionNode},
-    model::{HasFoldedSsaResult, Model, ModelState},
-    ssa::{SsaMemoryReference, VersionedMemoryReference},
-    FunctionId, InstructionId,
+use crate::disasm::{
+    symbol_renaming::CustomTypeId,
+    v3::{
+        define_id_type,
+        lir::{Expression, Instruction, InstructionNode},
+        model::{HasFoldedSsaResult, Model, ModelState},
+        ssa::{SsaMemoryReference, VersionedMemoryReference},
+        FunctionId, InstructionId,
+    },
 };
 
 define_id_type!(TypeVarId);
@@ -108,6 +111,7 @@ pub enum Type {
     Generic(GenericTypeVarId),
     /// Nothing type (bottom of the lattice, subtype of all types)
     Nothing,
+    CustomType(CustomTypeId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -139,7 +143,12 @@ impl From<bool> for YesNoMaybe {
 impl Type {
     pub fn is_concrete_type(&self) -> bool {
         match self {
-            Type::Int | Type::Bool | Type::Char | Type::Truthy | Type::NumericLiteral => true,
+            Type::Int
+            | Type::Bool
+            | Type::Char
+            | Type::Truthy
+            | Type::NumericLiteral
+            | Type::CustomType(_) => true,
             Type::Any | Type::Nothing => false,
             Type::Pointer(pointee) => pointee.is_concrete_type(),
             Type::Function { params, returns } => {
@@ -333,210 +342,9 @@ impl Type {
             Type::Truthy => Type::Truthy,
             Type::Any => Type::Any,
             Type::Generic(id) => Type::Generic(*id),
+            Type::CustomType(id) => Type::CustomType(*id),
         }
     }
-
-    /*
-    /// Computes the greatest lower bound (GLB) of two types, returning a canonical form.
-    /// Assumes Type::GLB is `GLB(Vec<Type>)`.
-    pub fn glb(t1: &Type, t2: &Type, registry: &impl TypeVarRegistry) -> Type {
-        println!(
-            "GLB of {} and {}",
-            t1.display_with(registry),
-            t2.display_with(registry)
-        );
-        // Shortcut: if one is a subtype of the other
-        if t1.is_subtype_of(t2, registry).is_yes() {
-            return t1.clone();
-        }
-        if t2.is_subtype_of(t1, registry).is_yes() {
-            return t2.clone();
-        }
-
-        // Structural rules
-        match (t1, t2) {
-            (Type::Pointer(p1), Type::Pointer(p2)) => {
-                let inner_glb = Self::glb(p1.as_ref(), p2.as_ref(), registry);
-                if inner_glb == Type::Nothing {
-                    return Type::Nothing;
-                }
-                Type::Pointer(Box::new(inner_glb))
-            }
-            (
-                Type::Function {
-                    params: params1,
-                    returns: returns1,
-                },
-                Type::Function {
-                    params: params2,
-                    returns: returns2,
-                },
-            ) => {
-                // Parameters are contravariant (LUB for GLB of functions)
-                // Returns are covariant (GLB for GLB of functions)
-                let lub_params = Self::lub(params1.as_ref(), params2.as_ref(), registry);
-                let glb_returns = Self::glb(returns1.as_ref(), returns2.as_ref(), registry);
-
-                if lub_params == Type::Any || glb_returns == Type::Nothing {
-                    Type::Nothing // This function signature is impossible
-                } else {
-                    Type::Function {
-                        params: Box::new(lub_params),
-                        returns: Box::new(glb_returns),
-                    }
-                }
-            }
-            (Type::Tuple(v1), Type::Tuple(v2)) => {
-                let len1 = v1.len();
-                let len2 = v2.len();
-                let max_len = std::cmp::max(len1, len2);
-                let mut res_vec = Vec::with_capacity(max_len);
-                for i in 0..max_len {
-                    match (v1.get(i), v2.get(i)) {
-                        (Some(e1), Some(e2)) => {
-                            res_vec.push(Self::glb(e1, e2, registry));
-                        }
-                        (Some(e1), None) => res_vec.push(e1.clone()),
-                        (None, Some(e2)) => res_vec.push(e2.clone()),
-                        (None, None) => unreachable!(),
-                    }
-                }
-                Type::Tuple(res_vec)
-            }
-            // Cases for fundamentally incompatible concrete types that are not covered by subtyping
-            (Type::Bool, Type::Pointer(_)) | (Type::Pointer(_), Type::Bool) => Type::Nothing,
-            (Type::Char, Type::Pointer(_)) | (Type::Pointer(_), Type::Char) => Type::Nothing,
-            // GLB(Int, Pointer) could be argued depending on pointer representation.
-            // Current is_subtype_of implies Pointer(_) <: Int. So GLB(Int, Pointer(X)) = Pointer(X). This is handled by shortcut.
-            // If they are not subtypes, then GLB(Int, Pointer(X)) = Nothing.
-            (Type::Int, Type::Pointer(p))
-                if !Type::Pointer(p.clone())
-                    .is_subtype_of(&Type::Int, registry)
-                    .is_yes() =>
-            {
-                Type::Nothing
-            }
-            (Type::Pointer(p), Type::Int)
-                if !Type::Pointer(p.clone())
-                    .is_subtype_of(&Type::Int, registry)
-                    .is_yes() =>
-            {
-                Type::Nothing
-            }
-
-            (Type::Bool, Type::Function { .. }) | (Type::Function { .. }, Type::Bool) => {
-                Type::Nothing
-            }
-            // Add Char vs Function
-            (Type::Char, Type::Function { .. }) | (Type::Function { .. }, Type::Char) => {
-                Type::Nothing
-            }
-            (Type::Char, Type::Bool) | (Type::Bool, Type::Char) => Type::Nothing,
-            // Add Int vs Function (if not covered by Function <: Int)
-            (Type::Int, Type::Function { .. })
-                if !Type::Function {
-                    params: Box::new(Type::Any),
-                    returns: Box::new(Type::Any),
-                }
-                .is_subtype_of(&Type::Int, registry)
-                .is_yes() =>
-            {
-                Type::Nothing
-            }
-            (Type::Function { .. }, Type::Int)
-                if !Type::Function {
-                    params: Box::new(Type::Any),
-                    returns: Box::new(Type::Any),
-                }
-                .is_subtype_of(&Type::Int, registry)
-                .is_yes() =>
-            {
-                Type::Nothing
-            }
-
-            (Type::GLB(types), x) | (x, Type::GLB(types)) => {
-                let mut t = types.clone();
-                t.push(x.clone()); // x is &Type, push expects Type
-                Self::build_compound_type(&t, CanonicalFormOperation::GLB, registry)
-            }
-            // Default: form a symbolic GLB. This handles TypeVars not caught by shortcuts.
-            _ => Type::GLB(vec![t1.clone(), t2.clone()]),
-        }
-    }
-
-    /// Computes the least upper bound (LUB) of two types, returning a canonical form.
-    /// Assumes Type::LUB is `LUB(Vec<Type>)`.
-    pub fn lub(t1: &Type, t2: &Type, registry: &impl TypeVarRegistry) -> Type {
-        // Shortcut: if one is a supertype of the other (t2 <: t1 means t1 is supertype)
-        if t2.is_subtype_of(t1, registry).is_yes() {
-            return t1.clone();
-        }
-        if t1.is_subtype_of(t2, registry).is_yes() {
-            return t2.clone();
-        }
-
-        // Structural rules
-        match (t1, t2) {
-            (Type::Pointer(p1), Type::Pointer(p2)) => {
-                Type::Pointer(Box::new(Self::lub(p1.as_ref(), p2.as_ref(), registry)))
-            }
-            (
-                Type::Function {
-                    params: params1,
-                    returns: returns1,
-                },
-                Type::Function {
-                    params: params2,
-                    returns: returns2,
-                },
-            ) => {
-                // Parameters are contravariant (GLB for LUB of functions)
-                // Returns are covariant (LUB for LUB of functions)
-                let glb_params = Self::glb(params1.as_ref(), params2.as_ref(), registry);
-                let lub_returns = Self::lub(returns1.as_ref(), returns2.as_ref(), registry);
-
-                if glb_params == Type::Nothing || lub_returns == Type::Any {
-                    Type::Any
-                } else {
-                    Type::Function {
-                        params: Box::new(glb_params),
-                        returns: Box::new(lub_returns),
-                    }
-                }
-            }
-            (Type::Tuple(v1), Type::Tuple(v2)) => {
-                let min_len = std::cmp::min(v1.len(), v2.len());
-                let mut res_vec = Vec::with_capacity(min_len);
-                for i in 0..min_len {
-                    res_vec.push(Self::lub(&v1[i], &v2[i], registry));
-                }
-                Type::Tuple(res_vec)
-            }
-
-            // Specific handling for Bool/Char LUB based on tests
-            (Type::Bool, Type::Char) | (Type::Char, Type::Bool) => Type::Truthy,
-
-            // General Truthy promotion: if both are subtypes of Truthy, their LUB is Truthy.
-            // This applies if shortcuts didn't (i.e., they are not subtypes of each other).
-            (a, b)
-                if a.is_subtype_of(&Type::Truthy, registry).is_yes()
-                    && b.is_subtype_of(&Type::Truthy, registry).is_yes() =>
-            {
-                Type::Truthy
-            }
-
-            (Type::LUB(types), x) | (x, Type::LUB(types)) => {
-                let mut new_types = types.clone();
-                new_types.push(x.clone());
-                Self::build_compound_type(&new_types, CanonicalFormOperation::LUB, registry)
-            }
-
-            // Default case, including TypeVars not caught by shortcuts, or other unhandled pairs.
-            // Forms a LUB construct.
-            _ => Type::LUB(vec![t1.clone(), t2.clone()]),
-        }
-    }
-    */
 
     pub fn display_with<'a, 'b, F>(&'a self, registry: &'b F) -> DisplayableType<'a, 'b, F>
     where
@@ -582,8 +390,8 @@ impl Type {
                     element_type.insert_involved_type_vars(type_vars);
                 }
             }
-            // Primitive types and Any/Nothing/Truthy don't contain TypeVars directly
             Type::Nothing
+            | Type::CustomType(_)
             | Type::Int
             | Type::Bool
             | Type::Char
@@ -614,6 +422,7 @@ impl Type {
             | Type::Char
             | Type::NumericLiteral
             | Type::Truthy
+            | Type::CustomType(_)
             | Type::Any => true,
             Type::Pointer(pointee) => pointee.is_var_free(),
         }
@@ -668,6 +477,7 @@ impl fmt::Display for Type {
             Type::Char => write!(f, "Char"),
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
             Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
+            Type::CustomType(id) => write!(f, "CustomType{}", id),
             Type::TypeVar(id) => write!(f, "{}", id),
             Type::Generic(id) => write!(f, "T{}", id.0),
             Type::Tuple(elements) => {
@@ -1328,6 +1138,7 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee.display_with(self.registry)),
             Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
+            Type::CustomType(id) => write!(f, "CustomType{}", id),
             Type::Any => write!(f, "Any"),
             Type::Generic(id) => write!(f, "T{}", id.0),
         }

@@ -252,7 +252,7 @@ impl VariableMerger {
                             .map(|(_, v)| v),
                     )
                     .find(|(_, v)| *v == var)
-                    .map(|(arg_name, _)| arg_name.clone())
+                    .map(|((arg_name, _), _)| arg_name.clone())
                 {
                     return Some(arg_name);
                 }
@@ -280,19 +280,20 @@ impl VariableMerger {
             state.next_pointer += 1;
             format!("ptr{}", n)
         } else if vars.iter().any(|v| v.kind.as_memory().is_some()) {
-            format!(
-                "UnexpectedMemory{}",
-                vars.iter().find(|v| v.kind.as_memory().is_some()).unwrap()
-            )
-            // unreachable!("Memory variables are either pointers or globals at this point.");
+            unreachable!()
         } else if vars.iter().any(|v| params.values().contains(v)) {
             let n = state.next_input;
             state.next_input += 1;
             format!("arg{}", n)
         } else {
+            let rep = vars.iter().min().unwrap();
+            rep.to_string()
+
+            /*
             let n = state.next_local;
             state.next_local += 1;
             format!("local{}", n)
+            */
         };
         Some(name)
     }

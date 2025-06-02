@@ -2,25 +2,41 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{digit1, space0, space1},
-    combinator::{map, map_res, opt, recognize},
+    combinator::{map, map_res, opt, recognize, value},
     sequence::{delimited, preceded},
     IResult,
 };
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Helper nom parsers
 
 use nom::Parser;
 
+use crate::disasm::v3::type_inference::Type;
+
 use super::v3::{
+    define_id_type,
     ssa::{types::VersionableMemoryKind, VersionedMemoryReference},
     FunctionId, PointerId,
 };
 
+define_id_type!(CustomTypeId);
+
+static CUSTOM_TYPE_ID_COUNTER: AtomicUsize = AtomicUsize::new(0); // For CustomTypeId
+
+impl CustomTypeId {
+    pub fn fresh() -> Self {
+        let next = CUSTOM_TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        CustomTypeId::new(next)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolRenaming {
-    functions: HashMap<FunctionId, (String, Vec<String>)>,
-    variable_names: HashMap<VersionedMemoryReference, String>,
+    functions: HashMap<FunctionId, (String, Vec<(String, Option<Type>)>)>,
+    variable_names: HashMap<VersionedMemoryReference, (String, Option<Type>)>,
+    custom_types: HashMap<CustomTypeId, String>,
 }
 
 impl Default for SymbolRenaming {
@@ -34,19 +50,36 @@ impl SymbolRenaming {
         Self {
             functions: HashMap::new(),
             variable_names: HashMap::new(),
+            custom_types: HashMap::new(),
         }
     }
 
-    fn add_function(&mut self, function_id: FunctionId, name: String, args: Vec<String>) {
+    fn add_function(
+        &mut self,
+        function_id: FunctionId,
+        name: String,
+        args: Vec<(String, Option<Type>)>,
+    ) {
         self.functions.insert(function_id, (name, args));
     }
 
-    fn add_variable_name(&mut self, variable: &VersionedMemoryReference, name: String) {
-        self.variable_names.insert(*variable, name);
+    fn add_variable_name(
+        &mut self,
+        variable: &VersionedMemoryReference,
+        name: String,
+        typ: Option<Type>,
+    ) {
+        self.variable_names.insert(*variable, (name, typ));
     }
 
     pub fn get_variable_name(&self, variable: &VersionedMemoryReference) -> Option<&String> {
-        self.variable_names.get(variable)
+        self.variable_names.get(variable).map(|(name, _)| name)
+    }
+
+    pub fn get_variable_type(&self, variable: &VersionedMemoryReference) -> Option<&Type> {
+        self.variable_names
+            .get(variable)
+            .and_then(|(_, typ)| typ.as_ref())
     }
 
     pub fn from_lines(lines: &str) -> Result<Self, String> {
@@ -63,10 +96,32 @@ impl SymbolRenaming {
             match SymbolRenamingLine::parse(trimmed_line) {
                 Ok((_, symbol_renaming_line)) => match symbol_renaming_line {
                     SymbolRenamingLine::Function(function_id, name, args) => {
-                        symbol_renaming.add_function(function_id, name, args);
+                        let resolved_args = args
+                            .into_iter()
+                            .map(|(arg_name, type_opt)| {
+                                let resolved_type = type_opt.and_then(|type_name| {
+                                    parse_type(&type_name, &symbol_renaming.custom_types)
+                                        .ok()
+                                        .map(|(_, parsed_type)| parsed_type)
+                                });
+                                (arg_name, resolved_type)
+                            })
+                            .collect();
+                        symbol_renaming.add_function(function_id, name, resolved_args);
                     }
-                    SymbolRenamingLine::Variable(variable, name) => {
-                        symbol_renaming.add_variable_name(&variable, name);
+                    SymbolRenamingLine::Variable(variable, name, type_opt) => {
+                        let ty = type_opt
+                            .map(|type_name| {
+                                parse_type(&type_name, &symbol_renaming.custom_types)
+                                    .map(|(_, parsed_type)| parsed_type)
+                                    .map_err(|e| e.to_string())
+                            })
+                            .transpose()?;
+                        symbol_renaming.add_variable_name(&variable, name, ty);
+                    }
+                    SymbolRenamingLine::CustomType(name) => {
+                        let custom_type_id = CustomTypeId::fresh();
+                        symbol_renaming.custom_types.insert(custom_type_id, name);
                     }
                 },
                 Err(err) => {
@@ -82,7 +137,10 @@ impl SymbolRenaming {
         self.functions.get(&function_id).map(|(name, _)| name)
     }
 
-    pub fn get_function_args(&self, function_id: FunctionId) -> Option<&Vec<String>> {
+    pub fn get_function_args(
+        &self,
+        function_id: FunctionId,
+    ) -> Option<&Vec<(String, Option<Type>)>> {
         self.functions.get(&function_id).map(|(_, args)| args)
     }
 }
@@ -168,8 +226,9 @@ fn parse_identifier(input: &str) -> IResult<&str, String> {
     map(identifier, |s: &str| s.trim().to_string()).parse(input)
 }
 enum SymbolRenamingLine {
-    Function(FunctionId, String, Vec<String>),
-    Variable(VersionedMemoryReference, String),
+    Function(FunctionId, String, Vec<(String, Option<String>)>),
+    Variable(VersionedMemoryReference, String, Option<String>),
+    CustomType(String),
 }
 
 //
@@ -189,12 +248,20 @@ impl SymbolRenamingLine {
                     parse_identifier,
                     opt(delimited(
                         tag("("),
-                        nom::multi::separated_list0((tag(","), space0), parse_identifier),
+                        nom::multi::separated_list0(
+                            (tag(","), space0),
+                            (parse_identifier, opt(preceded(tag(":"), parse_type_as_str))),
+                        ),
                         tag(")"),
                     )),
+                    space0,
                 ),
-                |(_, _, fid, _, name, args_opt)| {
-                    let args = args_opt.unwrap_or_default();
+                |(_, _, fid, _, name, args_opt, _)| {
+                    let args = args_opt
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(arg_name, type_opt)| (arg_name, type_opt))
+                        .collect();
                     SymbolRenamingLine::Function(fid, name, args)
                 },
             ),
@@ -207,19 +274,78 @@ impl SymbolRenamingLine {
                     parse_vmr_parts,
                     space1,
                     parse_identifier,
+                    opt(preceded(space1, parse_type_as_str)),
+                    space0,
                 ),
-                |(_, _, fid, _, vmr_parts, _, name)| {
+                |(_, _, fid, _, vmr_parts, _, name, type_opt, _)| {
                     let vmr = VersionedMemoryReference {
                         kind: vmr_parts.kind,
                         function_id: fid,
                         version: vmr_parts.version,
                     };
-                    SymbolRenamingLine::Variable(vmr, name)
+                    SymbolRenamingLine::Variable(vmr, name, type_opt)
                 },
+            ),
+            map(
+                (tag("T"), space1, parse_identifier, space0),
+                |(_, _, name, _)| SymbolRenamingLine::CustomType(name),
             ),
         ))
         .parse(input)
     }
+}
+
+fn parse_type_as_str(input: &str) -> IResult<&str, String> {
+    // Parse what looks like a type (letters, numbers, underscores, <, >)
+    let type_identifier = recognize(nom::multi::many1(alt((
+        nom::character::complete::alpha1,
+        nom::character::complete::digit1,
+        tag("_"),
+        tag("<"),
+        tag(">"),
+    ))));
+
+    map(type_identifier, |s: &str| s.trim().to_string()).parse(input)
+}
+
+pub fn parse_type<'a>(
+    input: &'a str,
+    custom_types: &HashMap<CustomTypeId, String>,
+) -> IResult<&'a str, Type> {
+    use nom::{
+        branch::alt,
+        bytes::complete::{tag, take_until},
+        combinator::{map, map_res},
+        sequence::delimited,
+    };
+
+    let parse_basic_type = alt((
+        value(Type::Int, tag("Int")),
+        value(Type::Bool, tag("Bool")),
+        value(Type::Char, tag("Char")),
+        value(Type::Any, tag("Any")),
+        value(Type::Truthy, tag("Truthy")),
+        value(Type::NumericLiteral, tag("NumericLiteral")),
+        value(Type::Nothing, tag("Nothing")),
+    ));
+
+    let parse_pointer_type = map(
+        delimited(tag("Pointer<"), take_until(">"), tag(">")),
+        |inner: &str| {
+            let (_, pointee) = parse_type(inner, custom_types).unwrap(); // Assume valid inner type
+            Type::Pointer(Box::new(pointee))
+        },
+    );
+
+    let parse_custom_type = map_res(nom::character::complete::alpha1, |name: &str| {
+        custom_types
+            .iter()
+            .find(|(_, v)| v == &name)
+            .map(|(id, _)| Type::CustomType(*id))
+            .ok_or_else(|| format!("Unknown custom type: {}", name))
+    });
+
+    alt((parse_basic_type, parse_pointer_type, parse_custom_type)).parse(input)
 }
 
 #[cfg(test)]
@@ -240,7 +366,6 @@ mod tests {
             _ => panic!("Expected a function line"),
         }
     }
-
     #[test]
     fn test_parse_variable_line() {
         let input = "V 5678 [R-4]_2 variable_name";
@@ -248,11 +373,12 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Variable(vmr, name) => {
+            SymbolRenamingLine::Variable(vmr, name, type_opt) => {
                 assert_eq!(vmr.function_id, FunctionId::new(5678));
                 assert_eq!(vmr.kind, VersionableMemoryKind::RelativeMemory(-4));
                 assert_eq!(vmr.version, 2);
                 assert_eq!(name, "variable_name");
+                assert_eq!(type_opt, None);
             }
             _ => panic!("Expected a variable line"),
         }
@@ -268,7 +394,7 @@ mod tests {
             SymbolRenamingLine::Function(fid, name, args) => {
                 assert_eq!(fid, FunctionId::new(1234));
                 assert_eq!(name, "function_name");
-                assert_eq!(args, Vec::<String>::new());
+                assert_eq!(args, Vec::<(String, Option<String>)>::new());
             }
             _ => panic!("Expected a function line"),
         }
@@ -284,7 +410,7 @@ mod tests {
             SymbolRenamingLine::Function(fid, name, args) => {
                 assert_eq!(fid, FunctionId::new(1234));
                 assert_eq!(name, "function_name");
-                assert_eq!(args, vec!["arg1".to_string()]);
+                assert_eq!(args, vec![("arg1".to_string(), None)]);
             }
             _ => panic!("Expected a function line"),
         }
@@ -302,7 +428,11 @@ mod tests {
                 assert_eq!(name, "function_name");
                 assert_eq!(
                     args,
-                    vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()]
+                    vec![
+                        ("arg1".to_string(), None),
+                        ("arg2".to_string(), None),
+                        ("arg3".to_string(), None)
+                    ]
                 );
             }
             _ => panic!("Expected a function line"),
@@ -316,11 +446,12 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Variable(vmr, name) => {
+            SymbolRenamingLine::Variable(vmr, name, type_opt) => {
                 assert_eq!(vmr.function_id, FunctionId::new(5678));
                 assert_eq!(vmr.kind, VersionableMemoryKind::Memory(100));
                 assert_eq!(vmr.version, 2);
                 assert_eq!(name, "variable_name");
+                assert_eq!(type_opt, None);
             }
             _ => panic!("Expected a variable line"),
         }
@@ -333,11 +464,29 @@ mod tests {
         assert!(result.is_ok());
         let (_, line) = result.unwrap();
         match line {
-            SymbolRenamingLine::Variable(vmr, name) => {
+            SymbolRenamingLine::Variable(vmr, name, type_opt) => {
                 assert_eq!(vmr.function_id, FunctionId::new(5678));
                 assert_eq!(vmr.kind, VersionableMemoryKind::Pointer(PointerId::new(10)));
                 assert_eq!(vmr.version, 2);
                 assert_eq!(name, "variable_name");
+                assert_eq!(type_opt, None);
+            }
+            _ => panic!("Expected a variable line"),
+        }
+    }
+    #[test]
+    fn test_parse_variable_line_with_type() {
+        let input = "V 5678 [P10]_2 variable_name Int";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok());
+        let (_, line) = result.unwrap();
+        match line {
+            SymbolRenamingLine::Variable(vmr, name, type_opt) => {
+                assert_eq!(vmr.function_id, FunctionId::new(5678));
+                assert_eq!(vmr.kind, VersionableMemoryKind::Pointer(PointerId::new(10)));
+                assert_eq!(vmr.version, 2);
+                assert_eq!(name, "variable_name");
+                assert_eq!(type_opt, Some("Int".to_string()));
             }
             _ => panic!("Expected a variable line"),
         }
@@ -388,7 +537,7 @@ mod tests {
         assert_eq!(symbol_renaming.functions.len(), 1);
         assert_eq!(
             symbol_renaming.functions.get(&FunctionId::new(1234)),
-            Some(&"function_name".to_string())
+            Some(&("function_name".to_string(), vec![]))
         );
         assert!(symbol_renaming.variable_names.is_empty());
     }
@@ -402,7 +551,7 @@ mod tests {
         assert_eq!(symbol_renaming.functions.len(), 1);
         assert_eq!(
             symbol_renaming.functions.get(&FunctionId::new(1234)),
-            Some(&"function_name".to_string())
+            Some(&("function_name".to_string(), vec![]))
         );
         assert_eq!(symbol_renaming.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
@@ -412,7 +561,7 @@ mod tests {
         };
         assert_eq!(
             symbol_renaming.variable_names.get(&vmr),
-            Some(&"variable_name".to_string())
+            Some(&("variable_name".to_string(), None))
         );
     }
 
@@ -424,5 +573,198 @@ mod tests {
         assert!(result
             .unwrap_err()
             .contains("Failed to parse line: X 1234 function_name"));
+    }
+    #[test]
+    fn test_parse_custom_type_line() {
+        let input = "T MyCustomType";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok());
+        let (_, line) = result.unwrap();
+        match line {
+            SymbolRenamingLine::CustomType(name) => {
+                assert_eq!(name, "MyCustomType");
+            }
+            _ => panic!("Expected a custom type line"),
+        }
+    }
+
+    #[test]
+    fn test_from_lines_with_custom_type() {
+        let input = "T MyCustomType";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.custom_types.len(), 1);
+        assert_eq!(
+            symbol_renaming.custom_types.values().next().unwrap(),
+            &"MyCustomType".to_string()
+        );
+    }
+
+    #[test]
+    fn test_get_function_name() {
+        let mut symbol_renaming = SymbolRenaming::new();
+        let function_id = FunctionId::new(1234);
+        symbol_renaming.add_function(function_id, "function_name".to_string(), vec![]);
+        let name = symbol_renaming.get_function_name(function_id);
+        assert_eq!(name, Some(&"function_name".to_string()));
+    }
+
+    #[test]
+    fn test_get_function_args() {
+        let mut symbol_renaming = SymbolRenaming::new();
+        let function_id = FunctionId::new(1234);
+        symbol_renaming.add_function(
+            function_id,
+            "function_name".to_string(),
+            vec![("arg1".to_string(), None), ("arg2".to_string(), None)],
+        );
+        let args = symbol_renaming.get_function_args(function_id);
+        assert_eq!(
+            args,
+            Some(&vec![
+                ("arg1".to_string(), None),
+                ("arg2".to_string(), None)
+            ])
+        );
+    }
+
+    #[test]
+    fn test_get_variable_name() {
+        let mut symbol_renaming = SymbolRenaming::new();
+        let variable = VersionedMemoryReference {
+            kind: VersionableMemoryKind::Memory(100),
+            function_id: FunctionId::new(5678),
+            version: 2,
+        };
+        symbol_renaming.add_variable_name(&variable, "variable_name".to_string(), None);
+        let name = symbol_renaming.get_variable_name(&variable);
+        assert_eq!(name, Some(&"variable_name".to_string()));
+    }
+    #[test]
+    fn test_from_lines_function_with_args_and_types() {
+        let input = "T MyCustomType\nF 1234 function_name(arg1:Int, arg2:MyCustomType)";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.functions.len(), 1);
+        assert_eq!(
+            symbol_renaming.functions.get(&FunctionId::new(1234)),
+            Some(&(
+                "function_name".to_string(),
+                vec![
+                    ("arg1".to_string(), Some(Type::Int)),
+                    (
+                        "arg2".to_string(),
+                        Some(Type::CustomType(
+                            symbol_renaming.custom_types.keys().next().unwrap().clone()
+                        ))
+                    )
+                ]
+            ))
+        );
+    }
+
+    #[test]
+    fn test_from_lines_variable_with_type() {
+        let input = "T MyCustomType\nV 5678 [R-4]_2 variable_name Int";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let vmr = VersionedMemoryReference {
+            kind: VersionableMemoryKind::RelativeMemory(-4),
+            function_id: FunctionId::new(5678),
+            version: 2,
+        };
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr),
+            Some(&("variable_name".to_string(), Some(Type::Int)))
+        );
+    }
+
+    #[test]
+    fn test_from_lines_variable_with_custom_type() {
+        let input = "T MyCustomType\nV 5678 [R-4]_2 variable_name MyCustomType";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let vmr = VersionedMemoryReference {
+            kind: VersionableMemoryKind::RelativeMemory(-4),
+            function_id: FunctionId::new(5678),
+            version: 2,
+        };
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr).unwrap().0,
+            "variable_name"
+        );
+
+        let expected_type = Type::CustomType(
+            symbol_renaming
+                .custom_types
+                .keys()
+                .next()
+                .expect("No custom type found")
+                .clone(),
+        );
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr).unwrap().1,
+            Some(expected_type)
+        );
+    }
+    #[test]
+    fn test_from_lines_variable_with_pointer_type() {
+        let input = "V 5678 [R-4]_2 variable_name Pointer<Int>";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let vmr = VersionedMemoryReference {
+            kind: VersionableMemoryKind::RelativeMemory(-4),
+            function_id: FunctionId::new(5678),
+            version: 2,
+        };
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr).unwrap().0,
+            "variable_name"
+        );
+
+        let expected_type = Type::Pointer(Box::new(Type::Int));
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr).unwrap().1,
+            Some(expected_type)
+        );
+    }
+
+    #[test]
+    fn test_from_lines_variable_with_pointer_to_custom_type() {
+        let input = "T MyCustomType\nV 5678 [R-4]_2 variable_name Pointer<MyCustomType>";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let vmr = VersionedMemoryReference {
+            kind: VersionableMemoryKind::RelativeMemory(-4),
+            function_id: FunctionId::new(5678),
+            version: 2,
+        };
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr).unwrap().0,
+            "variable_name"
+        );
+
+        let expected_type = Type::Pointer(Box::new(Type::CustomType(
+            symbol_renaming
+                .custom_types
+                .keys()
+                .next()
+                .expect("No custom type found")
+                .clone(),
+        )));
+        assert_eq!(
+            symbol_renaming.variable_names.get(&vmr).unwrap().1,
+            Some(expected_type)
+        );
     }
 }

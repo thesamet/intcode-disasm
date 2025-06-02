@@ -1125,6 +1125,8 @@ impl Solver {
             // Concrete types that could vary
             Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
 
+            Type::CustomType(_) => true,
+
             // Any might represent unconverged types
             Type::Any => true,
 
