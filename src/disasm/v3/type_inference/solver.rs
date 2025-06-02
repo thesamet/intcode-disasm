@@ -542,13 +542,7 @@ impl Solver {
                 .parameter_entry_vars
                 .values()
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
-                .map(|v| {
-                    (
-                        *v,
-                        result.get_type_for(&v.clone().into()),
-                        result.get_type_id_for_vmr(&v.clone().into()),
-                    )
-                })
+                .map(|v| (*v, result.get_type_for(v), result.get_type_id_for_vmr(v)))
                 .collect_vec();
             let returns = self
                 .model
@@ -557,13 +551,7 @@ impl Solver {
                 .unwrap_or_default()
                 .iter()
                 .sorted_by_key(|(v, _)| v)
-                .map(|(_, v)| {
-                    (
-                        *v,
-                        result.get_type_for(&v.clone().into()),
-                        result.get_type_id_for_vmr(&v.clone().into()),
-                    )
-                })
+                .map(|(_, v)| (*v, result.get_type_for(v), result.get_type_id_for_vmr(v)))
                 .collect_vec();
             result
                 .function_signatures
@@ -915,9 +903,7 @@ impl Solver {
                             (t.max(*tv_id), t.min(*tv_id))
                         };
                         conv.insert(u, v.to_type());
-                    } else if let Some(item) =
-                        intersection.iter().filter(|t| !t.is_concrete_type()).next()
-                    {
+                    } else if let Some(item) = intersection.iter().find(|t| !t.is_concrete_type()) {
                         // The case of exactly one concrete convergence is handle above. We don't want to pocess here cases of two or more concrete convergences -
                         // since it is potentially a generic type or a conflict.
                         conv.insert(*tv_id, (*item).clone());
@@ -928,7 +914,7 @@ impl Solver {
         }
         let mut changed = false;
         for (tv_id, target_type) in conv.iter().sorted() {
-            let new_value = self.state.resolve_type(&target_type);
+            let new_value = self.state.resolve_type(target_type);
             if new_value == tv_id.to_type() {
                 continue;
             }
@@ -937,7 +923,7 @@ impl Solver {
             } else {
                 ConverganceType::NonConcreteConvergence
             };
-            self.state.converge(&tv_id, new_value, conv_type);
+            self.state.converge(tv_id, new_value, conv_type);
             changed = true;
         }
         if changed {
@@ -1048,7 +1034,7 @@ impl Solver {
                 // Include all types that could represent different concrete types
                 let potential_generic_types: Vec<_> = upper_bounds
                     .iter()
-                    .filter(|t| self.is_potential_generic_type(t))
+                    .filter(|t| Self::is_potential_generic_type(t))
                     .cloned()
                     .collect();
 
@@ -1134,7 +1120,7 @@ impl Solver {
     }
 
     /// Determines if a type could represent different concrete types and thus be part of a generic pattern
-    fn is_potential_generic_type(&self, ty: &Type) -> bool {
+    fn is_potential_generic_type(ty: &Type) -> bool {
         match ty {
             // Concrete types that could vary
             Type::Int | Type::Bool | Type::Char | Type::Truthy => true,
@@ -1149,11 +1135,11 @@ impl Solver {
             Type::Generic(_) => true,
 
             // Recursively check compound types
-            Type::Pointer(inner) => self.is_potential_generic_type(inner),
+            Type::Pointer(inner) => Self::is_potential_generic_type(inner),
             Type::Function { params, returns } => {
-                self.is_potential_generic_type(params) || self.is_potential_generic_type(returns)
+                Self::is_potential_generic_type(params) || Self::is_potential_generic_type(returns)
             }
-            Type::Tuple(elements) => elements.iter().any(|e| self.is_potential_generic_type(e)),
+            Type::Tuple(elements) => elements.iter().any(Self::is_potential_generic_type),
 
             // These are not considered generic
             Type::NumericLiteral | Type::Nothing => false,

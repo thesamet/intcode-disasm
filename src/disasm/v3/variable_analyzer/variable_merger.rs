@@ -196,7 +196,7 @@ impl VariableMerger {
                 return;
             }
             if let Some(addr) = v.kind.as_memory() {
-                if let Some(set_id) = globals.get(&addr) {
+                if let Some(set_id) = globals.get(addr) {
                     globals.insert(*addr, ds.insert_join(set_id, v));
                 } else {
                     globals.insert(*addr, ds.insert(v));

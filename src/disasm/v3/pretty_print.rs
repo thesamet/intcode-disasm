@@ -275,7 +275,7 @@ fn format_signature<S: ModelState + 'static>(
             .map(|(v, t, tv_id)| {
                 format!(
                     "{}{}: {}",
-                    var_id(&tv_id),
+                    var_id(tv_id),
                     v.pretty_print_with_context(ctx),
                     t.display_with(res)
                 )
@@ -287,7 +287,7 @@ fn format_signature<S: ModelState + 'static>(
             .map(|(v, t, tv_id)| {
                 format!(
                     "{}{}: {}",
-                    var_id(&tv_id),
+                    var_id(tv_id),
                     v.pretty_print_with_context(ctx),
                     t.display_with(res)
                 )
@@ -508,15 +508,19 @@ impl ContextualPrettyPrint for MemoryReference {
             MemoryReference::StackRelative(offset) => {
                 // Use context helpers for '[' and ']' and ctx.format for 'R' and offset
                 let base = ctx.format("R", SemanticColor::Variable);
-                let offset_str = if *offset == 0 {
-                    // No offset needed for [R]
-                    String::new()
-                } else if *offset > 0 {
-                    // Format positive offset like +offset
-                    format!("{}{}", ctx.format("+", SemanticColor::Operator), offset)
-                } else {
-                    // Format negative offset directly like -offset
-                    format!("{offset}")
+                let offset_str = match offset {
+                    0 => {
+                        // No offset needed for [R]
+                        String::new()
+                    }
+                    offset if *offset > 0 => {
+                        // Format positive offset like +offset
+                        format!("{}{}", ctx.format("+", SemanticColor::Operator), offset)
+                    }
+                    _ => {
+                        // Format negative offset directly like -offset
+                        format!("{offset}")
+                    }
                 };
 
                 format!(

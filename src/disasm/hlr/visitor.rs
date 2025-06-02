@@ -52,7 +52,7 @@ impl ControlFlow for () {
         false
     }
     fn continuing() -> Self {
-        ()
+        
     }
 }
 
@@ -397,26 +397,17 @@ mod tests {
         let mut visited = Vec::new();
 
         visit_function(&mut func, |event| {
-            match event {
-                HlrVisitEvent::Enter(node) => match node {
-                    HlrNode::Block(_) => visited.push(VisitedNode::Block),
-                    HlrNode::Statement(stmt) => match stmt {
-                        HlrStatement::VarDef(vars, _) => {
-                            if !vars.is_empty() {
-                                visited.push(VisitedNode::Statement(vars[0].name.clone()))
-                            }
-                        }
-                        _ => {}
-                    },
-                    HlrNode::Expression(expr) => match expr {
-                        HlrExpression::Constant(val, _) => {
-                            visited.push(VisitedNode::Expression(format!("Constant({})", val)))
-                        }
-                        _ => {}
-                    },
+            if let HlrVisitEvent::Enter(node) = event { match node {
+                HlrNode::Block(_) => visited.push(VisitedNode::Block),
+                HlrNode::Statement(stmt) => if let HlrStatement::VarDef(vars, _) = stmt {
+                    if !vars.is_empty() {
+                        visited.push(VisitedNode::Statement(vars[0].name.clone()))
+                    }
                 },
-                _ => {}
-            }
+                HlrNode::Expression(expr) => if let HlrExpression::Constant(val, _) = expr {
+                    visited.push(VisitedNode::Expression(format!("Constant({})", val)))
+                },
+            } }
             Control::Continue
         });
 
@@ -449,29 +440,23 @@ mod tests {
         let mut visited = Vec::new();
 
         visit_function(&mut func, |event| {
-            match event {
-                HlrVisitEvent::Enter(node) => match node {
-                    HlrNode::Statement(stmt) => match stmt {
-                        HlrStatement::VarDef(vars, _) => {
-                            if !vars.is_empty() {
-                                visited.push(VisitedNode::Statement(vars[0].name.clone()))
-                            }
+            if let HlrVisitEvent::Enter(node) = event { match node {
+                HlrNode::Statement(stmt) => match stmt {
+                    HlrStatement::VarDef(vars, _) => {
+                        if !vars.is_empty() {
+                            visited.push(VisitedNode::Statement(vars[0].name.clone()))
                         }
-                        HlrStatement::If(_, _, _) => {
-                            visited.push(VisitedNode::Statement("if".to_string()))
-                        }
-                        _ => {}
-                    },
-                    HlrNode::Expression(expr) => match expr {
-                        HlrExpression::Constant(val, _) => {
-                            visited.push(VisitedNode::Expression(format!("Constant({})", val)))
-                        }
-                        _ => {}
-                    },
+                    }
+                    HlrStatement::If(_, _, _) => {
+                        visited.push(VisitedNode::Statement("if".to_string()))
+                    }
                     _ => {}
                 },
+                HlrNode::Expression(expr) => if let HlrExpression::Constant(val, _) = expr {
+                    visited.push(VisitedNode::Expression(format!("Constant({})", val)))
+                },
                 _ => {}
-            }
+            } }
             Control::Continue
         });
 

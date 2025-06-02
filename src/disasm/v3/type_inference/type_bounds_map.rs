@@ -725,7 +725,7 @@ impl<'a> IntoNeighborsDirected for TypeVarDependencyGraph<'a> {
                 .dependents
                 .get(&n)
                 .cloned()
-                .unwrap_or_else(|| HashSet::new())
+                .unwrap_or_else(HashSet::new)
                 .into_iter(),
         }
     }
@@ -762,12 +762,12 @@ impl Visitable for TypeVarDependencyGraph<'_> {
     type Map = HashSet<TypeVarId>;
 
     #[doc = r" Create a new visitor map"]
-    fn visit_map(self: &Self) -> Self::Map {
+    fn visit_map(&self) -> Self::Map {
         HashSet::new()
     }
 
     #[doc = r" Reset the visitor map (and resize to new size of graph if needed)"]
-    fn reset_map(self: &Self, map: &mut Self::Map) {
+    fn reset_map(&self, map: &mut Self::Map) {
         map.clear()
     }
 }

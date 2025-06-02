@@ -158,18 +158,12 @@ impl TypeInferenceQueryEngine {
         let indent_str = "  ".repeat(indent);
         println!("{}{:?}: {}", indent_str, id, constraint,);
 
-        if let Some(source) = self.store.get_constraint_source(id) {
-            if let super::constraints::ConstraintSource::Derived {
-                from_constraint, ..
-            } = source
-            {
-                if let Some(parent_constraint) = self.store.get_constraint_by_id(*from_constraint) {
-                    self.print_constraint_recursive(
-                        *from_constraint,
-                        parent_constraint,
-                        indent + 1,
-                    );
-                }
+        if let Some(super::constraints::ConstraintSource::Derived {
+            from_constraint, ..
+        }) = self.store.get_constraint_source(id)
+        {
+            if let Some(parent_constraint) = self.store.get_constraint_by_id(*from_constraint) {
+                self.print_constraint_recursive(*from_constraint, parent_constraint, indent + 1);
             }
         }
     }

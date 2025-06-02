@@ -19,4 +19,5 @@ pub use types::ExpressionPathElement;
 pub use types::Type;
 pub use types::{TypeVarId, TypeVarPath};
 
+#[cfg(test)]
 mod type_inference_tests;

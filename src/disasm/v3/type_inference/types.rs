@@ -119,16 +119,10 @@ pub enum YesNoMaybe {
 
 impl YesNoMaybe {
     pub fn is_yes(&self) -> bool {
-        match self {
-            YesNoMaybe::Yes => true,
-            _ => false,
-        }
+        matches!(self, YesNoMaybe::Yes)
     }
     pub fn is_no(&self) -> bool {
-        match self {
-            YesNoMaybe::No => true,
-            _ => false,
-        }
+        matches!(self, YesNoMaybe::No)
     }
 }
 
@@ -158,10 +152,7 @@ impl Type {
     }
 
     pub fn is_function(&self) -> bool {
-        match self {
-            Type::Function { .. } => true,
-            _ => false,
-        }
+        matches!(self, Type::Function { .. })
     }
 
     pub fn as_type_var_id(&self) -> Option<&TypeVarId> {
@@ -705,6 +696,12 @@ pub struct TypeBounds {
     pub lower_bounds: HashSet<Type>,
 }
 
+impl Default for TypeBounds {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeBounds {
     pub fn new() -> Self {
         Self {
@@ -1246,13 +1243,10 @@ impl TypeVarPath {
     where
         S: ModelState + HasFoldedSsaResult,
     {
-        let Some(instruction_id) = self.instruction_id() else {
-            return None;
-        };
+        let instruction_id = self.instruction_id()?;
         let f = model.function(&self.function_id());
         f.blocks()
-            .map(|(_, block)| &block.folded_ssa().instructions)
-            .flatten()
+            .flat_map(|(_, block)| &block.folded_ssa().instructions)
             .find(|instruction| instruction.id == instruction_id)
     }
 
@@ -1263,12 +1257,8 @@ impl TypeVarPath {
     where
         S: ModelState + HasFoldedSsaResult,
     {
-        let Some(inst) = self.instruction_from_model(model) else {
-            return None;
-        };
-        let Some(path) = self.expression_path() else {
-            return None;
-        };
+        let inst = self.instruction_from_model(model)?;
+        let path = self.expression_path()?;
         let expr = match (self, &inst.kind) {
             (
                 TypeVarPath::AssignmentTargetDeref { .. },

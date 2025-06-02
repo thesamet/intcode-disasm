@@ -23,6 +23,12 @@ pub struct HlrTransformer {
     stats: TransformationStats,
 }
 
+impl Default for HlrTransformer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HlrTransformer {
     /// Create a new transformer with no transformations
     pub fn new() -> Self {

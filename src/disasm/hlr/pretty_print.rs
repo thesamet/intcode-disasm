@@ -106,7 +106,7 @@ impl ContextualPrettyPrint for HlrAssignmentTarget {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
             HlrAssignmentTarget::Variable(var) => {
-                format!("{}", var.pretty_print_with_context(ctx))
+                var.pretty_print_with_context(ctx).to_string()
             }
             HlrAssignmentTarget::Deref(expr) => {
                 format!(
@@ -529,7 +529,7 @@ fn format_function_signature(func: &HlrFunction, ctx: &FormattingContext) -> Str
 impl ContextualPrettyPrint for HlrFunction {
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let signature = format_function_signature(self, ctx);
-        let signature_line = line(&signature, &ctx);
+        let signature_line = line(&signature, ctx);
 
         let body_lines = self
             .body

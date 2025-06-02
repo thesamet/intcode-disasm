@@ -66,7 +66,7 @@ impl ControlFlowStructureAnalyzer {
         model: Model<VariableMergerComplete>,
         symbol_renaming: SymbolRenaming,
     ) -> Result<Model<HlrConstructionComplete>, Error> {
-        Ok(ControlFlowStructureAnalyzer::new(model, symbol_renaming).recover_structures()?)
+        ControlFlowStructureAnalyzer::new(model, symbol_renaming).recover_structures()
     }
 
     /// Recovers high-level control flow structures for the entire program.
@@ -412,7 +412,7 @@ impl ControlFlowStructureAnalyzer {
                             let cond = cond.clone();
                             let cond = build_expr! { !#cond };
                             let cond = self.expr_to_hlr(
-                                &cond.simplify().unwrap_or_else(|| cond),
+                                &cond.simplify().unwrap_or(cond),
                                 // TODO: This is likely wrong, if the expression has been simplified, the path may be out of sync with the expression
                                 // used in the typevar.
                                 TypeVarPath::if_cond(
@@ -498,7 +498,7 @@ impl ControlFlowStructureAnalyzer {
                 }
             }
             Expression::Addressable(a) => match a {
-                SsaMemoryReference::Versioned(a) => HlrExpression::Variable(self.hlr_var(&a)),
+                SsaMemoryReference::Versioned(a) => HlrExpression::Variable(self.hlr_var(a)),
                 SsaMemoryReference::Deref(a) => HlrExpression::Deref(Box::new(
                     self.expr_to_hlr(a, path.extending_path(ExpressionPathElement::Deref)),
                 )),

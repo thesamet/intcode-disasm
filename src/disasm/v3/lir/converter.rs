@@ -203,25 +203,26 @@ impl InstructionNode<MemoryReference> {
                 let Some(adjust) = r.kind.get_immediate() else {
                     panic!("Expected immediate value for R adjustment");
                 };
-
                 if adjust < 0 {
                     // Must be followed by GOTO [R], representing a return
-                    match next_instruction {
-                        Some(GenericNativeInstruction {
-                            kind:
-                                NativeInstructionKind::Goto(Operand {
-                                    kind: OperandKind::RelativeMemory(0),
-                                    ..
-                                }),
-                            ..
-                        }) => Some((
+                    if let Some(GenericNativeInstruction {
+                        kind:
+                            NativeInstructionKind::Goto(Operand {
+                                kind: OperandKind::RelativeMemory(0),
+                                ..
+                            }),
+                        ..
+                    }) = next_instruction
+                    {
+                        Some((
                             2,
                             Some(InstructionNode {
                                 id: InstructionId::fresh(),
                                 kind: Instruction::Return,
                             }),
-                        )),
-                        _ => panic!("Expected GOTO [R] after R adjustment for function return"),
+                        ))
+                    } else {
+                        panic!("Expected GOTO [R] after R adjustment for function return")
                     }
                 } else if adjust > 0 {
                     // Entry point to function, discard

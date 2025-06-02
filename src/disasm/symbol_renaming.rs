@@ -23,6 +23,12 @@ pub struct SymbolRenaming {
     pub variable_names: HashMap<VersionedMemoryReference, String>,
 }
 
+impl Default for SymbolRenaming {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolRenaming {
     pub fn new() -> Self {
         Self {
@@ -36,7 +42,7 @@ impl SymbolRenaming {
     }
 
     fn add_variable_name(&mut self, variable: &VersionedMemoryReference, name: String) {
-        self.variable_names.insert(variable.clone(), name);
+        self.variable_names.insert(*variable, name);
     }
 
     pub fn from_lines(lines: &str) -> Result<Self, String> {

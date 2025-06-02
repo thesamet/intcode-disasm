@@ -1,103 +1,102 @@
-#[cfg(test)]
-mod tests {
-    use super::super::ImageScanner;
-    use crate::disasm::parser;
-    use crate::disasm::test_utils::init_logging;
-    use crate::disasm::v3::image_scanner::ImageScannerResult;
-    use crate::disasm::v3::model::Model;
+use crate::disasm::parser;
+use crate::disasm::test_utils::init_logging;
+use crate::disasm::v3::image_scanner::ImageScannerResult;
+use crate::disasm::v3::model::Model;
 
-    fn parse_and_scan(code: &str) -> ImageScannerResult {
-        let binary = parser::compile(code);
-        let model = Model::from_binary(binary);
-        let result = ImageScanner::run(model).expect("Image scanner failed");
-        result.image_scanner_result().clone()
+use super::ImageScanner;
+
+fn parse_and_scan(code: &str) -> ImageScannerResult {
+    let binary = parser::compile(code);
+    let model = Model::from_binary(binary);
+    let result = ImageScanner::run(model).expect("Image scanner failed");
+    result.image_scanner_result().clone()
+}
+
+#[test]
+fn test_image_scanner_basic() {
+    init_logging();
+
+    // Create a simple test image
+    let image = vec![1, 2, 3, 4, 5];
+
+    // Create initial model
+    let model = Model::from_binary(image);
+
+    // Run the image scanner
+    let result = ImageScanner::run(model).expect("Image scanner failed");
+
+    // Verify the result
+    assert_eq!(*result.image(), vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn test_empty_image() {
+    init_logging();
+
+    // Create an empty image
+    let image = vec![];
+
+    // Create initial model
+    let model = Model::from_binary(image);
+
+    // Run the image scanner
+    let result = ImageScanner::run(model).expect("Image scanner failed");
+
+    // Verify the result
+    let scanner_result = result.image_scanner_result();
+    assert_eq!(scanner_result.function_ids().len(), 0);
+    assert_eq!(scanner_result.data_segments.len(), 0);
+}
+
+#[test]
+fn test_function_mapping() {
+    init_logging();
+
+    // Create a test image with multiple potential functions
+    let image = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    // Create initial model
+    let model = Model::from_binary(image);
+
+    // Run the image scanner
+    let result = ImageScanner::run(model).expect("Image scanner failed");
+
+    // Verify the result
+    let scanner_result = result.image_scanner_result();
+
+    // Check that function ID 0 maps to address 0
+    if !scanner_result.function_ids().is_empty() {
+        let function_id = scanner_result.function_ids()[0];
+        assert_eq!(
+            scanner_result.address_to_function.get(&0),
+            Some(&function_id)
+        );
     }
+}
 
-    #[test]
-    fn test_image_scanner_basic() {
-        init_logging();
-
-        // Create a simple test image
-        let image = vec![1, 2, 3, 4, 5];
-
-        // Create initial model
-        let model = Model::from_binary(image);
-
-        // Run the image scanner
-        let result = ImageScanner::run(model).expect("Image scanner failed");
-
-        // Verify the result
-        assert_eq!(*result.image(), vec![1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn test_empty_image() {
-        init_logging();
-
-        // Create an empty image
-        let image = vec![];
-
-        // Create initial model
-        let model = Model::from_binary(image);
-
-        // Run the image scanner
-        let result = ImageScanner::run(model).expect("Image scanner failed");
-
-        // Verify the result
-        let scanner_result = result.image_scanner_result();
-        assert_eq!(scanner_result.function_ids().len(), 0);
-        assert_eq!(scanner_result.data_segments.len(), 0);
-    }
-
-    #[test]
-    fn test_function_mapping() {
-        init_logging();
-
-        // Create a test image with multiple potential functions
-        let image = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-        // Create initial model
-        let model = Model::from_binary(image);
-
-        // Run the image scanner
-        let result = ImageScanner::run(model).expect("Image scanner failed");
-
-        // Verify the result
-        let scanner_result = result.image_scanner_result();
-
-        // Check that function ID 0 maps to address 0
-        if !scanner_result.function_ids().is_empty() {
-            let function_id = scanner_result.function_ids()[0];
-            assert_eq!(
-                scanner_result.address_to_function.get(&0),
-                Some(&function_id)
-            );
-        }
-    }
-
-    #[test]
-    fn test_simple_function() {
-        let result = parse_and_scan(
-            r#"
+#[test]
+fn test_simple_function() {
+    let result = parse_and_scan(
+        r#"
             R += 5
             [R+2] = [R+3] + [R+4]
             [R+2] = [R+3] + [R+4]
             R -= 5
             goto [R]
             "#,
-        );
-        assert_eq!(result.function_ids().len(), 1);
-        let function_id = result.function_ids()[0];
-        let function = &result.recognized_functions[&function_id];
-        assert_eq!(function.stack_size, 5);
-        assert!(function.return_span.is_some());
-        assert_eq!(function.instructions.len(), 5);
-    }
+    );
+    assert_eq!(result.function_ids().len(), 1);
+    let function_id = result.function_ids()[0];
+    let function = &result.recognized_functions[&function_id];
+    assert_eq!(function.stack_size, 5);
+    assert!(function.return_span.is_some());
+    assert_eq!(function.instructions.len(), 5);
+}
 
-    #[test]
-    fn test_function_with_call() {
-        let result = parse_and_scan(
-            r#"
+#[test]
+fn test_function_with_call() {
+    let result = parse_and_scan(
+        r#"
             R += 5      ;0
             [R+1] = 42  ;2
             [R] = @ret  ;6
@@ -111,28 +110,28 @@ mod tests {
             R -= 3
             goto [R]
             "#,
-        );
-        assert_eq!(result.function_ids().len(), 2);
+    );
+    assert_eq!(result.function_ids().len(), 2);
 
-        // Get the main function (first one)
-        let main_id = result.function_ids()[0];
-        let main = &result.recognized_functions[&main_id];
+    // Get the main function (first one)
+    let main_id = result.function_ids()[0];
+    let main = &result.recognized_functions[&main_id];
 
-        // Get the other function (second one)
-        let other_id = result.function_ids()[1];
-        let other = &result.recognized_functions[&other_id];
+    // Get the other function (second one)
+    let other_id = result.function_ids()[1];
+    let other = &result.recognized_functions[&other_id];
 
-        assert_eq!(main.stack_size, 5);
-        assert_eq!(other.stack_size, 3);
+    assert_eq!(main.stack_size, 5);
+    assert_eq!(other.stack_size, 3);
 
-        assert_eq!(main.function_calls.len(), 1);
-        assert_eq!(main.function_calls[0].return_address, 13);
-    }
+    assert_eq!(main.function_calls.len(), 1);
+    assert_eq!(main.function_calls[0].return_address, 13);
+}
 
-    #[test]
-    fn test_function_with_jumps() {
-        let result = parse_and_scan(
-            r#"
+#[test]
+fn test_function_with_jumps() {
+    let result = parse_and_scan(
+        r#"
             R += 5                   ; 0
             if [R+1] goto @branch    ; 2
             [R+2] = 42               ; 5
@@ -143,20 +142,20 @@ mod tests {
             R -= 5                   ; 16
             goto [R]                 ; 18
             "#,
-        );
-        assert_eq!(result.function_ids().len(), 1);
-        let function_id = result.function_ids()[0];
-        let function = &result.recognized_functions[&function_id];
+    );
+    assert_eq!(result.function_ids().len(), 1);
+    let function_id = result.function_ids()[0];
+    let function = &result.recognized_functions[&function_id];
 
-        assert_eq!(function.jump_targets.len(), 2);
-        assert!(function.jump_targets.contains(&12)); // branch
-        assert!(function.jump_targets.contains(&16)); // merge
-    }
+    assert_eq!(function.jump_targets.len(), 2);
+    assert!(function.jump_targets.contains(&12)); // branch
+    assert!(function.jump_targets.contains(&16)); // merge
+}
 
-    #[test]
-    fn test_data_segments() {
-        let result = parse_and_scan(
-            r#"
+#[test]
+fn test_data_segments() {
+    let result = parse_and_scan(
+        r#"
             DATA 99
             DATA 1, 2, 3, 4
             R += 5         ; 5
@@ -166,16 +165,16 @@ mod tests {
             DATA 99        ; 16
             DATA 5, 6, 7, 8
             "#,
-        );
+    );
 
-        assert_eq!(result.function_ids().len(), 1);
-        assert!(!result.data_segments.is_empty());
-    }
+    assert_eq!(result.function_ids().len(), 1);
+    assert!(!result.data_segments.is_empty());
+}
 
-    #[test]
-    fn test_another_function_call() {
-        let result = parse_and_scan(
-            r#"
+#[test]
+fn test_another_function_call() {
+    let result = parse_and_scan(
+        r#"
             ; Main Function (Offset 0)
             main:
             R += 5
@@ -211,21 +210,20 @@ mod tests {
             ; Offset 44
             goto [R]
             "#,
-        );
-        assert_eq!(result.function_ids().len(), 2);
+    );
+    assert_eq!(result.function_ids().len(), 2);
 
-        // Get the main function (first one)
-        let main_id = result.function_ids()[0];
-        let main = &result.recognized_functions[&main_id];
+    // Get the main function (first one)
+    let main_id = result.function_ids()[0];
+    let main = &result.recognized_functions[&main_id];
 
-        // Get the callee function (second one)
-        let callee_id = result.function_ids()[1];
-        let callee = &result.recognized_functions[&callee_id];
+    // Get the callee function (second one)
+    let callee_id = result.function_ids()[1];
+    let callee = &result.recognized_functions[&callee_id];
 
-        assert_eq!(main.stack_size, 5);
-        assert_eq!(callee.stack_size, 4);
+    assert_eq!(main.stack_size, 5);
+    assert_eq!(callee.stack_size, 4);
 
-        assert_eq!(main.function_calls.len(), 1);
-        assert_eq!(main.function_calls[0].return_address, 17);
-    }
+    assert_eq!(main.function_calls.len(), 1);
+    assert_eq!(main.function_calls[0].return_address, 17);
 }

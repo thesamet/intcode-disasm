@@ -30,7 +30,7 @@ where
     ///
     /// # Panics
     /// Panics if the function ID does not exist in the model
-    pub fn function<'a, 'b>(&'a self, function_id: &'b FunctionId) -> FunctionView<'a, S> {
+    pub fn function<'a>(&'a self, function_id: &FunctionId) -> FunctionView<'a, S> {
         self.get_function(function_id)
             .unwrap_or_else(|| panic!("Function {} does not exist", function_id))
     }
@@ -48,7 +48,7 @@ where
     ///
     /// # Returns
     /// An iterator that yields tuples of function IDs and their corresponding function views
-    pub fn functions<'a>(&'a self) -> impl Iterator<Item = (FunctionId, FunctionView<'a, S>)> {
+    pub fn functions(&self) -> impl Iterator<Item = (FunctionId, FunctionView<'_, S>)> {
         self.control_flow_graph_result()
             .functions
             .iter()

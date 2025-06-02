@@ -77,7 +77,7 @@ pub fn repl(model: &Model<TypeInferenceComplete>) {
                 editor.add_history_entry(line.as_str()).unwrap();
                 match ReplLine::try_parse_from(std::iter::once(">>").chain(line.split_whitespace()))
                 {
-                    Ok(cmd) => match run_command(cmd, &model) {
+                    Ok(cmd) => match run_command(cmd, model) {
                         Ok(_) => {}
                         Err(err) => {
                             println!("{}", err.red())
@@ -120,9 +120,9 @@ where
     I: IntoIterator<Item = &'a Type>,
 {
     let v = v.into_iter().sorted().collect_vec();
-    let out = format!("{}", v.iter().join(", "));
+    let out = v.iter().join(", ").to_string();
     if out.len() > 30 {
-        format!("{}", v.iter().join(",\n"))
+        v.iter().join(",\n").to_string()
     } else {
         out
     }
@@ -158,23 +158,23 @@ fn format_path<'a>(
     let expr = path.expression_from_model(model);
     let role = match path {
         TypeVarPath::AssignmentTargetVersioned { vmr, .. } => format!("Assign to {}", vmr),
-        TypeVarPath::AssignmentTargetDeref { .. } => format!("Assign to deref"),
+        TypeVarPath::AssignmentTargetDeref { .. } => "Assign to deref".to_string(),
         TypeVarPath::FunctionDefArg { index, .. } => format!("DefArg[{}]", index),
         TypeVarPath::FunctionDefArgTuple { .. } => "FunctionDefArgTuple".to_string(),
         TypeVarPath::FunctionDefRet { index, .. } => format!("DefRet[{}]", index),
         TypeVarPath::FunctionDefRetTuple { .. } => "FunctionDefRetTuple".to_string(),
         TypeVarPath::AssignmentSrc {
             expression_path: _, ..
-        } => format!("AssignmentSrc"),
+        } => "AssignmentSrc".to_string(),
         TypeVarPath::IfCond {
             expression_path: _, ..
-        } => format!("IfCond"),
+        } => "IfCond".to_string(),
         TypeVarPath::Output {
             expression_path: _, ..
-        } => format!("Output"),
+        } => "Output".to_string(),
         TypeVarPath::CallAddress {
             expression_path: _, ..
-        } => format!("CallAddress"),
+        } => "CallAddress".to_string(),
         TypeVarPath::CallArgTuple { .. } => "CallArgTuple".to_string(),
         TypeVarPath::CallArg {
             index,
@@ -242,14 +242,12 @@ fn list_variables(
         data.push(TypeVarRow {
             id: format!("{}", tv),
             function: format!("{}", tv_node.path.function_id()),
-            inst: format!(
-                "{}",
-                tv_node
-                    .path
-                    .instruction_id()
-                    .map(|c| c.to_string())
-                    .unwrap_or_default()
-            ),
+            inst: tv_node
+                .path
+                .instruction_id()
+                .map(|c| c.to_string())
+                .unwrap_or_default()
+                .to_string(),
             role,
             expr: expr.map(|e| e.to_string()).unwrap_or_default(),
             lower: match state {
@@ -274,7 +272,7 @@ fn list_variables(
         table.modify((row + 1, 5), Span::column(2));
         table.modify((row + 1, 5), Width::wrap(50));
     }
-    println!("{}", table.to_string());
+    println!("{}", table);
     Ok(())
 }
 
@@ -286,7 +284,7 @@ fn format_change_log(tir: &TypeInferenceResult, clk: &ChangeLogKind, resolve: bo
             ..
         } => {
             let typ = if resolve {
-                &tir.resolve_type(&new_bound)
+                &tir.resolve_type(new_bound)
             } else {
                 new_bound
             };
@@ -336,7 +334,7 @@ fn changelog(
             iter: change.iteration,
             time,
             tv_id: format!("{}", change.tv_id),
-            kind: format!("{}", format_change_log(ti, &change.kind, resolve)),
+            kind: format_change_log(ti, &change.kind, resolve).to_string(),
             reason: match &change.kind {
                 ChangeLogKind::AddedBound { reason, .. } => {
                     let reason = match reason {
@@ -344,7 +342,7 @@ fn changelog(
                             let constraint = ti.constraint_store.get_constraint_by_id(*id).unwrap();
                             format!("{}: {:?}", id, constraint.reason)
                         }
-                        __ => format!("{}", reason),
+                        _ => format!("{}", reason),
                     };
                     reason
                 }
