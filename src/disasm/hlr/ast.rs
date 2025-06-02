@@ -162,12 +162,15 @@ impl BinaryOperator {
         }
     }
     pub fn is_logical_operator(&self) -> bool {
-        match self {
-            BinaryOperator::Equals | BinaryOperator::NotEquals => true,
-            BinaryOperator::GreaterThan | BinaryOperator::LessThan => true,
-            BinaryOperator::GreaterThanOrEqual | BinaryOperator::LessThanOrEqual => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            BinaryOperator::Equals
+                | BinaryOperator::NotEquals
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::LessThan
+                | BinaryOperator::GreaterThanOrEqual
+                | BinaryOperator::LessThanOrEqual
+        )
     }
 }
 

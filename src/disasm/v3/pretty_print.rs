@@ -221,16 +221,13 @@ fn format_signature<S: ModelState + 'static>(
     function: &FunctionView<S>,
     ctx: &FormattingContext,
 ) -> String {
-    fn format_signature<
-        T: HasFunctionCallAnalysisResult + ModelState + 'static,
-        S: ModelState + 'static,
-    >(
+    fn format_signature<T, S: ModelState + 'static>(
         model: &Model<T>,
         function: &FunctionView<S>,
         ctx: &FormattingContext,
     ) -> String
     where
-        T: HasFunctionCallAnalysisResult,
+        T: HasFunctionCallAnalysisResult + ModelState + 'static,
     {
         format!(
             "{}{}{}",
@@ -249,16 +246,14 @@ fn format_signature<S: ModelState + 'static>(
         )
     }
 
-    fn format_typed_signature<
-        T: HasTypeInferenceResult + ModelState + 'static,
-        S: ModelState + 'static,
-    >(
+    fn format_typed_signature<T, S>(
         model: &Model<T>,
         function: &FunctionView<S>,
         ctx: &FormattingContext,
     ) -> String
     where
-        T: HasFunctionCallAnalysisResult,
+        T: HasTypeInferenceResult + ModelState + HasFunctionCallAnalysisResult + 'static,
+        S: ModelState + 'static,
     {
         let res = model.type_inference_result();
         let show_var_ids = ctx.config.show_types_var_ids;
@@ -391,11 +386,11 @@ impl<A: ContextualPrettyPrint + 'static> Display for Expression<A> {
     }
 }
 
-fn right_instructions<'a, S: ModelState + 'static>(
+fn right_instructions<'a, S>(
     block: &BlockView<'a, S>,
 ) -> &'a Vec<InstructionNode<SsaMemoryReference>>
 where
-    S: HasSsaResult,
+    S: HasSsaResult + ModelState + 'static,
 {
     castaway::match_type!(block.model, {
         &Model<TypeInferenceComplete> as m =>
@@ -628,12 +623,9 @@ where
     }
 }
 
-fn format_callers_comment<S: ModelState + 'static>(
-    model: &Model<S>,
-    function_id: FunctionId,
-) -> String
+fn format_callers_comment<S>(model: &Model<S>, function_id: FunctionId) -> String
 where
-    S: 'static,
+    S: ModelState + 'static,
 {
     if let Ok(m_fca) = cast!(model, &Model<FunctionCallAnalysisComplete>) {
         let fca_result = m_fca.function_call_analysis_result();
@@ -681,19 +673,16 @@ derive_display!(VersionedMemoryReference);
 
 // --- Public API ---
 
-pub fn pretty_print_ssa_with_config<S: ModelState + 'static>(
-    model: &Model<S>,
-    config: PrettyPrintConfig,
-) -> String
+pub fn pretty_print_ssa_with_config<S>(model: &Model<S>, config: PrettyPrintConfig) -> String
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     model.pretty_print_with_config(&config)
 }
 
-pub fn pretty_print_ssa<S: ModelState + 'static>(model: &Model<S>) -> String
+pub fn pretty_print_ssa<S>(model: &Model<S>) -> String
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     let config = PrettyPrintConfig::default()
         .with_show_types(false)
@@ -701,19 +690,16 @@ where
     pretty_print_ssa_with_config(model, config)
 }
 
-pub fn pretty_print_folded_ssa_with_config<S: ModelState + 'static>(
-    model: &Model<S>,
-    config: PrettyPrintConfig,
-) -> String
+pub fn pretty_print_folded_ssa_with_config<S>(model: &Model<S>, config: PrettyPrintConfig) -> String
 where
-    S: HasFoldedSsaResult + HasControlFlowGraphResult,
+    S: HasFoldedSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     model.pretty_print_with_config(&config)
 }
 
-pub fn pretty_print_folded_ssa<S: ModelState + 'static>(model: &Model<S>) -> String
+pub fn pretty_print_folded_ssa<S>(model: &Model<S>) -> String
 where
-    S: HasFoldedSsaResult + HasControlFlowGraphResult,
+    S: HasFoldedSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     let config = PrettyPrintConfig::default()
         .with_show_types(false)
@@ -721,9 +707,9 @@ where
     pretty_print_folded_ssa_with_config(model, config)
 }
 
-pub fn pretty_print_types<S: ModelState + 'static>(model: &Model<S>) -> String
+pub fn pretty_print_types<S>(model: &Model<S>) -> String
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     let config = PrettyPrintConfig::default()
         .with_show_vars(false)
@@ -731,49 +717,43 @@ where
     pretty_print_types_with_config(model, config)
 }
 
-pub fn pretty_print_types_with_config<S: ModelState + 'static>(
-    model: &Model<S>,
-    config: PrettyPrintConfig,
-) -> String
+pub fn pretty_print_types_with_config<S>(model: &Model<S>, config: PrettyPrintConfig) -> String
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     model.pretty_print_with_config(&config)
 }
 
 // --- Backward compatibility functions ---
 
-pub fn pretty_print_ssa_stdout<S: ModelState + 'static>(model: &Model<S>)
+pub fn pretty_print_ssa_stdout<S>(model: &Model<S>)
 where
-    S: HasSsaResult + HasControlFlowGraphResult,
+    S: HasSsaResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     println!("{}", pretty_print_ssa(model));
 }
 
-pub fn pretty_print_with_types_stdout<S: ModelState + 'static>(model: &Model<S>)
+pub fn pretty_print_with_types_stdout<S>(model: &Model<S>)
 where
-    S: HasTypeInferenceResult + HasControlFlowGraphResult,
+    S: HasTypeInferenceResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     println!("{}", pretty_print_types(model));
 }
 
 // --- HLR pretty print functions ---
 
-pub fn pretty_print_hlr_with_config<S: ModelState + 'static>(
-    model: &Model<S>,
-    config: PrettyPrintConfig,
-) -> String
+pub fn pretty_print_hlr_with_config<S>(model: &Model<S>, config: PrettyPrintConfig) -> String
 where
-    S: HasHlrProgram,
+    S: HasHlrProgram + ModelState + 'static,
 {
     // Get the HLR program and use the implemented pretty print function
     let hlr_program = model.hlr_program();
     crate::disasm::hlr::pretty_print::pretty_print_hlr_with_config(hlr_program, &config)
 }
 
-pub fn pretty_print_hlr<S: ModelState + 'static>(model: &Model<S>) -> String
+pub fn pretty_print_hlr<S>(model: &Model<S>) -> String
 where
-    S: HasHlrProgram,
+    S: HasHlrProgram + ModelState + 'static,
 {
     let config = PrettyPrintConfig::default()
         .with_show_types(false)
@@ -781,9 +761,9 @@ where
     pretty_print_hlr_with_config(model, config)
 }
 
-pub fn pretty_print_hlr_stdout<S: ModelState + 'static>(model: &Model<S>)
+pub fn pretty_print_hlr_stdout<S>(model: &Model<S>)
 where
-    S: HasHlrProgram,
+    S: HasHlrProgram + ModelState + 'static,
 {
     println!("{}", pretty_print_hlr(model));
 }

@@ -1,5 +1,3 @@
-// disasm/src/disasm/v3/type_inference/constraints.rs
-
 use log::trace;
 
 use super::{

@@ -357,8 +357,7 @@ pub fn memref(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn match_dsl(input: TokenStream) -> TokenStream {
     let parsed_input = parse_macro_input!(input as MatchDslInput); // Use corrected MatchDslInput
-    let code = parsed_input.expanded().into();
-    code
+    parsed_input.expanded().into()
 }
 
 #[proc_macro]

@@ -52,8 +52,8 @@ impl<A> Instruction<A> {
     ///
     /// Different instruction types operate on different kinds of expressions:
     /// - Assign: The source expression to be assigned. Note that evaluating
-    ///           the target expression will result in the source expression
-    ///           being evaluated. See ReadAddressExtractor for more details.
+    ///   the target expression will result in the source expression
+    ///   being evaluated. See ReadAddressExtractor for more details.
     /// - If: The condition expression
     /// - Call: The target address expression
     /// - Output: The expression to be output

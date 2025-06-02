@@ -173,8 +173,8 @@ impl Type {
         let mut visited = HashSet::new();
         self.is_subtype_of_inner(other, &mut visited, registry)
     }
-    /// Checks if `self` is a subtype of `other` (self <: other).
 
+    /// Checks if `self` is a subtype of `other` (self <: other).
     fn is_subtype_of_inner<'a>(
         &'a self,
         other: &'a Type,

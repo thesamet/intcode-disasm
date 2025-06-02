@@ -587,7 +587,7 @@ impl ControlFlowStructureAnalyzer {
     }
 
     // Returns some return statement if it's an early return or there are return values.
-    fn maybe_return_statement<'a>(&self, func: Function, is_end: bool) -> Option<HlrStatement> {
+    fn maybe_return_statement(&self, func: Function, is_end: bool) -> Option<HlrStatement> {
         let rets = self.model.type_inference_result().function_signatures[&func.function_id()]
             .returns
             .iter()

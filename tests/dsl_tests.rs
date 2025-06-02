@@ -337,8 +337,7 @@ mod tests {
             },
             _ => {
                 // Should not reach here
-                assert!(false, "Did not match constant pattern");
-                0
+                unreachable!()
             }
         );
         assert_eq!(result_const, 1);

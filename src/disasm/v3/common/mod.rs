@@ -41,7 +41,7 @@ where
 ///
 /// * `value` - The mutable reference to the value being updated
 /// * `update_fn` - A function that takes a mutable reference to a value, updates it, and returns
-///                 `true` if further updates are needed or `false` if the fixed point is reached
+///   `true` if further updates are needed or `false` if the fixed point is reached
 ///
 pub fn fixed_point_mut<T, F>(mut value: T, mut update_fn: F) -> T
 where

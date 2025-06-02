@@ -136,8 +136,7 @@ fn handle_states(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             };
             has_trait_defs.push(has_trait_def);
 
-            for later_state_idx in idx..states_vec.len() {
-                let later_state = &states_vec[later_state_idx];
+            for later_state in states_vec.iter().skip(idx) {
                 let later_state_name_ident = format_ident!("{}", &later_state.state_name);
 
                 let has_impl = quote! {
@@ -340,7 +339,7 @@ fn handle_model(input: &mut DeriveInput) -> Result<proc_macro2::TokenStream, syn
     for info in &state_info_vec {
         if !info.is_unit {
             // Add initializer for this field if it's not the initial state's (already handled)
-            if !(info.state_name == initial_state_info.state_name && !initial_state_info.is_unit) {
+            if info.state_name != initial_state_info.state_name || initial_state_info.is_unit {
                 let field_name = format_ident!("{}", &info.getter_name);
                 initializers.push(quote! { #field_name: None });
             }
