@@ -5,6 +5,7 @@ use log::debug;
 
 use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
+use crate::disasm::v3::type_inference::constraints::AddConstraintResult;
 use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::types::TypeVarNode;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
@@ -15,7 +16,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
 use super::constraints_generator::generate_constraints;
-use super::query_engine::TypeInferenceQueryEngine;
 use super::result::FunctionSignature;
 use super::type_bounds_map::{BoundChangeReason, TypeVarRegistry};
 use super::types::{TypeBounds, TypeVarId, TypeVarPath};
@@ -335,7 +335,7 @@ impl CompoundTypeRefiner {
                 {
                     let func_type =
                         Type::function(callee_arg_type.clone(), callee_ret_type.clone());
-                    store.add_original_equality_constraint(
+                    store.add_equality_constraint(
                         Constraint {
                             sub_type: func_type,
                             super_type: tv_id.to_type(),
@@ -343,6 +343,7 @@ impl CompoundTypeRefiner {
                             origin_instruction_id: instruction_id,
                             reason: ConstraintReason::ConstIsFunctionPointer,
                         },
+                        None,
                         state,
                     );
                 }
@@ -432,25 +433,46 @@ impl<'a> Solver<'a> {
         let markers = generator_result.markers;
 
         //
-        let mut iteration_count = 0;
+        let mut vars_worklist: Vec<TypeVarId> = self
+            .state
+            .iter_all_type_states()
+            .map(|(id, _)| id)
+            .cloned()
+            .collect();
         loop {
             self.state.next_iteration();
-            let mut worklist: VecDeque<(ConstraintId, Constraint)> = self
-                .store
-                .iter()
-                .sorted_by_key(|c| c.0)
-                .map(|(id, x)| (*id, x.clone()))
-                .collect();
-            iteration_count += 1;
-            if iteration_count >= 10000 {
-                panic!("Too many iterations");
-            }
 
             let mut changed = false;
 
-            while let Some((constraint_id, constraint)) = worklist.pop_front() {
-                changed |= self.apply_constraint(&constraint_id, &constraint);
+            let mut constraint_ids: HashSet<ConstraintId> = HashSet::new();
+            println!("Vars worklist len: {}", vars_worklist.len());
+            for vars in vars_worklist.iter_mut() {
+                for c in self
+                    .store
+                    .get_constraints_involving_type_var(vars)
+                    .into_iter()
+                    .flatten()
+                {
+                    constraint_ids.insert(*c);
+                }
             }
+            let mut constraint_ids: VecDeque<ConstraintId> = constraint_ids.into_iter().collect();
+            let mut count = 0;
+            while let Some(constraint_id) = constraint_ids.pop_front() {
+                count += 1;
+                let new_constraints = self.apply_constraint(constraint_id);
+                for constraint in new_constraints {
+                    match self.store.add_constraint(constraint, None, &self.state) {
+                        AddConstraintResult::NewConstraint(id) =>
+                        /*  | AddConstraintResult::ExistingConstraint(id) */
+                        {
+                            constraint_ids.push_back(id)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            println!("Applied {} constraints", count);
 
             let e = self
                 .store
@@ -468,6 +490,7 @@ impl<'a> Solver<'a> {
             if !changed {
                 break;
             }
+            vars_worklist = self.state.take_updated_vars();
         }
 
         // Phase 2 & 3: Detect and transform generic patterns iteratively
@@ -538,7 +561,7 @@ impl<'a> Solver<'a> {
             result.path_to_type_var_id.insert(node.path.clone(), *id);
         }
         result.debug_markers = markers;
-        result.query_engine = TypeInferenceQueryEngine::new(self.state.clone(), self.store.clone());
+
         result.constraint_store = self.store;
         result.generic_type_vars = self.state.generic_type_vars();
         result.change_log = self.state.change_log;
@@ -572,69 +595,55 @@ impl<'a> Solver<'a> {
         Ok(result_model)
     }
 
-    fn apply_constraint(&mut self, constraint_id: &ConstraintId, constraint: &Constraint) -> bool {
-        let mut changed = false;
+    // Applies a constraint and returns new constraints derived from it.
+    fn apply_constraint(&mut self, constraint_id: ConstraintId) -> Vec<Constraint> {
+        let constraint = self.store.get_constraint_by_id(constraint_id).unwrap();
+        let mut new_constraints: Vec<Constraint> = vec![];
         let sub_type = self.state.resolve_type(&constraint.sub_type);
         let super_type = self.state.resolve_type(&constraint.super_type);
         if let Type::TypeVar(tv_id) = &sub_type {
-            changed |= self.state.update_upper_bound(
+            self.state.update_upper_bound(
                 tv_id,
                 &super_type,
-                BoundChangeReason::Constraint(*constraint_id),
+                BoundChangeReason::Constraint(constraint_id),
             );
         }
         if let Type::TypeVar(tv_id) = &super_type {
-            changed |= self.state.update_lower_bound(
+            self.state.update_lower_bound(
                 tv_id,
                 &sub_type,
-                BoundChangeReason::Constraint(*constraint_id),
-            )
+                BoundChangeReason::Constraint(constraint_id),
+            );
         }
 
         match (&sub_type, &super_type) {
-            (Type::TypeVar(tv_id), Type::TypeVar(tv_id2)) if tv_id == tv_id2 => {
-                changed |= self.state.update_lower_bound(
-                    tv_id,
+            (Type::TypeVar(lower_tvid), Type::TypeVar(upper_tvid)) if lower_tvid == upper_tvid => {
+                self.state.update_lower_bound(
+                    lower_tvid,
                     &sub_type,
-                    BoundChangeReason::Constraint(*constraint_id),
+                    BoundChangeReason::Constraint(constraint_id),
                 );
             }
             (Type::Tuple(ts), Type::Tuple(us)) => {
                 for (idx, (t, u)) in ts.iter().zip(us).enumerate() {
-                    let new_constraint = Constraint::new(
+                    new_constraints.push(Constraint::new(
                         t.clone(),
                         u.clone(),
                         constraint.origin_function_id,
                         constraint.origin_instruction_id,
                         ConstraintReason::TupleElementSubtype(idx),
-                    );
-
-                    // Track this as a derived constraint from tuple subtyping
-                    let (_, ch) = self.store.add_derived_constraint(
-                        new_constraint.clone(),
-                        *constraint_id,
-                        BoundChangeReason::Constraint(*constraint_id),
-                        &self.state,
-                    );
-                    changed |= ch;
+                    ));
                 }
             }
             (Type::Pointer(x), Type::Pointer(y)) => {
                 // Pointer subtyping
-                let new_constraint = Constraint::new(
+                new_constraints.push(Constraint::new(
                     *x.clone(),
                     *y.clone(),
                     constraint.origin_function_id,
                     constraint.origin_instruction_id,
                     ConstraintReason::PointerSubtype,
-                );
-                let (_, ch) = self.store.add_derived_constraint(
-                    new_constraint,
-                    *constraint_id,
-                    BoundChangeReason::Constraint(*constraint_id),
-                    &self.state,
-                );
-                changed |= ch;
+                ));
             }
             (
                 Type::Function {
@@ -653,6 +662,7 @@ impl<'a> Solver<'a> {
                     constraint.origin_instruction_id,
                     ConstraintReason::FunctionParamsSubtype,
                 );
+
                 let returns_constraint = Constraint::new(
                     returns1.as_ref().clone(),
                     returns2.as_ref().clone(),
@@ -660,23 +670,12 @@ impl<'a> Solver<'a> {
                     constraint.origin_instruction_id,
                     ConstraintReason::FunctionReturnsSubtype,
                 );
-                let (_, ch1) = self.store.add_derived_constraint(
-                    params_constraint,
-                    *constraint_id,
-                    BoundChangeReason::Constraint(*constraint_id),
-                    &self.state,
-                );
-                let (_, ch2) = self.store.add_derived_constraint(
-                    returns_constraint,
-                    *constraint_id,
-                    BoundChangeReason::Constraint(*constraint_id),
-                    &self.state,
-                );
-                changed |= ch1 || ch2;
+                new_constraints.push(params_constraint);
+                new_constraints.push(returns_constraint);
             }
             _ => {}
         }
-        changed
+        new_constraints
     }
 
     fn try_classify_add_expression(
@@ -728,10 +727,11 @@ impl<'a> Solver<'a> {
                 reason,
             );
             // For arithmetic classification, treat as derived from the expression analysis
-            let (_, is_new) = self
-                .store
-                .add_original_constraint(new_constraint, &self.state);
-            changed |= is_new;
+            if let AddConstraintResult::NewConstraint(_) =
+                self.store.add_constraint(new_constraint, None, &self.state)
+            {
+                changed = true;
+            }
         };
 
         if is_op1_int && is_op2_int {

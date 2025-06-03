@@ -99,24 +99,26 @@ impl<'a> TypeConstraintGenerator<'a> {
                         .to_type(),
                 );
             }
-            self.result.store.add_original_equality_constraint(
-                Constraint {
-                    sub_type: args.to_type(),
-                    super_type: Type::tuple(&args_tuple),
-                    origin_function_id: function_id,
-                    origin_instruction_id: InstructionId::new(0), // Dummy ID for function args
-                    reason: ConstraintReason::CalleeFunctionArguments,
-                },
+            self.result.store.add_equality_constraint(
+                Constraint::new(
+                    args.to_type(),
+                    Type::tuple(&args_tuple),
+                    function_id,
+                    InstructionId::new(0), // Dummy ID for function args
+                    ConstraintReason::CalleeFunctionArguments,
+                ),
+                None,
                 &self.result.state,
             );
-            self.result.store.add_original_equality_constraint(
-                Constraint {
-                    sub_type: returns.to_type(),
-                    super_type: Type::tuple(&rets_tuple),
-                    origin_function_id: function_id,
-                    origin_instruction_id: InstructionId::new(0), // Dummy ID for function args
-                    reason: ConstraintReason::CalleeFunctionReturns,
-                },
+            self.result.store.add_equality_constraint(
+                Constraint::new(
+                    returns.to_type(),
+                    Type::tuple(&rets_tuple),
+                    function_id,
+                    InstructionId::new(0), // Dummy ID for function args
+                    ConstraintReason::CalleeFunctionReturns,
+                ),
+                None,
                 &self.result.state,
             );
         }
@@ -153,7 +155,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             .sorted()
         {
             if let Some(canonical_id) = self.global_vars.get(&addr) {
-                self.result.store.add_original_equality_constraint(
+                self.result.store.add_equality_constraint(
                     Constraint::new(
                         Type::TypeVar(*canonical_id),
                         Type::TypeVar(*tv_id),
@@ -161,6 +163,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         InstructionId::new(0), // Dummy ID for function args
                         ConstraintReason::GlobalVariable(addr),
                     ),
+                    None,
                     &self.result.state,
                 );
             } else {
@@ -176,7 +179,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 warn!("Could not find type var for {}", vmr);
                 continue;
             };
-            self.result.store.add_original_equality_constraint(
+            self.result.store.add_equality_constraint(
                 Constraint::new(
                     Type::TypeVar(tv_id),
                     ty.clone(),
@@ -184,6 +187,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     InstructionId::new(0), // Dummy ID for function args
                     ConstraintReason::SymbolRenaming,
                 ),
+                None,
                 &self.result.state,
             );
         }
@@ -215,7 +219,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 },
             );
 
-            self.result.store.add_original_equality_constraint(
+            self.result.store.add_equality_constraint(
                 Constraint::new(
                     incoming_tv_id.to_type(),
                     dest_tv_id.to_type(),
@@ -223,6 +227,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     phi_origin_instruction_id,
                     ConstraintReason::PhiNodeOperand,
                 ),
+                None,
                 &self.result.state,
             );
         }
@@ -270,7 +275,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         );
                         let target_type = Type::TypeVar(target_tv_id);
 
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(src_type),
                                 target_type.clone(),
@@ -278,6 +283,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::Assignment,
                             ),
+                            None,
                             &self.result.state,
                         );
                         if let Some(debug_marker) = target_debug_marker {
@@ -295,7 +301,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 expression_path: ExpressionPath::root(),
                             },
                         );
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(ptr_addr_type),
                                 Type::Pointer(Box::new(Type::TypeVar(src_type))),
@@ -303,6 +309,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::AssignmentToDereferenceTarget,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
@@ -319,7 +326,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         expression_path: ExpressionPath::root(),
                     },
                 );
-                self.result.store.add_original_constraint(
+                self.result.store.add_constraint(
                     Constraint::new(
                         cond_type.to_type(),
                         Type::Truthy,
@@ -327,6 +334,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         instruction_id,
                         ConstraintReason::IfConditionOperand,
                     ),
+                    None,
                     &self.result.state,
                 );
             }
@@ -341,7 +349,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         expression_path: ExpressionPath::root(),
                     },
                 );
-                self.result.store.add_original_equality_constraint(
+                self.result.store.add_equality_constraint(
                     Constraint::new(
                         expr_type.to_type(),
                         Type::Char,
@@ -349,6 +357,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         instruction_id,
                         ConstraintReason::OutputValueType,
                     ),
+                    None,
                     &self.result.state,
                 );
             }
@@ -418,34 +427,37 @@ impl<'a> TypeConstraintGenerator<'a> {
                 });
 
                 let fp = Type::function(args_id.to_type(), rets_id.to_type());
-                self.result.store.add_original_constraint(
-                    Constraint {
-                        sub_type: addr_var_id.to_type(),
-                        super_type: fp,
-                        origin_function_id: function_id,
-                        origin_instruction_id: instruction_id,
-                        reason: ConstraintReason::FunctionCallImpliesFunctionType,
-                    },
+                self.result.store.add_constraint(
+                    Constraint::new(
+                        addr_var_id.to_type(),
+                        fp,
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::FunctionCallImpliesFunctionType,
+                    ),
+                    None,
                     &self.result.state,
                 );
-                self.result.store.add_original_equality_constraint(
-                    Constraint {
-                        sub_type: args_id.to_type(),
-                        super_type: arg_type_tuple,
-                        origin_function_id: function_id,
-                        origin_instruction_id: instruction_id,
-                        reason: ConstraintReason::FunctionCallArguments,
-                    },
+                self.result.store.add_equality_constraint(
+                    Constraint::new(
+                        args_id.to_type(),
+                        arg_type_tuple,
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::FunctionCallArguments,
+                    ),
+                    None,
                     &self.result.state,
                 );
-                self.result.store.add_original_equality_constraint(
-                    Constraint {
-                        sub_type: ret_type_tuple,
-                        super_type: rets_id.to_type(),
-                        origin_function_id: function_id,
-                        origin_instruction_id: instruction_id,
-                        reason: ConstraintReason::FunctionCallReturns,
-                    },
+                self.result.store.add_equality_constraint(
+                    Constraint::new(
+                        ret_type_tuple,
+                        rets_id.to_type(),
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::FunctionCallReturns,
+                    ),
+                    None,
                     &self.result.state,
                 );
                 if let Expression::Constant(direct_addr) = addr {
@@ -454,7 +466,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         .function_types
                         .get(&FunctionId::new(*direct_addr as usize))
                     {
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 args_id.to_type(),
                                 callee_arg_type.clone(),
@@ -462,9 +474,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::FunctionCallArgumentsBinding,
                             ),
+                            None,
                             &self.result.state,
                         );
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 callee_ret_type.clone(),
                                 rets_id.to_type(),
@@ -472,6 +485,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::FunctionCallReturnsBinding,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
@@ -502,7 +516,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let const_type = Type::TypeVar(tv_id);
 
                 // Need a new ConstraintReason::LiteralInteger
-                self.result.store.add_original_constraint(
+                self.result.store.add_constraint(
                     Constraint::new(
                         const_type.clone(),
                         Type::NumericLiteral,
@@ -510,6 +524,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         instruction_id,
                         ConstraintReason::NumericLiteral,
                     ),
+                    None,
                     &self.result.state,
                 );
                 // If val is 0 or 1, could add specific constraints for Bool/Truthy
@@ -531,7 +546,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     let pointee_tv_id = self.result.state.make_expression_type_var(path);
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
-                    self.result.store.add_original_equality_constraint(
+                    self.result.store.add_equality_constraint(
                         Constraint::new(
                             Type::TypeVar(ptr_addr_type_var_id),
                             Type::Pointer(Box::new(pointee_type.clone())),
@@ -539,6 +554,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                             instruction_id,
                             ConstraintReason::DereferenceRequiresPointer,
                         ),
+                        None,
                         &self.result.state,
                     );
                     pointee_tv_id
@@ -572,7 +588,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     }
                     disasm::v3::lir::expression::BinaryOperator::Mul => {
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 lhs_type.clone(),
                                 Type::Int,
@@ -580,9 +596,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticLHS,
                             ),
+                            None,
                             &self.result.state,
                         );
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 rhs_type.clone(),
                                 Type::Int,
@@ -590,9 +607,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticRHS,
                             ),
+                            None,
                             &self.result.state,
                         );
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -600,6 +618,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::ArithmeticResult,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
@@ -609,7 +628,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     | BinaryOperator::NotEquals
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool,
@@ -617,6 +636,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::ComparisonResult,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
@@ -627,7 +647,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     | BinaryOperator::LessThanOrEqual
                     | BinaryOperator::GreaterThanOrEqual => {
                         // Need ConstraintReason::ComparisonLHS, ComparisonRHS, ComparisonResult
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 lhs_type,
                                 Type::Int,
@@ -635,9 +655,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::ComparisonLHS,
                             ),
+                            None,
                             &self.result.state,
                         );
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 rhs_type,
                                 Type::Int,
@@ -645,11 +666,12 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::ComparisonRHS,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
                     BinaryOperator::Equals | BinaryOperator::NotEquals => {
-                        self.result.store.add_original_equality_constraint(
+                        self.result.store.add_equality_constraint(
                             Constraint::new(
                                 lhs_type,
                                 rhs_type,
@@ -657,6 +679,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::EqualityComparisonSameType,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
@@ -677,7 +700,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 match op {
                     disasm::v3::lir::expression::UnaryOperator::Not => {
                         // Need ConstraintReason::NotOperand, NotResult
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
                                 Type::NumericLiteral, // Operand of NOT must be Truthy
@@ -685,9 +708,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::NotOperand,
                             ),
+                            None,
                             &self.result.state,
                         );
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Bool, // Result of NOT is Bool
@@ -695,11 +719,12 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::NotResult,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
                     disasm::v3::lir::expression::UnaryOperator::Minus => {
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 Type::TypeVar(arg_type),
                                 Type::Int,
@@ -707,9 +732,10 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::UnaryMinusOperand,
                             ),
+                            None,
                             &self.result.state,
                         );
-                        self.result.store.add_original_constraint(
+                        self.result.store.add_constraint(
                             Constraint::new(
                                 result_type.clone(),
                                 Type::Int,
@@ -717,6 +743,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 instruction_id,
                                 ConstraintReason::UnaryMinusResult,
                             ),
+                            None,
                             &self.result.state,
                         );
                     }
@@ -727,7 +754,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let tv_id = self.result.state.make_expression_type_var(path);
                 let input_type = Type::TypeVar(tv_id);
                 // Need ConstraintReason::InputSourceType
-                self.result.store.add_original_constraint(
+                self.result.store.add_constraint(
                     Constraint::new(
                         input_type,
                         Type::Char, // Assuming input is Char by default
@@ -735,6 +762,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         instruction_id,
                         ConstraintReason::InputSourceType,
                     ),
+                    None,
                     &self.result.state,
                 );
                 tv_id

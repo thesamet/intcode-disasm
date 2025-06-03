@@ -11,7 +11,7 @@ use crate::disasm::v3::FunctionId;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
 use super::types::{Type, TypeVarId, TypeVarNode};
-use super::{ConstraintStore, TypeInferenceQueryEngine, TypeVarPath, TypeVarState};
+use super::{ConstraintStore, TypeVarPath, TypeVarState};
 
 #[derive(Debug, Clone, Default)]
 pub struct FunctionSignature {
@@ -27,7 +27,6 @@ pub struct TypeInferenceResult {
     pub vmr_to_type_var_id: HashMap<VersionedMemoryReference, TypeVarId>,
     pub path_to_type_var_id: HashMap<TypeVarPath, TypeVarId>,
     pub debug_markers: HashMap<char, TypeVarId>,
-    pub query_engine: TypeInferenceQueryEngine,
     pub change_log: Vec<ChangeLogEntry>,
     pub constraint_store: ConstraintStore,
     pub generic_type_vars: HashMap<super::types::GenericTypeVarId, super::types::GenericTypeVar>,

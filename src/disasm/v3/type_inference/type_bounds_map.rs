@@ -105,25 +105,6 @@ impl fmt::Display for TypeVarState {
     }
 }
 
-fn transitive_upper_bound_inner<'a>(
-    registry: &'a (impl TypeVarRegistry + ?Sized),
-    tv_id: &TypeVarId,
-    visited: &mut HashSet<TypeVarId>,
-    out: &mut HashSet<&'a Type>,
-) {
-    if !visited.insert(*tv_id) {
-        return;
-    }
-    let upper_bounds = registry.upper_bounds(tv_id);
-    for bound in upper_bounds.iter() {
-        if let Some(id) = bound.as_type_var_id() {
-            transitive_upper_bound_inner(registry, id, visited, out);
-        } else {
-            out.insert(*bound);
-        }
-    }
-}
-
 pub trait TypeVarRegistry {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode>;
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState>;
@@ -140,12 +121,6 @@ pub trait TypeVarRegistry {
             TypeVarState::Bounds { upper_bounds, .. } => upper_bounds.iter().collect(),
             TypeVarState::Converged(ty) => HashSet::from([ty]),
         }
-    }
-
-    fn transitive_upper_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
-        let mut out = HashSet::new();
-        transitive_upper_bound_inner(self, tv_id, &mut HashSet::new(), &mut out);
-        out
     }
 
     fn resolve_type(&self, typ: &Type) -> Type {
@@ -400,6 +375,7 @@ impl InferenceAlgorithmState {
         }
         self.type_var_states
             .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
+        self.updated_type_vars.insert(*tv_id);
         self.change_log.push(ChangeLogEntry {
             iteration: self.iteration,
             tv_id: *tv_id,
@@ -438,6 +414,7 @@ impl InferenceAlgorithmState {
                         .filter(|l| *l != id.to_type())
                         .collect();
                     if new_lower_bounds != *lower_bounds || new_upper_bounds != *upper_bounds {
+                        self.updated_type_vars.insert(id);
                         log_entries.push(ChangeLogEntry {
                             iteration: self.iteration,
                             tv_id: id,

@@ -10,7 +10,6 @@ use tabled::settings::{object::Columns, Span, Style, Width};
 use crate::disasm::v3::{
     common::formatting::ContextualPrettyPrint,
     type_inference::{
-        constraints::ConstraintSource,
         type_bounds_map::{BoundChangeReason, ChangeLogKind, TypeVarRegistry},
         Constraint, TypeInferenceResult, TypeVarState,
     },
@@ -431,23 +430,7 @@ where
         let mut data = Vec::new();
         let mut found = false;
 
-        let get_parent = |constraint_id: &ConstraintId| {
-            ti.constraint_store
-                .get_constraint_source(*constraint_id)
-                .and_then(|s| match s {
-                    ConstraintSource::Derived {
-                        from_constraint, ..
-                    } => Some(from_constraint),
-                    _ => None,
-                })
-        };
-
         let mut add_constraint = |constraint_id: &ConstraintId, constraint: &Constraint| {
-            let source = match get_parent(constraint_id) {
-                Some(from_constraint) => format!("{}", from_constraint),
-                None => "".to_string(),
-            };
-
             data.push(ConstraintRow {
                 id: format!("{}", constraint_id),
                 function: format!("{}", constraint.origin_function_id),
@@ -455,7 +438,11 @@ where
                 sub_type: format!("{}", constraint.sub_type), // .display_with(ti)),
                 super_type: format!("{}", constraint.super_type), // .display_with(ti)),
                 reason: format!("{:?}", constraint.reason),
-                parent: source,
+                parent: ti
+                    .constraint_store
+                    .get_parent_id(*constraint_id)
+                    .map(|c| format!("{}", c))
+                    .unwrap_or_default(),
             });
         };
 
@@ -464,8 +451,8 @@ where
             while let Some(constraint) = ti.constraint_store.get_constraint_by_id(current_id) {
                 add_constraint(&current_id, constraint);
                 found = true;
-                match get_parent(&current_id) {
-                    Some(parent_id) => current_id = *parent_id,
+                match ti.constraint_store.get_parent_id(current_id) {
+                    Some(parent_id) => current_id = parent_id,
                     None => break,
                 }
             }

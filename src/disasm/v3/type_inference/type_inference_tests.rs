@@ -404,14 +404,6 @@ fn test_link_function_params_to_argument_types_single() {
         "Pretty printed model with types (V3):\n{}",
         pretty_print_types(&ctx.model)
     );
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_variables();
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_constraints();
     assert_marker_type!(ctx, 'a', Type::Truthy);
     assert_marker_type!(ctx, 'b', Type::Truthy);
 }
@@ -457,10 +449,6 @@ fn test_link_function_params_to_argument_types_multi() {
         "Pretty printed model with types (V3):\n{}",
         pretty_print_types(&ctx.model)
     );
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_variables();
     assert_marker_type!(ctx, 'a', Type::Char);
     assert_marker_type!(ctx, 'b', Type::Truthy);
     assert_marker_is_function_pointer!(ctx, 'c');
@@ -518,10 +506,6 @@ fn test_link_function_return_type_single() {
         "Pretty printed model with types (V3):\n{}",
         pretty_print_types(&ctx.model)
     );
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_variables();
 
     assert_marker_type!(ctx, 'b', Type::Int);
     assert_marker_type!(ctx, 'c', Type::Int);
@@ -560,11 +544,6 @@ fn test_reconcile_truthy_with_pointer_across_functions() {
         "Pretty printed model with types (V3):\n{}",
         pretty_print_types(&ctx.model)
     );
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_variables();
-
     assert_marker_type!(ctx, 'a', Type::Int); // not smart enough yet to see it's char.
     assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
     assert_marker_type!(ctx, 'e', Type::pointer(Type::Char));
@@ -623,10 +602,6 @@ fn test_signatures_for_indirect_calls() {
         "Pretty printed model with types (V3):\n{}",
         pretty_print_types(&ctx.model)
     );
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_variables();
     /*
     let t_id = ctx
         .model
@@ -795,10 +770,6 @@ fn test_pointer_arithmetic_case3() {
         )
         .unwrap();
     pretty_print_with_types_stdout(&ctx.model);
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_variables();
 
     // Test case 3: [R+301] is an integer, [R+300] must be a pointer, result is pointer
     assert_marker_type!(ctx, 'g', Type::pointer(Type::Char));
@@ -976,10 +947,6 @@ fn test_infers_func_types_based_on_main_usage() {
         pretty_print_types(&ctx.model)
     );
     ctx.model.type_inference_result().print_all_type_bounds();
-    ctx.model
-        .type_inference_result()
-        .query_engine
-        .list_all_constraints();
     assert_marker_type!(ctx, 'a', Type::Char);
     assert_marker_type!(ctx, 'b', Type::Int);
 }

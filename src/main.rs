@@ -6,7 +6,6 @@ use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, Pret
 use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
 };
-use disasm::disasm::v3::type_inference::TypeVarId;
 use disasm::disasm::v3::FunctionId;
 use disasm::disasm::SymbolRenaming;
 use itertools::Itertools;
@@ -257,9 +256,6 @@ fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme
     if let Some(function_id) = function {
         let fu = model.function(&function_id);
         println!("{}", fu.pretty_print());
-        let qe = &model.type_inference_result().query_engine;
-        qe.list_function_variables(&function_id);
-        qe.list_variable_changes(TypeVarId::new(7));
     } else {
         let config = PrettyPrintConfig::default().with_show_types_var_ids(show_var_ids);
         println!("{}", model.pretty_print_with_config(&config));

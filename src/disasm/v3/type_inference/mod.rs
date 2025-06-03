@@ -2,7 +2,6 @@
 
 pub mod constraints;
 mod constraints_generator;
-pub mod query_engine;
 mod result;
 mod solver;
 pub mod type_bounds_map;
@@ -10,7 +9,6 @@ mod types;
 
 pub use constraints::ConstraintStore;
 pub use constraints::{Constraint, ConstraintReason};
-pub use query_engine::TypeInferenceQueryEngine;
 pub use result::TypeInferenceResult;
 pub use solver::Solver;
 pub use type_bounds_map::{InferenceAlgorithmState, TypeVarState};
