@@ -30,3 +30,6 @@ pretty_assertions = "1.4.1"
 test-log = "0.2.17"
 
 [lints.rust]
+
+# [profile.dev]
+# opt-level = 1

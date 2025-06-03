@@ -34,7 +34,7 @@ impl CustomTypeId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolRenaming {
-    functions: HashMap<FunctionId, (String, Vec<(String, Option<Type>)>)>,
+    functions: HashMap<FunctionId, FunctionSymbol>,
     variable_names: HashMap<VersionedMemoryReference, (String, Option<Type>)>,
     custom_types: HashMap<CustomTypeId, String>,
 }
@@ -42,6 +42,26 @@ pub struct SymbolRenaming {
 impl Default for SymbolRenaming {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSymbol {
+    name: String,
+    args: Vec<(String, Option<Type>)>,
+}
+
+impl FunctionSymbol {
+    pub fn new(name: String, args: Vec<(String, Option<Type>)>) -> Self {
+        Self { name, args }
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn args(&self) -> &Vec<(String, Option<Type>)> {
+        &self.args
     }
 }
 
@@ -60,7 +80,8 @@ impl SymbolRenaming {
         name: String,
         args: Vec<(String, Option<Type>)>,
     ) {
-        self.functions.insert(function_id, (name, args));
+        self.functions
+            .insert(function_id, FunctionSymbol::new(name, args));
     }
 
     fn add_variable_name(
@@ -86,7 +107,7 @@ impl SymbolRenaming {
         &self.variable_names
     }
 
-    pub fn get_functions(&self) -> &HashMap<FunctionId, (String, Vec<(String, Option<Type>)>)> {
+    pub fn get_functions(&self) -> &HashMap<FunctionId, FunctionSymbol> {
         &self.functions
     }
 
@@ -142,14 +163,14 @@ impl SymbolRenaming {
     }
 
     pub fn get_function_name(&self, function_id: FunctionId) -> Option<&String> {
-        self.functions.get(&function_id).map(|(name, _)| name)
+        self.functions.get(&function_id).map(|symbol| symbol.name())
     }
 
     pub fn get_function_args(
         &self,
         function_id: FunctionId,
     ) -> Option<&Vec<(String, Option<Type>)>> {
-        self.functions.get(&function_id).map(|(_, args)| args)
+        self.functions.get(&function_id).map(|v| v.args())
     }
 
     pub fn get_custom_types(&self) -> &HashMap<CustomTypeId, String> {
@@ -545,7 +566,7 @@ mod tests {
         assert_eq!(symbol_renaming.functions.len(), 1);
         assert_eq!(
             symbol_renaming.functions.get(&FunctionId::new(1234)),
-            Some(&("function_name".to_string(), vec![]))
+            Some(&FunctionSymbol::new("function_name".to_string(), vec![]))
         );
         assert!(symbol_renaming.variable_names.is_empty());
     }
@@ -559,7 +580,7 @@ mod tests {
         assert_eq!(symbol_renaming.functions.len(), 1);
         assert_eq!(
             symbol_renaming.functions.get(&FunctionId::new(1234)),
-            Some(&("function_name".to_string(), vec![]))
+            Some(&FunctionSymbol::new("function_name".to_string(), vec![]))
         );
         assert_eq!(symbol_renaming.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
@@ -656,20 +677,19 @@ mod tests {
         assert!(result.is_ok());
         let symbol_renaming = result.unwrap();
         assert_eq!(symbol_renaming.functions.len(), 1);
+        let function_id = FunctionId::new(1234);
+        let custom_type_id = *symbol_renaming.custom_types.keys().next().unwrap();
+        let expected_function_symbol = FunctionSymbol::new(
+            "function_name".to_string(),
+            vec![
+                ("arg1".to_string(), Some(Type::Int)),
+                ("arg2".to_string(), Some(Type::CustomType(custom_type_id))),
+            ],
+        );
+
         assert_eq!(
-            symbol_renaming.functions.get(&FunctionId::new(1234)),
-            Some(&(
-                "function_name".to_string(),
-                vec![
-                    ("arg1".to_string(), Some(Type::Int)),
-                    (
-                        "arg2".to_string(),
-                        Some(Type::CustomType(
-                            *symbol_renaming.custom_types.keys().next().unwrap()
-                        ))
-                    )
-                ]
-            ))
+            symbol_renaming.functions.get(&function_id),
+            Some(&expected_function_symbol)
         );
     }
 

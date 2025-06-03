@@ -611,7 +611,7 @@ mod tests {
 
         // Check for function name and other elements
         assert!(default_output.contains("function test_func"));
-        assert!(default_output.contains("let y: int = 42"));
+        assert!(default_output.contains("let y: Int = 42"));
         assert!(default_output.contains("if y < 100"));
         assert!(default_output.contains("y ="));
         assert!(default_output.contains("y + 1"));
@@ -620,8 +620,8 @@ mod tests {
         // Test with no colors - already using nocolor above
         // No need to test the same thing twice
         assert!(default_output.contains("function test_func"));
-        assert!(default_output.contains("(x: int)"));
-        assert!(default_output.contains("-> int"));
+        assert!(default_output.contains("(x: Int)"));
+        assert!(default_output.contains("-> Int"));
 
         // We can still test with a theme, but don't check the output content
         let themed_config = PrettyPrintConfig::default().with_colors(Colors::blue_accent_theme());
@@ -676,7 +676,7 @@ mod tests {
         // Use nocolor() for consistent testing without ANSI codes
         let output = var_def.nocolor();
 
-        assert!(output.contains("let x: int = 42;"));
+        assert!(output.contains("let x: Int = 42;"));
 
         // Test if statement
         let if_stmt = hlr_if(
