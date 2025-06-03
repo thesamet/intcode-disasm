@@ -6,5 +6,6 @@ pkgs.mkShell {
     rustup
     pkg-config
     nodejs
+    samply
   ];
 }
