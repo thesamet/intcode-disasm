@@ -101,19 +101,32 @@ impl<'a, T: fmt::Display> fmt::Display for FormattedText<'a, T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FormattingContext<'a> {
+#[derive(Clone)]
+pub struct GenericFormattingContext<'a, T> {
     pub config: &'a PrettyPrintConfig,
     pub indent_level: usize,
     pub parent_precedence: Option<u8>, // For expressions
+    pub data: &'a T,
 }
 
-impl<'a> FormattingContext<'a> {
+impl<'a> GenericFormattingContext<'a, ()> {
     pub fn new(config: &'a PrettyPrintConfig) -> Self {
         Self {
             config,
             indent_level: 0,
             parent_precedence: None,
+            data: &(),
+        }
+    }
+}
+
+impl<'a, T> GenericFormattingContext<'a, T> {
+    pub fn new_with_data(config: &'a PrettyPrintConfig, data: &'a T) -> Self {
+        Self {
+            config,
+            indent_level: 0,
+            parent_precedence: None,
+            data,
         }
     }
 
@@ -129,11 +142,11 @@ impl<'a> FormattingContext<'a> {
 
     // Helper method for conditional formatting
     // Takes text convertible to string and a semantic color type
-    pub fn format<T: fmt::Display>(
+    pub fn format<I: fmt::Display>(
         &self,
-        text: T,
+        text: I,
         semantic: SemanticColor,
-    ) -> FormattedText<'a, T> {
+    ) -> FormattedText<'a, I> {
         let color = self.config.colors.map(|c| c.get_color(semantic));
         FormattedText {
             text,
@@ -143,15 +156,21 @@ impl<'a> FormattingContext<'a> {
     }
 
     // Create a new context with increased indentation
-    pub fn indented(&self) -> Self {
-        let mut ctx = *self;
+    pub fn indented(&self) -> Self
+    where
+        GenericFormattingContext<'a, T>: Clone,
+    {
+        let mut ctx = self.clone();
         ctx.indent_level += 1;
         ctx
     }
 
     // Create a context for a nested expression
-    pub fn with_precedence(&self, precedence: u8) -> Self {
-        let mut ctx = *self;
+    pub fn with_precedence(&self, precedence: u8) -> Self
+    where
+        GenericFormattingContext<'a, T>: Clone,
+    {
+        let mut ctx = self.clone();
         ctx.parent_precedence = Some(precedence);
         ctx
     }
@@ -213,19 +232,52 @@ impl<'a> FormattingContext<'a> {
 }
 
 pub trait ContextualPrettyPrint {
+    type T;
+
     // Pretty print with context including indentation
-    fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String;
+    fn pretty_print_with_context(&self, ctx: &GenericFormattingContext<Self::T>) -> String;
 
     // Convenience method with default context
-    fn pretty_print_with_config(&self, config: &PrettyPrintConfig) -> String {
-        self.pretty_print_with_context(&FormattingContext::new(config))
+    fn pretty_print_with_config_and_data(
+        &self,
+        config: &PrettyPrintConfig,
+        data: &Self::T,
+    ) -> String {
+        self.pretty_print_with_context(&GenericFormattingContext::new_with_data(config, data))
     }
 
-    fn pretty_print(&self) -> String {
+    fn pretty_print_with_data(&self, data: &Self::T) -> String {
+        self.pretty_print_with_config_and_data(&PrettyPrintConfig::default(), data)
+    }
+
+    fn nocolor_with_data(&self, data: &Self::T) -> String {
+        // Added method
+        let config = PrettyPrintConfig::default().with_no_colors();
+        self.pretty_print_with_config_and_data(&config, data)
+    }
+
+    // Convenience method with default context
+    fn pretty_print_with_config(&self, config: &PrettyPrintConfig) -> String
+    where
+        Self::T: Default,
+    {
+        self.pretty_print_with_context(&GenericFormattingContext::new_with_data(
+            config,
+            &Self::T::default(),
+        ))
+    }
+
+    fn pretty_print(&self) -> String
+    where
+        Self::T: Default,
+    {
         self.pretty_print_with_config(&PrettyPrintConfig::default())
     }
 
-    fn nocolor(&self) -> String {
+    fn nocolor(&self) -> String
+    where
+        Self::T: Default,
+    {
         // Added method
         let config = PrettyPrintConfig::default().with_no_colors();
         self.pretty_print_with_config(&config)

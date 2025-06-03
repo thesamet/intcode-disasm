@@ -102,7 +102,9 @@ impl TestContextBuilder<TypeInferenceComplete> for TypeInferenceComplete {
     fn test_context(asm: &str) -> Result<TestContext<TypeInferenceComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_type_inference(binary)?;
+        let symbol_renaming = SymbolRenaming::new();
+        let model = analysis::binary_to_type_inference(binary, &symbol_renaming)?;
+
         Ok(TestContext { model })
     }
 }
@@ -111,7 +113,7 @@ impl TestContextBuilder<VariableMergerComplete> for VariableMergerComplete {
     fn test_context(asm: &str) -> Result<TestContext<VariableMergerComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_variable_merger(binary, SymbolRenaming::new())?;
+        let model = analysis::binary_to_variable_merger(binary, &SymbolRenaming::new())?;
         Ok(TestContext { model })
     }
 }

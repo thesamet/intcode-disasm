@@ -14,7 +14,7 @@ use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::type_inference::TypeVarId;
 use crate::disasm::v3::{
     cfg::{BlockView, FunctionView},
-    common::formatting::pretty_print_framework::{FormattingContext, PrettyPrintConfig},
+    common::formatting::pretty_print_framework::PrettyPrintConfig,
     model::{
         FunctionCallAnalysisComplete, HasControlFlowGraphResult, HasSsaResult, Model, ModelState,
     },
@@ -28,6 +28,7 @@ use crate::disasm::v2::{
 };
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
+use super::common::formatting::pretty_print_framework::GenericFormattingContext;
 use super::common::formatting::{ContextualPrettyPrint, SemanticColor};
 
 // --- Operator Precedence Helpers ---
@@ -43,7 +44,11 @@ fn binary_op_precedence(op: &BinaryOperator) -> u8 {
     }
 }
 
-impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNode<A> {
+type FormattingContext<'a> = GenericFormattingContext<'a, ()>;
+
+impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for InstructionNode<A> {
+    type T = ();
+
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match &self.kind {
             Instruction::Assign {
@@ -125,7 +130,7 @@ impl<A: 'static + ContextualPrettyPrint> ContextualPrettyPrint for InstructionNo
 
 impl<A> Display for InstructionNode<A>
 where
-    A: 'static + ContextualPrettyPrint,
+    A: 'static + ContextualPrettyPrint<T = ()>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.pretty_print())
@@ -133,6 +138,7 @@ where
 }
 
 impl ContextualPrettyPrint for PhiFunction {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let inputs_str = self
             .inputs
@@ -189,6 +195,7 @@ impl<S: ModelState + 'static> ContextualPrettyPrint for Model<S>
 where
     S: HasSsaResult + HasControlFlowGraphResult,
 {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let mut functions_sorted: Vec<_> = self.functions().map(|(_, f)| f).collect();
         functions_sorted.sort_by_key(|f| f.function_id());
@@ -307,7 +314,8 @@ fn format_signature<S: ModelState + 'static>(
     })
 }
 
-impl<A: ContextualPrettyPrint + 'static> ContextualPrettyPrint for Expression<A> {
+impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for Expression<A> {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
             Expression::Constant(value) => value.pretty_print_with_context(ctx),
@@ -380,7 +388,7 @@ impl<A: ContextualPrettyPrint + 'static> ContextualPrettyPrint for Expression<A>
     }
 }
 
-impl<A: ContextualPrettyPrint + 'static> Display for Expression<A> {
+impl<A: ContextualPrettyPrint<T = ()> + 'static> Display for Expression<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.pretty_print())
     }
@@ -413,6 +421,7 @@ impl<'a, S> ContextualPrettyPrint for BlockView<'a, S>
 where
     S: ModelState + HasSsaResult + 'static,
 {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let mut lines = Vec::new();
         let indent_str = ctx.indent_str();
@@ -479,6 +488,7 @@ where
 }
 
 impl ContextualPrettyPrint for SsaMemoryReference {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
             SsaMemoryReference::Versioned(a) => a.pretty_print_with_context(ctx),
@@ -498,6 +508,7 @@ impl ContextualPrettyPrint for SsaMemoryReference {
 derive_display!(SsaMemoryReference);
 
 impl ContextualPrettyPrint for MemoryReference {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
             MemoryReference::StackRelative(offset) => {
@@ -563,6 +574,7 @@ impl<'a, S> ContextualPrettyPrint for FunctionView<'a, S>
 where
     S: ModelState + HasSsaResult + 'static,
 {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let model = self.model;
         let mut lines = Vec::new();
@@ -652,12 +664,14 @@ where
 }
 
 impl ContextualPrettyPrint for i128 {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         ctx.format(self, SemanticColor::Constant).to_string()
     }
 }
 
 impl ContextualPrettyPrint for VersionedMemoryReference {
+    type T = ();
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         // Add the version
         let mem_ref = self.to_memory_reference();

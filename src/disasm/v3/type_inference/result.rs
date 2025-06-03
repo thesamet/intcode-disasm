@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
+use crate::disasm::symbol_renaming::CustomTypeId;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
 use crate::disasm::v3::FunctionId;
 
@@ -31,6 +32,7 @@ pub struct TypeInferenceResult {
     pub constraint_store: ConstraintStore,
     pub generic_type_vars: HashMap<super::types::GenericTypeVarId, super::types::GenericTypeVar>,
     pub function_signatures: HashMap<FunctionId, FunctionSignature>,
+    pub custom_type_names: HashMap<CustomTypeId, String>,
 }
 
 impl TypeInferenceResult {
@@ -138,5 +140,9 @@ impl TypeVarRegistry for TypeInferenceResult {
         id: &super::types::GenericTypeVarId,
     ) -> Option<&super::types::GenericTypeVar> {
         self.generic_type_vars.get(id)
+    }
+
+    fn get_custom_type_name(&self, custom_type_id: CustomTypeId) -> Option<&String> {
+        self.custom_type_names.get(&custom_type_id)
     }
 }

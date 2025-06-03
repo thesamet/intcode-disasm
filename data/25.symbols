@@ -1,3 +1,5 @@
+T EncodedString
+
 F 1130 map_array(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
 
@@ -6,6 +8,7 @@ V 1174 [R-2]_1 length
 V 1174 [R-3]_1 index
 
 F 1234 print_encoded_string(encoded_string)
+V 1234 [R-1]_0 str Pointer<EncodedString>
 
 F 1256 output_sum(a, b, c)
 

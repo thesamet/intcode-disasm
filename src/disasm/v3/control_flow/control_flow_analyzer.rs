@@ -49,13 +49,13 @@ struct LoopStructure {
                         // if None, the loop is infinite. If not, 'break' jumps here.
 }
 
-pub struct ControlFlowStructureAnalyzer {
+pub struct ControlFlowStructureAnalyzer<'a> {
     model: Model<VariableMergerComplete>,
-    symbol_renaming: SymbolRenaming,
+    symbol_renaming: &'a SymbolRenaming,
 }
 
-impl ControlFlowStructureAnalyzer {
-    fn new(model: Model<VariableMergerComplete>, symbol_renaming: SymbolRenaming) -> Self {
+impl<'a> ControlFlowStructureAnalyzer<'a> {
+    fn new(model: Model<VariableMergerComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
         Self {
             model,
             symbol_renaming,
@@ -64,7 +64,7 @@ impl ControlFlowStructureAnalyzer {
 
     pub fn run(
         model: Model<VariableMergerComplete>,
-        symbol_renaming: SymbolRenaming,
+        symbol_renaming: &'a SymbolRenaming,
     ) -> Result<Model<HlrConstructionComplete>, Error> {
         ControlFlowStructureAnalyzer::new(model, symbol_renaming).recover_structures()
     }

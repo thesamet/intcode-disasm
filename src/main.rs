@@ -86,6 +86,8 @@ enum Command {
     },
     Repl {
         input: Option<String>,
+        #[arg(long, help = "Symbol renaming rules files")]
+        symbols: Option<String>,
     },
     FlowRecovery {
         input: String,
@@ -135,7 +137,7 @@ fn main() {
             )
         }
         Command::FlowRecovery { input } => flow_recovery(input),
-        Command::Repl { input } => repl(input.unwrap()),
+        Command::Repl { input, symbols } => repl(input.unwrap(), symbols),
         Command::FoldedSsa {
             input,
             theme,
@@ -251,7 +253,7 @@ fn folded_ssa(input: String, theme: String) {
 
 fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let model = analysis::binary_to_type_inference(prog).unwrap();
+    let model = analysis::binary_to_type_inference(prog, &SymbolRenaming::new()).unwrap();
     if let Some(function_id) = function {
         let fu = model.function(&function_id);
         println!("{}", fu.pretty_print());
@@ -264,9 +266,15 @@ fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme
     }
 }
 
-fn repl(input: String) {
+fn repl(input: String, symbols: Option<String>) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let model = analysis::binary_to_type_inference(prog).unwrap();
+    let symbol_renaming = if let Some(symbols) = symbols {
+        let symbols = std::fs::read_to_string(symbols).unwrap();
+        SymbolRenaming::from_lines(&symbols).unwrap()
+    } else {
+        SymbolRenaming::new()
+    };
+    let model = analysis::binary_to_hlr(prog, &symbol_renaming).unwrap();
     repl::repl(&model);
 }
 
@@ -284,7 +292,7 @@ fn hlr(input: String, symbols: Option<String>, theme: String) {
     } else {
         SymbolRenaming::new()
     };
-    let model = analysis::binary_to_hlr(prog, symbol_renaming).unwrap();
+    let model = analysis::binary_to_hlr(prog, &symbol_renaming).unwrap();
 
     if theme == "default" {
         // For default theme, use the HLR program directly

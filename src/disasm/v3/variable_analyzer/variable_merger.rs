@@ -43,9 +43,7 @@ pub struct VariableMergerResult {
 }
 
 /// Analyzes SSA form to create variable clusters that merge different versions of the same variable
-pub struct VariableMerger {
-    // <'a> {
-    // model: &'a ProgramModel,
+pub struct VariableMerger<'a> {
     /// Maps SSA variable to the cluster it belongs to
     variable_to_cluster: HashMap<VersionedMemoryReference, ClusterId>,
     /// Collection of all clusters
@@ -55,7 +53,7 @@ pub struct VariableMerger {
 
     function_state: HashMap<FunctionId, FunctionVarNamingState>,
     model: Model<TypeInferenceComplete>,
-    symbol_renaming: SymbolRenaming,
+    symbol_renaming: &'a SymbolRenaming,
 }
 
 #[expect(dead_code)]
@@ -79,9 +77,9 @@ impl FunctionVarNamingState {
     }
 }
 
-impl VariableMerger {
+impl<'a> VariableMerger<'a> {
     /// Creates a new VariableclusterAnalyzer
-    fn new(model: Model<TypeInferenceComplete>, symbol_renaming: SymbolRenaming) -> VariableMerger {
+    fn new(model: Model<TypeInferenceComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
         VariableMerger {
             variable_to_cluster: HashMap::new(),
             clusters: HashMap::new(),
@@ -94,7 +92,7 @@ impl VariableMerger {
 
     pub fn run(
         model: Model<TypeInferenceComplete>,
-        symbol_renaming: SymbolRenaming,
+        symbol_renaming: &'a SymbolRenaming,
     ) -> Result<Model<VariableMergerComplete>, Error> {
         let mut merger = Self::new(model, symbol_renaming);
         merger.build_clusters()?;

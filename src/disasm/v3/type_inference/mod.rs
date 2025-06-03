@@ -10,7 +10,6 @@ mod types;
 
 pub use constraints::ConstraintStore;
 pub use constraints::{Constraint, ConstraintReason};
-pub use constraints_generator::generate_constraints;
 pub use query_engine::TypeInferenceQueryEngine;
 pub use result::TypeInferenceResult;
 pub use solver::Solver;

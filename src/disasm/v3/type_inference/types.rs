@@ -678,6 +678,9 @@ pub enum TypeVarPath {
         instruction_id: InstructionId,
         index: usize,
     },
+    SymbolRenaming {
+        function_id: FunctionId,
+    },
 
     // When we discover that a type var has a function type as an upper bound, we converge it to a function type.
     // with args and returns typles. The path of these new type vars is FunctionsArgsRefinement and FunctionsRetsRefinement.
@@ -908,7 +911,8 @@ impl TypeVarPath {
             | TypeVarPath::FunctionArgsRefinement { function_id, .. }
             | TypeVarPath::FunctionRetsRefinement { function_id, .. }
             | TypeVarPath::TupleRefinement { function_id, .. }
-            | TypeVarPath::PointerRefinement { function_id, .. } => *function_id,
+            | TypeVarPath::PointerRefinement { function_id, .. }
+            | TypeVarPath::SymbolRenaming { function_id, .. } => *function_id,
         }
     }
 
@@ -933,6 +937,7 @@ impl TypeVarPath {
             | TypeVarPath::FunctionArgsRefinement { .. }
             | TypeVarPath::FunctionRetsRefinement { .. }
             | TypeVarPath::TupleRefinement { .. }
+            | TypeVarPath::SymbolRenaming { .. }
             | TypeVarPath::PointerRefinement { .. } => None,
         }
     }
@@ -952,6 +957,7 @@ impl TypeVarPath {
             | TypeVarPath::FunctionArgsRefinement { .. }
             | TypeVarPath::FunctionRetsRefinement { .. }
             | TypeVarPath::TupleRefinement { .. }
+            | TypeVarPath::SymbolRenaming { .. }
             | TypeVarPath::PointerRefinement { .. } => None,
             TypeVarPath::AssignmentSrc {
                 expression_path, ..
@@ -1138,7 +1144,9 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee.display_with(self.registry)),
             Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
-            Type::CustomType(id) => write!(f, "CustomType{}", id),
+            Type::CustomType(id) => {
+                write!(f, "{}", self.registry.get_custom_type_name(*id).unwrap())
+            }
             Type::Any => write!(f, "Any"),
             Type::Generic(id) => write!(f, "T{}", id.0),
         }
@@ -1208,6 +1216,10 @@ mod tests {
         }
 
         fn get_generic_type_var(&self, _id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
+            todo!()
+        }
+
+        fn get_custom_type_name(&self, _custom_type_id: CustomTypeId) -> Option<&String> {
             todo!()
         }
     }

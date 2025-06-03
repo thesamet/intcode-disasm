@@ -1,7 +1,7 @@
 //! Type inference solver implementation.
 
 use itertools::Itertools;
-use log::{debug, trace};
+use log::debug;
 
 use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
@@ -9,18 +9,18 @@ use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::types::TypeVarNode;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
-use crate::disasm::Error; // Assuming a general error type for the project
+use crate::disasm::{Error, SymbolRenaming}; // Assuming a general error type for the project
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
+use super::constraints_generator::generate_constraints;
 use super::query_engine::TypeInferenceQueryEngine;
 use super::result::FunctionSignature;
 use super::type_bounds_map::{BoundChangeReason, TypeVarRegistry};
 use super::types::{TypeBounds, TypeVarId, TypeVarPath};
 use super::{
-    generate_constraints, Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState,
-    Type, TypeVarState,
+    Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState, Type, TypeVarState,
 };
 
 /// Trait for compound type refinement strategies
@@ -367,28 +367,30 @@ struct GenericOpportunity {
 /// The solver takes a model with folded SSA results and attempts to infer types
 /// for virtual machine registers (VMRs) and memory locations by generating
 /// and solving a set of type constraints.
-pub struct Solver {
+pub struct Solver<'a> {
     /// The model containing the folded SSA result, which includes the CFG, DFG, and Function.
     model: Model<FoldedSsaComplete>,
     state: InferenceAlgorithmState,
     store: ConstraintStore,
     function_types: HashMap<FunctionId, (Type, Type)>,
     compound_type_refiner: CompoundTypeRefiner,
+    symbol_renaming: &'a SymbolRenaming,
 }
 
-impl Solver {
+impl<'a> Solver<'a> {
     /// Creates a new solver instance.
     ///
     /// # Arguments
     ///
     /// * `model` - The model with folded SSA results.
-    pub fn new(model: Model<FoldedSsaComplete>) -> Self {
+    pub fn new(model: Model<FoldedSsaComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
         Self {
             model,
             state: InferenceAlgorithmState::new(),
             store: ConstraintStore::new(),
             function_types: HashMap::new(),
             compound_type_refiner: CompoundTypeRefiner::new(),
+            symbol_renaming,
         }
     }
 
@@ -404,8 +406,11 @@ impl Solver {
     ///
     /// A `Result` containing the model with type inference complete, or an `Error`
     /// if type inference fails (e.g., due to a type contradiction or other issue).
-    pub fn run(model: Model<FoldedSsaComplete>) -> Result<Model<TypeInferenceComplete>, Error> {
-        let solver = Self::new(model);
+    pub fn run(
+        model: Model<FoldedSsaComplete>,
+        symbol_renaming: &'a SymbolRenaming,
+    ) -> Result<Model<TypeInferenceComplete>, Error> {
+        let solver = Self::new(model, symbol_renaming);
         solver.solve()
     }
 
@@ -420,7 +425,7 @@ impl Solver {
     /// A `Result` containing the model with type inference complete, or an `Error`.
     fn solve(mut self) -> Result<Model<TypeInferenceComplete>, Error> {
         // 1. Initialize Analyzer, State, and Store
-        let generator_result = generate_constraints(&self.model);
+        let generator_result = generate_constraints(&self.model, self.symbol_renaming);
         self.store = generator_result.store;
         self.state = generator_result.state;
         self.function_types = generator_result.function_types;
@@ -537,6 +542,7 @@ impl Solver {
         result.constraint_store = self.store;
         result.generic_type_vars = self.state.generic_type_vars();
         result.change_log = self.state.change_log;
+        result.custom_type_names = self.symbol_renaming.get_custom_types().clone();
         for (function_id, _) in self.model.functions() {
             let args = self.model.function_call_analysis_result().functions[&function_id]
                 .parameter_entry_vars
@@ -965,16 +971,6 @@ impl Solver {
                         .filter(|t| !t.is_numeric_literal())
                         .cloned()
                         .collect_vec(),
-                );
-                trace!(
-                    "effective glb of {}: {:?}",
-                    upper_bounds.iter().join(", "),
-                    effective_glb
-                );
-                trace!(
-                    "effective lub of {}: {:?}",
-                    lower_bounds.iter().join(", "),
-                    effective_lub
                 );
                 if effective_lub.is_some() {
                     debug!(

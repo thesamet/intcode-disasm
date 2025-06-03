@@ -5,11 +5,13 @@ use super::ast::{
 use crate::derive_display;
 use crate::disasm::v3::common::formatting::colors::SemanticColor;
 use crate::disasm::v3::common::formatting::pretty_print_framework::{
-    ContextualPrettyPrint, FormattingContext,
+    ContextualPrettyPrint, GenericFormattingContext,
 };
-use crate::disasm::v3::type_inference::Type;
+use crate::disasm::v3::type_inference::TypeInferenceResult;
 use colored::Colorize;
 use itertools::Itertools;
+
+type FormattingContext<'a> = GenericFormattingContext<'a, TypeInferenceResult>;
 
 // Precedence values for operators (higher = binds tighter)
 fn binary_op_precedence(op: &BinaryOperator) -> u8 {
@@ -40,6 +42,8 @@ fn line(s: &str, ctx: &FormattingContext) -> String {
 
 // Implement ContextualPrettyPrint for binary operators
 impl ContextualPrettyPrint for BinaryOperator {
+    type T = TypeInferenceResult;
+
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let op_str = match self {
             BinaryOperator::Add => "+",
@@ -58,6 +62,8 @@ impl ContextualPrettyPrint for BinaryOperator {
 
 // Implement ContextualPrettyPrint for unary operators
 impl ContextualPrettyPrint for UnaryOperator {
+    type T = TypeInferenceResult;
+
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let op_str = match self {
             UnaryOperator::LogicalNot => "!",
@@ -69,45 +75,18 @@ impl ContextualPrettyPrint for UnaryOperator {
 
 // Implement ContextualPrettyPrint for variables
 impl ContextualPrettyPrint for HlrVariable {
+    type T = TypeInferenceResult;
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         ctx.format(&self.name, SemanticColor::Variable).to_string()
     }
 }
 
-// Function to format a type with context
-fn format_type(ty: &Type, ctx: &FormattingContext) -> String {
-    match ty {
-        Type::Int => ctx.format("int", SemanticColor::Type).to_string(),
-        Type::Bool => ctx.format("bool", SemanticColor::Type).to_string(),
-        Type::Char => ctx.format("char", SemanticColor::Type).to_string(),
-        Type::Pointer(inner_ty) => {
-            format!("{}{}", ctx.fmt_star(), format_type(inner_ty, ctx))
-        }
-        Type::Tuple(types) => {
-            let types_str = types
-                .iter()
-                .map(|t| format_type(t, ctx))
-                .join(&ctx.fmt_comma().to_string());
-            format!(
-                "{}Tuple{}{}{}{}",
-                ctx.format("", SemanticColor::Type),
-                ctx.fmt_open_paren(),
-                types_str,
-                ctx.fmt_close_paren(),
-                ctx.format("", SemanticColor::Type)
-            )
-        }
-        _ => ctx.format(ty.to_string(), SemanticColor::Type).to_string(),
-    }
-}
-
 // Implement ContextualPrettyPrint for assignment targets
 impl ContextualPrettyPrint for HlrAssignmentTarget {
+    type T = TypeInferenceResult;
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
-            HlrAssignmentTarget::Variable(var) => {
-                var.pretty_print_with_context(ctx).to_string()
-            }
+            HlrAssignmentTarget::Variable(var) => var.pretty_print_with_context(ctx).to_string(),
             HlrAssignmentTarget::Deref(expr) => {
                 format!(
                     "{}{}{}",
@@ -128,7 +107,8 @@ use std::fmt::Display;
 
 // Implement ContextualPrettyPrint for expressions
 impl ContextualPrettyPrint for HlrExpression {
-    fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
+    type T = TypeInferenceResult;
+    fn pretty_print_with_context(&self, ctx: &GenericFormattingContext<Self::T>) -> String {
         match self {
             HlrExpression::Variable(var) => var.pretty_print_with_context(ctx),
 
@@ -214,26 +194,22 @@ impl ContextualPrettyPrint for HlrExpression {
             }
 
             HlrExpression::StaticFunctionReference(name) => {
-                format!(
-                    "{}{}",
-                    ctx.fmt_ampersand(),
-                    ctx.format(name, SemanticColor::Variable)
-                )
+                format!("{}", ctx.format(name, SemanticColor::Variable))
             }
         }
     }
 }
-// Format a variable declaration with type
+
 fn format_variable_decl(var: &HlrVariable, ctx: &FormattingContext) -> String {
     format!(
         "{}: {}",
         var.pretty_print_with_context(ctx),
-        format_type(&var.type_info, ctx)
+        var.type_info.display_with(ctx.data)
     )
 }
-
 // Implement ContextualPrettyPrint for statements
 impl ContextualPrettyPrint for HlrStatement {
+    type T = TypeInferenceResult;
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         match self {
             HlrStatement::VarDef(vars, expr) => {
@@ -478,7 +454,7 @@ fn format_function_signature(func: &HlrFunction, ctx: &FormattingContext) -> Str
             format!(
                 "{}: {}",
                 arg.pretty_print_with_context(ctx),
-                format_type(&arg.type_info, ctx)
+                arg.type_info.display_with(ctx.data),
             )
         })
         .join(&ctx.fmt_comma().to_string());
@@ -486,12 +462,15 @@ fn format_function_signature(func: &HlrFunction, ctx: &FormattingContext) -> Str
     // Format return type
     let ret_str = match func.return_type.len() {
         0 => ctx.format("void", SemanticColor::Type).to_string(),
-        1 => format_type(&func.return_type[0].type_info, ctx),
+        1 => func.return_type[0]
+            .type_info
+            .display_with(ctx.data)
+            .to_string(),
         _ => {
             let types_str = func
                 .return_type
                 .iter()
-                .map(|ret| format_type(&ret.type_info, ctx))
+                .map(|ret| ret.type_info.display_with(ctx.data))
                 .join(&ctx.fmt_comma().to_string());
 
             format!(
@@ -527,6 +506,7 @@ fn format_function_signature(func: &HlrFunction, ctx: &FormattingContext) -> Str
 
 // Implement ContextualPrettyPrint for functions
 impl ContextualPrettyPrint for HlrFunction {
+    type T = TypeInferenceResult;
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         let signature = format_function_signature(self, ctx);
         let signature_line = line(&signature, ctx);
@@ -545,6 +525,7 @@ impl ContextualPrettyPrint for HlrFunction {
 
 // Implement ContextualPrettyPrint for programs
 impl ContextualPrettyPrint for HlrProgram {
+    type T = TypeInferenceResult;
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
         self.functions
             .iter()

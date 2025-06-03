@@ -82,6 +82,14 @@ impl SymbolRenaming {
             .and_then(|(_, typ)| typ.as_ref())
     }
 
+    pub fn get_variables(&self) -> &HashMap<VersionedMemoryReference, (String, Option<Type>)> {
+        &self.variable_names
+    }
+
+    pub fn get_functions(&self) -> &HashMap<FunctionId, (String, Vec<(String, Option<Type>)>)> {
+        &self.functions
+    }
+
     pub fn from_lines(lines: &str) -> Result<Self, String> {
         let mut symbol_renaming = SymbolRenaming::new();
 
@@ -142,6 +150,10 @@ impl SymbolRenaming {
         function_id: FunctionId,
     ) -> Option<&Vec<(String, Option<Type>)>> {
         self.functions.get(&function_id).map(|(_, args)| args)
+    }
+
+    pub fn get_custom_types(&self) -> &HashMap<CustomTypeId, String> {
+        &self.custom_types
     }
 }
 
@@ -257,11 +269,7 @@ impl SymbolRenamingLine {
                     space0,
                 ),
                 |(_, _, fid, _, name, args_opt, _)| {
-                    let args = args_opt
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|(arg_name, type_opt)| (arg_name, type_opt))
-                        .collect();
+                    let args = args_opt.unwrap_or_default().into_iter().collect();
                     SymbolRenamingLine::Function(fid, name, args)
                 },
             ),
@@ -657,7 +665,7 @@ mod tests {
                     (
                         "arg2".to_string(),
                         Some(Type::CustomType(
-                            symbol_renaming.custom_types.keys().next().unwrap().clone()
+                            *symbol_renaming.custom_types.keys().next().unwrap()
                         ))
                     )
                 ]
@@ -701,12 +709,11 @@ mod tests {
         );
 
         let expected_type = Type::CustomType(
-            symbol_renaming
+            *symbol_renaming
                 .custom_types
                 .keys()
                 .next()
-                .expect("No custom type found")
-                .clone(),
+                .expect("No custom type found"),
         );
         assert_eq!(
             symbol_renaming.variable_names.get(&vmr).unwrap().1,
@@ -755,12 +762,11 @@ mod tests {
         );
 
         let expected_type = Type::Pointer(Box::new(Type::CustomType(
-            symbol_renaming
+            *symbol_renaming
                 .custom_types
                 .keys()
                 .next()
-                .expect("No custom type found")
-                .clone(),
+                .expect("No custom type found"),
         )));
         assert_eq!(
             symbol_renaming.variable_names.get(&vmr).unwrap().1,

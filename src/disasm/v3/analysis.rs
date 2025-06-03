@@ -49,23 +49,26 @@ pub fn binary_to_folded_ssa(binary: Vec<i128>) -> Result<Model<FoldedSsaComplete
     FoldedSsaBuilder::run(model)
 }
 
-pub fn binary_to_type_inference(binary: Vec<i128>) -> Result<Model<TypeInferenceComplete>, Error> {
+pub fn binary_to_type_inference(
+    binary: Vec<i128>,
+    symbol_renaming: &SymbolRenaming,
+) -> Result<Model<TypeInferenceComplete>, Error> {
     let model = binary_to_folded_ssa(binary)?;
-    Solver::run(model)
+    Solver::run(model, symbol_renaming)
 }
 
 pub fn binary_to_variable_merger(
     binary: Vec<i128>,
-    symbol_renaming: SymbolRenaming,
+    symbol_renaming: &SymbolRenaming,
 ) -> Result<Model<VariableMergerComplete>, Error> {
-    let model = binary_to_type_inference(binary)?;
+    let model = binary_to_type_inference(binary, symbol_renaming)?;
     VariableMerger::run(model, symbol_renaming)
 }
 
 pub fn binary_to_hlr(
     binary: Vec<i128>,
-    symbol_renaming: SymbolRenaming,
+    symbol_renaming: &SymbolRenaming,
 ) -> Result<Model<HlrConstructionComplete>, Error> {
-    let model = binary_to_variable_merger(binary, symbol_renaming.clone())?;
+    let model = binary_to_variable_merger(binary, symbol_renaming)?;
     ControlFlowStructureAnalyzer::run(model, symbol_renaming)
 }

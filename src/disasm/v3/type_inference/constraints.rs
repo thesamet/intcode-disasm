@@ -109,7 +109,8 @@ pub enum ConstraintReason {
     // Input/Output
     InputSourceType, // `input x` => type(x) <: Char (or chosen input type)
     OutputValueType,
-    GlobalVariable(usize), // `output x` => type(x) <: Int (or Char, if outputting characters)
+    GlobalVariable(usize),
+    SymbolRenaming, // From symbol renaming config file.
 }
 
 /// Represents a subtype constraint: `sub_type <: super_type`.

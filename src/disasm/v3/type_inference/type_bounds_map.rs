@@ -10,7 +10,7 @@ use petgraph::{
     Direction,
 };
 
-use crate::disasm::v3::ssa::VersionedMemoryReference;
+use crate::disasm::{symbol_renaming::CustomTypeId, v3::ssa::VersionedMemoryReference};
 
 // Import necessary types from your existing types.rs file.
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
@@ -128,6 +128,7 @@ pub trait TypeVarRegistry {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode>;
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState>;
     fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar>;
+    fn get_custom_type_name(&self, custom_type_id: CustomTypeId) -> Option<&String>;
     fn lower_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
         match self.get_type_var_state(tv_id).unwrap() {
             TypeVarState::Bounds { lower_bounds, .. } => lower_bounds.iter().collect(),
@@ -178,6 +179,9 @@ impl TypeVarRegistry for InferenceAlgorithmState {
     }
     fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
         self.generic_type_vars.get(id)
+    }
+    fn get_custom_type_name(&self, _custom_type_id: CustomTypeId) -> Option<&String> {
+        unimplemented!()
     }
 }
 
@@ -527,6 +531,10 @@ impl InferenceAlgorithmState {
         let new_tv_id = self.create_memory_reference_type_var(path, *vmr);
         self.vmr_to_type_var.insert(*vmr, new_tv_id);
         new_tv_id
+    }
+
+    pub fn get_type_id_for_vmr(&self, vmr: &VersionedMemoryReference) -> Option<TypeVarId> {
+        self.vmr_to_type_var.get(vmr).copied()
     }
 
     /// Creates a new TypeVar for an expression result or intermediate value.

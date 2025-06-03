@@ -1,14 +1,14 @@
 // disasm/src/disasm/v3/type_inference/analyzer.rs
 
 use itertools::Itertools;
-use log::trace;
+use log::{trace, warn};
 
-use crate::disasm;
 use crate::disasm::v3::cfg::BlockView;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::{self, SymbolRenaming};
 // SsaBlock was unused
 use crate::disasm::v3::lir::InstructionNode;
 use crate::disasm::v3::type_inference::types::ExpressionPath;
@@ -35,14 +35,16 @@ pub struct TypeConstraintGenerator<'a> {
 
     // References to external data structures
     model: &'a Model<FoldedSsaComplete>,
+    symbol_renaming: &'a SymbolRenaming,
     result: TypeConstraintGeneratorResult,
 }
 
 impl<'a> TypeConstraintGenerator<'a> {
-    fn new(model: &'a Model<FoldedSsaComplete>) -> Self {
+    fn new(model: &'a Model<FoldedSsaComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
         TypeConstraintGenerator {
             global_vars: HashMap::new(),
             model,
+            symbol_renaming,
             result: TypeConstraintGeneratorResult {
                 state: InferenceAlgorithmState::new(),
                 store: ConstraintStore::new(),
@@ -164,6 +166,26 @@ impl<'a> TypeConstraintGenerator<'a> {
             } else {
                 self.global_vars.insert(addr, *tv_id);
             }
+        }
+
+        for (vmr, (_, ty)) in self.symbol_renaming.get_variables() {
+            let Some(ty) = ty else {
+                continue;
+            };
+            let Some(tv_id) = self.result.state.get_type_id_for_vmr(vmr) else {
+                warn!("Could not find type var for {}", vmr);
+                continue;
+            };
+            self.result.store.add_original_equality_constraint(
+                Constraint::new(
+                    Type::TypeVar(tv_id),
+                    ty.clone(),
+                    vmr.function_id,
+                    InstructionId::new(0), // Dummy ID for function args
+                    ConstraintReason::SymbolRenaming,
+                ),
+                &self.result.state,
+            );
         }
     }
 
@@ -727,8 +749,11 @@ impl<'a> TypeConstraintGenerator<'a> {
     }
 }
 
-pub fn generate_constraints(model: &Model<FoldedSsaComplete>) -> TypeConstraintGeneratorResult {
-    let mut constraint_generator = TypeConstraintGenerator::new(model);
+pub fn generate_constraints(
+    model: &Model<FoldedSsaComplete>,
+    symbol_renaming: &SymbolRenaming,
+) -> TypeConstraintGeneratorResult {
+    let mut constraint_generator = TypeConstraintGenerator::new(model, symbol_renaming);
     constraint_generator.generate_all_constraints();
     constraint_generator.result
 }
