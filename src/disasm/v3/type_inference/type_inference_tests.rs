@@ -19,7 +19,10 @@ use crate::disasm::v3::type_inference::types::Type;
 macro_rules! assert_marker_type {
     ($ctx:expr, $marker:expr, $expected_type:expr) => {
         let model = &$ctx.model; // Get reference to the model from TestContext
-        let actual_type = get_marker_type_from_model(model, $marker)
+        let actual_type =
+            crate::disasm::v3::type_inference::type_inference_tests::get_marker_type_from_model(
+                model, $marker,
+            )
             .unwrap_or_else(|| panic!("No type found for marker '{}'", $marker));
 
         if std::env::var("REPL").is_ok() {
@@ -28,7 +31,7 @@ macro_rules! assert_marker_type {
                     "Marker {} has incorrect type: expected {:?}, actual {:?}",
                     $marker, $expected_type, actual_type
                 );
-                repl(&$ctx.model);
+                crate::disasm::repl::repl(&$ctx.model);
             }
         }
         assert_eq!(
@@ -78,9 +81,17 @@ macro_rules! assert_marker_is_function_pointer {
     };
 }
 
+pub(crate) use assert_function_pointer;
+pub(crate) use assert_marker_is_function_pointer;
+pub(crate) use assert_marker_type;
+pub(crate) use panic_or_repl;
+
 // --- Start of Stub Helper Functions ---
 
-fn get_marker_type_from_model(model: &Model<TypeInferenceComplete>, marker: char) -> Option<Type> {
+pub fn get_marker_type_from_model(
+    model: &Model<TypeInferenceComplete>,
+    marker: char,
+) -> Option<Type> {
     model.type_inference_result().get_marker_type(marker)
 }
 
@@ -1121,57 +1132,4 @@ fn test_fn_pointer_args_inferred() {
 
     // 'g' is the parameter in f3, should be Pointer<Int>
     assert_marker_type!(ctx, 'g', Type::pointer(Type::Int));
-}
-
-#[test]
-fn test_harder_type_inference() {
-    let ctx = TypeInferenceComplete::test_context(
-        r#"
-            R += 1000
-            halt
-
-
-            f2722:
-                R += 5
-                'a [5000] = [R-4]
-                [R+1] = 8888
-                [R] = @ret1
-                goto @f2763
-                ret1:
-                R -= 5
-                goto [R]
-
-
-            f2763:
-                R += 2
-                [R+1] = 346
-                [R+2] = [R-1]
-                [R] = @ret2
-                goto [5000]
-                ret2:
-                R -= 1
-                goto [R]
-
-            takes_pointer:
-                R += 4
-                ptr = [R-3]
-                [R-3] = [R-3] * 5
-                [R-2] = *ptr
-                [R-2] = [R-2] * 3
-                R -= 4
-                goto [R]
-
-            calls_f2722_with_take_pointer:
-                R += 1
-                [R+1] = @takes_pointer
-                [R] = @retc
-                goto @f2722
-                retc:
-                R -= 1
-                goto [R]
-        "#,
-    )
-    .unwrap();
-    assert_marker_type!(ctx, 'a', Type::Char);
-    assert!(false);
 }
