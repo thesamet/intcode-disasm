@@ -28,3 +28,4 @@ examples/
 context_portal
 .claude
 history.txt
+profile.json.gz

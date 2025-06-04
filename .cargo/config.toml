@@ -1,0 +1,19 @@
+[alias]
+repl = "run -r -- repl  ../aoc-2019-rust/data/inputs/25.txt  --symbols ./data/25.symbols"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = [
+  "-C",
+  "link-arg=-fuse-ld=/nix/store/1jbfq9hbbs8acbidi2shldzc27jkw6ra-mold-2.39.1/bin/mold",
+]
+
+[unstable]
+codegen-backend = true
+
+[profile.dev]
+codegen-backend = "cranelift"
+
+[profile.profiling]
+inherits = "release"
+debug = true
