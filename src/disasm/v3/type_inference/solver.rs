@@ -443,7 +443,6 @@ impl<'a> Solver<'a> {
             self.state.next_iteration();
 
             let mut constraint_ids: HashSet<ConstraintId> = HashSet::new();
-            println!("Vars worklist len: {}", vars_worklist.len());
             for tv_id in vars_worklist.iter() {
                 self.store
                     .update_constraints_involving_type_var_id(*tv_id, &self.state);
@@ -457,10 +456,8 @@ impl<'a> Solver<'a> {
                 }
             }
             let mut constraint_ids: VecDeque<ConstraintId> = constraint_ids.into_iter().collect();
-            let mut count = 0;
             while !constraint_ids.is_empty() {
                 while let Some(constraint_id) = constraint_ids.pop_front() {
-                    count += 1;
                     let new_constraints = self.apply_constraint(constraint_id);
                     for constraint in new_constraints {
                         match self.store.add_constraint(
@@ -476,7 +473,6 @@ impl<'a> Solver<'a> {
                         }
                     }
                 }
-                println!("Applied {} constraints", count);
 
                 let e = self
                     .store
@@ -860,17 +856,6 @@ impl<'a> Solver<'a> {
     }
 
     fn effective_lub(&self, types: &[Type]) -> Option<Type> {
-        if types.len() == 6 {
-            println!("Effective lub {:?}", types);
-            for t in types {
-                println!(
-                    "{} {}: {}",
-                    t,
-                    t.display_with(&self.state),
-                    self.state.resolve_type(t).display_with(&self.state),
-                );
-            }
-        }
         if !types.iter().all(|t| t.is_concrete_type()) {
             return None;
         }

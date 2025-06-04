@@ -332,7 +332,8 @@ impl InferenceAlgorithmState {
         if changed {
             trace!("Updated bounds {} to {}   was  {}", tv_id, state, old_state);
             self.updated_type_vars.insert(*tv_id);
-            for dep in new_bound.involved_type_vars() {
+            let involved_type_vars = new_bound.involved_type_vars();
+            for dep in involved_type_vars {
                 self.dependents.entry(dep).or_default().insert(*tv_id);
             }
             self.change_log.push(ChangeLogEntry {
@@ -605,6 +606,10 @@ impl InferenceAlgorithmState {
         // TypeVarId must be Clone
         let updated_set = std::mem::take(&mut self.updated_type_vars);
         updated_set.into_iter().collect()
+    }
+
+    pub fn get_updated_type_vars(&self) -> &HashSet<TypeVarId> {
+        &self.updated_type_vars
     }
 
     pub fn get_all_dependencies(&self, tv_id: &TypeVarId) -> HashSet<TypeVarId> {
