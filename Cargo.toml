@@ -28,9 +28,13 @@ term_size = "0.3.2"
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 test-log = "0.2.17"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lints.rust]
 
 # [profile.dev]
 # opt-level = 1
-#
+
+[[bench]]
+name = "type_benchmark"
+harness = false

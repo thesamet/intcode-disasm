@@ -466,6 +466,14 @@ impl Type {
             _ => None,
         }
     }
+
+    pub fn as_pointer(&self) -> Option<&Type> {
+        if let Self::Pointer(v) = self {
+            Some(v.as_ref())
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Display for Type {

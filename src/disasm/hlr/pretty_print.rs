@@ -195,6 +195,12 @@ impl ContextualPrettyPrint for HlrExpression {
             HlrExpression::StaticFunctionReference(name) => {
                 format!("{}", ctx.format(name, SemanticColor::Variable))
             }
+            HlrExpression::StaticCustomType(_, name, _) => {
+                format!(
+                    "{}",
+                    ctx.format(format!("{}", name), SemanticColor::Constant)
+                )
+            }
         }
     }
 }

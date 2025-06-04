@@ -106,6 +106,7 @@ impl ImageScanner {
             data_segments,
             address_to_function,
             recognized_functions: function_details,
+            image: image.to_vec(),
         };
 
         // Return a new model with the updated state

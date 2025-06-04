@@ -921,6 +921,7 @@ impl<'a> Solver<'a> {
             }
         }
         let mut changed = false;
+        let mut converge_count = 0;
         for (tv_id, target_type) in conv.iter().sorted() {
             let new_value = self.state.resolve_type(target_type);
             if new_value == tv_id.to_type() {
@@ -933,6 +934,7 @@ impl<'a> Solver<'a> {
             };
             self.state.converge(tv_id, new_value, conv_type);
             changed = true;
+            converge_count += 1;
         }
         if changed {
             return true;

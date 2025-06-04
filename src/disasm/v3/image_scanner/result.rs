@@ -15,6 +15,9 @@ pub struct ImageScannerResult {
 
     // Detailed function information
     pub recognized_functions: HashMap<FunctionId, RecognizedFunction>,
+
+    // image
+    pub image: Vec<i128>,
 }
 
 impl ImageScannerResult {

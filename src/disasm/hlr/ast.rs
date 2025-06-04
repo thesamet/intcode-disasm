@@ -57,6 +57,7 @@ pub enum HlrExpression {
     Deref(Box<HlrExpression>),
     Constant(i128, Type),
     StaticFunctionReference(String),
+    StaticCustomType(CustomTypeId, String, usize),
     BinaryOp {
         op: BinaryOperator,
         left: Box<HlrExpression>,
@@ -180,6 +181,7 @@ pub enum UnaryOperator {
     Minus,
 }
 
+use crate::disasm::symbol_renaming::CustomTypeId;
 use crate::disasm::v3::type_inference::Type;
 use crate::disasm::v3::FunctionId;
 

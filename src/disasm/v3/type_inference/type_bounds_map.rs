@@ -391,9 +391,7 @@ impl InferenceAlgorithmState {
         };
 
         let mut log_entries = vec![];
-        let ids = self.type_var_nodes.keys().cloned().collect_vec();
-        for id in ids {
-            //.get_all_dependents(tv_id) {
+        for id in self.get_all_dependents(tv_id) {
             if id == *tv_id {
                 continue;
             }

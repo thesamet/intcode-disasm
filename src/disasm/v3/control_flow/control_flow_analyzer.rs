@@ -492,7 +492,7 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                         .unwrap_or_else(|| format!("{}", function_id));
                     HlrExpression::StaticFunctionReference(name)
                 } else {
-                    HlrExpression::Constant(*c, typ)
+                    self.const_to_hlr(*c, typ)
                 }
             }
             Expression::Addressable(a) => match a {
@@ -629,6 +629,29 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 )),
                 expr,
             ),
+        }
+    }
+
+    fn const_to_hlr(&self, c: i128, typ: Type) -> HlrExpression {
+        let addr = if c < 0 {
+            return HlrExpression::Constant(c, typ);
+        } else {
+            c as usize
+        };
+        if let Some(Type::CustomType(ct_id)) = typ.as_pointer() {
+            let ct_name = self.symbol_renaming.get_custom_type(*ct_id).unwrap();
+            let image = &self.model.image_scanner_result().image;
+            let len = image[addr];
+            let r: String = image[(addr + 1)..(addr + (len as usize) + 1)]
+                .iter()
+                .enumerate()
+                .map(|(i, &x)| (x as i128 + len as i128 + i as i128) as u8 as char)
+                .collect();
+            println!("Found string: {}", r.escape_default());
+
+            HlrExpression::StaticCustomType(*ct_id, format!("{}_{}", ct_name, addr), c as usize)
+        } else {
+            HlrExpression::Constant(c, typ)
         }
     }
 }

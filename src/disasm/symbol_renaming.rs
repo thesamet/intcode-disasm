@@ -173,6 +173,10 @@ impl SymbolRenaming {
         self.functions.get(&function_id).map(|v| v.args())
     }
 
+    pub fn get_custom_type(&self, id: CustomTypeId) -> Option<&String> {
+        self.custom_types.get(&id)
+    }
+
     pub fn get_custom_types(&self) -> &HashMap<CustomTypeId, String> {
         &self.custom_types
     }

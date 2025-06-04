@@ -152,6 +152,7 @@ where
             }
             HlrExpression::Input() => (),
             HlrExpression::StaticFunctionReference(_) => (),
+            HlrExpression::StaticCustomType(..) => (),
         }
     });
 }
