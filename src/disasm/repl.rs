@@ -8,7 +8,8 @@ use rustyline::DefaultEditor;
 use tabled::settings::{object::Columns, Span, Style, Width};
 
 use crate::disasm::v3::{
-    common::formatting::ContextualPrettyPrint,
+    common::formatting::{ContextualPrettyPrint, PrettyPrintConfig},
+    lir::MemoryReferenceInfo,
     type_inference::{
         type_bounds_map::{BoundChangeReason, ChangeLogKind, TypeVarRegistry},
         Constraint, TypeInferenceResult, TypeVarState,
@@ -32,6 +33,8 @@ enum Command {
         function: Option<FunctionId>,
         #[arg(long)]
         hlr: bool,
+        #[arg(long)]
+        type_vars: bool,
     },
     /// List all available functions
     #[clap(alias = "lf")]
@@ -42,6 +45,8 @@ enum Command {
         id: Option<TypeVarId>,
         #[arg(short, long)]
         function: Option<FunctionId>,
+        #[arg(short, long)]
+        global: bool,
     },
     /// Show change history for a type variable
     #[clap(alias = "h")]
@@ -153,7 +158,16 @@ where
 
     fn run_command(cmd: ReplLine, model: &Model<S>) -> Result<(), String> {
         match cmd.command {
-            Command::Print { function, hlr } => {
+            Command::Print {
+                function,
+                hlr,
+                type_vars,
+            } => {
+                let config = PrettyPrintConfig::default().with_show_types_var_ids(type_vars);
+                if hlr && type_vars {
+                    return Err("Cannot show both HLR and type vars".to_string());
+                }
+
                 if hlr {
                     let hlr_model =
                         Self::as_hlr(model).ok_or_else(|| "HLR not avaiable".to_string())?;
@@ -167,24 +181,28 @@ where
                                 .ok_or(format!("Could not find function {function_id}"))?;
                             println!(
                                 "{}",
-                                fu.pretty_print_with_data(hlr_model.type_inference_result())
+                                fu.pretty_print_with_config_and_data(
+                                    &config,
+                                    hlr_model.type_inference_result(),
+                                )
                             );
                         }
                         None => println!(
                             "{}",
-                            hlr_model
-                                .hlr_program()
-                                .pretty_print_with_data(hlr_model.type_inference_result())
+                            hlr_model.hlr_program().pretty_print_with_config_and_data(
+                                &config,
+                                hlr_model.type_inference_result()
+                            )
                         ),
                     }
                 } else {
                     match function {
                         Some(function_id) => {
                             let fu = get_function(model, &function_id)?;
-                            println!("{}", fu.pretty_print());
+                            println!("{}", fu.pretty_print_with_config(&config));
                         }
                         None => {
-                            println!("{}", model.pretty_print());
+                            println!("{}", model.pretty_print_with_config(&config));
                         }
                     }
                 }
@@ -194,7 +212,11 @@ where
                     println!("{}", id);
                 }
             }
-            Command::Variables { id, function } => Self::list_variables(model, id, function)?,
+            Command::Variables {
+                id,
+                function,
+                global,
+            } => Self::list_variables(model, id, function, global)?,
             Command::History { tv_id, resolve } => Self::changelog(model, tv_id, resolve)?,
             Command::Constraints { id, function } => Self::constraint(model, id, function)?,
         }
@@ -262,6 +284,7 @@ where
         model: &Model<S>,
         id: Option<TypeVarId>,
         function: Option<FunctionId>,
+        global: bool,
     ) -> Result<(), String> {
         let ti = model.type_inference_result();
         use tabled::{Table, Tabled};
@@ -284,6 +307,7 @@ where
                 id.is_none_or(|id| id == **tv_id)
                     && function.is_none_or(|f| f == n.path.function_id())
             })
+            .filter(|(_, n)| !global || n.vmr.is_some_and(|vmr| vmr.is_global()))
             .sorted_by_key(|(id, _)| *id)
             .enumerate()
         {

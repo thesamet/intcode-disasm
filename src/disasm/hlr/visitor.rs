@@ -653,7 +653,7 @@ mod tests {
         ) -> Control {
             let expr_type = match expr {
                 HlrExpression::Constant(_val, _) => "Constant".to_string(),
-                _ => format!("{}", expr),
+                _ => format!("{:?}", expr),
             };
 
             self.events.push(format!(
@@ -670,7 +670,7 @@ mod tests {
         ) -> Control {
             let expr_type = match expr {
                 HlrExpression::Constant(_val, _) => "Constant".to_string(),
-                _ => format!("{}", expr),
+                _ => format!("{:?}", expr),
             };
 
             self.events.push(format!(

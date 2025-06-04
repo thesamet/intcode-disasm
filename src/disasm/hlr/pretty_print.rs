@@ -2,7 +2,6 @@ use super::ast::{
     BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
     HlrVariable, UnaryOperator,
 };
-use crate::derive_display;
 use crate::disasm::v3::common::formatting::colors::SemanticColor;
 use crate::disasm::v3::common::formatting::pretty_print_framework::{
     ContextualPrettyPrint, GenericFormattingContext,
@@ -535,29 +534,6 @@ impl ContextualPrettyPrint for HlrProgram {
     }
 }
 
-// Apply the display macros
-derive_display!(HlrProgram);
-derive_display!(HlrFunction);
-derive_display!(HlrStatement);
-derive_display!(HlrExpression);
-derive_display!(HlrAssignmentTarget);
-
-// Public pretty printing functions for use in the CLI
-pub fn pretty_print_hlr(program: &HlrProgram) -> String {
-    program.pretty_print()
-}
-
-pub fn pretty_print_hlr_with_config(
-    program: &HlrProgram,
-    config: &crate::disasm::v3::common::formatting::pretty_print_framework::PrettyPrintConfig,
-) -> String {
-    program.pretty_print_with_config(config)
-}
-
-pub fn pretty_print_hlr_stdout(program: &HlrProgram) {
-    println!("{}", pretty_print_hlr(program));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,7 +581,7 @@ mod tests {
         let program = hlr_program(vec![func]);
 
         // Use nocolor() to get output without ANSI color codes for testing
-        let default_output = program.nocolor();
+        let default_output = program.print_nocolor_with_data(&TypeInferenceResult::new());
         #[cfg(test)]
         println!("DEFAULT OUTPUT (no color):\n{}", default_output);
 
@@ -625,7 +601,8 @@ mod tests {
 
         // We can still test with a theme, but don't check the output content
         let themed_config = PrettyPrintConfig::default().with_colors(Colors::blue_accent_theme());
-        let _themed_output = pretty_print_hlr_with_config(&program, &themed_config);
+        let _themed_output =
+            program.pretty_print_with_config_and_data(&themed_config, &TypeInferenceResult::new());
         // Just make sure it produces output without errors
     }
 
@@ -645,7 +622,7 @@ mod tests {
         );
 
         // Use nocolor() for simpler testing
-        let output = expr1.nocolor();
+        let output = expr1.print_nocolor_with_data(&TypeInferenceResult::new());
 
         // Should not add unnecessary parentheses because multiplication has higher precedence
         assert_eq!(output, "1 + 2 * 3");
@@ -663,7 +640,7 @@ mod tests {
             Type::Int,
         );
 
-        let output2 = expr2.nocolor();
+        let output2 = expr2.print_nocolor_with_data(&TypeInferenceResult::new());
         // Should add parentheses because addition has lower precedence
         assert_eq!(output2, "(1 + 2) * 3");
     }
@@ -674,7 +651,7 @@ mod tests {
         let var_def = hlr_vardef(hlr_var("x", Type::Int), hlr_const(42, Type::Int));
 
         // Use nocolor() for consistent testing without ANSI codes
-        let output = var_def.nocolor();
+        let output = var_def.print_nocolor_with_data(&TypeInferenceResult::new());
 
         assert!(output.contains("let x: Int = 42;"));
 
@@ -690,7 +667,7 @@ mod tests {
             vec![hlr_output(hlr_const(0, Type::Int))],
         );
 
-        let output = if_stmt.nocolor();
+        let output = if_stmt.print_nocolor_with_data(&TypeInferenceResult::new());
         assert!(output.contains("if x == 42 {"));
         assert!(output.contains("output(1);"));
         assert!(output.contains("} else {"));

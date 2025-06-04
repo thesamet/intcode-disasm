@@ -8,7 +8,7 @@ use crate::derive_display;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{
     FoldedSsaComplete, HasFoldedSsaResult, HasFunctionCallAnalysisResult, HasHlrProgram,
-    HasTypeInferenceResult, TypeInferenceComplete,
+    HasTypeInferenceResult, HlrConstructionComplete, TypeInferenceComplete, VariableMergerComplete,
 };
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::type_inference::TypeVarId;
@@ -310,6 +310,8 @@ fn format_signature<S: ModelState + 'static>(
         &Model<FunctionCallAnalysisComplete> as m => format_signature(m, function, ctx),
         &Model<FoldedSsaComplete> as m => format_signature(m, function, ctx),
         &Model<TypeInferenceComplete> as m =>  format_typed_signature(m, function, ctx),
+        &Model<VariableMergerComplete> as m => format_typed_signature(m,  function, ctx),
+        &Model<HlrConstructionComplete> as m => format_typed_signature(m, function, ctx),
         _ => "".to_string(),
     })
 }
@@ -752,32 +754,4 @@ where
     S: HasTypeInferenceResult + HasControlFlowGraphResult + ModelState + 'static,
 {
     println!("{}", pretty_print_types(model));
-}
-
-// --- HLR pretty print functions ---
-
-pub fn pretty_print_hlr_with_config<S>(model: &Model<S>, config: PrettyPrintConfig) -> String
-where
-    S: HasHlrProgram + ModelState + 'static,
-{
-    // Get the HLR program and use the implemented pretty print function
-    let hlr_program = model.hlr_program();
-    crate::disasm::hlr::pretty_print::pretty_print_hlr_with_config(hlr_program, &config)
-}
-
-pub fn pretty_print_hlr<S>(model: &Model<S>) -> String
-where
-    S: HasHlrProgram + ModelState + 'static,
-{
-    let config = PrettyPrintConfig::default()
-        .with_show_types(false)
-        .with_show_vars(false);
-    pretty_print_hlr_with_config(model, config)
-}
-
-pub fn pretty_print_hlr_stdout<S>(model: &Model<S>)
-where
-    S: HasHlrProgram + ModelState + 'static,
-{
-    println!("{}", pretty_print_hlr(model));
 }

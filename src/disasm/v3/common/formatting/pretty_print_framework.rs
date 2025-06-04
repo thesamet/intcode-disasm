@@ -250,7 +250,7 @@ pub trait ContextualPrettyPrint {
         self.pretty_print_with_config_and_data(&PrettyPrintConfig::default(), data)
     }
 
-    fn nocolor_with_data(&self, data: &Self::T) -> String {
+    fn print_nocolor_with_data(&self, data: &Self::T) -> String {
         // Added method
         let config = PrettyPrintConfig::default().with_no_colors();
         self.pretty_print_with_config_and_data(&config, data)
@@ -274,7 +274,7 @@ pub trait ContextualPrettyPrint {
         self.pretty_print_with_config(&PrettyPrintConfig::default())
     }
 
-    fn nocolor(&self) -> String
+    fn print_nocolor(&self) -> String
     where
         Self::T: Default,
     {

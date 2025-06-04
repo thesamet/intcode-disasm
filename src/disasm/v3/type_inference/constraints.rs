@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use super::{
     types::{Type, TypeVarId},
     InferenceAlgorithmState,
@@ -249,7 +251,7 @@ impl ConstraintStore {
                 .insert(new_id);
         }
         if let Some(parent_id) = parent {
-            self.parent.insert(parent_id, new_id);
+            self.parent.insert(new_id, parent_id);
         }
         AddConstraintResult::NewConstraint(new_id)
     }
@@ -360,6 +362,30 @@ impl ConstraintStore {
     /// Returns true if the store contains no unique constraints.
     pub fn is_empty(&self) -> bool {
         self.constraints.is_empty()
+    }
+
+    pub fn update_constraints_involving_type_var_id(
+        &mut self,
+        tv_id: TypeVarId,
+        state: &InferenceAlgorithmState,
+    ) {
+        let constraint_ids = self
+            .get_constraints_involving_type_var(&tv_id)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect_vec();
+        for c_id in constraint_ids {
+            let c = self.constraints.get_mut(&c_id).unwrap();
+            let new_sub_type = state.resolve_type(&c.sub_type);
+            let new_super_type = state.resolve_type(&c.super_type);
+            let mut involved_types = HashSet::new();
+            new_sub_type.insert_involved_type_vars(&mut involved_types);
+            new_super_type.insert_involved_type_vars(&mut involved_types);
+            for t in involved_types {
+                self.type_var_constraints.entry(t).or_default().insert(c_id);
+            }
+        }
     }
 }
 

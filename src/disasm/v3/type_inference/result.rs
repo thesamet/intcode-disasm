@@ -20,7 +20,7 @@ pub struct FunctionSignature {
 }
 
 /// Result of the type inference analysis.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TypeInferenceResult {
     pub type_var_states: HashMap<TypeVarId, TypeVarState>,
     pub type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
@@ -37,7 +37,18 @@ pub struct TypeInferenceResult {
 impl TypeInferenceResult {
     /// Create a new empty type inference result.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            type_var_states: HashMap::new(),
+            type_var_nodes: HashMap::new(),
+            vmr_to_type_var_id: HashMap::new(),
+            path_to_type_var_id: HashMap::new(),
+            debug_markers: HashMap::new(),
+            change_log: Vec::new(),
+            constraint_store: ConstraintStore::new(),
+            generic_type_vars: HashMap::new(),
+            function_signatures: HashMap::new(),
+            custom_type_names: HashMap::new(),
+        }
     }
 
     pub fn get_marker_type(&self, marker: char) -> Option<Type> {

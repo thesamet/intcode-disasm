@@ -415,7 +415,7 @@ mod tests {
                 )
             });
             assert_eq!(
-                simplified.nocolor(),
+                simplified.print_nocolor(),
                 $expected_str,
                 "Simplified expression mismatch for original: {}",
                 original

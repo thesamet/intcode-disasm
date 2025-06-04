@@ -293,7 +293,10 @@ fn hlr(input: String, symbols: Option<String>, theme: String) {
     if theme == "default" {
         // For default theme, use the HLR program directly
         let hlr_program = model.hlr_program();
-        hlr::pretty_print::pretty_print_hlr_stdout(hlr_program);
+        println!(
+            "{}",
+            hlr_program.pretty_print_with_data(model.type_inference_result())
+        );
         return;
     }
 
@@ -303,7 +306,7 @@ fn hlr(input: String, symbols: Option<String>, theme: String) {
     let hlr_program = model.hlr_program();
     println!(
         "{}",
-        hlr::pretty_print::pretty_print_hlr_with_config(hlr_program, &config)
+        hlr_program.pretty_print_with_config_and_data(&config, model.type_inference_result())
     );
 }
 

@@ -442,14 +442,14 @@ impl<'a> Solver<'a> {
         loop {
             self.state.next_iteration();
 
-            let mut changed = false;
-
             let mut constraint_ids: HashSet<ConstraintId> = HashSet::new();
             println!("Vars worklist len: {}", vars_worklist.len());
-            for vars in vars_worklist.iter_mut() {
+            for tv_id in vars_worklist.iter() {
+                self.store
+                    .update_constraints_involving_type_var_id(*tv_id, &self.state);
                 for c in self
                     .store
-                    .get_constraints_involving_type_var(vars)
+                    .get_constraints_involving_type_var(tv_id)
                     .into_iter()
                     .flatten()
                 {
@@ -458,34 +458,42 @@ impl<'a> Solver<'a> {
             }
             let mut constraint_ids: VecDeque<ConstraintId> = constraint_ids.into_iter().collect();
             let mut count = 0;
-            while let Some(constraint_id) = constraint_ids.pop_front() {
-                count += 1;
-                let new_constraints = self.apply_constraint(constraint_id);
-                for constraint in new_constraints {
-                    match self.store.add_constraint(constraint, None, &self.state) {
-                        AddConstraintResult::NewConstraint(id) =>
-                        /*  | AddConstraintResult::ExistingConstraint(id) */
-                        {
-                            constraint_ids.push_back(id)
+            while !constraint_ids.is_empty() {
+                while let Some(constraint_id) = constraint_ids.pop_front() {
+                    count += 1;
+                    let new_constraints = self.apply_constraint(constraint_id);
+                    for constraint in new_constraints {
+                        match self.store.add_constraint(
+                            constraint,
+                            Some(constraint_id),
+                            &self.state,
+                        ) {
+                            AddConstraintResult::NewConstraint(id)
+                            | AddConstraintResult::ExistingConstraint(id) => {
+                                constraint_ids.push_back(id)
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+                }
+                println!("Applied {} constraints", count);
+
+                let e = self
+                    .store
+                    .iter_unclassified_add_expressions()
+                    .cloned()
+                    .collect_vec();
+                for unclassified in e {
+                    for constraint in self.try_classify_add_expression(&unclassified) {
+                        match self.store.add_constraint(constraint, None, &self.state) {
+                            AddConstraintResult::NewConstraint(id) => constraint_ids.push_back(id),
+                            _ => {}
+                        }
                     }
                 }
             }
-            println!("Applied {} constraints", count);
 
-            let e = self
-                .store
-                .iter_unclassified_add_expressions()
-                .cloned()
-                .collect_vec();
-            for unclassified in e {
-                changed |= self.try_classify_add_expression(&unclassified);
-            }
-
-            if !changed {
-                changed |= self.try_solving();
-            }
+            let changed = self.try_solving();
 
             if !changed {
                 break;
@@ -681,7 +689,7 @@ impl<'a> Solver<'a> {
     fn try_classify_add_expression(
         &mut self,
         unclassified: &UnclassifiedArithmeticExpression,
-    ) -> bool {
+    ) -> Vec<Constraint> {
         let Expression::Binary { op, .. } = &unclassified.expression else {
             panic!("Expected BinaryOp expression");
         };
@@ -716,22 +724,16 @@ impl<'a> Solver<'a> {
             .is_subtype_of(&Type::pointer(Type::Any), &self.state)
             .is_yes();
         let is_result_char = Type::Char.is_subtype_of(&res, &self.state).is_yes();
-        let mut changed = false;
+        let mut new_constraints = Vec::new();
 
         let mut add_constraint = |sub_type: Type, super_type: Type, reason: ConstraintReason| {
-            let new_constraint = Constraint::new(
+            new_constraints.push(Constraint::new(
                 sub_type,
                 super_type,
                 FunctionId::new(0),
                 InstructionId::new(0),
                 reason,
-            );
-            // For arithmetic classification, treat as derived from the expression analysis
-            if let AddConstraintResult::NewConstraint(_) =
-                self.store.add_constraint(new_constraint, None, &self.state)
-            {
-                changed = true;
-            }
+            ));
         };
 
         if is_op1_int && is_op2_int {
@@ -836,7 +838,7 @@ impl<'a> Solver<'a> {
             );
         }
 
-        changed
+        new_constraints
     }
 
     fn effective_glb(&self, types: &[Type]) -> Option<Type> {

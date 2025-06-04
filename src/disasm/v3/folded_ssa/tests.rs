@@ -1,4 +1,3 @@
-
 use crate::disasm::{
     test_utils::TestContextBuilder,
     v3::{common::formatting::ContextualPrettyPrint, model::FoldedSsaComplete},
@@ -21,5 +20,8 @@ fn test_placeholder_folded_ssa() {
         .block(&ctx.main_function().entry_block())
         .folded_ssa()
         .instructions[0];
-    assert_eq!(inst.nocolor(), "[R-1]_3 = ([R-2]_0 * 5 + 7) * [R-3]_0");
+    assert_eq!(
+        inst.print_nocolor(), 
+       "[R-1]_3 = ([R-2]_0 * 5 + 7) * [R-3]_0")
+    ;
 }
