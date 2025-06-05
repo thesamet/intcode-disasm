@@ -19,6 +19,7 @@ pub enum MemoryReference {
     /// Dereference of a pointer expression.
     Deref(Box<Expression<MemoryReference>>),
 }
+
 unsafe impl LifetimeFree for MemoryReference {}
 
 impl<'a> From<&'a MemoryReference> for MemoryReference {
@@ -160,7 +161,12 @@ where
 /// For example, when writing to a dereferenced pointer (`*ptr = value`), we need to recognize
 /// that `ptr` itself is being read to determine the target address. This trait provides a
 /// standardized way to extract such read operations across different memory reference types.
-pub trait ReadAddressExtractor {
+pub trait ReadExpressionExtractor
+where
+    Self: Sized,
+{
+    fn extract_read_expressions(&self) -> Option<&Expression<Self>>;
+
     /// Extracts all memory references that are read when this value is used.
     ///
     /// This method is particularly important for:
@@ -169,18 +175,25 @@ pub trait ReadAddressExtractor {
     ///
     /// # Returns
     /// A vector of references to all memory locations that are read when this value is used.
-    fn extract_read_addresses(&self) -> Vec<&Self>;
+    fn extract_read_addresses(&self) -> Vec<&Self>
+    where
+        Self: Sized,
+    {
+        self.extract_read_expressions()
+            .map(|expr| expr.collect_read_addresses())
+            .unwrap_or_default()
+    }
 }
 
-impl ReadAddressExtractor for MemoryReference {
-    fn extract_read_addresses(&self) -> Vec<&Self> {
+impl ReadExpressionExtractor for MemoryReference {
+    fn extract_read_expressions(&self) -> Option<&Expression<MemoryReference>> {
         match self {
             // When dereferencing a pointer, we need to read the pointer expression
-            MemoryReference::Deref(expr) => expr.collect_read_addresses(),
+            MemoryReference::Deref(expr) => Some(expr),
             // Other memory reference types don't involve indirect reads
-            MemoryReference::Global(_) => Vec::new(),
-            MemoryReference::StackRelative(_) => Vec::new(),
-            MemoryReference::Pointer(_) => Vec::new(),
+            MemoryReference::Global(_) => None,
+            MemoryReference::StackRelative(_) => None,
+            MemoryReference::Pointer(_) => None,
         }
     }
 }

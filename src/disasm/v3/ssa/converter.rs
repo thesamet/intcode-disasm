@@ -47,12 +47,12 @@ use crate::disasm::{
 use std::collections::{HashMap, HashSet};
 pub use v3::ssa::SsaBlock;
 
-use crate::disasm::v3::lir::ReadAddressExtractor; // Import the trait
-impl ReadAddressExtractor for SsaMemoryReference {
-    fn extract_read_addresses(&self) -> Vec<&Self> {
+use crate::disasm::v3::lir::ReadExpressionExtractor; // Import the trait
+impl ReadExpressionExtractor for SsaMemoryReference {
+    fn extract_read_expressions(&self) -> Option<&Expression<Self>> {
         match self {
-            SsaMemoryReference::Deref(expr) => expr.collect_read_addresses(),
-            SsaMemoryReference::Versioned(_) => Vec::new(),
+            SsaMemoryReference::Deref(expr) => Some(expr),
+            SsaMemoryReference::Versioned(_) => None,
         }
     }
 }
@@ -65,10 +65,8 @@ pub struct PhiFunction {
     /// Map describing the sources for this Phi function's value.
     /// The key is the v3 PredecessorKind corresponding to the incoming edge, but with SsaMemoryReference.
     /// The value is the VersionedMemoryReference representing the value coming from that source.
-    pub inputs: HashMap<
-        disasm::v3::cfg::PredecessorKind<SsaMemoryReference>,
-        VersionedMemoryReference,
-    >,
+    pub inputs:
+        HashMap<disasm::v3::cfg::PredecessorKind<SsaMemoryReference>, VersionedMemoryReference>,
 }
 
 /// Represents a function in SSA form
@@ -731,16 +729,18 @@ impl<'a> SSAConversionState<'a> {
             match &ssa_block_next {
                 disasm::v3::cfg::NextKind::Follows(target_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_id) {
-                        successor_block.predecessors.push(
-                            disasm::v3::cfg::PredecessorKind::FollowsFrom(block_id),
-                        ); // Use block_id directly
+                        successor_block
+                            .predecessors
+                            .push(disasm::v3::cfg::PredecessorKind::FollowsFrom(block_id));
+                        // Use block_id directly
                     }
                 }
                 disasm::v3::cfg::NextKind::Goto(target_block_id) => {
                     if let Some(successor_block) = ssa_blocks.get_mut(target_block_id) {
-                        successor_block.predecessors.push(
-                            disasm::v3::cfg::PredecessorKind::GotoFrom(block_id),
-                        ); // Use block_id directly
+                        successor_block
+                            .predecessors
+                            .push(disasm::v3::cfg::PredecessorKind::GotoFrom(block_id));
+                        // Use block_id directly
                     }
                 }
                 disasm::v3::cfg::NextKind::FunctionCall(call) => {
@@ -755,16 +755,12 @@ impl<'a> SSAConversionState<'a> {
                     // 'cond' is already v3::Condition<SsaMemoryReference>
                     if let Some(target_block) = ssa_blocks.get_mut(&cond.target_block) {
                         target_block.predecessors.push(
-                            disasm::v3::cfg::PredecessorKind::ConditionalJump(
-                                cond.clone(),
-                            ),
+                            disasm::v3::cfg::PredecessorKind::ConditionalJump(cond.clone()),
                         );
                     }
                     if let Some(follows_block) = ssa_blocks.get_mut(&cond.follows_block) {
                         follows_block.predecessors.push(
-                            disasm::v3::cfg::PredecessorKind::ConditionalFollow(
-                                cond.clone(),
-                            ),
+                            disasm::v3::cfg::PredecessorKind::ConditionalFollow(cond.clone()),
                         );
                     }
                 }

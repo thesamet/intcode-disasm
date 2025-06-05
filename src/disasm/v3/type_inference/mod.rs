@@ -12,8 +12,8 @@ pub use constraints::{Constraint, ConstraintReason};
 pub use result::TypeInferenceResult;
 pub use solver::Solver;
 pub use type_bounds_map::{InferenceAlgorithmState, TypeVarState};
-pub use types::ExpressionPathElement;
 pub use types::Type;
+pub use types::{ExpressionPath, ExpressionPathElement};
 pub use types::{TypeVarId, TypeVarPath};
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use crate::disasm::v3::lir::{
     Expression,
     InstructionNode,
     MemoryReference,
-    ReadAddressExtractor, // Use LIR types
+    ReadExpressionExtractor, // Use LIR types
 };
 use crate::disasm::v3::model::{Model, ModelState};
 use crate::disasm::v3::InstructionId;
@@ -89,7 +89,7 @@ where
 
 impl<T> NextKind<T>
 where
-    T: Clone + PartialEq + Eq + std::hash::Hash + ReadAddressExtractor,
+    T: Clone + PartialEq + Eq + std::hash::Hash + ReadExpressionExtractor,
 {
     pub fn map<F, S>(&self, map: &mut F) -> NextKind<S>
     where

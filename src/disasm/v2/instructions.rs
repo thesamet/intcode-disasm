@@ -1,7 +1,7 @@
 // Forward all definitions to the v3 LIR module
 pub use crate::disasm::v3::lir::{
     BinaryOperator, Expression, Instruction, InstructionNode, MemoryReference, MemoryReferenceInfo,
-    ReadAddressExtractor, UnaryOperator,
+    ReadExpressionExtractor, UnaryOperator,
 };
 
 // Forward relevant ID types from v3

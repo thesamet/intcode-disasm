@@ -540,7 +540,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                         inner_ptr_expr,
                         function_id,
                         instruction_id,
-                        path.extending_path(ExpressionPathElement::Deref),
+                        path.extending_path_element(ExpressionPathElement::Deref),
                     );
 
                     let pointee_tv_id = self.result.state.make_expression_type_var(path);
@@ -565,13 +565,13 @@ impl<'a> TypeConstraintGenerator<'a> {
                     lhs,
                     function_id,
                     instruction_id,
-                    path.extending_path(ExpressionPathElement::BinaryLeft),
+                    path.extending_path_element(ExpressionPathElement::BinaryLeft),
                 ));
                 let rhs_type = Type::TypeVar(self.process_expression(
                     rhs,
                     function_id,
                     instruction_id,
-                    path.extending_path(ExpressionPathElement::BinaryRight),
+                    path.extending_path_element(ExpressionPathElement::BinaryRight),
                 ));
                 let result_tv_id = self.result.state.make_expression_type_var(path);
                 let result_type = Type::TypeVar(result_tv_id);
@@ -692,7 +692,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     arg,
                     function_id,
                     instruction_id,
-                    path.extending_path(ExpressionPathElement::Unary),
+                    path.extending_path_element(ExpressionPathElement::Unary),
                 );
                 let result_tv_id = self.result.state.make_expression_type_var(path);
                 let result_type = Type::TypeVar(result_tv_id);

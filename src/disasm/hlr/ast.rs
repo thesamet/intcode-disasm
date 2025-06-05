@@ -1,4 +1,17 @@
+use std::collections::HashMap;
 use std::fmt::Display;
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VariableId(usize);
+
+impl VariableId {
+    pub fn fresh() -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        VariableId(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Scope {
@@ -11,6 +24,16 @@ pub struct HlrVariable {
     pub name: String,
     pub type_info: Type,
     pub scope: Scope,
+}
+
+impl HlrVariable {
+    pub fn new(name: String, type_info: Type) -> Self {
+        Self {
+            name,
+            type_info,
+            scope: Scope::Local,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -45,10 +68,12 @@ pub enum HlrStatement {
     Nop,
 }
 
+pub type HlrGlobals = HashMap<usize, (HlrVariable, String)>;
+
 #[derive(Debug, Clone)]
 pub struct HlrProgram {
     pub functions: Vec<HlrFunction>,
-    pub globals: Vec<HlrVariable>,
+    pub globals: HlrGlobals,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -532,7 +557,7 @@ pub mod test_utils {
     pub fn hlr_program(functions: Vec<HlrFunction>) -> HlrProgram {
         HlrProgram {
             functions,
-            globals: vec![],
+            globals: HlrGlobals::new(),
         }
     }
 

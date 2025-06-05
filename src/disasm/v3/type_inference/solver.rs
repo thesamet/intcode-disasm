@@ -285,6 +285,10 @@ impl CompoundTypeRefiner {
                     let refined_type = pattern.clone().into_type();
                     let convergence_type = strategy.convergence_type();
 
+                    // We want tv_id to depend on the various type_vars that came from the pattern.
+                    // This way when the new refined vars converge, we will have tv_id updated. That is
+                    // it would change from Pointer<ty863> to Pointer<Char> when ty863 converges to Char.
+                    state.add_dependency(tv_id, &refined_type);
                     state.converge(tv_id, refined_type, convergence_type);
 
                     // Handle special post-convergence logic

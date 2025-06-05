@@ -357,7 +357,7 @@ impl InferenceAlgorithmState {
     ///
     /// Note: the dependents map stores the reverse mapping: from a type variable to the set of type
     /// variables that depend on it.
-    fn add_dependency(&mut self, u: &TypeVarId, v: &Type) {
+    pub fn add_dependency(&mut self, u: &TypeVarId, v: &Type) {
         // Iterate through all type variables involved in `v` and add `u` as a dependent.
         for dep_tv_id in v.involved_type_vars() {
             self.dependents.entry(dep_tv_id).or_default().insert(*u);

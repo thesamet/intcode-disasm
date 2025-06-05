@@ -3,20 +3,27 @@ use std::collections::{HashMap, HashSet};
 use dsl_macros_impl::build_expr;
 use itertools::Itertools;
 use log::trace;
+use petgraph::data::Element;
 use petgraph::visit::{depth_first_search, Control, IntoNeighbors};
 
 use crate::disasm::hlr::ast::{
-    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrProgram, HlrStatement,
-    HlrVariable, Scope,
+    BinaryOperator, HlrAssignmentTarget, HlrExpression, HlrFunction, HlrGlobals, HlrProgram,
+    HlrStatement, HlrVariable, Scope, UnaryOperator,
 };
 use crate::disasm::v3::cfg::{BlockView, FunctionView};
-use crate::disasm::v3::lir::{Expression, Instruction};
+use crate::disasm::v3::lir::expression::ExpressionPathVisitor;
+use crate::disasm::v3::lir::{
+    BinaryOperator as LirBinaryOperator, Expression, Instruction, UnaryOperator as LirUnaryOperator,
+};
 use crate::disasm::v3::model::{HlrConstructionComplete, Model, VariableMergerComplete};
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
-use crate::disasm::v3::type_inference::{ExpressionPathElement, Type, TypeVarPath};
+use crate::disasm::v3::type_inference::{
+    ExpressionPath, ExpressionPathElement, Type, TypeInferenceResult, TypeVarPath,
+};
+use crate::disasm::v3::variable_analyzer::ClusterId;
 use crate::disasm::v3::{BlockId, FunctionId, InstructionId, NextKind};
-use crate::disasm::{Error, SymbolRenaming};
+use crate::disasm::{Error, PathVisitor, SymbolRenaming};
 
 type Function<'a> = FunctionView<'a, VariableMergerComplete>;
 
@@ -54,6 +61,273 @@ pub struct ControlFlowStructureAnalyzer<'a> {
     symbol_renaming: &'a SymbolRenaming,
 }
 
+struct GlobalVariableDiscovery<'a> {
+    globals: HlrGlobals,
+    symbol_renaming: &'a SymbolRenaming,
+    model: &'a Model<VariableMergerComplete>,
+}
+
+impl<'a> GlobalVariableDiscovery<'a> {
+    fn new(symbol_renaming: &'a SymbolRenaming, model: &'a Model<VariableMergerComplete>) -> Self {
+        Self {
+            globals: HlrGlobals::new(),
+            symbol_renaming,
+            model,
+        }
+    }
+
+    fn run(&mut self, expr: &Expression<SsaMemoryReference>, path: &TypeVarPath) {}
+
+    fn get_globals(self) -> HlrGlobals {
+        self.globals
+    }
+}
+
+// Helper struct for converting LIR Expression to HLR Expression using the Visitor pattern
+struct HlrExpressionConverter<'a> {
+    analyzer: &'a ControlFlowStructureAnalyzer<'a>,
+    base_type_var_path: TypeVarPath,
+}
+
+impl<'a> HlrExpressionConverter<'a> {
+    fn new(
+        analyzer: &'a ControlFlowStructureAnalyzer<'a>,
+        base_type_var_path: TypeVarPath,
+    ) -> Self {
+        Self {
+            analyzer,
+            base_type_var_path,
+        }
+    }
+}
+
+impl<'a> ExpressionPathVisitor<SsaMemoryReference> for HlrExpressionConverter<'a> {
+    // pre_visit_* methods use default empty implementations from the trait
+
+    /*
+    fn post_visit_constant(&mut self, value: i128, path: &TypeVarPath) -> HlrExpression {
+        // Type for Constant is derived from its path
+        let tv_id = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_id_for_path(path);
+        let typ = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_for_id(tv_id);
+        self.analyzer.const_to_hlr(value, typ)
+    }
+
+    fn post_visit_addressable(
+        &mut self,
+        addressable: &SsaMemoryReference,
+        path: &TypeVarPath, // Path of the Expression::Addressable node
+    ) -> HlrExpression {
+        match addressable {
+            SsaMemoryReference::Versioned(vmr) => {
+                // The type of a VMR is inherently tied to the VMR itself,
+                // not necessarily the path of the Expression::Addressable node.
+                HlrExpression::Variable(self.analyzer.hlr_var(vmr))
+            }
+            SsaMemoryReference::Deref(inner_expr_box) => {
+                // The path for the inner expression being dereferenced.
+                // This path construction is consistent with the original recursive call.
+                let inner_expr_actual_path = path.extending_path(ExpressionPathElement::Deref);
+                // Recursively walk the inner expression using the same visitor instance.
+                let inner_hlr = inner_expr_box.walk(self, &inner_expr_actual_path);
+                HlrExpression::Deref(Box::new(inner_hlr))
+            }
+        }
+    }
+
+    fn post_visit_binary(
+        &mut self,
+        op: &LirBinaryOperator, // LirBinaryOperator is the original LIR Binary operator
+        lhs_result: HlrExpression, // Already converted HLR of LHS
+        rhs_result: HlrExpression, // Already converted HLR of RHS
+        path: &TypeVarPath,     // Path of the Expression::Binary node
+    ) -> HlrExpression {
+        // Type for the result of a Binary operation is derived from its path
+        let tv_id = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_id_for_path(path);
+        let result_type = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_for_id(tv_id);
+
+        let hlr_op = match op {
+            LirBinaryOperator::Add => BinaryOperator::Add,
+            LirBinaryOperator::Mul => BinaryOperator::Mul,
+            LirBinaryOperator::Sub => BinaryOperator::Sub,
+            LirBinaryOperator::LessThan => BinaryOperator::LessThan,
+            LirBinaryOperator::LessThanOrEqual => BinaryOperator::LessThanOrEqual,
+            LirBinaryOperator::GreaterThan => BinaryOperator::GreaterThan,
+            LirBinaryOperator::GreaterThanOrEqual => BinaryOperator::GreaterThanOrEqual,
+            LirBinaryOperator::Equals => BinaryOperator::Equals,
+            LirBinaryOperator::NotEquals => BinaryOperator::NotEquals,
+        };
+
+        HlrExpression::BinaryOp {
+            op: hlr_op,
+            left: Box::new(lhs_result),
+            right: Box::new(rhs_result),
+            result_type,
+        }
+    }
+
+    fn post_visit_unary(
+        &mut self,
+        op: &LirUnaryOperator,
+        arg_result: HlrExpression, // Already converted HLR of the argument
+        _path: &TypeVarPath, // Path of the Expression::Unary node (type not typically stored in Hlr UnaryOp)
+    ) -> HlrExpression {
+        let hlr_op = match op {
+            LirUnaryOperator::Not => UnaryOperator::LogicalNot,
+            LirUnaryOperator::Minus => UnaryOperator::Minus,
+        };
+        HlrExpression::UnaryOperator {
+            op: hlr_op,
+            expr: Box::new(arg_result),
+        }
+    }
+
+    fn post_visit_input(&mut self, _path: &TypeVarPath) -> HlrExpression {
+        HlrExpression::Input()
+    }
+
+    fn post_visit_debug_marker(
+        &mut self,
+        _marker: &char,
+        expr_result: HlrExpression, // Already converted HLR of the inner expression
+        _path: &TypeVarPath,
+    ) -> HlrExpression {
+        // Effectively unwraps the marker, returning the HLR of the inner expression
+        expr_result
+    }
+    */
+
+    fn visit_constant(
+        &mut self,
+        path: &ExpressionPath,
+        value: i128,
+    ) -> Result<Self::Return, Self::Error> {
+        // Type for Constant is derived from its path
+        let tv_id = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_id_for_path(&self.base_type_var_path.extending_path(path));
+        let typ = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_for_id(tv_id);
+        Ok(self.analyzer.const_to_hlr(value, typ))
+    }
+
+    fn visit_addressable(
+        &mut self,
+        path: &crate::disasm::v3::type_inference::ExpressionPath,
+        addressable: &SsaMemoryReference,
+        deref_expr: Option<Self::Return>,
+    ) -> Result<Self::Return, Self::Error> {
+        match addressable {
+            SsaMemoryReference::Versioned(vmr) => {
+                // The type of a VMR is inherently tied to the VMR itself,
+                // not necessarily the path of the Expression::Addressable node.
+                Ok(HlrExpression::Variable(self.analyzer.hlr_var(vmr)))
+            }
+            SsaMemoryReference::Deref(_) => Ok(HlrExpression::Deref(Box::new(deref_expr.unwrap()))),
+        }
+    }
+
+    fn visit_binary(
+        &mut self,
+        path: &crate::disasm::v3::type_inference::ExpressionPath,
+        op: LirBinaryOperator,
+        lhs: Self::Return,
+        rhs: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        // Type for the result of a Binary operation is derived from its path
+        let tv_id = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_id_for_path(&self.base_type_var_path.extending_path(path));
+        let result_type = self
+            .analyzer
+            .model
+            .type_inference_result()
+            .get_type_for_id(tv_id);
+
+        let hlr_op = match op {
+            LirBinaryOperator::Add => BinaryOperator::Add,
+            LirBinaryOperator::Mul => BinaryOperator::Mul,
+            LirBinaryOperator::Sub => BinaryOperator::Sub,
+            LirBinaryOperator::LessThan => BinaryOperator::LessThan,
+            LirBinaryOperator::LessThanOrEqual => BinaryOperator::LessThanOrEqual,
+            LirBinaryOperator::GreaterThan => BinaryOperator::GreaterThan,
+            LirBinaryOperator::GreaterThanOrEqual => BinaryOperator::GreaterThanOrEqual,
+            LirBinaryOperator::Equals => BinaryOperator::Equals,
+            LirBinaryOperator::NotEquals => BinaryOperator::NotEquals,
+        };
+
+        Ok(HlrExpression::BinaryOp {
+            op: hlr_op,
+            left: Box::new(lhs),
+            right: Box::new(rhs),
+            result_type,
+        })
+    }
+
+    fn visit_unary(
+        &mut self,
+        _path: &ExpressionPath,
+        op: LirUnaryOperator,
+        arg: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        let hlr_op = match op {
+            LirUnaryOperator::Not => UnaryOperator::LogicalNot,
+            LirUnaryOperator::Minus => UnaryOperator::Minus,
+        };
+        Ok(HlrExpression::UnaryOperator {
+            op: hlr_op,
+            expr: Box::new(arg),
+        })
+    }
+
+    fn visit_input(
+        &mut self,
+        _path: &crate::disasm::v3::type_inference::ExpressionPath,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(HlrExpression::Input())
+    }
+
+    fn visit_debug_marker(
+        &mut self,
+        _path: &crate::disasm::v3::type_inference::ExpressionPath,
+        _marker: char,
+        expr: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        // Effectively unwraps the marker, returning the HLR of the inner expression
+        Ok(expr)
+    }
+
+    type Return = HlrExpression;
+
+    type Error = Error;
+
+    fn default_return(&mut self) -> Self::Return {
+        todo!()
+    }
+}
+
 impl<'a> ControlFlowStructureAnalyzer<'a> {
     fn new(model: Model<VariableMergerComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
         Self {
@@ -69,10 +343,21 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         ControlFlowStructureAnalyzer::new(model, symbol_renaming).recover_structures()
     }
 
+    pub fn extract_global_variables(&self) {
+        let global_var_discovery = GlobalVariableDiscovery::new(self.symbol_renaming, &self.model);
+        for (_, func) in self.model.functions() {
+            for (_, block) in func.blocks() {
+                for instr in &block.folded_ssa().instructions {}
+            }
+        }
+    }
+
     /// Recovers high-level control flow structures for the entire program.
     fn recover_structures(self) -> Result<Model<HlrConstructionComplete>, Error> {
         let mut hlr_functions = Vec::new();
-        let globals = Vec::new();
+        let mut globals = HlrGlobals::new();
+
+        self.extract_global_variables();
 
         // Process each function in the program
         for (_, func) in self.model.functions() {
@@ -446,6 +731,10 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
     }
 
     fn hlr_var(&self, var: &VersionedMemoryReference) -> HlrVariable {
+        self.hlr_var_with_cluster_id(var).0
+    }
+
+    fn hlr_var_with_cluster_id(&self, var: &VersionedMemoryReference) -> (HlrVariable, ClusterId) {
         let vars = self.model.variable_merger_result();
         let cluster_id = vars
             .variable_to_cluster
@@ -454,14 +743,17 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         let cluster = &vars.clusters[cluster_id];
         let name = cluster.cluster_name.clone();
         let typ = self.var_type(var);
-        HlrVariable {
-            name,
-            type_info: typ,
-            scope: match var.kind {
-                VersionableMemoryKind::Memory(_) => Scope::Global,
-                _ => Scope::Local,
+        (
+            HlrVariable {
+                name,
+                type_info: typ,
+                scope: match var.kind {
+                    VersionableMemoryKind::Memory(_) => Scope::Global,
+                    _ => Scope::Local,
+                },
             },
-        }
+            *cluster_id,
+        )
     }
 
     fn expr_to_hlr(
@@ -469,80 +761,8 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         expr: &Expression<SsaMemoryReference>,
         path: TypeVarPath,
     ) -> HlrExpression {
-        let tv_id = match expr {
-            // VMRs have unique type var ids. If this VMR was first used outside this expression, it's not associated with this path.
-            Expression::Addressable(SsaMemoryReference::Versioned(vmr)) => {
-                self.model.type_inference_result().get_type_id_for_vmr(vmr)
-            }
-            _ => self
-                .model
-                .type_inference_result()
-                .get_type_id_for_path(&path),
-        };
-        let typ = self.model.type_inference_result().get_type_for_id(tv_id);
-
-        match expr {
-            Expression::Constant(c) => {
-                let function_id = FunctionId::new(*c as usize);
-                if typ.is_function() {
-                    let name = self
-                        .symbol_renaming
-                        .get_function_name(function_id)
-                        .cloned()
-                        .unwrap_or_else(|| format!("{}", function_id));
-                    HlrExpression::StaticFunctionReference(name)
-                } else {
-                    self.const_to_hlr(*c, typ)
-                }
-            }
-            Expression::Addressable(a) => match a {
-                SsaMemoryReference::Versioned(a) => HlrExpression::Variable(self.hlr_var(a)),
-                SsaMemoryReference::Deref(a) => HlrExpression::Deref(Box::new(
-                    self.expr_to_hlr(a, path.extending_path(ExpressionPathElement::Deref)),
-                )),
-            },
-            Expression::Binary { op, lhs, rhs } => HlrExpression::BinaryOp {
-                op: match op {
-                    crate::disasm::v3::lir::BinaryOperator::Add => BinaryOperator::Add,
-                    crate::disasm::v3::lir::BinaryOperator::Mul => BinaryOperator::Mul,
-                    crate::disasm::v3::lir::BinaryOperator::Sub => BinaryOperator::Sub,
-                    crate::disasm::v3::lir::BinaryOperator::LessThan => BinaryOperator::LessThan,
-                    crate::disasm::v3::lir::BinaryOperator::LessThanOrEqual => {
-                        BinaryOperator::LessThanOrEqual
-                    }
-                    crate::disasm::v3::lir::BinaryOperator::GreaterThan => {
-                        BinaryOperator::GreaterThan
-                    }
-                    crate::disasm::v3::lir::BinaryOperator::GreaterThanOrEqual => {
-                        BinaryOperator::GreaterThanOrEqual
-                    }
-                    crate::disasm::v3::lir::BinaryOperator::Equals => BinaryOperator::Equals,
-                    crate::disasm::v3::lir::BinaryOperator::NotEquals => BinaryOperator::NotEquals,
-                },
-                left: Box::new(
-                    self.expr_to_hlr(lhs, path.extending_path(ExpressionPathElement::BinaryLeft)),
-                ),
-                right: Box::new(
-                    self.expr_to_hlr(rhs, path.extending_path(ExpressionPathElement::BinaryRight)),
-                ),
-                result_type: typ,
-            },
-            Expression::Unary { op, arg } => HlrExpression::UnaryOperator {
-                op: match op {
-                    crate::disasm::v3::lir::UnaryOperator::Not => {
-                        crate::disasm::hlr::ast::UnaryOperator::LogicalNot
-                    }
-                    crate::disasm::v3::lir::UnaryOperator::Minus => {
-                        crate::disasm::hlr::ast::UnaryOperator::Minus
-                    }
-                },
-                expr: Box::new(
-                    self.expr_to_hlr(arg, path.extending_path(ExpressionPathElement::Unary)),
-                ),
-            },
-            Expression::Input() => HlrExpression::Input(),
-            Expression::DebugMarker(_, e) => self.expr_to_hlr(e, path),
-        }
+        let mut converter = HlrExpressionConverter::new(self, path);
+        expr.visit(&mut converter, &ExpressionPath::root()).unwrap()
     }
 
     fn var_type(&self, var: &VersionedMemoryReference) -> Type {
@@ -638,6 +858,15 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         } else {
             c as usize
         };
+        if typ.is_function() {
+            let function_id = FunctionId::new(addr);
+            let name = self
+                .symbol_renaming
+                .get_function_name(function_id)
+                .cloned()
+                .unwrap_or_else(|| format!("{}", function_id));
+            return HlrExpression::StaticFunctionReference(name);
+        }
         if let Some(Type::CustomType(ct_id)) = typ.as_pointer() {
             let ct_name = self.symbol_renaming.get_custom_type(*ct_id).unwrap();
             let image = &self.model.image_scanner_result().image;
@@ -647,11 +876,14 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
                 .enumerate()
                 .map(|(i, &x)| (x as i128 + len as i128 + i as i128) as u8 as char)
                 .collect();
-            println!("Found string: {}", r.escape_default());
+            println!("Found string at {addr}: {}", r.escape_default());
 
-            HlrExpression::StaticCustomType(*ct_id, format!("{}_{}", ct_name, addr), c as usize)
-        } else {
-            HlrExpression::Constant(c, typ)
+            return HlrExpression::StaticCustomType(
+                *ct_id,
+                format!("{}_{}", ct_name, addr),
+                c as usize,
+            );
         }
+        HlrExpression::Constant(c, typ)
     }
 }

@@ -558,6 +558,12 @@ impl ExpressionPath {
         new_path
     }
 
+    pub fn concat(&self, other: &ExpressionPath) -> Self {
+        let mut new_path = self.clone();
+        new_path.0.extend(other.0.clone());
+        new_path
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -1050,13 +1056,21 @@ impl TypeVarPath {
         }
     }
 
-    pub fn extending_path(&self, element: ExpressionPathElement) -> TypeVarPath {
+    pub fn extending_path_element(&self, element: ExpressionPathElement) -> TypeVarPath {
         self.with_expression_path(
             self.expression_path()
                 .unwrap_or_else(|| {
                     panic!("Cannot extend path for {:?} / element {:?}", self, element)
                 })
                 .extending(element),
+        )
+    }
+
+    pub fn extending_path(&self, path: &ExpressionPath) -> TypeVarPath {
+        self.with_expression_path(
+            self.expression_path()
+                .unwrap_or_else(|| panic!("Cannot extend path for {:?} / path {:?}", self, path))
+                .concat(path),
         )
     }
 

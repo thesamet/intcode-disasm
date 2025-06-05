@@ -4,9 +4,11 @@ use std::fmt::Display;
 use dsl_macros_impl::match_dsl;
 
 use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::v3::type_inference::{ExpressionPath, ExpressionPathElement, TypeVarPath};
+use crate::disasm::visitor::{PathVisitable, PathVisitor};
 use crate::macros::build_expr;
 
-use super::ReadAddressExtractor;
+use super::ReadExpressionExtractor;
 
 /// Represents a low-level expression that can be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -35,8 +37,101 @@ pub enum Expression<A> {
     DebugMarker(char, Box<Expression<A>>),
 }
 
+#[allow(unused_variables)]
+pub trait ExpressionPathVisitor<A: ReadExpressionExtractor> {
+    type Return;
+    type Error;
+
+    fn default_return(&mut self) -> Self::Return;
+
+    fn visit_constant(
+        &mut self,
+        path: &ExpressionPath,
+        value: i128,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
+
+    fn visit_addressable(
+        &mut self,
+        path: &ExpressionPath,
+        addressable: &A,
+        deref_expr: Option<Self::Return>,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
+
+    fn visit_binary(
+        &mut self,
+        path: &ExpressionPath,
+        op: BinaryOperator,
+        lhs: Self::Return,
+        rhs: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
+
+    fn visit_unary(
+        &mut self,
+        path: &ExpressionPath,
+        op: UnaryOperator,
+        arg: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
+
+    fn visit_input(&mut self, path: &ExpressionPath) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
+
+    fn visit_debug_marker(
+        &mut self,
+        path: &ExpressionPath,
+        marker: char,
+        expr: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
+}
+
 impl<A> Expression<A> {
-    /// Collects all memory references that this expression reads from.
+    pub fn visit<V: ExpressionPathVisitor<A>>(
+        &self,
+        visitor: &mut V,
+        path: &ExpressionPath,
+    ) -> Result<V::Return, V::Error>
+    where
+        A: ReadExpressionExtractor,
+    {
+        match self {
+            Expression::Constant(c) => visitor.visit_constant(path, *c),
+            Expression::Addressable(a) => {
+                let deref_expr_res: Option<V::Return> = a
+                    .extract_read_expressions()
+                    .map(|deref_expr| {
+                        deref_expr.visit(visitor, &path.extending(ExpressionPathElement::Deref))
+                    })
+                    .transpose()?;
+                visitor.visit_addressable(path, a, deref_expr_res)
+            }
+            Expression::Binary { op, lhs, rhs } => {
+                let lhs = lhs.visit(visitor, &path.extending(ExpressionPathElement::BinaryLeft))?;
+                let rhs =
+                    rhs.visit(visitor, &path.extending(ExpressionPathElement::BinaryRight))?;
+                visitor.visit_binary(path, *op, lhs, rhs)
+            }
+            Expression::Unary { op, arg } => {
+                let arg = arg.visit(visitor, &path.extending(ExpressionPathElement::Unary))?;
+                visitor.visit_unary(path, *op, arg)
+            }
+            Expression::Input() => visitor.visit_input(path),
+            Expression::DebugMarker(marker, expr) => {
+                let expr = expr.visit(visitor, path)?;
+                visitor.visit_debug_marker(path, *marker, expr)
+            }
+        }
+    }
+
     ///
     /// This method recursively traverses the expression tree to find all memory
     /// references that are read during evaluation. It's a key component of data flow
@@ -54,7 +149,7 @@ impl<A> Expression<A> {
     /// ```
     pub fn collect_read_addresses(&self) -> Vec<&A>
     where
-        A: ReadAddressExtractor,
+        A: ReadExpressionExtractor,
     {
         let mut out = vec![];
         let mut queue = vec![self];

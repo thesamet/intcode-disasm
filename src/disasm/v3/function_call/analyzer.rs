@@ -8,7 +8,10 @@ use crate::disasm::{
         cfg::FunctionView,
         data_flow::OriginationPoint,
         function_call::result::{CallSiteInfo, CalleeInfo},
-        lir::{memory_reference::MemoryReferenceInfo, Expression, MemoryReference, ReadAddressExtractor},
+        lir::{
+            memory_reference::MemoryReferenceInfo, Expression, MemoryReference,
+            ReadExpressionExtractor,
+        },
         model::{FunctionCallAnalysisComplete, Model, SsaComplete},
         ssa::{types::VersionableMemoryKind, SsaMemoryReference, VersionedMemoryReference},
         FunctionId, InstructionId, NextKind,

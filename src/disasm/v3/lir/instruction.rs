@@ -1,4 +1,6 @@
-use super::{expression::Expression, memory_reference::ReadAddressExtractor};
+use itertools::Itertools;
+
+use super::{expression::Expression, memory_reference::ReadExpressionExtractor};
 use crate::disasm::v3::id_types::{BlockId, InstructionId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +86,7 @@ impl<A> Instruction<A> {
     }
 }
 
-impl<A: ReadAddressExtractor> Instruction<A> {
+impl<A: ReadExpressionExtractor> Instruction<A> {
     /// Collects all memory references that this instruction reads from.
     ///
     /// This method is essential for data flow analysis as it identifies all memory
@@ -99,16 +101,19 @@ impl<A: ReadAddressExtractor> Instruction<A> {
     /// # Returns
     /// A vector of references to all memory locations read by this instruction.
     pub fn collect_read_addresses(&self) -> Vec<&A> {
-        // Start with reads from the write target (if any)
-        // This is crucial for cases like *ptr = value where ptr is read
+        self.collect_all_expressions()
+            .into_iter()
+            .flat_map(|e| e.collect_read_addresses())
+            .collect()
+    }
+
+    pub fn collect_all_expressions(&self) -> Vec<&Expression<A>> {
         let mut reads = self
             .get_write_address()
-            .map_or(vec![], |a| a.extract_read_addresses());
-        reads.extend(
-            self.collect_source_expressions()
-                .iter()
-                .flat_map(|e| e.collect_read_addresses()),
-        );
+            .and_then(|a| a.extract_read_expressions())
+            .into_iter()
+            .collect_vec();
+        reads.extend(self.collect_source_expressions());
         reads
     }
 }
