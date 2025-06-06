@@ -184,16 +184,29 @@ impl SymbolRenaming {
 
                         let resolved_fields: Vec<StructField> = parsed_fields_str
                             .into_iter()
-                            .map(|(field_name, field_type_str)| {
-                                match parse_type(&field_type_str, &symbol_renaming.custom_types) {
-                                    Ok((_, parsed_field_type)) => Ok(StructField {
-                                        name: field_name,
-                                        typ: parsed_field_type,
-                                    }),
-                                    Err(e) => Err(format!(
-                                        "Failed to parse type '{}' for field '{}' in struct '{}': {}",
-                                        field_type_str, field_name, struct_def_name, e
-                                    )),
+                            .map(|(field_name, opt_field_type_str)| { // opt_field_type_str is Option<String>
+                                match opt_field_type_str {
+                                    Some(field_type_str) => { // If type string is Some, parse it
+                                        match parse_type(&field_type_str, &symbol_renaming.custom_types)
+                                        {
+                                            Ok((_remaining_input, parsed_field_type)) => {
+                                                Ok(StructField {
+                                                    name: field_name,
+                                                    typ: Some(parsed_field_type), // Store as Some(Type)
+                                                })
+                                            }
+                                            Err(e) => Err(format!(
+                                                "Failed to parse type '{}' for field '{}' in struct '{}': {}",
+                                                field_type_str, field_name, struct_name_key, e
+                                            )),
+                                        }
+                                    }
+                                    None => { // If type string is None, store type as None
+                                        Ok(StructField {
+                                            name: field_name,
+                                            typ: None, // Store as None
+                                        })
+                                    }
                                 }
                             })
                             .collect::<Result<Vec<StructField>, String>>()?;
@@ -208,7 +221,7 @@ impl SymbolRenaming {
                     }
                 },
                 Err(err) => {
-                    return Err(format!("Failed to parse line: {}\\nError: {}", line, err));
+                    return Err(format!("Failed to parse line: {}\nError: {}", line, err));
                 }
             }
         }
@@ -326,7 +339,7 @@ enum SymbolRenamingLine {
     Variable(VersionedMemoryReference, String, Option<String>),
     CustomType(String),
     Global(usize, String, Option<String>),
-    Struct(String, Vec<(String, String)>),
+    Struct(String, Vec<(String, Option<String>)>), // Struct Name, Vec<(Field Name, Option<Field Type String>)>
 }
 
 //
@@ -416,7 +429,8 @@ impl SymbolRenamingLine {
                             (space0, tag(","), space0), // Add space0 around comma for fields
                             (
                                 preceded(space0, parse_identifier), // Field name, consume leading space
-                                preceded((space0, tag(":"), space0), parse_type_as_str), // Field type (already good)
+                                // Field type is now optional
+                                opt(preceded((space0, tag(":"), space0), parse_type_as_str)),
                             ),
                         ),
                         preceded(space0, tag("}")), // Add space0 before }
@@ -861,7 +875,7 @@ mod tests {
             parsed_line,
             SymbolRenamingLine::Struct(
                 "MyStruct".to_string(),
-                vec![("field1".to_string(), "Int".to_string())]
+                vec![("field1".to_string(), Some("Int".to_string()))]
             )
         );
     }
@@ -877,9 +891,9 @@ mod tests {
             SymbolRenamingLine::Struct(
                 "GameThing".to_string(),
                 vec![
-                    ("a".to_string(), "Int".to_string()),
-                    ("b".to_string(), "Pointer<Int>".to_string()),
-                    ("c".to_string(), "CustomType1".to_string())
+                    ("a".to_string(), Some("Int".to_string())),
+                    ("b".to_string(), Some("Pointer<Int>".to_string())),
+                    ("c".to_string(), Some("CustomType1".to_string()))
                 ]
             )
         );
@@ -909,11 +923,11 @@ mod tests {
             fields: vec![
                 StructField {
                     name: "x".to_string(),
-                    typ: Type::Int,
+                    typ: Some(Type::Int),
                 },
                 StructField {
                     name: "y".to_string(),
-                    typ: Type::Bool,
+                    typ: Some(Type::Bool),
                 },
             ],
         };
@@ -961,11 +975,11 @@ mod tests {
             fields: vec![
                 StructField {
                     name: "val".to_string(),
-                    typ: Type::CustomType(*custom_type_id),
+                    typ: Some(Type::CustomType(*custom_type_id)),
                 },
                 StructField {
                     name: "count".to_string(),
-                    typ: Type::Int,
+                    typ: Some(Type::Int),
                 },
             ],
         };

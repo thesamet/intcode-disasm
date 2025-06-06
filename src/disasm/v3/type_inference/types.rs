@@ -124,10 +124,10 @@ pub struct StructDef {
     pub fields: Vec<StructField>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StructField {
     pub name: String,
-    pub typ: Type,
+    pub typ: Option<Type>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
