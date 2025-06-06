@@ -13,8 +13,7 @@ pub use result::TypeInferenceResult;
 pub use solver::Solver;
 pub use type_bounds_map::{InferenceAlgorithmState, TypeVarState};
 pub use types::Type;
-pub use types::{ExpressionPath, ExpressionPathElement};
-pub use types::{TypeVarId, TypeVarPath};
+pub use types::TypeVarId;
 
 #[cfg(test)]
 mod type_inference_extra;

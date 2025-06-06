@@ -153,6 +153,7 @@ where
             HlrExpression::Input() => (),
             HlrExpression::StaticFunctionReference(_) => (),
             HlrExpression::StaticCustomType(..) => (),
+            HlrExpression::String(_) => (),
         }
     });
 }

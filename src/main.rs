@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand};
-use disasm::disasm::hlr;
 use disasm::disasm::repl;
 use disasm::disasm::v3::analysis::{self};
 use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, PrettyPrintConfig};

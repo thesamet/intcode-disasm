@@ -740,6 +740,7 @@ impl DslInstructionParse {
         quote! {
             #v3_path::lir::InstructionNode {
                 id: #v3_path::lir::InstructionId::new(0),
+                containing_function_id: #v3_path::FunctionId::new(0),
                 kind: #instruction_variant_tokens,
             }
         }

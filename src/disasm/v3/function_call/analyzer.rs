@@ -153,9 +153,9 @@ impl FunctionCallAnalyzer {
                             }
                             reads_in_instr.extend(
                                 instr
-                                    .kind
                                     .collect_source_expressions()
                                     .iter()
+                                    .map(|(_, expr)| expr)
                                     .flat_map(|expr| expr.collect_read_addresses()),
                             );
 
@@ -271,9 +271,9 @@ fn find_lowest_version_of(
             // Extract reads from source expressions
             reads_in_instr.extend(
                 instr_node
-                    .kind
                     .collect_source_expressions()
                     .iter()
+                    .map(|(_, expr)| expr)
                     .flat_map(|expr| expr.collect_read_addresses()),
             );
 

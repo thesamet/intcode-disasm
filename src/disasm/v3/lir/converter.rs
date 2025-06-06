@@ -10,6 +10,7 @@ use crate::disasm::v3::{
         instruction::{GenericNativeInstruction, NativeInstruction, NativeInstructionKind},
         operand::{Operand, OperandKind},
     },
+    FunctionId,
 };
 
 impl From<Operand> for Expression<MemoryReference> {
@@ -46,15 +47,22 @@ impl TryFrom<OperandKind> for MemoryReference {
 
 impl InstructionNode<MemoryReference> {
     /// Converts a block of native instructions into a block of low-level instructions.
-    pub fn convert_block<I>(native: I) -> Vec<InstructionNode<MemoryReference>>
+    pub fn convert_block<I>(
+        function_id: FunctionId,
+        native: I,
+    ) -> Vec<InstructionNode<MemoryReference>>
     where
         I: IntoIterator<Item = NativeInstruction>,
     {
         let mut iter = native.into_iter().peekable();
         let mut result = vec![];
         while let Some(native) = iter.next() {
-            let (skip, low) =
-                InstructionNode::from_native_instruction_pair(native, iter.peek(), &result);
+            let (skip, low) = InstructionNode::from_native_instruction_pair(
+                function_id,
+                native,
+                iter.peek(),
+                &result,
+            );
             result.extend(low);
             assert!(skip == 2 || skip == 1);
             if skip == 2 {
@@ -67,14 +75,18 @@ impl InstructionNode<MemoryReference> {
     /// Converts a native instruction into a low-level instruction.
     /// Returns the number of instructions consumed and the resulting low-level instruction(s).
     fn from_native_instruction_pair(
+        function_id: FunctionId,
         native: NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
         previous_instructions: &[InstructionNode<MemoryReference>],
     ) -> (usize, Option<InstructionNode<MemoryReference>>) {
         // Handle special cases that need to look at the next instruction
-        if let Some(result) =
-            Self::handle_special_instruction_pairs(&native, next_instruction, previous_instructions)
-        {
+        if let Some(result) = Self::handle_special_instruction_pairs(
+            function_id,
+            &native,
+            next_instruction,
+            previous_instructions,
+        ) {
             return result;
         }
 
@@ -123,6 +135,7 @@ impl InstructionNode<MemoryReference> {
         (
             1,
             Some(InstructionNode {
+                containing_function_id: function_id,
                 kind,
                 id: InstructionId::fresh(),
             }),
@@ -193,6 +206,7 @@ impl InstructionNode<MemoryReference> {
 
     /// Handles special cases where we need to look at pairs of instructions together
     fn handle_special_instruction_pairs(
+        function_id: FunctionId,
         native: &NativeInstruction,
         next_instruction: Option<&NativeInstruction>,
         previous_instructions: &[InstructionNode<MemoryReference>],
@@ -217,6 +231,7 @@ impl InstructionNode<MemoryReference> {
                         Some((
                             2,
                             Some(InstructionNode {
+                                containing_function_id: function_id,
                                 id: InstructionId::fresh(),
                                 kind: Instruction::Return,
                             }),
@@ -260,6 +275,7 @@ impl InstructionNode<MemoryReference> {
                                 return Some((
                                     2,
                                     Some(InstructionNode {
+                                        containing_function_id: function_id,
                                         kind: Instruction::Call {
                                             addr: (*func_addr).into(),
                                             args: collected_args

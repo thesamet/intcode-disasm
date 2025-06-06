@@ -165,7 +165,7 @@ pub trait ReadExpressionExtractor
 where
     Self: Sized,
 {
-    fn extract_read_expressions(&self) -> Option<&Expression<Self>>;
+    fn extract_read_expression(&self) -> Option<&Expression<Self>>;
 
     /// Extracts all memory references that are read when this value is used.
     ///
@@ -179,14 +179,14 @@ where
     where
         Self: Sized,
     {
-        self.extract_read_expressions()
+        self.extract_read_expression()
             .map(|expr| expr.collect_read_addresses())
             .unwrap_or_default()
     }
 }
 
 impl ReadExpressionExtractor for MemoryReference {
-    fn extract_read_expressions(&self) -> Option<&Expression<MemoryReference>> {
+    fn extract_read_expression(&self) -> Option<&Expression<MemoryReference>> {
         match self {
             // When dereferencing a pointer, we need to read the pointer expression
             MemoryReference::Deref(expr) => Some(expr),

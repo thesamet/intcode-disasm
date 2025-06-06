@@ -3,9 +3,8 @@ use std::fmt::Display;
 
 use dsl_macros_impl::match_dsl;
 
+use crate::disasm::v3::lir::{ExpressionPath, ExpressionPathElement};
 use crate::disasm::v3::ssa::SsaMemoryReference;
-use crate::disasm::v3::type_inference::{ExpressionPath, ExpressionPathElement, TypeVarPath};
-use crate::disasm::visitor::{PathVisitable, PathVisitor};
 use crate::macros::build_expr;
 
 use super::ReadExpressionExtractor;
@@ -107,7 +106,7 @@ impl<A> Expression<A> {
             Expression::Constant(c) => visitor.visit_constant(path, *c),
             Expression::Addressable(a) => {
                 let deref_expr_res: Option<V::Return> = a
-                    .extract_read_expressions()
+                    .extract_read_expression()
                     .map(|deref_expr| {
                         deref_expr.visit(visitor, &path.extending(ExpressionPathElement::Deref))
                     })

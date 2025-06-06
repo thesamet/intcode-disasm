@@ -37,6 +37,7 @@ pub struct SymbolRenaming {
     functions: HashMap<FunctionId, FunctionSymbol>,
     variable_names: HashMap<VersionedMemoryReference, (String, Option<Type>)>,
     custom_types: HashMap<CustomTypeId, String>,
+    globals: HashMap<usize, (String, Option<Type>)>,
 }
 
 impl Default for SymbolRenaming {
@@ -71,6 +72,7 @@ impl SymbolRenaming {
             functions: HashMap::new(),
             variable_names: HashMap::new(),
             custom_types: HashMap::new(),
+            globals: HashMap::new(),
         }
     }
 
@@ -91,6 +93,10 @@ impl SymbolRenaming {
         typ: Option<Type>,
     ) {
         self.variable_names.insert(*variable, (name, typ));
+    }
+
+    fn add_global(&mut self, addr: usize, name: String, typ: Option<Type>) {
+        self.globals.insert(addr, (name, typ));
     }
 
     pub fn get_variable_name(&self, variable: &VersionedMemoryReference) -> Option<&String> {
@@ -152,6 +158,16 @@ impl SymbolRenaming {
                         let custom_type_id = CustomTypeId::fresh();
                         symbol_renaming.custom_types.insert(custom_type_id, name);
                     }
+                    SymbolRenamingLine::Global(addr, name, type_opt) => {
+                        let ty = type_opt
+                            .map(|type_name| {
+                                parse_type(&type_name, &symbol_renaming.custom_types)
+                                    .map(|(_, parsed_type)| parsed_type)
+                                    .map_err(|e| e.to_string())
+                            })
+                            .transpose()?;
+                        symbol_renaming.add_global(addr, name, ty);
+                    }
                 },
                 Err(err) => {
                     return Err(format!("Failed to parse line: {}\nError: {}", line, err));
@@ -179,6 +195,10 @@ impl SymbolRenaming {
 
     pub fn get_custom_types(&self) -> &HashMap<CustomTypeId, String> {
         &self.custom_types
+    }
+
+    pub fn get_global(&self, addr: usize) -> Option<&String> {
+        self.globals.get(&addr).map(|(name, _)| name)
     }
 }
 
@@ -262,10 +282,12 @@ fn parse_identifier(input: &str) -> IResult<&str, String> {
 
     map(identifier, |s: &str| s.trim().to_string()).parse(input)
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SymbolRenamingLine {
     Function(FunctionId, String, Vec<(String, Option<String>)>),
     Variable(VersionedMemoryReference, String, Option<String>),
     CustomType(String),
+    Global(usize, String, Option<String>),
 }
 
 //
@@ -322,6 +344,20 @@ impl SymbolRenamingLine {
             map(
                 (tag("T"), space1, parse_identifier, space0),
                 |(_, _, name, _)| SymbolRenamingLine::CustomType(name),
+            ),
+            map(
+                (
+                    tag("G"),
+                    space1,
+                    parse_usize,
+                    space1,
+                    parse_identifier,
+                    opt(preceded(space1, parse_type_as_str)),
+                    space0,
+                ),
+                |(_, _, addr, _, name, type_opt, _)| {
+                    SymbolRenamingLine::Global(addr, name, type_opt)
+                },
             ),
         ))
         .parse(input)
@@ -622,6 +658,30 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_global_line() {
+        let line = "G 576 MyGlobal";
+        let result = SymbolRenamingLine::parse(line);
+        assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
+        let (_, parsed_line) = result.unwrap();
+        assert_eq!(
+            parsed_line,
+            SymbolRenamingLine::Global(576, "MyGlobal".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn test_parse_global_line_with_type() {
+        let line = "G 576 MyGlobal Int";
+        let result = SymbolRenamingLine::parse(line);
+        assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
+        let (_, parsed_line) = result.unwrap();
+        assert_eq!(
+            parsed_line,
+            SymbolRenamingLine::Global(576, "MyGlobal".to_string(), Some("Int".to_string()))
+        );
+    }
+
+    #[test]
     fn test_from_lines_with_custom_type() {
         let input = "T MyCustomType";
         let result = SymbolRenaming::from_lines(input);
@@ -631,6 +691,32 @@ mod tests {
         assert_eq!(
             symbol_renaming.custom_types.values().next().unwrap(),
             &"MyCustomType".to_string()
+        );
+    }
+
+    #[test]
+    fn test_from_lines_with_global() {
+        let input = "G 576 MyGlobal Int";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.globals.len(), 1);
+        assert_eq!(
+            symbol_renaming.globals.get(&576),
+            Some(&("MyGlobal".to_string(), Some(Type::Int)))
+        );
+    }
+
+    #[test]
+    fn test_from_lines_with_global_no_type() {
+        let input = "G 1024 AnotherGlobal";
+        let result = SymbolRenaming::from_lines(input);
+        assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
+        let symbol_renaming = result.unwrap();
+        assert_eq!(symbol_renaming.globals.len(), 1);
+        assert_eq!(
+            symbol_renaming.globals.get(&1024),
+            Some(&("AnotherGlobal".to_string(), None))
         );
     }
 

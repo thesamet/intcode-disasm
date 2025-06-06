@@ -1,9 +1,29 @@
+G   34  SEPARATOR_START
+G   41  SEPARATOR_END
+G   46  DOORS_HERE_LEAD
+G  133  NOT_CARRYING_ITEMS
+G  166  COMMAND_PROMPT
+G  177  UNRECOGNIZED_COMMAND
+G  201  CANT_GO_THAT_WAY
+G  226  ITEM_NOT_HERE
+G  258  YOU_TAKE
+G  273  ITEM_NOT_AVAILABLE
+G  301  YOU_DROP
+G  316  CANT_MOVE_MAGNET
+G  377  INFINITE_LOOP
+G  407  GAME_OVER_LAVA
+G  452  GAME_OVER_GRUE
+G  512  LAUNCHED_TO_SPACE
+G  826  YOU_MAY_PROCEED
+G 1090  ON_THE_KEYPAD
+
+
 T EncodedString
 
-F 1130 map_array(list, length, item_size, handle_function)
+F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
 
-F 1174 map_length_encoded(array, mapper)
+F 1174 length_encoded_foreach(array, mapper)
 V 1174 [R-2]_1 length
 V 1174 [R-3]_1 index
 
@@ -11,5 +31,14 @@ F 1234 print_encoded_string(encoded_string)
 V 1234 [R-1]_0 str Pointer<EncodedString>
 
 F 1256 output_sum(a, b, c)
+F 1796 finished
+
+F 1829 infinite_loop
+F 1850 game_over_lava
+F 1872 game_over_grue
+
+G 2486 sababa
+
+
 
 F 2329 coolio2329

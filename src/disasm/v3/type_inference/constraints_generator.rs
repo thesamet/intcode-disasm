@@ -4,20 +4,22 @@ use itertools::Itertools;
 use log::{trace, warn};
 
 use crate::disasm::v3::cfg::BlockView;
-use crate::disasm::v3::lir::{BinaryOperator, Expression, Instruction, MemoryReferenceInfo};
+use crate::disasm::v3::lir::{
+    BinaryOperator, Expression, ExpressionPath, ExpressionPathElement, Instruction,
+    MemoryReferenceInfo, TypeVarPath,
+};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::disasm::{self, SymbolRenaming};
 // SsaBlock was unused
 use crate::disasm::v3::lir::InstructionNode;
-use crate::disasm::v3::type_inference::types::ExpressionPath;
 // Assuming this is generic over SsaMemoryReference
 use crate::disasm::v3::{FunctionId, InstructionId};
 
 use super::constraints::{Constraint, ConstraintReason, ConstraintStore};
 use super::type_bounds_map::InferenceAlgorithmState;
-use super::types::{ExpressionPathElement, Type, TypeVarId, TypeVarPath};
+use super::types::{Type, TypeVarId};
 // TypeVarNode is defined in types.rs and re-exported by the parent module.
 use super::types::TypeVarNode;
 
@@ -28,11 +30,10 @@ pub struct TypeConstraintGeneratorResult {
     pub store: ConstraintStore,
     pub markers: HashMap<char, TypeVarId>, // Type of markers might need adjustment based on actual usage
     pub function_types: HashMap<FunctionId, (Type, Type)>,
+    pub global_vars: HashMap<usize, TypeVarId>,
 }
 
 pub struct TypeConstraintGenerator<'a> {
-    global_vars: HashMap<usize, TypeVarId>,
-
     // References to external data structures
     model: &'a Model<FoldedSsaComplete>,
     symbol_renaming: &'a SymbolRenaming,
@@ -42,7 +43,6 @@ pub struct TypeConstraintGenerator<'a> {
 impl<'a> TypeConstraintGenerator<'a> {
     fn new(model: &'a Model<FoldedSsaComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
         TypeConstraintGenerator {
-            global_vars: HashMap::new(),
             model,
             symbol_renaming,
             result: TypeConstraintGeneratorResult {
@@ -50,6 +50,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 store: ConstraintStore::new(),
                 markers: HashMap::new(),
                 function_types: HashMap::new(),
+                global_vars: HashMap::new(),
             },
         }
     }
@@ -154,7 +155,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             .filter_map(|(var, tv_id)| var.as_global().map(|addr| (addr, tv_id, var)))
             .sorted()
         {
-            if let Some(canonical_id) = self.global_vars.get(&addr) {
+            if let Some(canonical_id) = self.result.global_vars.get(&addr) {
                 self.result.store.add_equality_constraint(
                     Constraint::new(
                         Type::TypeVar(*canonical_id),
@@ -167,7 +168,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     &self.result.state,
                 );
             } else {
-                self.global_vars.insert(addr, *tv_id);
+                self.result.global_vars.insert(addr, *tv_id);
             }
         }
 

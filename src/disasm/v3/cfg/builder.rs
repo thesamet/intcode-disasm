@@ -177,6 +177,7 @@ impl ControlFlowGraphBuilder {
                 // native_instructions: current_block_instructions.clone(), // Removed - unresolved
                 // Assuming convert_block now returns Vec<InstructionNode<v3::lir::MemoryReference>>
                 low_instructions: InstructionNode::convert_block(
+                    function_id,
                     current_block_instructions.clone(),
                 ), // Clone to satisfy IntoIterator
                 next: NextKind::Unknown,  // Specify type

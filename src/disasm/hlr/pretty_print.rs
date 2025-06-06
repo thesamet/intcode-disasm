@@ -110,11 +110,9 @@ impl ContextualPrettyPrint for HlrExpression {
     fn pretty_print_with_context(&self, ctx: &GenericFormattingContext<Self::T>) -> String {
         match self {
             HlrExpression::Variable(var) => var.pretty_print_with_context(ctx),
-
             HlrExpression::Constant(val, _) => ctx
                 .format(val.to_string(), SemanticColor::Constant)
                 .to_string(),
-
             HlrExpression::BinaryOp {
                 op,
                 left,
@@ -142,7 +140,6 @@ impl ContextualPrettyPrint for HlrExpression {
                 }
                 result
             }
-
             HlrExpression::UnaryOperator { op, expr } => {
                 let op_prec = unary_op_precedence(op);
                 let op_str = op.pretty_print_with_context(ctx);
@@ -163,7 +160,6 @@ impl ContextualPrettyPrint for HlrExpression {
                 }
                 result
             }
-
             HlrExpression::FunctionCall(func_expr, args) => {
                 let func_name = match &**func_expr {
                     HlrExpression::Constant(id, _) => ctx
@@ -185,13 +181,10 @@ impl ContextualPrettyPrint for HlrExpression {
                     ctx.fmt_close_paren()
                 )
             }
-
             HlrExpression::Input() => ctx.format("input()", SemanticColor::Keyword).to_string(),
-
             HlrExpression::Deref(expr) => {
                 format!("{}{}", ctx.fmt_star(), expr.pretty_print_with_context(ctx))
             }
-
             HlrExpression::StaticFunctionReference(name) => {
                 format!("{}", ctx.format(name, SemanticColor::Variable))
             }
@@ -199,6 +192,12 @@ impl ContextualPrettyPrint for HlrExpression {
                 format!(
                     "{}",
                     ctx.format(format!("{}", name), SemanticColor::Constant)
+                )
+            }
+            HlrExpression::String(s) => {
+                format!(
+                    "\"{}\"",
+                    ctx.format(s.escape_default(), SemanticColor::Constant)
                 )
             }
         }
@@ -532,11 +531,36 @@ impl ContextualPrettyPrint for HlrFunction {
 impl ContextualPrettyPrint for HlrProgram {
     type T = TypeInferenceResult;
     fn pretty_print_with_context(&self, ctx: &FormattingContext) -> String {
-        self.functions
+        let s1 = self
+            .globals
+            .iter()
+            .sorted_by_key(|(addr, _)| *addr)
+            .map(|(_, (var, value))| {
+                let type_info = var.type_info.display_with(ctx.data);
+                line(
+                    &format!(
+                        "{} {}{} {} {} {}",
+                        ctx.format("static", SemanticColor::Keyword),
+                        ctx.format(&var.name, SemanticColor::Variable),
+                        ctx.fmt_colon(),
+                        ctx.format(&type_info, SemanticColor::Type),
+                        ctx.fmt_eq(),
+                        ctx.format(
+                            value.pretty_print_with_context(ctx),
+                            SemanticColor::Constant
+                        )
+                    ),
+                    ctx,
+                )
+            })
+            .join(&line("", ctx));
+        let s2 = self
+            .functions
             .iter()
             .sorted_by_key(|f| f.original_id)
             .map(|func| func.pretty_print_with_context(ctx))
-            .join(&line("", ctx))
+            .join(&line("", ctx));
+        s1 + &s2
     }
 }
 

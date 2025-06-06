@@ -6,12 +6,13 @@ use itertools::Itertools;
 use log::debug;
 
 use crate::disasm::symbol_renaming::CustomTypeId;
+use crate::disasm::v3::lir::TypeVarPath;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
 use crate::disasm::v3::FunctionId;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
 use super::types::{Type, TypeVarId, TypeVarNode};
-use super::{ConstraintStore, TypeVarPath, TypeVarState};
+use super::{ConstraintStore, TypeVarState};
 
 #[derive(Debug, Clone, Default)]
 pub struct FunctionSignature {
@@ -32,6 +33,7 @@ pub struct TypeInferenceResult {
     pub generic_type_vars: HashMap<super::types::GenericTypeVarId, super::types::GenericTypeVar>,
     pub function_signatures: HashMap<FunctionId, FunctionSignature>,
     pub custom_type_names: HashMap<CustomTypeId, String>,
+    pub global_type_var_ids: HashMap<usize, TypeVarId>,
 }
 
 impl TypeInferenceResult {
@@ -48,6 +50,7 @@ impl TypeInferenceResult {
             generic_type_vars: HashMap::new(),
             function_signatures: HashMap::new(),
             custom_type_names: HashMap::new(),
+            global_type_var_ids: HashMap::new(),
         }
     }
 
@@ -135,6 +138,10 @@ impl TypeInferenceResult {
 
     pub fn type_id_for_node(&self, t: TypeVarNode) -> TypeVarId {
         *self.type_var_nodes.iter().find(|x| *x.1 == t).unwrap().0
+    }
+
+    pub fn get_global_type_var_id(&self, addr: usize) -> Option<TypeVarId> {
+        self.global_type_var_ids.get(&addr).cloned()
     }
 }
 

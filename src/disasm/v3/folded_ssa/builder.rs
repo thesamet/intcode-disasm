@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use super::result::{FoldedSsaBlock, FoldedSsaResult};
-use crate::disasm::v3::common::fixed_point_mut;
 use crate::disasm::v3::cfg::FunctionView;
+use crate::disasm::v3::common::fixed_point_mut;
 use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNode is needed for transformation logic
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
@@ -102,7 +102,6 @@ impl FoldedSsaBuilder {
                         defs.insert(*mr, (*block_id, instruction.id, src.clone()));
                     };
                     for r in instruction
-                        .kind
                         .collect_read_addresses()
                         .iter()
                         .filter_map(|r| r.as_versioned())

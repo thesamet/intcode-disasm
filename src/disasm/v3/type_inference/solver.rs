@@ -3,7 +3,7 @@
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo};
+use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo, TypeVarPath};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::constraints::AddConstraintResult;
 use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
@@ -18,7 +18,7 @@ use super::constraints::{ConstraintId, UnclassifiedArithmeticExpression};
 use super::constraints_generator::generate_constraints;
 use super::result::FunctionSignature;
 use super::type_bounds_map::{BoundChangeReason, TypeVarRegistry};
-use super::types::{TypeBounds, TypeVarId, TypeVarPath};
+use super::types::{TypeBounds, TypeVarId};
 use super::{
     Constraint, ConstraintReason, ConstraintStore, InferenceAlgorithmState, Type, TypeVarState,
 };
@@ -574,6 +574,7 @@ impl<'a> Solver<'a> {
         result.generic_type_vars = self.state.generic_type_vars();
         result.change_log = self.state.change_log;
         result.custom_type_names = self.symbol_renaming.get_custom_types().clone();
+        result.global_type_var_ids = generator_result.global_vars;
         for (function_id, _) in self.model.functions() {
             let args = self.model.function_call_analysis_result().functions[&function_id]
                 .parameter_entry_vars
@@ -910,7 +911,7 @@ impl<'a> Solver<'a> {
             }
         }
         let mut changed = false;
-        let mut converge_count = 0;
+
         for (tv_id, target_type) in conv.iter().sorted() {
             let new_value = self.state.resolve_type(target_type);
             if new_value == tv_id.to_type() {
@@ -923,7 +924,6 @@ impl<'a> Solver<'a> {
             };
             self.state.converge(tv_id, new_value, conv_type);
             changed = true;
-            converge_count += 1;
         }
         if changed {
             return true;

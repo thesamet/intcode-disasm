@@ -207,7 +207,6 @@ impl<'a> VariableMerger<'a> {
         for (_, block) in function.blocks() {
             for instr in &block.folded_ssa().instructions {
                 let reads = instr
-                    .kind
                     .collect_read_addresses()
                     .iter()
                     .filter_map(|v| v.as_versioned())

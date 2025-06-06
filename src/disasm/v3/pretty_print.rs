@@ -7,8 +7,8 @@ use itertools::Itertools;
 use crate::derive_display;
 use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::{
-    FoldedSsaComplete, HasFoldedSsaResult, HasFunctionCallAnalysisResult, HasHlrProgram,
-    HasTypeInferenceResult, HlrConstructionComplete, TypeInferenceComplete, VariableMergerComplete,
+    FoldedSsaComplete, HasFoldedSsaResult, HasFunctionCallAnalysisResult, HasTypeInferenceResult,
+    HlrConstructionComplete, TypeInferenceComplete, VariableMergerComplete,
 };
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::type_inference::TypeVarId;

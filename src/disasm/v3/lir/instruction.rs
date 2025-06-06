@@ -1,10 +1,15 @@
 use itertools::Itertools;
 
 use super::{expression::Expression, memory_reference::ReadExpressionExtractor};
-use crate::disasm::v3::id_types::{BlockId, InstructionId};
+use crate::disasm::v3::{
+    id_types::{BlockId, InstructionId},
+    lir::TypeVarPath,
+    FunctionId,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstructionNode<A> {
+    pub containing_function_id: FunctionId,
     pub id: InstructionId,
     pub kind: Instruction<A>,
 }
@@ -50,30 +55,6 @@ pub enum Instruction<A> {
 }
 
 impl<A> Instruction<A> {
-    /// Collects the source expressions that this instruction evaluates.
-    ///
-    /// Different instruction types operate on different kinds of expressions:
-    /// - Assign: The source expression to be assigned. Note that evaluating
-    ///   the target expression will result in the source expression
-    ///   being evaluated. See ReadAddressExtractor for more details.
-    /// - If: The condition expression
-    /// - Call: The target address expression
-    /// - Output: The expression to be output
-    /// - Other instructions (Goto, Return, Halt): No expressions
-    pub fn collect_source_expressions(&self) -> Vec<&Expression<A>> {
-        match self {
-            Instruction::Assign { src, .. } => vec![src],
-            Instruction::If { cond, .. } => vec![cond],
-            Instruction::Goto(_) => vec![],
-            Instruction::Call { addr, args, .. } => {
-                let mut exprs = vec![addr];
-                exprs.extend(args.iter());
-                exprs
-            }
-            Instruction::Output(expr) => vec![expr],
-            Instruction::Return | Instruction::Halt => vec![],
-        }
-    }
     /// Returns the target memory reference that this instruction writes to, if any.
     ///
     /// Only Assign instructions write to memory. For example, in an assignment
@@ -86,7 +67,7 @@ impl<A> Instruction<A> {
     }
 }
 
-impl<A: ReadExpressionExtractor> Instruction<A> {
+impl<A: ReadExpressionExtractor> InstructionNode<A> {
     /// Collects all memory references that this instruction reads from.
     ///
     /// This method is essential for data flow analysis as it identifies all memory
@@ -103,18 +84,26 @@ impl<A: ReadExpressionExtractor> Instruction<A> {
     pub fn collect_read_addresses(&self) -> Vec<&A> {
         self.collect_all_expressions()
             .into_iter()
+            .map(|(_, e)| e)
             .flat_map(|e| e.collect_read_addresses())
             .collect()
     }
 
-    pub fn collect_all_expressions(&self) -> Vec<&Expression<A>> {
-        let mut reads = self
+    pub fn collect_all_expressions(&self) -> Vec<(TypeVarPath, &Expression<A>)> {
+        let mut exprs = self
+            .kind
             .get_write_address()
-            .and_then(|a| a.extract_read_expressions())
+            .and_then(|a| a.extract_read_expression())
+            .map(|e| {
+                (
+                    TypeVarPath::assignment_target_deref(self.containing_function_id, self.id),
+                    e,
+                )
+            })
             .into_iter()
             .collect_vec();
-        reads.extend(self.collect_source_expressions());
-        reads
+        exprs.extend(self.collect_source_expressions());
+        exprs
     }
 }
 
@@ -152,6 +141,7 @@ impl<A> InstructionNode<A> {
                 // Removed debug print
                 InstructionNode {
                     id: self.id,
+                    containing_function_id: self.containing_function_id,
                     kind: Instruction::Assign {
                         target,
                         src,
@@ -165,6 +155,7 @@ impl<A> InstructionNode<A> {
                 else_addr,
             } => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::If {
                     cond: cond.flat_map(&mut |v| map_read(context, v)),
                     then_addr: *then_addr,
@@ -173,6 +164,7 @@ impl<A> InstructionNode<A> {
             },
             Instruction::Goto(addr) => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Goto(*addr),
             },
             Instruction::Call {
@@ -180,6 +172,7 @@ impl<A> InstructionNode<A> {
                 args,
                 return_to,
             } => InstructionNode {
+                containing_function_id: self.containing_function_id,
                 id: self.id,
                 kind: Instruction::Call {
                     addr: addr.flat_map(&mut |v| map_read(context, v)),
@@ -192,14 +185,17 @@ impl<A> InstructionNode<A> {
             },
             Instruction::Output(expr) => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Output(expr.flat_map(&mut |v| map_read(context, v))),
             },
             Instruction::Return => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Return,
             },
             Instruction::Halt => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Halt,
             },
         }
@@ -235,6 +231,7 @@ impl<A> InstructionNode<A> {
                 target_debug_marker,
             } => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Assign {
                     target: target.clone(),
                     src: map(src),
@@ -247,6 +244,7 @@ impl<A> InstructionNode<A> {
                 else_addr,
             } => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::If {
                     cond: map(cond),
                     then_addr: *then_addr,
@@ -255,6 +253,7 @@ impl<A> InstructionNode<A> {
             },
             Instruction::Goto(addr) => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Goto(*addr),
             },
             Instruction::Call {
@@ -263,6 +262,7 @@ impl<A> InstructionNode<A> {
                 return_to,
             } => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Call {
                     addr: map(addr),
                     args: args.iter().map(&mut map).collect(),
@@ -271,16 +271,67 @@ impl<A> InstructionNode<A> {
             },
             Instruction::Output(expr) => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Output(map(expr)),
             },
             Instruction::Return => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Return,
             },
             Instruction::Halt => InstructionNode {
                 id: self.id,
+                containing_function_id: self.containing_function_id,
                 kind: Instruction::Halt,
             },
+        }
+    }
+
+    /// Collects the source expressions that this instruction evaluates.
+    ///
+    /// Different instruction types operate on different kinds of expressions:
+    /// - Assign: The source expression to be assigned. Note that evaluating
+    ///   the target expression will result in the source expression
+    ///   being evaluated. See ReadAddressExtractor for more details.
+    /// - If: The condition expression
+    /// - Call: The target address expression
+    /// - Output: The expression to be output
+    /// - Other instructions (Goto, Return, Halt): No expressions
+    pub fn collect_source_expressions(&self) -> Vec<(TypeVarPath, &Expression<A>)> {
+        match &self.kind {
+            Instruction::Assign { src, .. } => {
+                vec![(
+                    TypeVarPath::assignment_src(self.containing_function_id, self.id),
+                    src,
+                )]
+            }
+            Instruction::If { cond, .. } => {
+                vec![(
+                    TypeVarPath::if_cond(self.containing_function_id, self.id),
+                    cond,
+                )]
+            }
+            Instruction::Goto(_) => vec![],
+            Instruction::Call { addr, args, .. } => {
+                let mut exprs = vec![(
+                    TypeVarPath::call_address(self.containing_function_id, self.id),
+                    addr,
+                )];
+                exprs.extend(args.iter().enumerate().map(|(i, arg)| {
+                    (
+                        TypeVarPath::call_arg(self.containing_function_id, self.id, i),
+                        arg,
+                    )
+                }));
+                exprs
+            }
+            Instruction::Output(expr) => {
+                vec![(
+                    TypeVarPath::output(self.containing_function_id, self.id),
+                    expr,
+                )]
+            }
+            Instruction::Return | Instruction::Halt => vec![],
         }
     }
 }

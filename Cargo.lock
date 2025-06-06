@@ -338,6 +338,7 @@ dependencies = [
  "dsl_macros_impl",
  "either",
  "env_logger",
+ "heck",
  "itertools 0.14.0",
  "log",
  "model_macros_impl",

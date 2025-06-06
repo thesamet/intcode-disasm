@@ -49,7 +49,7 @@ pub use v3::ssa::SsaBlock;
 
 use crate::disasm::v3::lir::ReadExpressionExtractor; // Import the trait
 impl ReadExpressionExtractor for SsaMemoryReference {
-    fn extract_read_expressions(&self) -> Option<&Expression<Self>> {
+    fn extract_read_expression(&self) -> Option<&Expression<Self>> {
         match self {
             SsaMemoryReference::Deref(expr) => Some(expr),
             SsaMemoryReference::Versioned(_) => None,

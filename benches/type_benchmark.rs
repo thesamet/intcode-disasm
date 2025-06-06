@@ -1,9 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode};
 use disasm::disasm::{
-    v3::{
-        analysis::{self, binary_to_folded_ssa},
-        type_inference,
-    },
+    v3::{analysis::binary_to_folded_ssa, type_inference},
     SymbolRenaming,
 };
 use std::hint::black_box;

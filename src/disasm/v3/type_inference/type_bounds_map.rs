@@ -10,7 +10,10 @@ use petgraph::{
     Direction,
 };
 
-use crate::disasm::{symbol_renaming::CustomTypeId, v3::ssa::VersionedMemoryReference};
+use crate::disasm::{
+    symbol_renaming::CustomTypeId,
+    v3::{lir::TypeVarPath, ssa::VersionedMemoryReference},
+};
 
 // Import necessary types from your existing types.rs file.
 // This path assumes type_bounds_map.rs and types.rs are in the same parent module,
@@ -18,7 +21,6 @@ use crate::disasm::{symbol_renaming::CustomTypeId, v3::ssa::VersionedMemoryRefer
 use super::{
     constraints::ConstraintId,
     types::{GenericTypeVar, GenericTypeVarId, Type, TypeBounds, TypeVarId, TypeVarNode},
-    TypeVarPath,
 };
 
 /// Holds the best bounds for a single TypeVarId.
@@ -767,7 +769,7 @@ mod tests {
     use crate::disasm::{
         test_utils::init_logging,
         v3::{
-            type_inference::types::{ExpressionPath, TypeVarPath},
+            lir::{ExpressionPath, TypeVarPath},
             FunctionId, InstructionId,
         },
     };

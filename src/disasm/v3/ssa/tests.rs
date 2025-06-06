@@ -94,7 +94,7 @@ impl<'a> FunctionView<'a, SsaComplete> {
                 }
 
                 // Check expressions within the instruction
-                for expr in instr_node.kind.collect_source_expressions() {
+                for (_, expr) in instr_node.collect_source_expressions() {
                     if let Some(addr) = find_addressable_under_marker(expr, marker) {
                         return Some(MarkerSearchResult::SsaAddressable(addr));
                     }

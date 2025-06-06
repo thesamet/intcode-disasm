@@ -9,7 +9,7 @@ use tabled::settings::{object::Columns, Span, Style, Width};
 
 use crate::disasm::v3::{
     common::formatting::{ContextualPrettyPrint, PrettyPrintConfig},
-    lir::MemoryReferenceInfo,
+    lir::{MemoryReferenceInfo, TypeVarPath},
     type_inference::{
         type_bounds_map::{BoundChangeReason, ChangeLogKind, TypeVarRegistry},
         Constraint, TypeInferenceResult, TypeVarState,
@@ -22,7 +22,7 @@ use super::v3::{
     lir::Expression,
     model::{HasTypeInferenceResult, HlrConstructionComplete, Model, ModelState},
     ssa::SsaMemoryReference,
-    type_inference::{constraints::ConstraintId, Type, TypeVarId, TypeVarPath},
+    type_inference::{constraints::ConstraintId, Type, TypeVarId},
 };
 
 #[derive(Subcommand, Debug, Clone)]

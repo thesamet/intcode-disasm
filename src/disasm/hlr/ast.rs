@@ -68,7 +68,7 @@ pub enum HlrStatement {
     Nop,
 }
 
-pub type HlrGlobals = HashMap<usize, (HlrVariable, String)>;
+pub type HlrGlobals = HashMap<usize, (HlrVariable, HlrExpression)>;
 
 #[derive(Debug, Clone)]
 pub struct HlrProgram {
@@ -93,6 +93,7 @@ pub enum HlrExpression {
         op: UnaryOperator,
         expr: Box<HlrExpression>,
     },
+    String(String),
     FunctionCall(Box<HlrExpression>, Vec<HlrExpression>),
     Input(),
 }
