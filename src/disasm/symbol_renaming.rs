@@ -326,7 +326,7 @@ enum SymbolRenamingLine {
     Variable(VersionedMemoryReference, String, Option<String>),
     CustomType(String),
     Global(usize, String, Option<String>),
-    Struct(String, Vec<(String, String)>), // Struct Name, Vec<(Field Name, Field Type String)>
+    Struct(String, Vec<(String, String)>),
 }
 
 //
@@ -345,12 +345,18 @@ impl SymbolRenamingLine {
                     space1,
                     parse_identifier,
                     opt(delimited(
-                        tag("("),
+                        preceded(space0, tag("(")),
                         nom::multi::separated_list0(
-                            (tag(","), space0),
-                            (parse_identifier, opt(preceded(tag(":"), parse_type_as_str))),
+                            (space0, tag(","), space0), // Add space0 around comma
+                            (
+                                parse_identifier,
+                                opt(preceded(
+                                    (space0, tag(":"), space0), // Add space0 around colon
+                                    parse_type_as_str,
+                                )),
+                            ),
                         ),
-                        tag(")"),
+                        preceded(space0, tag(")")),
                     )),
                     space0,
                 ),
@@ -403,17 +409,17 @@ impl SymbolRenamingLine {
                     tag("S"),
                     space1,
                     parse_identifier, // Struct name
-                    space0,
+                    space0,           // Space before {
                     delimited(
-                        (tag("{"), space0),
+                        preceded(space0, tag("{")), // Add space0 before {
                         nom::multi::separated_list0(
-                            (tag(","), space0), // Separator: comma and optional space
+                            (space0, tag(","), space0), // Add space0 around comma for fields
                             (
-                                parse_identifier,                                        // Field name
-                                preceded((space0, tag(":"), space0), parse_type_as_str), // Field type
+                                preceded(space0, parse_identifier), // Field name, consume leading space
+                                preceded((space0, tag(":"), space0), parse_type_as_str), // Field type (already good)
                             ),
                         ),
-                        (space0, tag("}")),
+                        preceded(space0, tag("}")), // Add space0 before }
                     ),
                     space0,
                 ),
@@ -425,16 +431,28 @@ impl SymbolRenamingLine {
 }
 
 fn parse_type_as_str(input: &str) -> IResult<&str, String> {
-    // Parse what looks like a type (letters, numbers, underscores, <, >)
-    let type_identifier = recognize(nom::multi::many1(alt((
-        nom::character::complete::alpha1,
-        nom::character::complete::digit1,
-        tag("_"),
-        tag("<"),
-        tag(">"),
-    ))));
-
-    map(type_identifier, |s: &str| s.trim().to_string()).parse(input)
+    map(
+        nom::bytes::complete::take_while1(|c: char| {
+            // Define characters that are allowed within a type string.
+            // Space IS included here. Combined with trim() and careful space0 usage by callers,
+            // this should correctly parse types with internal spaces like "Array<10; Int>".
+            // Crucially, delimiters like ':', '{', '}', '(', ')', ',' are EXCLUDED.
+            c.is_alphanumeric()
+                || c == '<'
+                || c == '>'
+                || c == '_'
+                || c == ';' // For array types like Array<N; T>
+                || c == ' ' // Allow spaces within types
+                || c == '[' || c == ']' // For potential future C-style array syntax or similar
+                || c == '*' // For pointers
+                || c == '&' // For references
+                || c == ']'
+                || c == '*'
+                || c == '&'
+        }),
+        |s: &str| s.trim().to_string(), // trim() is crucial
+    )
+    .parse(input)
 }
 
 pub fn parse_type<'a>(
@@ -542,7 +560,27 @@ mod tests {
                 assert_eq!(name, "variable_name");
                 assert_eq!(type_opt, None);
             }
-            _ => panic!("Expected a variable line"),
+            _ => panic!("Expected Variable line, got {:?}", line),
+        }
+    }
+
+    #[test]
+    fn test_parse_global_line_with_array_of_ints() {
+        let input = "G 42 global_array Array<10; Int>";
+        let expected_name = "global_array".to_string();
+        // Parse the input
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok());
+
+        // Check the parsed line
+        let (_, line) = result.unwrap();
+        match line {
+            SymbolRenamingLine::Global(42, name, Some(type_expr)) => {
+                assert_eq!(name, expected_name);
+                // Assert the type expression
+                assert_eq!(type_expr, "Array<10; Int>"); // Make sure type_expr is comparable directly.
+            }
+            _ => panic!("Unexpected enum variant"),
         }
     }
 

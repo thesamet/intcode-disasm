@@ -20,7 +20,7 @@ G 1090  ON_THE_KEYPAD
 
 T EncodedString
 
-S GameThing { a: Int, b: Int, c: Int, d: Int }
+S GameThing { a, b, c, d }
 
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
@@ -39,8 +39,6 @@ F 1829 infinite_loop
 F 1850 game_over_lava
 F 1872 game_over_grue
 
-G 2486 sababa
-
-
+G 3094 SOME_ARR Array<13;Int>
 
 F 2329 coolio2329
