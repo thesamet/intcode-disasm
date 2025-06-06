@@ -1127,6 +1127,8 @@ impl<'a> Solver<'a> {
 
             // Recursively check compound types
             Type::Pointer(inner) => Self::is_potential_generic_type(inner),
+            Type::Array { elem_type, .. } => Self::is_potential_generic_type(elem_type),
+            Type::Struct(_) => false,
             Type::Function { params, returns } => {
                 Self::is_potential_generic_type(params) || Self::is_potential_generic_type(returns)
             }

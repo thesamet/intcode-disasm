@@ -20,6 +20,8 @@ G 1090  ON_THE_KEYPAD
 
 T EncodedString
 
+S GameThing { a: Int, b: Int, c: Int, d: Int }
+
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
 

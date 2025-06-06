@@ -1,11 +1,10 @@
 use crate::disasm::{
-    symbol_renaming::CustomTypeId,
+    symbol_renaming::{CustomTypeId, StructId},
     v3::{
         define_id_type,
-        lir::{Expression, Instruction, InstructionNode, TypeVarPath},
-        model::{HasFoldedSsaResult, Model, ModelState},
-        ssa::{SsaMemoryReference, VersionedMemoryReference},
-        FunctionId, InstructionId,
+        lir::TypeVarPath,
+        model::{HasFoldedSsaResult, ModelState},
+        ssa::VersionedMemoryReference,
     },
 };
 
@@ -112,6 +111,23 @@ pub enum Type {
     /// Nothing type (bottom of the lattice, subtype of all types)
     Nothing,
     CustomType(CustomTypeId),
+    Array {
+        len: usize,
+        elem_type: Box<Type>,
+    },
+    Struct(StructId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<StructField>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StructField {
+    pub name: String,
+    pub typ: Type,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -148,13 +164,15 @@ impl Type {
             | Type::Char
             | Type::Truthy
             | Type::NumericLiteral
-            | Type::CustomType(_) => true,
+            | Type::CustomType(_)
+            | Type::Struct(_) => true,
             Type::Any | Type::Nothing => false,
             Type::Pointer(pointee) => pointee.is_concrete_type(),
             Type::Function { params, returns } => {
                 params.is_concrete_type() && returns.is_concrete_type()
             }
             Type::Tuple(elements) => elements.iter().all(|e| e.is_concrete_type()),
+            Type::Array { elem_type, .. } => elem_type.is_concrete_type(),
             Type::TypeVar(_) => false,
             Type::Generic(_) => false,
         }
@@ -343,6 +361,11 @@ impl Type {
             Type::Any => Type::Any,
             Type::Generic(id) => Type::Generic(*id),
             Type::CustomType(id) => Type::CustomType(*id),
+            Type::Array { len, elem_type } => Type::Array {
+                len: *len,
+                elem_type: Box::new(elem_type.map(var_mapper)),
+            },
+            Type::Struct(id) => Type::Struct(*id),
         }
     }
 
@@ -390,6 +413,7 @@ impl Type {
                     element_type.insert_involved_type_vars(type_vars);
                 }
             }
+            Type::Array { elem_type, .. } => elem_type.insert_involved_type_vars(type_vars),
             Type::Nothing
             | Type::CustomType(_)
             | Type::Int
@@ -398,6 +422,7 @@ impl Type {
             | Type::NumericLiteral
             | Type::Truthy
             | Type::Any
+            | Type::Struct(_)
             | Type::Generic(_) => {
                 // No nested type vars
             }
@@ -414,6 +439,7 @@ impl Type {
         match self {
             Type::TypeVar(_) => false,
             Type::Generic(_) => false,
+            Type::Array { elem_type, .. } => elem_type.is_var_free(),
             Type::Tuple(elements) => elements.iter().all(|e| e.is_var_free()),
             Type::Function { params, returns } => params.is_var_free() && returns.is_var_free(),
             Type::Nothing
@@ -422,6 +448,7 @@ impl Type {
             | Type::Char
             | Type::NumericLiteral
             | Type::Truthy
+            | Type::Struct(_)
             | Type::CustomType(_)
             | Type::Any => true,
             Type::Pointer(pointee) => pointee.is_var_free(),
@@ -486,6 +513,10 @@ impl fmt::Display for Type {
             Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
             Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
             Type::CustomType(id) => write!(f, "CustomType{}", id),
+            Type::Struct(id) => write!(f, "Struct{}", id),
+            Type::Array { len, elem_type, .. } => {
+                write!(f, "Array<{}; {}>", len, elem_type,)
+            }
             Type::TypeVar(id) => write!(f, "{}", id),
             Type::Generic(id) => write!(f, "T{}", id.0),
             Type::Tuple(elements) => {
@@ -586,6 +617,17 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::CustomType(id) => {
                 write!(f, "{}", self.registry.get_custom_type_name(*id).unwrap())
             }
+            Type::Struct(id) => {
+                write!(f, "{}", self.registry.get_struct_name(*id).unwrap())
+            }
+            Type::Array { len, elem_type, .. } => {
+                write!(
+                    f,
+                    "Array<{}; {}>",
+                    len,
+                    elem_type.display_with(self.registry),
+                )
+            }
             Type::Any => write!(f, "Any"),
             Type::Generic(id) => write!(f, "T{}", id.0),
         }
@@ -659,6 +701,10 @@ mod tests {
         }
 
         fn get_custom_type_name(&self, _custom_type_id: CustomTypeId) -> Option<&String> {
+            todo!()
+        }
+
+        fn get_struct_name(&self, _struct_id: StructId) -> Option<&String> {
             todo!()
         }
     }

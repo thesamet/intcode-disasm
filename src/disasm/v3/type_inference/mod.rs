@@ -14,6 +14,7 @@ pub use solver::Solver;
 pub use type_bounds_map::{InferenceAlgorithmState, TypeVarState};
 pub use types::Type;
 pub use types::TypeVarId;
+pub use types::{StructDef, StructField};
 
 #[cfg(test)]
 mod type_inference_extra;

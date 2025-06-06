@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::symbol_renaming::CustomTypeId;
+use crate::disasm::symbol_renaming::{CustomTypeId, StructId};
 use crate::disasm::v3::lir::TypeVarPath;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
+use crate::disasm::v3::type_inference::types::StructDef;
 use crate::disasm::v3::FunctionId;
 
 use super::type_bounds_map::{ChangeLogEntry, TypeVarRegistry};
@@ -33,6 +34,7 @@ pub struct TypeInferenceResult {
     pub generic_type_vars: HashMap<super::types::GenericTypeVarId, super::types::GenericTypeVar>,
     pub function_signatures: HashMap<FunctionId, FunctionSignature>,
     pub custom_type_names: HashMap<CustomTypeId, String>,
+    pub struct_defs: HashMap<StructId, StructDef>,
     pub global_type_var_ids: HashMap<usize, TypeVarId>,
 }
 
@@ -51,6 +53,7 @@ impl TypeInferenceResult {
             function_signatures: HashMap::new(),
             custom_type_names: HashMap::new(),
             global_type_var_ids: HashMap::new(),
+            struct_defs: HashMap::new(),
         }
     }
 
@@ -161,5 +164,9 @@ impl TypeVarRegistry for TypeInferenceResult {
 
     fn get_custom_type_name(&self, custom_type_id: CustomTypeId) -> Option<&String> {
         self.custom_type_names.get(&custom_type_id)
+    }
+
+    fn get_struct_name(&self, struct_id: StructId) -> Option<&String> {
+        self.struct_defs.get(&struct_id).map(|def| &def.name)
     }
 }
