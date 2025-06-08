@@ -1,5 +1,7 @@
 // Test utilities for the disassembler crate
 
+use crate::disasm::symbol_renaming::UserDefs;
+
 use super::{
     parser,
     v3::{
@@ -12,7 +14,7 @@ use super::{
         },
         FunctionId,
     },
-    Error, SymbolRenaming,
+    Error,
 };
 pub fn init_logging() {
     use std::io::Write;
@@ -102,8 +104,7 @@ impl TestContextBuilder<TypeInferenceComplete> for TypeInferenceComplete {
     fn test_context(asm: &str) -> Result<TestContext<TypeInferenceComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let symbol_renaming = SymbolRenaming::new();
-        let model = analysis::binary_to_type_inference(binary, &symbol_renaming)?;
+        let model = analysis::binary_to_type_inference(binary, UserDefs::new())?;
 
         Ok(TestContext { model })
     }
@@ -113,7 +114,7 @@ impl TestContextBuilder<VariableMergerComplete> for VariableMergerComplete {
     fn test_context(asm: &str) -> Result<TestContext<VariableMergerComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_variable_merger(binary, &SymbolRenaming::new())?;
+        let model = analysis::binary_to_variable_merger(binary, UserDefs::new())?;
         Ok(TestContext { model })
     }
 }

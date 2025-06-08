@@ -6,7 +6,7 @@ use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
 };
 use disasm::disasm::v3::FunctionId;
-use disasm::disasm::SymbolRenaming;
+use disasm::disasm::UserDefs;
 use itertools::Itertools;
 use std::process;
 
@@ -251,7 +251,7 @@ fn folded_ssa(input: String, theme: String) {
 
 fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let model = analysis::binary_to_type_inference(prog, &SymbolRenaming::new()).unwrap();
+    let model = analysis::binary_to_type_inference(prog, UserDefs::new()).unwrap();
     if let Some(function_id) = function {
         let fu = model.function(&function_id);
         println!("{}", fu.pretty_print());
@@ -263,13 +263,13 @@ fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme
 
 fn repl(input: String, symbols: Option<String>) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let symbol_renaming = if let Some(symbols) = symbols {
+    let user_defs = if let Some(symbols) = symbols {
         let symbols = std::fs::read_to_string(symbols).unwrap();
-        SymbolRenaming::from_lines(&symbols).unwrap()
+        UserDefs::from_lines(&symbols).unwrap()
     } else {
-        SymbolRenaming::new()
+        UserDefs::new()
     };
-    let model = analysis::binary_to_hlr(prog, &symbol_renaming).unwrap();
+    let model = analysis::binary_to_hlr(prog, user_defs).unwrap();
     repl::repl(&model);
 }
 
@@ -281,13 +281,13 @@ fn flow_recovery(input: String) {
 
 fn hlr(input: String, symbols: Option<String>, theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    let symbol_renaming = if let Some(symbols) = symbols {
+    let user_defs = if let Some(symbols) = symbols {
         let symbols = std::fs::read_to_string(symbols).unwrap();
-        SymbolRenaming::from_lines(&symbols).unwrap()
+        UserDefs::from_lines(&symbols).unwrap()
     } else {
-        SymbolRenaming::new()
+        UserDefs::new()
     };
-    let model = analysis::binary_to_hlr(prog, &symbol_renaming).unwrap();
+    let model = analysis::binary_to_hlr(prog, user_defs).unwrap();
 
     if theme == "default" {
         // For default theme, use the HLR program directly

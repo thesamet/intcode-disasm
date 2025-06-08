@@ -1,4 +1,4 @@
-use crate::disasm::{Error, SymbolRenaming};
+use crate::disasm::{symbol_renaming::UserDefs, Error};
 
 use super::{
     cfg::ControlFlowGraphBuilder,
@@ -51,24 +51,24 @@ pub fn binary_to_folded_ssa(binary: Vec<i128>) -> Result<Model<FoldedSsaComplete
 
 pub fn binary_to_type_inference(
     binary: Vec<i128>,
-    symbol_renaming: &SymbolRenaming,
+    user_defs: UserDefs,
 ) -> Result<Model<TypeInferenceComplete>, Error> {
     let model = binary_to_folded_ssa(binary)?;
-    Solver::run(model, symbol_renaming)
+    Solver::run(model, user_defs)
 }
 
 pub fn binary_to_variable_merger(
     binary: Vec<i128>,
-    symbol_renaming: &SymbolRenaming,
+    user_defs: UserDefs,
 ) -> Result<Model<VariableMergerComplete>, Error> {
-    let model = binary_to_type_inference(binary, symbol_renaming)?;
-    VariableMerger::run(model, symbol_renaming)
+    let model = binary_to_type_inference(binary, user_defs)?;
+    VariableMerger::run(model)
 }
 
 pub fn binary_to_hlr(
     binary: Vec<i128>,
-    symbol_renaming: &SymbolRenaming,
+    user_defs: UserDefs,
 ) -> Result<Model<HlrConstructionComplete>, Error> {
-    let model = binary_to_variable_merger(binary, symbol_renaming)?;
-    ControlFlowStructureAnalyzer::run(model, symbol_renaming)
+    let model = binary_to_variable_merger(binary, user_defs)?;
+    ControlFlowStructureAnalyzer::run(model)
 }

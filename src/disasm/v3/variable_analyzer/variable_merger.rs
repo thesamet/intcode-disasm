@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
 
 use crate::disasm::{
+    symbol_renaming::UserDefs,
     v3::{
         cfg::FunctionView,
         define_id_type,
@@ -12,7 +13,7 @@ use crate::disasm::{
         type_inference::Type,
         FunctionId,
     },
-    Error, SymbolRenaming,
+    Error,
 };
 
 use super::disjoint_set::{DisjointSet, SetId};
@@ -43,7 +44,7 @@ pub struct VariableMergerResult {
 }
 
 /// Analyzes SSA form to create variable clusters that merge different versions of the same variable
-pub struct VariableMerger<'a> {
+pub struct VariableMerger {
     /// Maps SSA variable to the cluster it belongs to
     variable_to_cluster: HashMap<VersionedMemoryReference, ClusterId>,
     /// Collection of all clusters
@@ -53,7 +54,6 @@ pub struct VariableMerger<'a> {
 
     function_state: HashMap<FunctionId, FunctionVarNamingState>,
     model: Model<TypeInferenceComplete>,
-    symbol_renaming: &'a SymbolRenaming,
 }
 
 #[expect(dead_code)]
@@ -77,24 +77,22 @@ impl FunctionVarNamingState {
     }
 }
 
-impl<'a> VariableMerger<'a> {
+impl VariableMerger {
     /// Creates a new VariableclusterAnalyzer
-    fn new(model: Model<TypeInferenceComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
+    fn new(model: Model<TypeInferenceComplete>) -> Self {
         VariableMerger {
             variable_to_cluster: HashMap::new(),
             clusters: HashMap::new(),
             function_state: HashMap::new(),
             next_cluster_id: 0,
             model,
-            symbol_renaming,
         }
     }
 
     pub fn run(
         model: Model<TypeInferenceComplete>,
-        symbol_renaming: &'a SymbolRenaming,
     ) -> Result<Model<VariableMergerComplete>, Error> {
-        let mut merger = Self::new(model, symbol_renaming);
+        let mut merger = Self::new(model);
         merger.build_clusters()?;
 
         Ok(merger.result())
@@ -228,6 +226,10 @@ impl<'a> VariableMerger<'a> {
         }
     }
 
+    fn user_defs(&self) -> &UserDefs {
+        &self.model.type_inference_result().user_defs
+    }
+
     fn generate_cluster_name(
         &mut self,
         set_id: &SetId,
@@ -236,7 +238,7 @@ impl<'a> VariableMerger<'a> {
     ) -> Option<String> {
         for var in vars.iter() {
             let function_id = vars.iter().next().unwrap().function_id;
-            if let Some(args) = self.symbol_renaming.get_function_args(function_id) {
+            if let Some(args) = self.user_defs().get_function_args(function_id) {
                 if let Some(arg_name) = args
                     .iter()
                     .zip(
@@ -254,7 +256,7 @@ impl<'a> VariableMerger<'a> {
                     return Some(arg_name);
                 }
             }
-            if let Some(name) = self.symbol_renaming.get_variable_name(var) {
+            if let Some(name) = self.user_defs().get_variable_name(var) {
                 return Some(name.clone());
             }
         }

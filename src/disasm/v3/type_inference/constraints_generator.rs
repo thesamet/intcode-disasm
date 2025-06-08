@@ -3,6 +3,7 @@
 use itertools::Itertools;
 use log::{trace, warn};
 
+use crate::disasm::symbol_renaming::UserDefs;
 use crate::disasm::v3::cfg::BlockView;
 use crate::disasm::v3::lir::{
     BinaryOperator, Expression, ExpressionPath, ExpressionPathElement, Instruction,
@@ -11,7 +12,7 @@ use crate::disasm::v3::lir::{
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::SsaMemoryReference;
-use crate::disasm::{self, SymbolRenaming};
+use crate::disasm::{self};
 // SsaBlock was unused
 use crate::disasm::v3::lir::InstructionNode;
 // Assuming this is generic over SsaMemoryReference
@@ -36,15 +37,15 @@ pub struct TypeConstraintGeneratorResult {
 pub struct TypeConstraintGenerator<'a> {
     // References to external data structures
     model: &'a Model<FoldedSsaComplete>,
-    symbol_renaming: &'a SymbolRenaming,
+    user_defs: &'a UserDefs,
     result: TypeConstraintGeneratorResult,
 }
 
 impl<'a> TypeConstraintGenerator<'a> {
-    fn new(model: &'a Model<FoldedSsaComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
+    fn new(model: &'a Model<FoldedSsaComplete>, user_defs: &'a UserDefs) -> Self {
         TypeConstraintGenerator {
             model,
-            symbol_renaming,
+            user_defs,
             result: TypeConstraintGeneratorResult {
                 state: InferenceAlgorithmState::new(),
                 store: ConstraintStore::new(),
@@ -172,7 +173,12 @@ impl<'a> TypeConstraintGenerator<'a> {
             }
         }
 
-        for (vmr, (_, ty)) in self.symbol_renaming.get_variables() {
+        self.add_variable_types_from_symbol_renaming();
+        self.add_function_argument_types_from_symbol_renaming();
+    }
+
+    fn add_variable_types_from_symbol_renaming(&mut self) {
+        for (vmr, (_, ty)) in self.user_defs.get_variables() {
             let Some(ty) = ty else {
                 continue;
             };
@@ -191,6 +197,44 @@ impl<'a> TypeConstraintGenerator<'a> {
                 None,
                 &self.result.state,
             );
+        }
+    }
+
+    fn add_function_argument_types_from_symbol_renaming(&mut self) {
+        for (&function_id, function_symbol) in self.user_defs.get_functions() {
+            for (idx, (_name, typ)) in function_symbol.args().iter().enumerate() {
+                println!(
+                    "ARG CONST: f={} arg={_name} idx: {}, typ: {:?}",
+                    function_symbol.name(),
+                    idx,
+                    typ
+                );
+                let Some(typ) = typ else {
+                    continue;
+                };
+                let f = self.model.function(&function_id);
+                let arg_vmr = f.callee_info().parameter_entry_vars[&(idx as i128 + 1)];
+
+                let tv_id = self.result.state.get_or_create_type_var_for_vmr(
+                    &arg_vmr,
+                    TypeVarPath::FunctionDefArg {
+                        function_id,
+                        index: idx,
+                    },
+                );
+                println!("  Adding");
+                self.result.store.add_equality_constraint(
+                    Constraint::new(
+                        Type::TypeVar(tv_id),
+                        typ.clone(),
+                        function_id,
+                        InstructionId::new(0), // Dummy ID for function args
+                        ConstraintReason::SymbolRenaming,
+                    ),
+                    None,
+                    &self.result.state,
+                );
+            }
         }
     }
 
@@ -780,9 +824,9 @@ impl<'a> TypeConstraintGenerator<'a> {
 
 pub fn generate_constraints(
     model: &Model<FoldedSsaComplete>,
-    symbol_renaming: &SymbolRenaming,
+    user_defs: &UserDefs,
 ) -> TypeConstraintGeneratorResult {
-    let mut constraint_generator = TypeConstraintGenerator::new(model, symbol_renaming);
+    let mut constraint_generator = TypeConstraintGenerator::new(model, user_defs);
     constraint_generator.generate_all_constraints();
     constraint_generator.result
 }

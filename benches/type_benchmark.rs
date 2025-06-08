@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode};
 use disasm::disasm::{
     v3::{analysis::binary_to_folded_ssa, type_inference},
-    SymbolRenaming,
+    UserDefs,
 };
 use std::hint::black_box;
 
@@ -18,7 +18,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.bench_function("types", |b| {
         b.iter(|| {
-            let _ = type_inference::Solver::run(black_box(model.clone()), &SymbolRenaming::new());
+            let _ = type_inference::Solver::run(black_box(model.clone()), UserDefs::new());
         })
     });
 }

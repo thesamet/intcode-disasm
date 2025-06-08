@@ -21,7 +21,7 @@ use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 use crate::disasm::v3::type_inference::Type;
 use crate::disasm::v3::variable_analyzer::ClusterId;
 use crate::disasm::v3::{BlockId, FunctionId, InstructionId, NextKind};
-use crate::disasm::{Error, SymbolRenaming};
+use crate::disasm::Error;
 
 type Function<'a> = FunctionView<'a, VariableMergerComplete>;
 
@@ -54,15 +54,13 @@ struct LoopStructure {
                         // if None, the loop is infinite. If not, 'break' jumps here.
 }
 
-pub struct ControlFlowStructureAnalyzer<'a> {
+pub struct ControlFlowStructureAnalyzer {
     model: Model<VariableMergerComplete>,
-    symbol_renaming: &'a SymbolRenaming,
     globals: HlrGlobals,
 }
 
 struct GlobalVariableDiscovery<'a> {
     globals: &'a mut HlrGlobals,
-    symbol_renaming: &'a SymbolRenaming,
     model: &'a Model<VariableMergerComplete>,
     base_type_var_path: TypeVarPath,
 }
@@ -70,15 +68,13 @@ struct GlobalVariableDiscovery<'a> {
 impl<'a> GlobalVariableDiscovery<'a> {
     fn new(
         base_type_var_path: TypeVarPath,
-        symbol_renaming: &'a SymbolRenaming,
         model: &'a Model<VariableMergerComplete>,
         globals: &'a mut HlrGlobals,
     ) -> Self {
         Self {
             base_type_var_path,
-            globals,
-            symbol_renaming,
             model,
+            globals,
         }
     }
 
@@ -109,7 +105,7 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
             value as usize
         };
         if let Some(Type::CustomType(ct_id)) = typ.as_pointer() {
-            let ct_name = self.symbol_renaming.get_custom_type(*ct_id).unwrap();
+            let ct_name = self.model.user_defs().get_custom_type(*ct_id).unwrap();
             let image = &self.model.image_scanner_result().image;
             let len = image[addr];
             let r: String = image[(addr + 1)..(addr + (len as usize) + 1)]
@@ -118,7 +114,8 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
                 .map(|(i, &x)| (x as i128 + len as i128 + i as i128) as u8 as char)
                 .collect();
             let name = self
-                .symbol_renaming
+                .model
+                .user_defs()
                 .get_global(addr)
                 .cloned()
                 .unwrap_or_else(|| format!("{}_{}", heck::AsShoutySnakeCase(ct_name), addr));
@@ -139,7 +136,7 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
 
     fn visit_addressable(
         &mut self,
-        path: &ExpressionPath,
+        _path: &ExpressionPath,
         addressable: &SsaMemoryReference,
         _: Option<Self::Return>,
     ) -> Result<Self::Return, Self::Error> {
@@ -154,7 +151,8 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
         let typ = self.model.type_inference_result().get_type_for_id(tv_id);
 
         let name = self
-            .symbol_renaming
+            .model
+            .user_defs()
             .get_global(addr)
             .cloned()
             .unwrap_or_else(|| format!("Global{}", addr));
@@ -176,15 +174,12 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
 
 // Helper struct for converting LIR Expression to HLR Expression using the Visitor pattern
 struct HlrExpressionConverter<'a> {
-    analyzer: &'a ControlFlowStructureAnalyzer<'a>,
+    analyzer: &'a ControlFlowStructureAnalyzer,
     base_type_var_path: TypeVarPath,
 }
 
 impl<'a> HlrExpressionConverter<'a> {
-    fn new(
-        analyzer: &'a ControlFlowStructureAnalyzer<'a>,
-        base_type_var_path: TypeVarPath,
-    ) -> Self {
+    fn new(analyzer: &'a ControlFlowStructureAnalyzer, base_type_var_path: TypeVarPath) -> Self {
         Self {
             analyzer,
             base_type_var_path,
@@ -317,20 +312,18 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for HlrExpressionConverter<'a
     }
 }
 
-impl<'a> ControlFlowStructureAnalyzer<'a> {
-    fn new(model: Model<VariableMergerComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
+impl ControlFlowStructureAnalyzer {
+    fn new(model: Model<VariableMergerComplete>) -> Self {
         Self {
             model,
-            symbol_renaming,
             globals: HlrGlobals::new(),
         }
     }
 
     pub fn run(
         model: Model<VariableMergerComplete>,
-        symbol_renaming: &'a SymbolRenaming,
     ) -> Result<Model<HlrConstructionComplete>, Error> {
-        ControlFlowStructureAnalyzer::new(model, symbol_renaming).recover_structures()
+        ControlFlowStructureAnalyzer::new(model).recover_structures()
     }
 
     pub fn extract_global_variables(&mut self) -> Result<(), Error> {
@@ -338,12 +331,8 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             for (_, block) in func.blocks() {
                 for instr in &block.folded_ssa().instructions {
                     for (path, expr) in instr.collect_all_expressions().into_iter() {
-                        let mut global_var_discovery = GlobalVariableDiscovery::new(
-                            path,
-                            self.symbol_renaming,
-                            &self.model,
-                            &mut self.globals,
-                        );
+                        let mut global_var_discovery =
+                            GlobalVariableDiscovery::new(path, &self.model, &mut self.globals);
                         global_var_discovery.run(expr)?;
                     }
                 }
@@ -488,7 +477,8 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
             .collect_vec();
 
         let name = self
-            .symbol_renaming
+            .model
+            .user_defs()
             .get_function_name(func.function_id())
             .cloned()
             .unwrap_or_else(|| format!("{}", func.function_id()));
@@ -881,7 +871,8 @@ impl<'a> ControlFlowStructureAnalyzer<'a> {
         if typ.is_function() {
             let function_id = FunctionId::new(addr);
             let name = self
-                .symbol_renaming
+                .model
+                .user_defs()
                 .get_function_name(function_id)
                 .cloned()
                 .unwrap_or_else(|| format!("{}", function_id));

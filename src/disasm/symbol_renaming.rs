@@ -43,47 +43,13 @@ impl StructId {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolRenaming {
-    functions: HashMap<FunctionId, FunctionSymbol>,
-    variable_names: HashMap<VersionedMemoryReference, (String, Option<Type>)>,
-    custom_types: HashMap<CustomTypeId, String>,
-    globals: HashMap<usize, (String, Option<Type>)>,
-    struct_definitions: HashMap<String, StructDef>,
-}
-
-impl Default for SymbolRenaming {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionSymbol {
-    name: String,
-    args: Vec<(String, Option<Type>)>,
-}
-
-impl FunctionSymbol {
-    pub fn new(name: String, args: Vec<(String, Option<Type>)>) -> Self {
-        Self { name, args }
-    }
-
-    pub fn name(&self) -> &String {
-        &self.name
-    }
-
-    pub fn args(&self) -> &Vec<(String, Option<Type>)> {
-        &self.args
-    }
+    user_defs: UserDefs,
 }
 
 impl SymbolRenaming {
     pub fn new() -> Self {
         Self {
-            functions: HashMap::new(),
-            variable_names: HashMap::new(),
-            custom_types: HashMap::new(),
-            globals: HashMap::new(),
-            struct_definitions: HashMap::new(),
+            user_defs: UserDefs::new(),
         }
     }
 
@@ -93,7 +59,8 @@ impl SymbolRenaming {
         name: String,
         args: Vec<(String, Option<Type>)>,
     ) {
-        self.functions
+        self.user_defs
+            .functions
             .insert(function_id, FunctionSymbol::new(name, args));
     }
 
@@ -103,29 +70,36 @@ impl SymbolRenaming {
         name: String,
         typ: Option<Type>,
     ) {
-        self.variable_names.insert(*variable, (name, typ));
+        self.user_defs.variable_names.insert(*variable, (name, typ));
+    }
+
+    fn add_custom_type(&mut self, custom_id: CustomTypeId, to_string: String) {
+        self.user_defs.custom_types.insert(custom_id, to_string);
     }
 
     fn add_global(&mut self, addr: usize, name: String, typ: Option<Type>) {
-        self.globals.insert(addr, (name, typ));
+        self.user_defs.globals.insert(addr, (name, typ));
     }
+}
 
-    pub fn get_variable_name(&self, variable: &VersionedMemoryReference) -> Option<&String> {
-        self.variable_names.get(variable).map(|(name, _)| name)
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserDefs {
+    functions: HashMap<FunctionId, FunctionSymbol>,
+    variable_names: HashMap<VersionedMemoryReference, (String, Option<Type>)>,
+    custom_types: HashMap<CustomTypeId, String>,
+    globals: HashMap<usize, (String, Option<Type>)>,
+    struct_definitions: HashMap<StructId, StructDef>,
+}
 
-    pub fn get_variable_type(&self, variable: &VersionedMemoryReference) -> Option<&Type> {
-        self.variable_names
-            .get(variable)
-            .and_then(|(_, typ)| typ.as_ref())
-    }
-
-    pub fn get_variables(&self) -> &HashMap<VersionedMemoryReference, (String, Option<Type>)> {
-        &self.variable_names
-    }
-
-    pub fn get_functions(&self) -> &HashMap<FunctionId, FunctionSymbol> {
-        &self.functions
+impl UserDefs {
+    pub fn new() -> Self {
+        Self {
+            functions: HashMap::new(),
+            variable_names: HashMap::new(),
+            custom_types: HashMap::new(),
+            globals: HashMap::new(),
+            struct_definitions: HashMap::new(),
+        }
     }
 
     pub fn from_lines(lines: &str) -> Result<Self, String> {
@@ -140,13 +114,13 @@ impl SymbolRenaming {
             }
 
             match SymbolRenamingLine::parse(trimmed_line) {
-                Ok((_, symbol_renaming_line)) => match symbol_renaming_line {
+                Ok((_, user_defs_line)) => match user_defs_line {
                     SymbolRenamingLine::Function(function_id, name, args) => {
                         let resolved_args = args
                             .into_iter()
                             .map(|(arg_name, type_opt)| {
-                                let resolved_type = type_opt.and_then(|type_name| {
-                                    parse_type(&type_name, &symbol_renaming.custom_types)
+                                let resolved_type = type_opt.clone().and_then(|type_name| {
+                                    parse_type(&type_name, &symbol_renaming.user_defs)
                                         .ok()
                                         .map(|(_, parsed_type)| parsed_type)
                                 });
@@ -158,7 +132,7 @@ impl SymbolRenaming {
                     SymbolRenamingLine::Variable(variable, name, type_opt) => {
                         let ty = type_opt
                             .map(|type_name| {
-                                parse_type(&type_name, &symbol_renaming.custom_types)
+                                parse_type(&type_name, &symbol_renaming.user_defs)
                                     .map(|(_, parsed_type)| parsed_type)
                                     .map_err(|e| e.to_string())
                             })
@@ -167,12 +141,12 @@ impl SymbolRenaming {
                     }
                     SymbolRenamingLine::CustomType(name) => {
                         let custom_type_id = CustomTypeId::fresh();
-                        symbol_renaming.custom_types.insert(custom_type_id, name);
+                        symbol_renaming.add_custom_type(custom_type_id, name);
                     }
                     SymbolRenamingLine::Global(addr, name, type_opt) => {
                         let ty = type_opt
                             .map(|type_name| {
-                                parse_type(&type_name, &symbol_renaming.custom_types)
+                                parse_type(&type_name, &symbol_renaming.user_defs)
                                     .map(|(_, parsed_type)| parsed_type)
                                     .map_err(|e| e.to_string())
                             })
@@ -187,7 +161,7 @@ impl SymbolRenaming {
                             .map(|(field_name, opt_field_type_str)| { // opt_field_type_str is Option<String>
                                 match opt_field_type_str {
                                     Some(field_type_str) => { // If type string is Some, parse it
-                                        match parse_type(&field_type_str, &symbol_renaming.custom_types)
+                                        match parse_type(&field_type_str, &symbol_renaming.user_defs)
                                         {
                                             Ok((_remaining_input, parsed_field_type)) => {
                                                 Ok(StructField {
@@ -216,8 +190,9 @@ impl SymbolRenaming {
                             fields: resolved_fields,
                         };
                         symbol_renaming
+                            .user_defs
                             .struct_definitions
-                            .insert(struct_name_key, struct_def); // Original struct_name_key is moved here as key
+                            .insert(StructId::fresh(), struct_def); // Original struct_name_key is moved here as key
                     }
                 },
                 Err(err) => {
@@ -226,9 +201,8 @@ impl SymbolRenaming {
             }
         }
 
-        Ok(symbol_renaming)
+        Ok(symbol_renaming.user_defs)
     }
-
     pub fn get_function_name(&self, function_id: FunctionId) -> Option<&String> {
         self.functions.get(&function_id).map(|symbol| symbol.name())
     }
@@ -244,12 +218,86 @@ impl SymbolRenaming {
         self.custom_types.get(&id)
     }
 
+    pub fn get_struct(&self, id: StructId) -> Option<&StructDef> {
+        self.struct_definitions.get(&id)
+    }
+
     pub fn get_custom_types(&self) -> &HashMap<CustomTypeId, String> {
         &self.custom_types
     }
 
     pub fn get_global(&self, addr: usize) -> Option<&String> {
         self.globals.get(&addr).map(|(name, _)| name)
+    }
+
+    pub fn struct_by_name(&self, name: &str) -> Option<(&StructId, &StructDef)> {
+        self.struct_definitions.iter().find(|(_, s)| s.name == name)
+    }
+
+    pub fn type_from_name(&self, name: &str) -> Option<Type> {
+        if let Some((custom_type_id, _)) = self.custom_types.iter().find(|(_, v)| *v == name) {
+            Some(Type::CustomType(*custom_type_id))
+        } else if let Some((struct_id, _)) =
+            self.struct_definitions.iter().find(|(_, v)| v.name == name)
+        {
+            Some(Type::Struct(*struct_id))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_variable_name(&self, variable: &VersionedMemoryReference) -> Option<&String> {
+        self.variable_names.get(variable).map(|(name, _)| name)
+    }
+
+    pub fn get_variable_type(&self, variable: &VersionedMemoryReference) -> Option<&Type> {
+        self.variable_names
+            .get(variable)
+            .and_then(|(_, typ)| typ.as_ref())
+    }
+
+    pub fn get_functions(&self) -> &HashMap<FunctionId, FunctionSymbol> {
+        &self.functions
+    }
+
+    pub fn get_variables(&self) -> &HashMap<VersionedMemoryReference, (String, Option<Type>)> {
+        &self.variable_names
+    }
+}
+
+impl Default for UserDefs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSymbol {
+    name: String,
+    args: Vec<(String, Option<Type>)>,
+}
+
+impl FunctionSymbol {
+    pub fn new(name: String, args: Vec<(String, Option<Type>)>) -> Self {
+        Self { name, args }
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn args(&self) -> &Vec<(String, Option<Type>)> {
+        &self.args
+    }
+}
+
+impl UserDefs {}
+
+impl Default for SymbolRenaming {
+    fn default() -> Self {
+        Self {
+            user_defs: UserDefs::default(),
+        }
     }
 }
 
@@ -469,10 +517,7 @@ fn parse_type_as_str(input: &str) -> IResult<&str, String> {
     .parse(input)
 }
 
-pub fn parse_type<'a>(
-    input: &'a str,
-    custom_types: &HashMap<CustomTypeId, String>,
-) -> IResult<&'a str, Type> {
+pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, Type> {
     use nom::{
         branch::alt,
         bytes::complete::tag,
@@ -484,7 +529,7 @@ pub fn parse_type<'a>(
     let parse_pointer_type = map(
         delimited(
             preceded(space0, tag("Pointer<")),
-            preceded(space0, |i| parse_type(i, custom_types)),
+            preceded(space0, |i| parse_type(i, user_defs)),
             preceded(space0, tag(">")),
         ),
         |pointee_type| Type::Pointer(Box::new(pointee_type)),
@@ -496,7 +541,7 @@ pub fn parse_type<'a>(
             tuple((
                 preceded(space0, parse_usize),
                 preceded(space0, tag(";")),
-                preceded(space0, |i| parse_type(i, custom_types)),
+                preceded(space0, |i| parse_type(i, user_defs)),
             )),
             preceded(space0, tag(">")),
         ),
@@ -509,10 +554,10 @@ pub fn parse_type<'a>(
     let parse_custom_type = map_res(
         preceded(space0, nom::character::complete::alpha1),
         |name: &str| {
-            custom_types
-                .iter()
-                .find(|(_, v)| v == &name)
-                .map(|(id, _)| Type::CustomType(*id))
+            user_defs
+                .type_from_name(name)
+                .as_ref()
+                .cloned()
                 .ok_or_else(|| format!("Unknown custom type: {}", name))
         },
     );
@@ -735,46 +780,46 @@ mod tests {
     #[test]
     fn test_from_lines_empty() {
         let input = "";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert!(symbol_renaming.functions.is_empty());
-        assert!(symbol_renaming.variable_names.is_empty());
+        let user_defs = result.unwrap();
+        assert!(user_defs.functions.is_empty());
+        assert!(user_defs.variable_names.is_empty());
     }
 
     #[test]
     fn test_from_lines_comments_and_empty_lines() {
         let input = "# This is a comment\n\nF 1234 function_name\n# Another comment\n";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.functions.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.functions.len(), 1);
         assert_eq!(
-            symbol_renaming.functions.get(&FunctionId::new(1234)),
+            user_defs.functions.get(&FunctionId::new(1234)),
             Some(&FunctionSymbol::new("function_name".to_string(), vec![]))
         );
-        assert!(symbol_renaming.variable_names.is_empty());
+        assert!(user_defs.variable_names.is_empty());
     }
 
     #[test]
     fn test_from_lines_mixed() {
         let input = "F 1234 function_name\nV 5678 [R-4]_2 variable_name";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.functions.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.functions.len(), 1);
         assert_eq!(
-            symbol_renaming.functions.get(&FunctionId::new(1234)),
+            user_defs.functions.get(&FunctionId::new(1234)),
             Some(&FunctionSymbol::new("function_name".to_string(), vec![]))
         );
-        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        assert_eq!(user_defs.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
             kind: VersionableMemoryKind::RelativeMemory(-4),
             function_id: FunctionId::new(5678),
             version: 2,
         };
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr),
+            user_defs.variable_names.get(&vmr),
             Some(&("variable_name".to_string(), None))
         );
     }
@@ -782,7 +827,7 @@ mod tests {
     #[test]
     fn test_from_lines_invalid_line() {
         let input = "X 1234 function_name";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -829,12 +874,12 @@ mod tests {
     #[test]
     fn test_from_lines_with_custom_type() {
         let input = "T MyCustomType";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.custom_types.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.custom_types.len(), 1);
         assert_eq!(
-            symbol_renaming.custom_types.values().next().unwrap(),
+            user_defs.custom_types.values().next().unwrap(),
             &"MyCustomType".to_string()
         );
     }
@@ -842,12 +887,12 @@ mod tests {
     #[test]
     fn test_from_lines_with_global() {
         let input = "G 576 MyGlobal Int";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.globals.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.globals.len(), 1);
         assert_eq!(
-            symbol_renaming.globals.get(&576),
+            user_defs.globals.get(&576),
             Some(&("MyGlobal".to_string(), Some(Type::Int)))
         );
     }
@@ -855,12 +900,12 @@ mod tests {
     #[test]
     fn test_from_lines_with_global_no_type() {
         let input = "G 1024 AnotherGlobal";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.globals.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.globals.len(), 1);
         assert_eq!(
-            symbol_renaming.globals.get(&1024),
+            user_defs.globals.get(&1024),
             Some(&("AnotherGlobal".to_string(), None))
         );
     }
@@ -914,10 +959,10 @@ mod tests {
     #[test]
     fn test_from_lines_with_struct() {
         let input = "S MyStruct { x: Int, y: Bool }";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.struct_definitions.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.struct_definitions.len(), 1);
         let expected_struct_def = StructDef {
             name: "MyStruct".to_string(),
             fields: vec![
@@ -932,7 +977,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            symbol_renaming.struct_definitions.get("MyStruct"),
+            user_defs.struct_by_name("MyStruct").map(|v| v.1),
             Some(&expected_struct_def)
         );
     }
@@ -940,16 +985,16 @@ mod tests {
     #[test]
     fn test_from_lines_with_struct_empty_fields() {
         let input = "S EmptyStruct { }";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.struct_definitions.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.struct_definitions.len(), 1);
         let expected_struct_def = StructDef {
             name: "EmptyStruct".to_string(),
             fields: vec![],
         };
         assert_eq!(
-            symbol_renaming.struct_definitions.get("EmptyStruct"),
+            user_defs.struct_by_name("EmptyStruct").map(|v| v.1),
             Some(&expected_struct_def)
         );
     }
@@ -957,19 +1002,19 @@ mod tests {
     #[test]
     fn test_from_lines_with_struct_and_custom_type_field() {
         let input = "T MyCustom\nS DataStruct { val: MyCustom, count: Int }";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok(), "from_lines failed: {:?}", result.err());
-        let symbol_renaming = result.unwrap();
+        let user_defs = result.unwrap();
 
-        assert_eq!(symbol_renaming.custom_types.len(), 1);
-        let custom_type_id_entry = symbol_renaming
+        assert_eq!(user_defs.custom_types.len(), 1);
+        let custom_type_id_entry = user_defs
             .custom_types
             .iter()
             .find(|(_, name)| name == &"MyCustom");
         assert!(custom_type_id_entry.is_some());
         let (custom_type_id, _) = custom_type_id_entry.unwrap();
 
-        assert_eq!(symbol_renaming.struct_definitions.len(), 1);
+        assert_eq!(user_defs.struct_definitions.len(), 1);
         let expected_struct_def = StructDef {
             name: "DataStruct".to_string(),
             fields: vec![
@@ -984,7 +1029,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            symbol_renaming.struct_definitions.get("DataStruct"),
+            user_defs.struct_by_name("DataStruct").map(|v| v.1),
             Some(&expected_struct_def)
         );
     }
@@ -994,7 +1039,7 @@ mod tests {
         let mut symbol_renaming = SymbolRenaming::new();
         let function_id = FunctionId::new(1234);
         symbol_renaming.add_function(function_id, "function_name".to_string(), vec![]);
-        let name = symbol_renaming.get_function_name(function_id);
+        let name = symbol_renaming.user_defs.get_function_name(function_id);
         assert_eq!(name, Some(&"function_name".to_string()));
     }
 
@@ -1007,7 +1052,7 @@ mod tests {
             "function_name".to_string(),
             vec![("arg1".to_string(), None), ("arg2".to_string(), None)],
         );
-        let args = symbol_renaming.get_function_args(function_id);
+        let args = symbol_renaming.user_defs.get_function_args(function_id);
         assert_eq!(
             args,
             Some(&vec![
@@ -1026,18 +1071,18 @@ mod tests {
             version: 2,
         };
         symbol_renaming.add_variable_name(&variable, "variable_name".to_string(), None);
-        let name = symbol_renaming.get_variable_name(&variable);
+        let name = symbol_renaming.user_defs.get_variable_name(&variable);
         assert_eq!(name, Some(&"variable_name".to_string()));
     }
     #[test]
     fn test_from_lines_function_with_args_and_types() {
         let input = "T MyCustomType\nF 1234 function_name(arg1:Int, arg2:MyCustomType)";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.functions.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.functions.len(), 1);
         let function_id = FunctionId::new(1234);
-        let custom_type_id = *symbol_renaming.custom_types.keys().next().unwrap();
+        let custom_type_id = *user_defs.custom_types.keys().next().unwrap();
         let expected_function_symbol = FunctionSymbol::new(
             "function_name".to_string(),
             vec![
@@ -1047,7 +1092,7 @@ mod tests {
         );
 
         assert_eq!(
-            symbol_renaming.functions.get(&function_id),
+            user_defs.functions.get(&function_id),
             Some(&expected_function_symbol)
         );
     }
@@ -1055,17 +1100,17 @@ mod tests {
     #[test]
     fn test_from_lines_variable_with_type() {
         let input = "T MyCustomType\nV 5678 [R-4]_2 variable_name Int";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
             kind: VersionableMemoryKind::RelativeMemory(-4),
             function_id: FunctionId::new(5678),
             version: 2,
         };
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr),
+            user_defs.variable_names.get(&vmr),
             Some(&("variable_name".to_string(), Some(Type::Int)))
         );
     }
@@ -1073,52 +1118,52 @@ mod tests {
     #[test]
     fn test_from_lines_variable_with_custom_type() {
         let input = "T MyCustomType\nV 5678 [R-4]_2 variable_name MyCustomType";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
             kind: VersionableMemoryKind::RelativeMemory(-4),
             function_id: FunctionId::new(5678),
             version: 2,
         };
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr).unwrap().0,
+            user_defs.variable_names.get(&vmr).unwrap().0,
             "variable_name"
         );
 
         let expected_type = Type::CustomType(
-            *symbol_renaming
+            *user_defs
                 .custom_types
                 .keys()
                 .next()
                 .expect("No custom type found"),
         );
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr).unwrap().1,
+            user_defs.variable_names.get(&vmr).unwrap().1,
             Some(expected_type)
         );
     }
     #[test]
     fn test_from_lines_variable_with_pointer_type() {
         let input = "V 5678 [R-4]_2 variable_name Pointer<Int>";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
             kind: VersionableMemoryKind::RelativeMemory(-4),
             function_id: FunctionId::new(5678),
             version: 2,
         };
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr).unwrap().0,
+            user_defs.variable_names.get(&vmr).unwrap().0,
             "variable_name"
         );
 
         let expected_type = Type::Pointer(Box::new(Type::Int));
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr).unwrap().1,
+            user_defs.variable_names.get(&vmr).unwrap().1,
             Some(expected_type)
         );
     }
@@ -1126,42 +1171,43 @@ mod tests {
     #[test]
     fn test_from_lines_variable_with_pointer_to_custom_type() {
         let input = "T MyCustomType\nV 5678 [R-4]_2 variable_name Pointer<MyCustomType>";
-        let result = SymbolRenaming::from_lines(input);
+        let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
-        let symbol_renaming = result.unwrap();
-        assert_eq!(symbol_renaming.variable_names.len(), 1);
+        let user_defs = result.unwrap();
+        assert_eq!(user_defs.variable_names.len(), 1);
         let vmr = VersionedMemoryReference {
             kind: VersionableMemoryKind::RelativeMemory(-4),
             function_id: FunctionId::new(5678),
             version: 2,
         };
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr).unwrap().0,
+            user_defs.variable_names.get(&vmr).unwrap().0,
             "variable_name"
         );
 
         let expected_type = Type::Pointer(Box::new(Type::CustomType(
-            *symbol_renaming
+            *user_defs
                 .custom_types
                 .keys()
                 .next()
                 .expect("No custom type found"),
         )));
         assert_eq!(
-            symbol_renaming.variable_names.get(&vmr).unwrap().1,
+            user_defs.variable_names.get(&vmr).unwrap().1,
             Some(expected_type)
         );
     }
 
     #[test]
     fn test_parse_type_array_variants() {
-        let mut custom_types = HashMap::new();
+        let mut symbol_renaming = SymbolRenaming::new();
         let custom_id = CustomTypeId::fresh();
-        custom_types.insert(custom_id, "MyCustom".to_string());
+        symbol_renaming.add_custom_type(custom_id, "MyCustom".to_string());
+        let user_defs = &symbol_renaming.user_defs;
 
         // Test 1: Simple array
         let input1 = "Array<10; Int>";
-        let result1 = parse_type(input1, &custom_types);
+        let result1 = parse_type(input1, user_defs);
         assert!(
             result1.is_ok(),
             "Failed to parse: '{}', error: {:?}",
@@ -1185,7 +1231,7 @@ mod tests {
 
         // Test 2: Array of pointers
         let input2 = "Array<5; Pointer<Bool>>";
-        let result2 = parse_type(input2, &custom_types);
+        let result2 = parse_type(input2, user_defs);
         assert!(
             result2.is_ok(),
             "Failed to parse: '{}', error: {:?}",
@@ -1209,7 +1255,7 @@ mod tests {
 
         // Test 3: Nested array
         let input3 = "Array<3; Array<2; Char>>";
-        let result3 = parse_type(input3, &custom_types);
+        let result3 = parse_type(input3, user_defs);
         assert!(
             result3.is_ok(),
             "Failed to parse: '{}', error: {:?}",
@@ -1236,7 +1282,7 @@ mod tests {
 
         // Test 4: Array of custom type
         let input4 = "Array<7; MyCustom>";
-        let result4 = parse_type(input4, &custom_types);
+        let result4 = parse_type(input4, user_defs);
         assert!(
             result4.is_ok(),
             "Failed to parse: '{}', error: {:?}",
@@ -1260,7 +1306,7 @@ mod tests {
 
         // Test 5: Array with spaces around components
         let input5 = "Array< 12 ; Pointer<Int> >";
-        let result5 = parse_type(input5, &custom_types);
+        let result5 = parse_type(input5, user_defs);
         assert!(
             result5.is_ok(),
             "Failed to parse: '{}', error: {:?}",
@@ -1287,7 +1333,7 @@ mod tests {
         // Test 6: Invalid syntax - missing length
         let input_err1 = "Array<; Int>";
         assert!(
-            parse_type(input_err1, &custom_types).is_err(),
+            parse_type(input_err1, user_defs).is_err(),
             "Should fail on missing length: {}",
             input_err1
         );
@@ -1295,7 +1341,7 @@ mod tests {
         // Test 7: Invalid syntax - missing type
         let input_err2 = "Array<10; >";
         assert!(
-            parse_type(input_err2, &custom_types).is_err(),
+            parse_type(input_err2, user_defs).is_err(),
             "Should fail on missing type: {}",
             input_err2
         );
@@ -1303,7 +1349,7 @@ mod tests {
         // Test 8: Invalid syntax - missing semicolon
         let input_err3 = "Array<10 Int>";
         assert!(
-            parse_type(input_err3, &custom_types).is_err(),
+            parse_type(input_err3, user_defs).is_err(),
             "Should fail on missing semicolon: {}",
             input_err3
         );

@@ -111,8 +111,6 @@ pub trait TypeVarRegistry {
     fn get_type_var_node(&self, tv_id: &TypeVarId) -> Option<&TypeVarNode>;
     fn get_type_var_state(&self, tv_id: &TypeVarId) -> Option<&TypeVarState>;
     fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar>;
-    fn get_custom_type_name(&self, custom_type_id: CustomTypeId) -> Option<&String>;
-    fn get_struct_name(&self, struct_id: StructId) -> Option<&String>;
     fn lower_bounds(&self, tv_id: &TypeVarId) -> HashSet<&Type> {
         match self.get_type_var_state(tv_id).unwrap() {
             TypeVarState::Bounds { lower_bounds, .. } => lower_bounds.iter().collect(),
@@ -157,13 +155,6 @@ impl TypeVarRegistry for InferenceAlgorithmState {
     }
     fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
         self.generic_type_vars.get(id)
-    }
-    fn get_custom_type_name(&self, _custom_type_id: CustomTypeId) -> Option<&String> {
-        unimplemented!()
-    }
-
-    fn get_struct_name(&self, _: StructId) -> Option<&String> {
-        unimplemented!()
     }
 }
 

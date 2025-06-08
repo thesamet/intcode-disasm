@@ -41,4 +41,4 @@ F 1872 game_over_grue
 
 G 3094 SOME_ARR Array<13;Int>
 
-F 2329 coolio2329
+F 2329 coolio2329(s: GameThing)

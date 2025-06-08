@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::symbol_renaming::{CustomTypeId, StructId};
+use crate::disasm::symbol_renaming::{CustomTypeId, StructId, UserDefs};
 use crate::disasm::v3::lir::TypeVarPath;
+use crate::disasm::v3::model::{HasTypeInferenceResult, Model, ModelState};
 use crate::disasm::v3::ssa::VersionedMemoryReference;
 use crate::disasm::v3::type_inference::types::StructDef;
 use crate::disasm::v3::FunctionId;
@@ -22,7 +23,7 @@ pub struct FunctionSignature {
 }
 
 /// Result of the type inference analysis.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct TypeInferenceResult {
     pub type_var_states: HashMap<TypeVarId, TypeVarState>,
     pub type_var_nodes: HashMap<TypeVarId, TypeVarNode>,
@@ -36,6 +37,16 @@ pub struct TypeInferenceResult {
     pub custom_type_names: HashMap<CustomTypeId, String>,
     pub struct_defs: HashMap<StructId, StructDef>,
     pub global_type_var_ids: HashMap<usize, TypeVarId>,
+    pub user_defs: UserDefs,
+}
+
+impl<S> Model<S>
+where
+    S: ModelState + HasTypeInferenceResult,
+{
+    pub fn user_defs(&self) -> &UserDefs {
+        &self.type_inference_result().user_defs
+    }
 }
 
 impl TypeInferenceResult {
@@ -54,6 +65,7 @@ impl TypeInferenceResult {
             custom_type_names: HashMap::new(),
             global_type_var_ids: HashMap::new(),
             struct_defs: HashMap::new(),
+            user_defs: UserDefs::new(),
         }
     }
 
@@ -160,13 +172,5 @@ impl TypeVarRegistry for TypeInferenceResult {
         id: &super::types::GenericTypeVarId,
     ) -> Option<&super::types::GenericTypeVar> {
         self.generic_type_vars.get(id)
-    }
-
-    fn get_custom_type_name(&self, custom_type_id: CustomTypeId) -> Option<&String> {
-        self.custom_type_names.get(&custom_type_id)
-    }
-
-    fn get_struct_name(&self, struct_id: StructId) -> Option<&String> {
-        self.struct_defs.get(&struct_id).map(|def| &def.name)
     }
 }

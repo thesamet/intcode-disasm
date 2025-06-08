@@ -3,6 +3,7 @@
 use itertools::Itertools;
 use log::debug;
 
+use crate::disasm::symbol_renaming::UserDefs;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo, TypeVarPath};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::constraints::AddConstraintResult;
@@ -10,7 +11,7 @@ use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::types::TypeVarNode;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
 use crate::disasm::v3::{FunctionId, InstructionId};
-use crate::disasm::{Error, SymbolRenaming}; // Assuming a general error type for the project
+use crate::disasm::Error;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -372,30 +373,30 @@ struct GenericOpportunity {
 /// The solver takes a model with folded SSA results and attempts to infer types
 /// for virtual machine registers (VMRs) and memory locations by generating
 /// and solving a set of type constraints.
-pub struct Solver<'a> {
+pub struct Solver {
     /// The model containing the folded SSA result, which includes the CFG, DFG, and Function.
     model: Model<FoldedSsaComplete>,
     state: InferenceAlgorithmState,
     store: ConstraintStore,
     function_types: HashMap<FunctionId, (Type, Type)>,
     compound_type_refiner: CompoundTypeRefiner,
-    symbol_renaming: &'a SymbolRenaming,
+    user_defs: UserDefs,
 }
 
-impl<'a> Solver<'a> {
+impl Solver {
     /// Creates a new solver instance.
     ///
     /// # Arguments
     ///
     /// * `model` - The model with folded SSA results.
-    pub fn new(model: Model<FoldedSsaComplete>, symbol_renaming: &'a SymbolRenaming) -> Self {
+    pub fn new(model: Model<FoldedSsaComplete>, user_defs: UserDefs) -> Self {
         Self {
             model,
             state: InferenceAlgorithmState::new(),
             store: ConstraintStore::new(),
             function_types: HashMap::new(),
             compound_type_refiner: CompoundTypeRefiner::new(),
-            symbol_renaming,
+            user_defs,
         }
     }
 
@@ -413,9 +414,9 @@ impl<'a> Solver<'a> {
     /// if type inference fails (e.g., due to a type contradiction or other issue).
     pub fn run(
         model: Model<FoldedSsaComplete>,
-        symbol_renaming: &'a SymbolRenaming,
+        user_defs: UserDefs,
     ) -> Result<Model<TypeInferenceComplete>, Error> {
-        let solver = Self::new(model, symbol_renaming);
+        let solver = Self::new(model, user_defs);
         solver.solve()
     }
 
@@ -430,7 +431,7 @@ impl<'a> Solver<'a> {
     /// A `Result` containing the model with type inference complete, or an `Error`.
     fn solve(mut self) -> Result<Model<TypeInferenceComplete>, Error> {
         // 1. Initialize Analyzer, State, and Store
-        let generator_result = generate_constraints(&self.model, self.symbol_renaming);
+        let generator_result = generate_constraints(&self.model, &self.user_defs);
         self.store = generator_result.store;
         self.state = generator_result.state;
         self.function_types = generator_result.function_types;
@@ -573,7 +574,7 @@ impl<'a> Solver<'a> {
         result.constraint_store = self.store;
         result.generic_type_vars = self.state.generic_type_vars();
         result.change_log = self.state.change_log;
-        result.custom_type_names = self.symbol_renaming.get_custom_types().clone();
+        result.user_defs = self.user_defs;
         result.global_type_var_ids = generator_result.global_vars;
         for (function_id, _) in self.model.functions() {
             let args = self.model.function_call_analysis_result().functions[&function_id]
@@ -883,7 +884,7 @@ impl<'a> Solver<'a> {
                         continue;
                     }
                     let intersection: Vec<&Type> = lower_bounds
-                        .intersection(upper_bounds)
+                        .intersection(&upper_bounds)
                         .filter(|t| **t != tv_id.to_type())
                         .sorted()
                         .collect_vec();
