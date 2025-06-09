@@ -1,7 +1,10 @@
 // disasm/src/disasm/v3/type_inference/type_bounds_map.rs
 
 use core::fmt;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use itertools::Itertools;
 use log::trace;
@@ -11,7 +14,7 @@ use petgraph::{
 };
 
 use crate::disasm::{
-    symbol_renaming::{CustomTypeId, StructId},
+    symbol_renaming::{CustomTypeId, StructId, UserDefs},
     v3::{lir::TypeVarPath, ssa::VersionedMemoryReference},
 };
 
@@ -144,6 +147,10 @@ pub trait TypeVarRegistry {
             }
         }
     }
+
+    // This is a hack to wire down UserDefs to types through the type registry. We should have
+    // a better contextual way to do this.
+    fn user_defs(&self) -> &UserDefs;
 }
 
 impl TypeVarRegistry for InferenceAlgorithmState {
@@ -155,6 +162,10 @@ impl TypeVarRegistry for InferenceAlgorithmState {
     }
     fn get_generic_type_var(&self, id: &GenericTypeVarId) -> Option<&GenericTypeVar> {
         self.generic_type_vars.get(id)
+    }
+
+    fn user_defs(&self) -> &UserDefs {
+        &self.user_defs
     }
 }
 
@@ -181,6 +192,7 @@ pub struct InferenceAlgorithmState {
     /// Generic type variables introduced during inference
     generic_type_vars: HashMap<GenericTypeVarId, GenericTypeVar>,
     next_generic_id_counter: usize,
+    user_defs: UserDefs,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -449,6 +461,7 @@ impl InferenceAlgorithmState {
 
             generic_type_vars: HashMap::new(),
             next_generic_id_counter: 0,
+            user_defs: UserDefs::new(),
         }
     }
 

@@ -1,6 +1,7 @@
 //! Type inference result data structure.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use itertools::Itertools;
 use log::debug;
@@ -172,5 +173,9 @@ impl TypeVarRegistry for TypeInferenceResult {
         id: &super::types::GenericTypeVarId,
     ) -> Option<&super::types::GenericTypeVar> {
         self.generic_type_vars.get(id)
+    }
+
+    fn user_defs(&self) -> &UserDefs {
+        &self.user_defs
     }
 }

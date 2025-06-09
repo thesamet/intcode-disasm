@@ -615,10 +615,18 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
             Type::CustomType(id) => {
-                write!(f, "{}", self.registry.get_custom_type_name(*id).unwrap())
+                write!(
+                    f,
+                    "{}",
+                    self.registry.user_defs().get_custom_type(*id).unwrap()
+                )
             }
             Type::Struct(id) => {
-                write!(f, "{}", self.registry.get_struct_name(*id).unwrap())
+                write!(
+                    f,
+                    "{}",
+                    self.registry.user_defs().get_struct(*id).unwrap().name
+                )
             }
             Type::Array { len, elem_type, .. } => {
                 write!(
@@ -636,6 +644,10 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
 
 #[cfg(test)]
 mod tests {
+
+    use std::rc::Rc;
+
+    use crate::disasm::symbol_renaming::UserDefs;
 
     use super::*;
 
@@ -676,11 +688,15 @@ mod tests {
         Type::NumericLiteral
     }
 
-    struct NoRegistry {}
+    struct NoRegistry {
+        user_defs: UserDefs,
+    }
 
     impl NoRegistry {
         fn new() -> Self {
-            NoRegistry {}
+            NoRegistry {
+                user_defs: UserDefs::new(),
+            }
         }
     }
 
@@ -700,11 +716,7 @@ mod tests {
             todo!()
         }
 
-        fn get_custom_type_name(&self, _custom_type_id: CustomTypeId) -> Option<&String> {
-            todo!()
-        }
-
-        fn get_struct_name(&self, _struct_id: StructId) -> Option<&String> {
+        fn user_defs(&self) -> &UserDefs {
             todo!()
         }
     }

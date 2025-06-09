@@ -581,6 +581,32 @@ impl<'a> TypeConstraintGenerator<'a> {
                     self.result.state.get_or_create_type_var_for_vmr(vmr, path)
                 }
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
+                    /*
+                    let struct_offset = match inner_ptr_expr.as_binary() {
+                        Some((_, base, Expression::Constant(offset))) if offset < 10 => {
+                            let base_type_var_id = self.process_expression(
+                                base,
+                                function_id,
+                                instruction_id,
+                                path.extending_path_element(ExpressionPathElement::Deref),
+                            );
+                            self.result.state.add_equality_constraint(
+                                Constraint::new(
+                                    Type::TypeVar(base_type_var_id),
+                                    Type::Pointer(Box::new(Type::TypeVar(ptr_addr_type_var_id))),
+                                    function_id,
+                                    instruction_id,
+                                    ConstraintReason::DereferenceRequiresPointer,
+                                ),
+                                None,
+                                &self.result.state,
+                            );
+                            Some(offset)
+                        }
+                        _ => None,
+                    };
+                    */
+
                     let ptr_addr_type_var_id = self.process_expression(
                         inner_ptr_expr,
                         function_id,
@@ -817,6 +843,31 @@ impl<'a> TypeConstraintGenerator<'a> {
                     self.process_expression(inner_expr, function_id, instruction_id, path);
                 self.result.markers.insert(*marker, expr_type);
                 expr_type
+            }
+            Expression::TupleElement { base, offset } => {
+                let base_type = self.process_expression(
+                    base,
+                    function_id,
+                    instruction_id,
+                    path.extending_path_element(ExpressionPathElement::TupleElementBase),
+                );
+                let result_tv_id = self.result.state.make_expression_type_var(path);
+                let result_type = Type::TypeVar(result_tv_id);
+
+                /*
+                self.result.store.add_equality_constraint(
+                    Constraint::new(
+                        Type::TypeVar(base_type),
+                        Type::Tuple(Box::new(vec![result_type.clone()])),
+                        function_id,
+                        instruction_id,
+                        ConstraintReason::TupleElement,
+                    ),
+                    None,
+                    &self.result.state,
+                );
+                */
+                result_tv_id
             }
         }
     }

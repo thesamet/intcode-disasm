@@ -9,6 +9,7 @@ mod symbol_renaming;
 mod test_utils;
 
 pub use symbol_renaming::SymbolRenaming;
+pub use symbol_renaming::UserDefs;
 use thiserror::Error;
 
 /// Represents errors that can occur during disassembly operations

@@ -1,12 +1,12 @@
 use clap::{Parser, Subcommand};
-use disasm::disasm::repl;
 use disasm::disasm::v3::analysis::{self};
 use disasm::disasm::v3::common::formatting::{Colors, ContextualPrettyPrint, PrettyPrintConfig};
 use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
 };
 use disasm::disasm::v3::FunctionId;
-use disasm::disasm::UserDefs;
+use disasm::disasm::{repl, UserDefs};
+
 use itertools::Itertools;
 use std::process;
 

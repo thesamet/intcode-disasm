@@ -386,6 +386,14 @@ impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for Expre
                     ctx.fmt_close_paren()                            // Helper for ')'
                 )
             }
+            Expression::TupleElement { base, offset } => {
+                format!(
+                    "{}{}{}",
+                    ctx.fmt_open_paren(),
+                    ctx.format(format!("{}", offset), SemanticColor::Constant),
+                    ctx.fmt_close_paren()
+                )
+            }
         }
     }
 }

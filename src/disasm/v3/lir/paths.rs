@@ -11,6 +11,7 @@ pub enum ExpressionPathElement {
     BinaryRight,
     Unary,
     Deref,
+    TupleElementBase,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -75,6 +76,13 @@ impl ExpressionPath {
                         current_expression = expr;
                     } else {
                         panic!("Invalid path: expected Addressable::Deref expression");
+                    }
+                }
+                ExpressionPathElement::TupleElementBase => {
+                    if let Expression::TupleElement { base, .. } = current_expression {
+                        current_expression = base;
+                    } else {
+                        panic!("Invalid path: expected TupleElement expression");
                     }
                 }
             }

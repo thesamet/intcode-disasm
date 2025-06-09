@@ -33,6 +33,10 @@ pub enum Expression<A> {
         arg: Box<Expression<A>>,
     },
     Input(), // Expression that reads the next input.
+    TupleElement {
+        base: Box<Expression<A>>,
+        offset: usize,
+    },
     DebugMarker(char, Box<Expression<A>>),
 }
 
@@ -91,6 +95,15 @@ pub trait ExpressionPathVisitor<A: ReadExpressionExtractor> {
     ) -> Result<Self::Return, Self::Error> {
         Ok(self.default_return())
     }
+
+    fn visit_tuple_element(
+        &mut self,
+        path: &ExpressionPath,
+        base: Self::Return,
+        offset: usize,
+    ) -> Result<Self::Return, Self::Error> {
+        Ok(self.default_return())
+    }
 }
 
 impl<A> Expression<A> {
@@ -127,6 +140,13 @@ impl<A> Expression<A> {
             Expression::DebugMarker(marker, expr) => {
                 let expr = expr.visit(visitor, path)?;
                 visitor.visit_debug_marker(path, *marker, expr)
+            }
+            Expression::TupleElement { base, offset } => {
+                let base = base.visit(
+                    visitor,
+                    &path.extending(ExpressionPathElement::TupleElementBase),
+                )?;
+                visitor.visit_tuple_element(path, base, *offset)
             }
         }
     }
@@ -166,6 +186,7 @@ impl<A> Expression<A> {
                 Expression::Unary { arg, .. } => queue.push(arg),
                 Expression::Input() => {}
                 Expression::DebugMarker(_, expr) => queue.push(expr),
+                Expression::TupleElement { base, .. } => queue.push(base),
             }
         }
         out
@@ -211,6 +232,10 @@ impl<A> Expression<A> {
             Expression::DebugMarker(marker, expr) => {
                 Expression::DebugMarker(*marker, Box::new(expr.flat_map(f)))
             }
+            Expression::TupleElement { base, offset } => Expression::TupleElement {
+                base: Box::new(base.flat_map(f)),
+                offset: *offset,
+            },
         }
     }
 
@@ -237,6 +262,27 @@ impl<A> Expression<A> {
                 .find_debug_marker(marker)
                 .or_else(|| rhs.find_debug_marker(marker)),
             Expression::Unary { arg, .. } => arg.find_debug_marker(marker),
+            _ => None,
+        }
+    }
+
+    pub fn is_constant(&self) -> bool {
+        match self {
+            Expression::Constant(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn as_constant(&self) -> Option<i128> {
+        match self {
+            Expression::Constant(c) => Some(*c),
+            _ => None,
+        }
+    }
+
+    pub fn as_binary(&self) -> Option<(&BinaryOperator, &Expression<A>, &Expression<A>)> {
+        match self {
+            Expression::Binary { op, lhs, rhs } => Some((op, lhs, rhs)),
             _ => None,
         }
     }

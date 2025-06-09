@@ -182,9 +182,18 @@ impl ContextualPrettyPrint for HlrExpression {
                 )
             }
             HlrExpression::Input() => ctx.format("input()", SemanticColor::Keyword).to_string(),
-            HlrExpression::Deref(expr) => {
-                format!("{}{}", ctx.fmt_star(), expr.pretty_print_with_context(ctx))
-            }
+            HlrExpression::Deref(expr) => match expr.as_ref() {
+                HlrExpression::BinaryOp { .. } => {
+                    format!(
+                        "{}{}{}{}",
+                        ctx.fmt_star(),
+                        ctx.fmt_open_paren(),
+                        expr.pretty_print_with_context(ctx),
+                        ctx.fmt_close_paren()
+                    )
+                }
+                _ => format!("{}{}", ctx.fmt_star(), expr.pretty_print_with_context(ctx)),
+            },
             HlrExpression::StaticFunctionReference(name) => {
                 format!("{}", ctx.format(name, SemanticColor::Variable))
             }
