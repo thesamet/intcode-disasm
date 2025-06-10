@@ -844,7 +844,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.markers.insert(*marker, expr_type);
                 expr_type
             }
-            Expression::TupleElement { base, offset } => {
+            Expression::TupleElement { base, .. } => {
                 let base_type = self.process_expression(
                     base,
                     function_id,

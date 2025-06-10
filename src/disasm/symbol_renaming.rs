@@ -523,7 +523,7 @@ pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, 
         bytes::complete::tag,
         character::complete::space0,
         combinator::{map, map_res},
-        sequence::{delimited, tuple},
+        sequence::delimited,
     };
 
     let parse_pointer_type = map(
@@ -538,11 +538,11 @@ pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, 
     let parse_array_type = map(
         delimited(
             preceded(space0, tag("Array<")),
-            tuple((
+            (
                 preceded(space0, parse_usize),
                 preceded(space0, tag(";")),
                 preceded(space0, |i| parse_type(i, user_defs)),
-            )),
+            ),
             preceded(space0, tag(">")),
         ),
         // Map the result tuple to Type::Array, extracting len (index 0) and elem_type (index 2)

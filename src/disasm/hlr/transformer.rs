@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::disasm::{v2::model::FunctionId, v3::type_inference::Type};
+use crate::disasm::v3::{type_inference::Type, FunctionId};
 
 use super::{
     ast::{HlrAssignmentTarget, HlrExpression, HlrFunction, HlrStatement, HlrVariable, Scope},

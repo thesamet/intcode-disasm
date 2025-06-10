@@ -1,5 +1,5 @@
 use crate::disasm::v3::model::{DataFlowComplete, Model, SsaComplete};
-use crate::disasm::v3::{InstructionId, NextKind};
+use crate::disasm::v3::{BlockId, FunctionId, InstructionId, NextKind};
 use crate::disasm::Error;
 
 /// Converts the control flow graph to SSA form
@@ -35,13 +35,10 @@ use crate::disasm::v3::cfg::PredecessorKind::FunctionCallReturns;
 use crate::disasm::v3::data_flow::OriginationPoint;
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
-use crate::disasm::{
-    v2::model::{BlockId, FunctionId},
-    v3::{
-        self,
-        cfg::FunctionView,
-        lir::{Expression, MemoryReference, MemoryReferenceInfo},
-    },
+use crate::disasm::v3::{
+    self,
+    cfg::FunctionView,
+    lir::{Expression, MemoryReference, MemoryReferenceInfo},
 };
 
 use std::collections::{HashMap, HashSet};

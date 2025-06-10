@@ -12,6 +12,7 @@ use crate::disasm::v3::model::{
 };
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::type_inference::TypeVarId;
+use crate::disasm::v3::FunctionId;
 use crate::disasm::v3::{
     cfg::{BlockView, FunctionView},
     common::formatting::pretty_print_framework::PrettyPrintConfig,
@@ -22,9 +23,8 @@ use crate::disasm::v3::{
 };
 
 // Import from V2/V3
-use crate::disasm::v2::{
-    instructions::{BinaryOperator, Expression, Instruction, InstructionNode, UnaryOperator},
-    model::FunctionId,
+use crate::disasm::v2::instructions::{
+    BinaryOperator, Expression, Instruction, InstructionNode, UnaryOperator,
 };
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
@@ -386,7 +386,7 @@ impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for Expre
                     ctx.fmt_close_paren()                            // Helper for ')'
                 )
             }
-            Expression::TupleElement { base, offset } => {
+            Expression::TupleElement { offset, .. } => {
                 format!(
                     "{}{}{}",
                     ctx.fmt_open_paren(),

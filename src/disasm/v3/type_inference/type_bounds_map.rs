@@ -1,10 +1,7 @@
 // disasm/src/disasm/v3/type_inference/type_bounds_map.rs
 
 use core::fmt;
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 use log::trace;
@@ -14,7 +11,7 @@ use petgraph::{
 };
 
 use crate::disasm::{
-    symbol_renaming::{CustomTypeId, StructId, UserDefs},
+    symbol_renaming::UserDefs,
     v3::{lir::TypeVarPath, ssa::VersionedMemoryReference},
 };
 

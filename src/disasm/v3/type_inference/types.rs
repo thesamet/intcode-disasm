@@ -1,11 +1,6 @@
 use crate::disasm::{
     symbol_renaming::{CustomTypeId, StructId},
-    v3::{
-        define_id_type,
-        lir::TypeVarPath,
-        model::{HasFoldedSsaResult, ModelState},
-        ssa::VersionedMemoryReference,
-    },
+    v3::{define_id_type, lir::TypeVarPath, ssa::VersionedMemoryReference},
 };
 
 define_id_type!(TypeVarId);
@@ -645,8 +640,6 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
 #[cfg(test)]
 mod tests {
 
-    use std::rc::Rc;
-
     use crate::disasm::symbol_renaming::UserDefs;
 
     use super::*;
@@ -688,15 +681,11 @@ mod tests {
         Type::NumericLiteral
     }
 
-    struct NoRegistry {
-        user_defs: UserDefs,
-    }
+    struct NoRegistry {}
 
     impl NoRegistry {
         fn new() -> Self {
-            NoRegistry {
-                user_defs: UserDefs::new(),
-            }
+            NoRegistry {}
         }
     }
 
