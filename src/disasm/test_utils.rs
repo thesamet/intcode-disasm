@@ -1,6 +1,6 @@
 // Test utilities for the disassembler crate
 
-use crate::disasm::symbol_renaming::UserDefs;
+use crate::disasm::{symbol_renaming::UserDefs, v3::model::HlrConstructionComplete};
 
 use super::{
     parser,
@@ -115,6 +115,15 @@ impl TestContextBuilder<VariableMergerComplete> for VariableMergerComplete {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_variable_merger(binary, UserDefs::new())?;
+        Ok(TestContext { model })
+    }
+}
+
+impl TestContextBuilder<HlrConstructionComplete> for HlrConstructionComplete {
+    fn test_context(asm: &str) -> Result<TestContext<HlrConstructionComplete>, Error> {
+        init_logging();
+        let binary = parser::compile(asm);
+        let model = analysis::binary_to_hlr(binary, UserDefs::new())?;
         Ok(TestContext { model })
     }
 }

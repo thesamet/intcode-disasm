@@ -76,10 +76,9 @@
 use castaway::LifetimeFree;
 use either::Either;
 
-use crate::disasm::v2::instructions::InstructionNode;
 use crate::disasm::v3::cfg::{NextKind, PredecessorKind};
 use crate::disasm::v3::id_types::BlockId;
-use crate::disasm::v3::lir::{Expression, MemoryReference, MemoryReferenceInfo};
+use crate::disasm::v3::lir::{Expression, InstructionNode, MemoryReference, MemoryReferenceInfo};
 use crate::disasm::v3::model::add_block_view_when;
 use crate::disasm::v3::{FunctionId, PointerId};
 

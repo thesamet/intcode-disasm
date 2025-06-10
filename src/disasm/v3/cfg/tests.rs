@@ -3,6 +3,7 @@ use crate::disasm::v3::cfg::{ControlFlowGraphBuilder, NextKind, PredecessorKind}
 use crate::disasm::v3::common::Span;
 use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::image_scanner::ImageScanner;
+use crate::disasm::v3::lir::Expression;
 use crate::disasm::v3::model::{ControlFlowGraphComplete, Model};
 use crate::disasm::{parser, v3};
 use itertools::Itertools;
@@ -393,7 +394,7 @@ fn test_function_call() {
         assert_eq!(call.return_block, BlockId::from(17));
         assert_eq!(call.calling_block, call_block.block_id());
         // For low-level, check that there's a constant expression with value 24
-        if let crate::disasm::v2::instructions::Expression::Constant(addr) = &call.function_addr {
+        if let Expression::Constant(addr) = &call.function_addr {
             assert_eq!(*addr, 24);
         } else {
             panic!("Expected function address to be a constant");

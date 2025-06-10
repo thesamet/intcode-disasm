@@ -1,7 +1,6 @@
 pub mod hlr;
 pub mod parser;
 pub mod repl;
-pub mod v2;
 pub mod v3;
 
 mod symbol_renaming;

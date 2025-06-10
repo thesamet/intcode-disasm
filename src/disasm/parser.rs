@@ -10,11 +10,13 @@ use nom::{
 };
 use std::collections::HashMap;
 
+use crate::disasm::v3::Span;
+
 use super::v3::native::instruction::simplify_instruction; // Import from v3 native
 use super::v3::native::{
     GenericNativeInstruction, NativeInstruction, NativeInstructionKind, Operand, OperandKind,
 };
-use super::{v2::Span, v3::NativeInstructionId};
+use super::v3::NativeInstructionId;
 
 type DebugMarker = Option<char>;
 

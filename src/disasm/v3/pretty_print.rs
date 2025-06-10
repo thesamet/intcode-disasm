@@ -5,7 +5,10 @@ use colored::Colorize;
 use itertools::Itertools;
 
 use crate::derive_display;
-use crate::disasm::v3::lir::{MemoryReference, MemoryReferenceInfo};
+use crate::disasm::v3::lir::{
+    BinaryOperator, Expression, Instruction, InstructionNode, MemoryReference, MemoryReferenceInfo,
+    UnaryOperator,
+};
 use crate::disasm::v3::model::{
     FoldedSsaComplete, HasFoldedSsaResult, HasFunctionCallAnalysisResult, HasTypeInferenceResult,
     HlrConstructionComplete, TypeInferenceComplete, VariableMergerComplete,
@@ -23,9 +26,6 @@ use crate::disasm::v3::{
 };
 
 // Import from V2/V3
-use crate::disasm::v2::instructions::{
-    BinaryOperator, Expression, Instruction, InstructionNode, UnaryOperator,
-};
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 
 use super::common::formatting::pretty_print_framework::GenericFormattingContext;
