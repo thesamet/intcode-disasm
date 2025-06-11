@@ -61,7 +61,7 @@ impl<'a> fmt::Display for DisplayableTypeVarId<'a> {
             .get_type_var_node(&self.id)
             .unwrap_or_else(|| panic!("TypeVarId {} not found", self.id))
             .path;
-        write!(f, "{:?}", path)
+        write!(f, "{path:?}")
     }
 }
 
@@ -505,14 +505,14 @@ impl fmt::Display for Type {
             Type::Int => write!(f, "Int"),
             Type::Bool => write!(f, "Bool"),
             Type::Char => write!(f, "Char"),
-            Type::Pointer(pointee) => write!(f, "Pointer<{}>", pointee),
-            Type::Function { params, returns } => write!(f, "Function<{} -> {}>", params, returns),
-            Type::CustomType(id) => write!(f, "CustomType{}", id),
-            Type::Struct(id) => write!(f, "Struct{}", id),
+            Type::Pointer(pointee) => write!(f, "Pointer<{pointee}>"),
+            Type::Function { params, returns } => write!(f, "Function<{params} -> {returns}>"),
+            Type::CustomType(id) => write!(f, "CustomType{id}"),
+            Type::Struct(id) => write!(f, "Struct{id}"),
             Type::Array { len, elem_type, .. } => {
-                write!(f, "Array<{}; {}>", len, elem_type,)
+                write!(f, "Array<{len}; {elem_type}>",)
             }
-            Type::TypeVar(id) => write!(f, "{}", id),
+            Type::TypeVar(id) => write!(f, "{id}"),
             Type::Generic(id) => write!(f, "T{}", id.0),
             Type::Tuple(elements) => {
                 let elements_str: Vec<String> = elements.iter().map(|e| e.to_string()).collect();

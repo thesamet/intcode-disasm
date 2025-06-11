@@ -486,10 +486,7 @@ impl Solver {
                     .collect_vec();
                 for unclassified in e {
                     for constraint in self.try_classify_add_expression(&unclassified) {
-                        match self.store.add_constraint(constraint, None, &self.state) {
-                            AddConstraintResult::NewConstraint(id) => constraint_ids.push_back(id),
-                            _ => {}
-                        }
+                        if let AddConstraintResult::NewConstraint(id) = self.store.add_constraint(constraint, None, &self.state) { constraint_ids.push_back(id) }
                     }
                 }
             }
@@ -884,7 +881,7 @@ impl Solver {
                         continue;
                     }
                     let intersection: Vec<&Type> = lower_bounds
-                        .intersection(&upper_bounds)
+                        .intersection(upper_bounds)
                         .filter(|t| **t != tv_id.to_type())
                         .sorted()
                         .collect_vec();

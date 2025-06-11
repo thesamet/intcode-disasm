@@ -102,7 +102,7 @@ impl fmt::Display for TypeVarState {
                 lower_bounds.iter().join(", "),
                 upper_bounds.iter().join(", ")
             ),
-            TypeVarState::Converged(ty) => write!(f, "{}", ty),
+            TypeVarState::Converged(ty) => write!(f, "{ty}"),
         }
     }
 }
@@ -243,7 +243,7 @@ impl<'a, F: TypeVarRegistry> fmt::Display for DisplayableChangeReason<'a, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.reason {
             BoundChangeReason::Constraint(constraint_id) => {
-                write!(f, "Constraint: {:?}", constraint_id)
+                write!(f, "Constraint: {constraint_id:?}")
             }
             BoundChangeReason::Test => write!(f, "Test"),
         }
@@ -269,7 +269,7 @@ impl fmt::Display for BoundChangeReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BoundChangeReason::Constraint(constraint_id) => {
-                write!(f, "Constraint: {:?}", constraint_id)
+                write!(f, "Constraint: {constraint_id:?}")
             }
             BoundChangeReason::Test => write!(f, "Test"),
         }
@@ -322,7 +322,7 @@ impl InferenceAlgorithmState {
             return false;
         }
         let Some(state) = self.type_var_states.get_mut(tv_id) else {
-            panic!("TypeVarId {:?} not found", tv_id);
+            panic!("TypeVarId {tv_id:?} not found");
         };
         let old_state = state.clone();
         let TypeVarState::Bounds {
@@ -379,7 +379,7 @@ impl InferenceAlgorithmState {
     ) {
         let state = self.type_var_states.get(tv_id).unwrap();
         if matches!(state, TypeVarState::Converged { .. }) {
-            panic!("Type var id {:?} already converged.", tv_id);
+            panic!("Type var id {tv_id:?} already converged.");
         }
         self.type_var_states
             .insert(*tv_id, TypeVarState::Converged(new_value.clone()));
@@ -746,7 +746,7 @@ impl<'a> IntoNeighbors for TypeVarDependencyGraph<'a> {
                 // A converged type may have depenenencies. It may converged say to a Pointer(tv_id_other)
                 ty.insert_involved_type_vars(&mut out);
             }
-            None => panic!("TypeVarId {:?} not found", tv_id),
+            None => panic!("TypeVarId {tv_id:?} not found"),
         }
         out.into_iter()
     }

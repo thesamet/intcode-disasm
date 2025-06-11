@@ -95,7 +95,7 @@ pub fn repl<S: HasTypeInferenceResult + ModelState + 'static>(model: &Model<S>) 
                         }
                     },
                     Err(err) => {
-                        println!("{}", err)
+                        println!("{err}")
                     }
                 }
                 // Here you would parse and evaluate the line against the model
@@ -107,7 +107,7 @@ pub fn repl<S: HasTypeInferenceResult + ModelState + 'static>(model: &Model<S>) 
                 break;
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("Error: {err:?}");
                 break;
             }
         }
@@ -123,7 +123,7 @@ fn get_function<'a, S: HasTypeInferenceResult + ModelState>(
 ) -> Result<FunctionView<'a, S>, String> {
     model
         .get_function(function_id)
-        .ok_or_else(|| format!("Function {} does not exist", function_id))
+        .ok_or_else(|| format!("Function {function_id} does not exist"))
 }
 
 fn format_bounds<'a, I>(v: I) -> String
@@ -209,7 +209,7 @@ where
             }
             Command::Functions => {
                 for (id, _) in model.functions().sorted_by_key(|f| f.0) {
-                    println!("{}", id);
+                    println!("{id}");
                 }
             }
             Command::Variables {
@@ -228,11 +228,11 @@ where
     ) -> (String, Option<&'a Expression<SsaMemoryReference>>) {
         let expr = path.expression_from_model(model);
         let role = match path {
-            TypeVarPath::AssignmentTargetVersioned { vmr, .. } => format!("Assign to {}", vmr),
+            TypeVarPath::AssignmentTargetVersioned { vmr, .. } => format!("Assign to {vmr}"),
             TypeVarPath::AssignmentTargetDeref { .. } => "Assign to deref".to_string(),
-            TypeVarPath::FunctionDefArg { index, .. } => format!("DefArg[{}]", index),
+            TypeVarPath::FunctionDefArg { index, .. } => format!("DefArg[{index}]"),
             TypeVarPath::FunctionDefArgTuple { .. } => "FunctionDefArgTuple".to_string(),
-            TypeVarPath::FunctionDefRet { index, .. } => format!("DefRet[{}]", index),
+            TypeVarPath::FunctionDefRet { index, .. } => format!("DefRet[{index}]"),
             TypeVarPath::FunctionDefRetTuple { .. } => "FunctionDefRetTuple".to_string(),
             TypeVarPath::AssignmentSrc {
                 expression_path: _, ..
@@ -251,30 +251,30 @@ where
                 index,
                 expression_path: _,
                 ..
-            } => format!("CallArg[{}]", index),
+            } => format!("CallArg[{index}]"),
             TypeVarPath::CallRetTuple { .. } => "CallRetTuple".to_string(),
-            TypeVarPath::CallRet { index, vmr, .. } => format!("CallRet[{}] {}", index, vmr),
+            TypeVarPath::CallRet { index, vmr, .. } => format!("CallRet[{index}] {vmr}"),
             TypeVarPath::PhiAssignment { .. } => "PhiAssignment".to_string(),
             TypeVarPath::PhiAssignmentArg { index, .. } => {
-                format!("PhiAssignmentArg: {}", index)
+                format!("PhiAssignmentArg: {index}")
             }
             TypeVarPath::FunctionArgsRefinement {
                 original_type_var_id,
                 ..
-            } => format!("FunctionArgsRefinement for {}", original_type_var_id),
+            } => format!("FunctionArgsRefinement for {original_type_var_id}"),
             TypeVarPath::FunctionRetsRefinement {
                 original_type_var_id,
                 ..
-            } => format!("FunctionRetsRefinement for {}", original_type_var_id),
+            } => format!("FunctionRetsRefinement for {original_type_var_id}"),
             TypeVarPath::TupleRefinement {
                 index,
                 original_type_var_id,
                 ..
-            } => format!("TupleRefinement[{}] for {}", index, original_type_var_id),
+            } => format!("TupleRefinement[{index}] for {original_type_var_id}"),
             TypeVarPath::PointerRefinement {
                 original_type_var_id,
                 ..
-            } => format!("PointerRefinement for {}", original_type_var_id),
+            } => format!("PointerRefinement for {original_type_var_id}"),
             TypeVarPath::SymbolRenaming { .. } => "SymbolRenaming".to_string(),
         };
         (role, expr)
@@ -315,7 +315,7 @@ where
             let (role, expr) = Self::format_path(model, &tv_node.path);
 
             data.push(TypeVarRow {
-                id: format!("{}", tv),
+                id: format!("{tv}"),
                 function: format!("{}", tv_node.path.function_id()),
                 inst: tv_node
                     .path
@@ -329,7 +329,7 @@ where
                     TypeVarState::Bounds { lower_bounds, .. } => format_bounds(lower_bounds),
                     TypeVarState::Converged(ty) => {
                         converged_rows.push(row);
-                        format!("{}", ty).green().to_string()
+                        format!("{ty}").green().to_string()
                     }
                 },
                 upper: match state {
@@ -347,7 +347,7 @@ where
             table.modify((row + 1, 5), Span::column(2));
             table.modify((row + 1, 5), Width::wrap(50));
         }
-        println!("{}", table);
+        println!("{table}");
         Ok(())
     }
 
@@ -414,20 +414,20 @@ where
                                     ti.constraint_store.get_constraint_by_id(*id).unwrap();
                                 format!("{}: {:?}", id, constraint.reason)
                             }
-                            _ => format!("{}", reason),
+                            _ => format!("{reason}"),
                         };
                         reason
                     }
                     ChangeLogKind::Converged {
                         convergence_type, ..
-                    } => format!("{}", convergence_type),
+                    } => format!("{convergence_type}"),
                     ChangeLogKind::DependencyConverged { .. } => "Dependency".to_string(),
                 },
             });
         }
         let mut table = Table::new(data);
         table.with(tabled::settings::Style::modern());
-        println!("{}", table);
+        println!("{table}");
 
         Ok(())
     }
@@ -456,7 +456,7 @@ where
 
         let mut add_constraint = |constraint_id: &ConstraintId, constraint: &Constraint| {
             data.push(ConstraintRow {
-                id: format!("{}", constraint_id),
+                id: format!("{constraint_id}"),
                 function: format!("{}", constraint.origin_function_id),
                 instruction: format!("{}", constraint.origin_instruction_id),
                 sub_type: format!("{}", constraint.sub_type), // .display_with(ti)),
@@ -465,7 +465,7 @@ where
                 parent: ti
                     .constraint_store
                     .get_parent_id(*constraint_id)
-                    .map(|c| format!("{}", c))
+                    .map(|c| format!("{c}"))
                     .unwrap_or_default(),
             });
         };
@@ -499,7 +499,7 @@ where
 
         let mut table = Table::new(data);
         table.with(tabled::settings::Style::modern());
-        println!("{}", table);
+        println!("{table}");
 
         Ok(())
     }

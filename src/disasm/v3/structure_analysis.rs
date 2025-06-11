@@ -78,7 +78,8 @@ impl crate::disasm::v3::lir::expression::ExpressionPathVisitor<SsaMemoryReferenc
             }
             _ => {}
         }
-        Ok(self.default_return())
+        self.default_return();
+        Ok(())
     }
 
     fn visit_binary(
@@ -102,7 +103,8 @@ impl crate::disasm::v3::lir::expression::ExpressionPathVisitor<SsaMemoryReferenc
             }
             _ => {}
         }
-        Ok(self.default_return())
+        self.default_return();
+        Ok(())
     }
 }
 
@@ -177,7 +179,7 @@ pub(crate) fn analyze_structure(
                 let struct_id = result
                     .global_structs
                     .entry(addr)
-                    .or_insert_with(|| StructId::fresh());
+                    .or_insert_with(StructId::fresh);
                 let si = result.structs.entry(*struct_id).or_insert(struct_info);
                 si.size = si.size.max(size);
                 si.size = si.size.max(
@@ -191,6 +193,6 @@ pub(crate) fn analyze_structure(
             }
         }
     }
-    println!("res= {:?}", result);
+    println!("res= {result:?}");
     Ok(model.with_structural_analysis_result(result))
 }

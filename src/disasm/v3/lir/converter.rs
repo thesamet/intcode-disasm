@@ -241,7 +241,7 @@ impl InstructionNode<MemoryReference> {
                     }
                 } else if adjust > 0 {
                     // Entry point to function, discard
-                    return Some((1, None));
+                    Some((1, None))
                 } else {
                     panic!("R adjustment must be non-zero");
                 }

@@ -49,6 +49,12 @@ where
     }
 }
 
+impl Default for TypeInferenceResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeInferenceResult {
     /// Create a new empty type inference result.
     pub fn new() -> Self {
@@ -125,17 +131,17 @@ impl TypeInferenceResult {
         self.vmr_to_type_var_id
             .get(t)
             .cloned()
-            .unwrap_or_else(|| panic!("No type var for {}", t))
+            .unwrap_or_else(|| panic!("No type var for {t}"))
     }
 
     pub fn get_type_id_for_path(&self, t: &TypeVarPath) -> TypeVarId {
         *self.path_to_type_var_id.get(t).unwrap_or_else(|| {
             for p in self.path_to_type_var_id.keys() {
                 if p.function_id() == t.function_id() && p.instruction_id() == t.instruction_id() {
-                    println!("Found path {:?} :", p);
+                    println!("Found path {p:?} :");
                 }
             }
-            panic!("No type var for {:?}", t)
+            panic!("No type var for {t:?}")
         })
     }
 

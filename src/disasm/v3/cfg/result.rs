@@ -32,7 +32,7 @@ where
     /// Panics if the function ID does not exist in the model
     pub fn function<'a>(&'a self, function_id: &FunctionId) -> FunctionView<'a, S> {
         self.get_function(function_id)
-            .unwrap_or_else(|| panic!("Function {} does not exist", function_id))
+            .unwrap_or_else(|| panic!("Function {function_id} does not exist"))
     }
 
     pub fn get_function<'a>(&'a self, function_id: &FunctionId) -> Option<FunctionView<'a, S>> {

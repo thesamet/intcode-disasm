@@ -273,17 +273,17 @@ impl VariableMerger {
             .or_insert_with(FunctionVarNamingState::new);
         let name = if globals.values().contains(set_id) {
             let addr = rep.as_global().unwrap();
-            format!("Global{}", addr)
+            format!("Global{addr}")
         } else if vars.iter().find_map(|v| v.kind.as_pointer()).is_some() {
             let n = state.next_pointer;
             state.next_pointer += 1;
-            format!("ptr{}", n)
+            format!("ptr{n}")
         } else if vars.iter().any(|v| v.kind.as_memory().is_some()) {
             unreachable!()
         } else if vars.iter().any(|v| params.values().contains(v)) {
             let n = state.next_input;
             state.next_input += 1;
-            format!("arg{}", n)
+            format!("arg{n}")
         } else {
             let rep = vars.iter().min().unwrap();
             rep.to_string()

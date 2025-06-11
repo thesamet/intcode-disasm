@@ -111,7 +111,7 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
             let r: String = image[(addr + 1)..(addr + (len as usize) + 1)]
                 .iter()
                 .enumerate()
-                .map(|(i, &x)| (x as i128 + len as i128 + i as i128) as u8 as char)
+                .map(|(i, &x)| (x + len + i as i128) as u8 as char)
                 .collect();
             let name = self
                 .model
@@ -155,7 +155,7 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
             .user_defs()
             .get_global(addr)
             .cloned()
-            .unwrap_or_else(|| format!("Global{}", addr));
+            .unwrap_or_else(|| format!("Global{addr}"));
         let value: i128 = self.model.image_scanner_result().image[addr];
         self.globals.insert(
             addr,
@@ -228,10 +228,10 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for HlrExpressionConverter<'a
             }) => Ok(HlrExpression::Variable(
                 self.analyzer
                     .globals
-                    .get(&addr)
+                    .get(addr)
                     .map(|(v, _)| v)
                     .cloned()
-                    .unwrap_or_else(|| panic!("Could not find global {}", addr)),
+                    .unwrap_or_else(|| panic!("Could not find global {addr}")),
             )),
             SsaMemoryReference::Versioned(vmr) => {
                 // The type of a VMR is inherently tied to the VMR itself,
@@ -425,7 +425,7 @@ impl ControlFlowStructureAnalyzer {
                     .as_ref()
                     .unwrap()
                     .immediate_dominator(*node)
-                    .unwrap_or_else(|| panic!("No immediate dominator for node {}", node));
+                    .unwrap_or_else(|| panic!("No immediate dominator for node {node}"));
                 ifs.insert(*node, merge_point);
                 trace!(
                     "Function_i={} has if: {} -> {}",
@@ -555,7 +555,7 @@ impl ControlFlowStructureAnalyzer {
             if let Err(e) =
                 self.translate_statements(context, func.function_id(), block, &mut statements)
             {
-                panic!("Error translating statements: {}", e);
+                panic!("Error translating statements: {e}");
             }
             if let Some(in_loop) = context.in_loop {
                 if current == in_loop.jump_back {
@@ -730,7 +730,7 @@ impl ControlFlowStructureAnalyzer {
                     break;
                 }
                 NextKind::Unknown => {
-                    panic!("Unknown next kind for block {}", current);
+                    panic!("Unknown next kind for block {current}");
                 }
             }
         }
@@ -750,7 +750,7 @@ impl ControlFlowStructureAnalyzer {
         let cluster_id = vars
             .variable_to_cluster
             .get(var)
-            .unwrap_or_else(|| panic!("Could not find cluster for variable {:?}", var));
+            .unwrap_or_else(|| panic!("Could not find cluster for variable {var:?}"));
         let cluster = &vars.clusters[cluster_id];
         let name = cluster.cluster_name.clone();
         let typ = self.var_type(var);
@@ -876,7 +876,7 @@ impl ControlFlowStructureAnalyzer {
                 .user_defs()
                 .get_function_name(function_id)
                 .cloned()
-                .unwrap_or_else(|| format!("{}", function_id));
+                .unwrap_or_else(|| format!("{function_id}"));
             return HlrExpression::StaticFunctionReference(name);
         }
         if let Some((var, _)) = self.globals.get(&addr) {

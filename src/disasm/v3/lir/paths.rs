@@ -529,7 +529,7 @@ impl TypeVarPath {
                 index: *index,
                 expression_path,
             },
-            _ => panic!("Cannot add expression path to {:?}", self),
+            _ => panic!("Cannot add expression path to {self:?}"),
         }
     }
 
@@ -537,7 +537,7 @@ impl TypeVarPath {
         self.with_expression_path(
             self.expression_path()
                 .unwrap_or_else(|| {
-                    panic!("Cannot extend path for {:?} / element {:?}", self, element)
+                    panic!("Cannot extend path for {self:?} / element {element:?}")
                 })
                 .extending(element),
         )
@@ -546,7 +546,7 @@ impl TypeVarPath {
     pub fn extending_path(&self, path: &ExpressionPath) -> TypeVarPath {
         self.with_expression_path(
             self.expression_path()
-                .unwrap_or_else(|| panic!("Cannot extend path for {:?} / path {:?}", self, path))
+                .unwrap_or_else(|| panic!("Cannot extend path for {self:?} / path {path:?}"))
                 .concat(path),
         )
     }
@@ -588,8 +588,7 @@ impl TypeVarPath {
             (TypeVarPath::CallAddress { .. }, Instruction::Call { addr, .. }) => addr,
             (TypeVarPath::CallArg { index, .. }, Instruction::Call { args, .. }) => &args[*index],
             _ => panic!(
-                "Unexpected combination of TypeVarPath and Instruction: {:?}",
-                self
+                "Unexpected combination of TypeVarPath and Instruction: {self:?}"
             ),
         };
         Some(path.get_subexpression(expr))

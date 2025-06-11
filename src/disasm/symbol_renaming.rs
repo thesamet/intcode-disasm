@@ -42,6 +42,7 @@ impl StructId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub struct SymbolRenaming {
     user_defs: UserDefs,
 }
@@ -170,8 +171,7 @@ impl UserDefs {
                                                 })
                                             }
                                             Err(e) => Err(format!(
-                                                "Failed to parse type '{}' for field '{}' in struct '{}': {}",
-                                                field_type_str, field_name, struct_name_key, e
+                                                "Failed to parse type '{field_type_str}' for field '{field_name}' in struct '{struct_name_key}': {e}"
                                             )),
                                         }
                                     }
@@ -196,7 +196,7 @@ impl UserDefs {
                     }
                 },
                 Err(err) => {
-                    return Err(format!("Failed to parse line: {}\nError: {}", line, err));
+                    return Err(format!("Failed to parse line: {line}\nError: {err}"));
                 }
             }
         }
@@ -293,13 +293,6 @@ impl FunctionSymbol {
 
 impl UserDefs {}
 
-impl Default for SymbolRenaming {
-    fn default() -> Self {
-        Self {
-            user_defs: UserDefs::default(),
-        }
-    }
-}
 
 fn parse_usize(input: &str) -> IResult<&str, usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)
@@ -558,7 +551,7 @@ pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, 
                 .type_from_name(name)
                 .as_ref()
                 .cloned()
-                .ok_or_else(|| format!("Unknown custom type: {}", name))
+                .ok_or_else(|| format!("Unknown custom type: {name}"))
         },
     );
 

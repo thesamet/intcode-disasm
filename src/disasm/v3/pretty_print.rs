@@ -266,7 +266,7 @@ fn format_signature<S: ModelState + 'static>(
         let show_var_ids = ctx.config.show_types_var_ids;
         let var_id = |tv_id: &TypeVarId| -> String {
             if show_var_ids {
-                format!("[{}] ", tv_id)
+                format!("[{tv_id}] ")
             } else {
                 String::new()
             }
@@ -390,7 +390,7 @@ impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for Expre
                 format!(
                     "{}{}{}",
                     ctx.fmt_open_paren(),
-                    ctx.format(format!("{}", offset), SemanticColor::Constant),
+                    ctx.format(format!("{offset}"), SemanticColor::Constant),
                     ctx.fmt_close_paren()
                 )
             }

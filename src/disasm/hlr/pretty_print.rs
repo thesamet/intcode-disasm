@@ -125,7 +125,7 @@ impl ContextualPrettyPrint for HlrExpression {
                 let left_str = left.pretty_print_with_context(&ctx.with_precedence(op_prec));
                 let right_str = right.pretty_print_with_context(&ctx.with_precedence(op_prec));
 
-                let result = format!("{}{}{}", left_str, op_display, right_str);
+                let result = format!("{left_str}{op_display}{right_str}");
 
                 // Add parentheses if needed based on precedence
                 if let Some(parent_prec) = ctx.parent_precedence {
@@ -145,7 +145,7 @@ impl ContextualPrettyPrint for HlrExpression {
                 let op_str = op.pretty_print_with_context(ctx);
                 let expr_str = expr.pretty_print_with_context(&ctx.with_precedence(op_prec));
 
-                let result = format!("{}{}", op_str, expr_str);
+                let result = format!("{op_str}{expr_str}");
 
                 // Add parentheses if needed
                 if let Some(parent_prec) = ctx.parent_precedence {
@@ -163,7 +163,7 @@ impl ContextualPrettyPrint for HlrExpression {
             HlrExpression::FunctionCall(func_expr, args) => {
                 let func_name = match &**func_expr {
                     HlrExpression::Constant(id, _) => ctx
-                        .format(format!("fu{}", id), SemanticColor::Function)
+                        .format(format!("fu{id}"), SemanticColor::Function)
                         .to_string(),
                     _ => func_expr.pretty_print_with_context(ctx),
                 };
@@ -200,7 +200,7 @@ impl ContextualPrettyPrint for HlrExpression {
             HlrExpression::StaticCustomType(_, name, _) => {
                 format!(
                     "{}",
-                    ctx.format(format!("{}", name), SemanticColor::Constant)
+                    ctx.format(name.to_string(), SemanticColor::Constant)
                 )
             }
             HlrExpression::String(s) => {
@@ -283,7 +283,7 @@ impl ContextualPrettyPrint for HlrStatement {
 
                 let loop_end = line(&format!("{}", ctx.fmt_close_brace()), ctx);
 
-                format!("{}{}{}", loop_start, body_lines, loop_end)
+                format!("{loop_start}{body_lines}{loop_end}")
             }
 
             HlrStatement::If(cond, true_branch, false_branch) => {
@@ -304,7 +304,7 @@ impl ContextualPrettyPrint for HlrStatement {
 
                 if false_branch.is_empty() {
                     let if_end = line(&format!("{}", ctx.fmt_close_brace()), ctx);
-                    format!("{}{}{}", if_start, true_branch_lines, if_end)
+                    format!("{if_start}{true_branch_lines}{if_end}")
                 } else {
                     let else_start = line(
                         &format!(
@@ -324,8 +324,7 @@ impl ContextualPrettyPrint for HlrStatement {
                     let else_end = line(&format!("{}", ctx.fmt_close_brace()), ctx);
 
                     format!(
-                        "{}{}{}{}{}",
-                        if_start, true_branch_lines, else_start, false_branch_lines, else_end
+                        "{if_start}{true_branch_lines}{else_start}{false_branch_lines}{else_end}"
                     )
                 }
             }
@@ -348,7 +347,7 @@ impl ContextualPrettyPrint for HlrStatement {
 
                 let while_end = line(&format!("{}", ctx.fmt_close_brace()), ctx);
 
-                format!("{}{}{}", while_start, body_lines, while_end)
+                format!("{while_start}{body_lines}{while_end}")
             }
 
             HlrStatement::DoWhile(body, cond) => {
@@ -377,7 +376,7 @@ impl ContextualPrettyPrint for HlrStatement {
                     ctx,
                 );
 
-                format!("{}{}{}", do_start, body_lines, do_end)
+                format!("{do_start}{body_lines}{do_end}")
             }
 
             HlrStatement::Break => line(
@@ -532,7 +531,7 @@ impl ContextualPrettyPrint for HlrFunction {
 
         let end_line = line(&format!("{}", ctx.fmt_close_brace()), ctx);
 
-        format!("{}{}{}", signature_line, body_lines, end_line)
+        format!("{signature_line}{body_lines}{end_line}")
     }
 }
 
