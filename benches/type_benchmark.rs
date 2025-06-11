@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode};
 use disasm::disasm::{
-    v3::{analysis::binary_to_folded_ssa, type_inference},
+    v3::{analysis::binary_to_structure_analysis, type_inference},
     UserDefs,
 };
 use std::hint::black_box;
@@ -12,7 +12,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         .split(',')
         .map(|x| x.parse().unwrap())
         .collect::<Vec<i128>>();
-    let model = binary_to_folded_ssa(binary).unwrap();
+    let model = binary_to_structure_analysis(binary).unwrap();
     let mut group = c.benchmark_group("flat-types");
     group.sample_size(20);
     group.sampling_mode(SamplingMode::Flat);

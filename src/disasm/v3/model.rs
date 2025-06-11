@@ -7,6 +7,7 @@ use crate::disasm::v3::id_types::BlockId;
 use crate::disasm::v3::image_scanner::ImageScannerResult;
 use crate::disasm::v3::ssa::SsaResult;
 use crate::disasm::v3::type_inference::TypeInferenceResult;
+use crate::disasm::v3::StructuralAnalysisResult;
 use crate::macros::{model, states};
 
 #[derive(Clone, Debug)]
@@ -29,6 +30,7 @@ enum ModelState {
     SsaComplete(SsaResult),
     FunctionCallAnalysisComplete(FunctionCallAnalysisResult),
     FoldedSsaComplete(FoldedSsaResult),
+    StructureAnalysisComplete(StructuralAnalysisResult),
     TypeInferenceComplete(TypeInferenceResult),
     VariableMergerComplete(VariableMergerResult),
     HlrConstructionComplete(HlrProgram),

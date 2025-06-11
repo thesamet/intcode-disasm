@@ -5,7 +5,7 @@ use log::debug;
 
 use crate::disasm::symbol_renaming::UserDefs;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo, TypeVarPath};
-use crate::disasm::v3::model::{FoldedSsaComplete, Model, TypeInferenceComplete};
+use crate::disasm::v3::model::{Model, StructureAnalysisComplete, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::constraints::AddConstraintResult;
 use crate::disasm::v3::type_inference::type_bounds_map::ConverganceType;
 use crate::disasm::v3::type_inference::types::TypeVarNode;
@@ -271,7 +271,7 @@ impl CompoundTypeRefiner {
         vars: &[(TypeVarId, TypeVarState)],
         state: &mut InferenceAlgorithmState,
         function_types: &HashMap<FunctionId, (Type, Type)>,
-        model: &Model<FoldedSsaComplete>,
+        model: &Model<StructureAnalysisComplete>,
         store: &mut ConstraintStore,
     ) -> bool {
         for (tv_id, type_state) in vars {
@@ -315,7 +315,7 @@ impl CompoundTypeRefiner {
         pattern: &CompoundTypePattern,
         state: &mut InferenceAlgorithmState,
         function_types: &HashMap<FunctionId, (Type, Type)>,
-        model: &Model<FoldedSsaComplete>,
+        model: &Model<StructureAnalysisComplete>,
         store: &mut ConstraintStore,
     ) {
         // Handle special cases like function pointer derivation
@@ -375,7 +375,7 @@ struct GenericOpportunity {
 /// and solving a set of type constraints.
 pub struct Solver {
     /// The model containing the folded SSA result, which includes the CFG, DFG, and Function.
-    model: Model<FoldedSsaComplete>,
+    model: Model<StructureAnalysisComplete>,
     state: InferenceAlgorithmState,
     store: ConstraintStore,
     function_types: HashMap<FunctionId, (Type, Type)>,
@@ -389,7 +389,7 @@ impl Solver {
     /// # Arguments
     ///
     /// * `model` - The model with folded SSA results.
-    pub fn new(model: Model<FoldedSsaComplete>, user_defs: UserDefs) -> Self {
+    pub fn new(model: Model<StructureAnalysisComplete>, user_defs: UserDefs) -> Self {
         Self {
             model,
             state: InferenceAlgorithmState::new(),
@@ -413,7 +413,7 @@ impl Solver {
     /// A `Result` containing the model with type inference complete, or an `Error`
     /// if type inference fails (e.g., due to a type contradiction or other issue).
     pub fn run(
-        model: Model<FoldedSsaComplete>,
+        model: Model<StructureAnalysisComplete>,
         user_defs: UserDefs,
     ) -> Result<Model<TypeInferenceComplete>, Error> {
         let solver = Self::new(model, user_defs);

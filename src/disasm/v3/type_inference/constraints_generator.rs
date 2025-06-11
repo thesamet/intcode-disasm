@@ -9,7 +9,7 @@ use crate::disasm::v3::lir::{
     BinaryOperator, Expression, ExpressionPath, ExpressionPathElement, Instruction,
     MemoryReferenceInfo, TypeVarPath,
 };
-use crate::disasm::v3::model::{FoldedSsaComplete, Model};
+use crate::disasm::v3::model::{Model, StructureAnalysisComplete};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::SsaMemoryReference;
 use crate::disasm::{self};
@@ -36,13 +36,13 @@ pub struct TypeConstraintGeneratorResult {
 
 pub struct TypeConstraintGenerator<'a> {
     // References to external data structures
-    model: &'a Model<FoldedSsaComplete>,
+    model: &'a Model<StructureAnalysisComplete>,
     user_defs: &'a UserDefs,
     result: TypeConstraintGeneratorResult,
 }
 
 impl<'a> TypeConstraintGenerator<'a> {
-    fn new(model: &'a Model<FoldedSsaComplete>, user_defs: &'a UserDefs) -> Self {
+    fn new(model: &'a Model<StructureAnalysisComplete>, user_defs: &'a UserDefs) -> Self {
         TypeConstraintGenerator {
             model,
             user_defs,
@@ -280,7 +280,7 @@ impl<'a> TypeConstraintGenerator<'a> {
 
     fn generate_constraints_for_instruction(
         &mut self,
-        block: &BlockView<'a, FoldedSsaComplete>,
+        block: &BlockView<'a, StructureAnalysisComplete>,
         instruction_node: &InstructionNode<SsaMemoryReference>,
         function_id: FunctionId,
     ) {
@@ -874,7 +874,7 @@ impl<'a> TypeConstraintGenerator<'a> {
 }
 
 pub fn generate_constraints(
-    model: &Model<FoldedSsaComplete>,
+    model: &Model<StructureAnalysisComplete>,
     user_defs: &UserDefs,
 ) -> TypeConstraintGeneratorResult {
     let mut constraint_generator = TypeConstraintGenerator::new(model, user_defs);

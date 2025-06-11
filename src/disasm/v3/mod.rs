@@ -13,6 +13,7 @@ pub mod model;
 pub mod native;
 pub mod pretty_print;
 pub mod ssa;
+mod structure_analysis;
 pub mod type_inference;
 pub mod variable_analyzer;
 
@@ -23,3 +24,4 @@ pub use common::Span; // Keep Span if it's truly common
 pub use id_types::*;
 // Note: FunctionCall might belong in LIR or HLR depending on usage
 pub use common::FunctionCall;
+pub use structure_analysis::StructuralAnalysisResult;
