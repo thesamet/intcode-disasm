@@ -245,6 +245,7 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for HlrExpressionConverter<'a
     fn visit_binary(
         &mut self,
         path: &ExpressionPath,
+        _: &Expression<SsaMemoryReference>,
         op: LirBinaryOperator,
         lhs: Self::Return,
         rhs: Self::Return,

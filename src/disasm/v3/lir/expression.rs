@@ -33,7 +33,7 @@ pub enum Expression<A> {
         arg: Box<Expression<A>>,
     },
     Input(), // Expression that reads the next input.
-    TupleElement {
+    StructField {
         base: Box<Expression<A>>,
         offset: usize,
     },
@@ -67,6 +67,7 @@ pub trait ExpressionPathVisitor<A: ReadExpressionExtractor> {
     fn visit_binary(
         &mut self,
         path: &ExpressionPath,
+        expr: &Expression<A>,
         op: BinaryOperator,
         lhs: Self::Return,
         rhs: Self::Return,
@@ -96,7 +97,7 @@ pub trait ExpressionPathVisitor<A: ReadExpressionExtractor> {
         Ok(self.default_return())
     }
 
-    fn visit_tuple_element(
+    fn visit_struct_field(
         &mut self,
         path: &ExpressionPath,
         base: Self::Return,
@@ -130,7 +131,7 @@ impl<A> Expression<A> {
                 let lhs = lhs.visit(visitor, &path.extending(ExpressionPathElement::BinaryLeft))?;
                 let rhs =
                     rhs.visit(visitor, &path.extending(ExpressionPathElement::BinaryRight))?;
-                visitor.visit_binary(path, *op, lhs, rhs)
+                visitor.visit_binary(path, self, *op, lhs, rhs)
             }
             Expression::Unary { op, arg } => {
                 let arg = arg.visit(visitor, &path.extending(ExpressionPathElement::Unary))?;
@@ -141,12 +142,12 @@ impl<A> Expression<A> {
                 let expr = expr.visit(visitor, path)?;
                 visitor.visit_debug_marker(path, *marker, expr)
             }
-            Expression::TupleElement { base, offset } => {
+            Expression::StructField { base, offset } => {
                 let base = base.visit(
                     visitor,
                     &path.extending(ExpressionPathElement::TupleElementBase),
                 )?;
-                visitor.visit_tuple_element(path, base, *offset)
+                visitor.visit_struct_field(path, base, *offset)
             }
         }
     }
@@ -186,7 +187,7 @@ impl<A> Expression<A> {
                 Expression::Unary { arg, .. } => queue.push(arg),
                 Expression::Input() => {}
                 Expression::DebugMarker(_, expr) => queue.push(expr),
-                Expression::TupleElement { base, .. } => queue.push(base),
+                Expression::StructField { base, .. } => queue.push(base),
             }
         }
         out
@@ -232,7 +233,7 @@ impl<A> Expression<A> {
             Expression::DebugMarker(marker, expr) => {
                 Expression::DebugMarker(*marker, Box::new(expr.flat_map(f)))
             }
-            Expression::TupleElement { base, offset } => Expression::TupleElement {
+            Expression::StructField { base, offset } => Expression::StructField {
                 base: Box::new(base.flat_map(f)),
                 offset: *offset,
             },

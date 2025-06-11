@@ -386,7 +386,7 @@ impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for Expre
                     ctx.fmt_close_paren()                            // Helper for ')'
                 )
             }
-            Expression::TupleElement { offset, .. } => {
+            Expression::StructField { offset, .. } => {
                 format!(
                     "{}{}{}",
                     ctx.fmt_open_paren(),

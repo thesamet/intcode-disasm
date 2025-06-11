@@ -1,29 +1,65 @@
+use std::collections::HashMap;
+
+use crate::disasm::symbol_renaming::StructId;
 use crate::disasm::v3::common::formatting::ContextualPrettyPrint;
-use crate::disasm::v3::lir::{BinaryOperator, Expression, ExpressionPath, TypeVarPath};
+use crate::disasm::v3::lir::{BinaryOperator, Expression, ExpressionPath, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 
 use crate::disasm::v3::model::StructureAnalysisComplete;
-use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
+use crate::disasm::v3::FunctionId;
 use crate::disasm::Error;
 
 #[derive(Debug, Clone)]
 pub struct StructuralAnalysisResult {
-    // TODO
+    detected_structs: HashMap<FunctionId, FunctionStructInfo>,
+
+    // Struct sizes for structs used as global variables. This is to overcome
+    // the fact that memory is versioned, but we assume all versions of global
+    // memory refer to the same struct.
+    global_structs: HashMap<usize, StructId>,
+
+    structs: HashMap<StructId, StructInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct StructInfo {
+    size: usize,
+}
+
+impl StructInfo {
+    fn new(size: usize) -> StructInfo {
+        StructInfo { size }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FunctionStructInfo {
+    // Struct sizes for structs used as relative memory.
+    register_structs: HashMap<VersionedMemoryReference, StructId>,
 }
 
 #[derive(Default)]
-struct DerefCollector {
+struct FieldAccessCollector {
+    // Expresions of the form *(expr + const)
     derefs: Vec<(ExpressionPath, Expression<SsaMemoryReference>, i128)>,
+    // Expresions of the form (vmr + const). After we know expr is some vmr
+    // that is a pointer to struct, an expression of the form (vmr+const) may be
+    // a reference to a pointer field
+    potential_pointer_adds: HashMap<VersionedMemoryReference, Vec<usize>>,
 }
 
-impl DerefCollector {
-    fn new() -> DerefCollector {
-        DerefCollector { derefs: vec![] }
+impl FieldAccessCollector {
+    fn new() -> FieldAccessCollector {
+        FieldAccessCollector {
+            derefs: vec![],
+            potential_pointer_adds: HashMap::new(),
+        }
     }
 }
 
 impl crate::disasm::v3::lir::expression::ExpressionPathVisitor<SsaMemoryReference>
-    for DerefCollector
+    for FieldAccessCollector
 {
     type Return = ();
     type Error = Error;
@@ -44,30 +80,117 @@ impl crate::disasm::v3::lir::expression::ExpressionPathVisitor<SsaMemoryReferenc
         }
         Ok(self.default_return())
     }
+
+    fn visit_binary(
+        &mut self,
+        _path: &ExpressionPath,
+        expr: &Expression<SsaMemoryReference>,
+        _op: BinaryOperator,
+        _lhs: Self::Return,
+        _rhs: Self::Return,
+    ) -> Result<Self::Return, Self::Error> {
+        match expr.as_binary() {
+            Some((
+                BinaryOperator::Add,
+                Expression::Addressable(SsaMemoryReference::Versioned(vmr)),
+                Expression::Constant(offset),
+            )) if *offset < 10 => {
+                self.potential_pointer_adds
+                    .entry(*vmr)
+                    .or_default()
+                    .push(*offset as usize);
+            }
+            _ => {}
+        }
+        Ok(self.default_return())
+    }
 }
 
 pub(crate) fn analyze_structure(
     model: Model<FoldedSsaComplete>,
 ) -> Result<Model<StructureAnalysisComplete>, Error> {
+    let mut result = StructuralAnalysisResult {
+        detected_structs: HashMap::new(),
+        global_structs: HashMap::new(),
+        structs: HashMap::new(),
+    };
+    let mut global_adds: HashMap<usize, Vec<usize>> = HashMap::new();
     for (_, f) in model.functions() {
+        result.detected_structs.insert(
+            f.function_id(),
+            FunctionStructInfo {
+                register_structs: HashMap::new(),
+            },
+        );
+        let mut hm: HashMap<VersionedMemoryReference, Vec<usize>> = HashMap::new();
         for (_, b) in f.blocks() {
             for i in &b.folded_ssa().instructions {
                 for (tvp, e) in i.collect_all_expressions() {
-                    let mut v = DerefCollector::new();
+                    let mut v = FieldAccessCollector::new();
                     e.visit(&mut v, &ExpressionPath::root())?;
-                    for k in v.derefs {
+                    if f.function_id().index() == 1424 {
                         println!(
-                            "{} {} {} {}",
-                            f.function_id(),
-                            i.id,
-                            k.1.pretty_print(),
-                            k.2
-                        )
+                            "Looking at {} {:?}",
+                            e.pretty_print(),
+                            v.potential_pointer_adds
+                        );
+                    }
+                    for (_, base, offset) in v.derefs {
+                        let Expression::Addressable(SsaMemoryReference::Versioned(vmr)) = base
+                        else {
+                            panic!("Expected VMR as base for struct field");
+                        };
+                        println!("{} {} {}", f.function_id(), base.pretty_print(), offset);
+                        hm.entry(vmr).or_default().push(offset as usize);
+                        if let Some(offsets) = v.potential_pointer_adds.get(&vmr) {
+                            println!("Extended {} with {:?}", vmr.pretty_print(), offsets);
+                            if vmr.is_stack_relative() {
+                                hm.get_mut(&vmr).unwrap().extend(offsets);
+                            }
+                        }
+                    }
+                    for (vmr, offsets) in v.potential_pointer_adds {
+                        if let Some(addr) = vmr.as_global() {
+                            global_adds.entry(addr).or_default().extend(offsets);
+                        }
                     }
                 }
             }
         }
+        for (vmr, offsets) in hm {
+            let size = *offsets.iter().max().unwrap();
+            let struct_info = StructInfo::new(size);
+            if vmr.is_stack_relative()
+                && !result.detected_structs[&f.function_id()]
+                    .register_structs
+                    .contains_key(&vmr)
+            {
+                let struct_id = StructId::fresh();
+                result.structs.insert(struct_id, struct_info);
+                result
+                    .detected_structs
+                    .get_mut(&f.function_id())
+                    .unwrap()
+                    .register_structs
+                    .insert(vmr, struct_id);
+            } else if let Some(addr) = vmr.as_global() {
+                let struct_id = result
+                    .global_structs
+                    .entry(addr)
+                    .or_insert_with(|| StructId::fresh());
+                let si = result.structs.entry(*struct_id).or_insert(struct_info);
+                si.size = si.size.max(size);
+                si.size = si.size.max(
+                    global_adds
+                        .get(&addr)
+                        .map(|f| *f.iter().max().unwrap())
+                        .unwrap_or(0),
+                );
+            } else {
+                unreachable!("Unexpected VMR type.")
+            }
+        }
     }
-    let result = StructuralAnalysisResult {};
+    println!("res= {:?}", result);
     Ok(model.with_structural_analysis_result(result))
 }

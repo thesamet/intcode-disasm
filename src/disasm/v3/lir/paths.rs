@@ -79,7 +79,7 @@ impl ExpressionPath {
                     }
                 }
                 ExpressionPathElement::TupleElementBase => {
-                    if let Expression::TupleElement { base, .. } = current_expression {
+                    if let Expression::StructField { base, .. } = current_expression {
                         current_expression = base;
                     } else {
                         panic!("Invalid path: expected TupleElement expression");

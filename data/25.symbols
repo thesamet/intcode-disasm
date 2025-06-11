@@ -39,6 +39,6 @@ F 1829 infinite_loop
 F 1850 game_over_lava
 F 1872 game_over_grue
 
-G 3094 SOME_ARR Array<13;Int>
-
 F 2329 coolio2329(s: GameThing)
+
+G 3094 SOME_ARR Array<13;Int>

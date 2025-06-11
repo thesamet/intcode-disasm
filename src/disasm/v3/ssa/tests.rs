@@ -56,7 +56,7 @@ fn find_first_addressable_in_expr(
         Expression::DebugMarker(_, inner_expr) => find_first_addressable_in_expr(inner_expr),
         Expression::Constant(_) => None,
         Expression::Input() => None,
-        Expression::TupleElement { base, .. } => find_first_addressable_in_expr(base),
+        Expression::StructField { base, .. } => find_first_addressable_in_expr(base),
     }
 }
 
