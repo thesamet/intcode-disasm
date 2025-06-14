@@ -55,16 +55,17 @@ pub fn binary_to_folded_ssa(binary: Vec<i128>) -> Result<Model<FoldedSsaComplete
 
 pub fn binary_to_structure_analysis(
     binary: Vec<i128>,
+    user_defs: &UserDefs,
 ) -> Result<Model<StructureAnalysisComplete>, Error> {
     let model = binary_to_folded_ssa(binary)?;
-    structure_analysis::analyze_structure(model)
+    structure_analysis::analyze_structure(model, user_defs)
 }
 
 pub fn binary_to_type_inference(
     binary: Vec<i128>,
     user_defs: UserDefs,
 ) -> Result<Model<TypeInferenceComplete>, Error> {
-    let model = binary_to_structure_analysis(binary)?;
+    let model = binary_to_structure_analysis(binary, &user_defs)?;
     Solver::run(model, user_defs)
 }
 

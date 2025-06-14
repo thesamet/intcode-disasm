@@ -276,6 +276,9 @@ where
                 ..
             } => format!("PointerRefinement for {original_type_var_id}"),
             TypeVarPath::SymbolRenaming { .. } => "SymbolRenaming".to_string(),
+            TypeVarPath::StructField { struct_id, index } => {
+                format!("StructField[{index}] for struct {struct_id}")
+            }
         };
         (role, expr)
     }

@@ -496,6 +496,13 @@ impl Type {
             None
         }
     }
+
+    pub fn as_struct(&self) -> Option<StructId> {
+        match self {
+            Type::Struct(id) => Some(*id),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Type {

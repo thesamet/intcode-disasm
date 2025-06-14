@@ -1,18 +1,19 @@
 use std::collections::HashMap;
 
 use crate::disasm::symbol_renaming::StructId;
-use crate::disasm::v3::common::formatting::ContextualPrettyPrint;
+use crate::disasm::v3::function_call::result::add_function_view_when;
 use crate::disasm::v3::lir::{BinaryOperator, Expression, ExpressionPath, MemoryReferenceInfo};
 use crate::disasm::v3::model::{FoldedSsaComplete, Model};
 
 use crate::disasm::v3::model::StructureAnalysisComplete;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
+use crate::disasm::v3::type_inference::Type;
 use crate::disasm::v3::FunctionId;
-use crate::disasm::Error;
+use crate::disasm::{Error, UserDefs};
 
 #[derive(Debug, Clone)]
 pub struct StructuralAnalysisResult {
-    detected_structs: HashMap<FunctionId, FunctionStructInfo>,
+    functions: HashMap<FunctionId, FunctionStructInfo>,
 
     // Struct sizes for structs used as global variables. This is to overcome
     // the fact that memory is versioned, but we assume all versions of global
@@ -22,8 +23,10 @@ pub struct StructuralAnalysisResult {
     structs: HashMap<StructId, StructInfo>,
 }
 
+add_function_view_when!(StructuralAnalysis, structural_analysis, FunctionStructInfo);
+
 #[derive(Debug, Clone)]
-struct StructInfo {
+pub struct StructInfo {
     size: usize,
 }
 
@@ -34,7 +37,7 @@ impl StructInfo {
 }
 
 #[derive(Debug, Clone)]
-struct FunctionStructInfo {
+pub struct FunctionStructInfo {
     // Struct sizes for structs used as relative memory.
     register_structs: HashMap<VersionedMemoryReference, StructId>,
 }
@@ -110,42 +113,52 @@ impl crate::disasm::v3::lir::expression::ExpressionPathVisitor<SsaMemoryReferenc
 
 pub(crate) fn analyze_structure(
     model: Model<FoldedSsaComplete>,
+    user_defs: &UserDefs,
 ) -> Result<Model<StructureAnalysisComplete>, Error> {
     let mut result = StructuralAnalysisResult {
-        detected_structs: HashMap::new(),
+        functions: HashMap::new(),
         global_structs: HashMap::new(),
         structs: HashMap::new(),
     };
     let mut global_adds: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (_, f) in model.functions() {
-        result.detected_structs.insert(
+    for (function_id, f) in model.functions() {
+        result.functions.insert(
             f.function_id(),
             FunctionStructInfo {
                 register_structs: HashMap::new(),
             },
         );
         let mut hm: HashMap<VersionedMemoryReference, Vec<usize>> = HashMap::new();
+        if let Some(def) = user_defs.get_functions().get(&f.function_id()) {
+            let entry_vars = &model
+                .function(&function_id)
+                .callee_info()
+                .parameter_entry_vars;
+            for (index, (_, typ)) in def.args().iter().enumerate() {
+                let Some(struct_id) = typ.as_ref().and_then(Type::as_struct) else {
+                    continue;
+                };
+                let vmr = entry_vars.get(&((index + 1) as i128)).unwrap();
+                result
+                    .functions
+                    .get_mut(&function_id)
+                    .unwrap()
+                    .register_structs
+                    .insert(*vmr, struct_id);
+            }
+        };
         for (_, b) in f.blocks() {
             for i in &b.folded_ssa().instructions {
                 for (tvp, e) in i.collect_all_expressions() {
                     let mut v = FieldAccessCollector::new();
                     e.visit(&mut v, &ExpressionPath::root())?;
-                    if f.function_id().index() == 1424 {
-                        println!(
-                            "Looking at {} {:?}",
-                            e.pretty_print(),
-                            v.potential_pointer_adds
-                        );
-                    }
                     for (_, base, offset) in v.derefs {
                         let Expression::Addressable(SsaMemoryReference::Versioned(vmr)) = base
                         else {
                             panic!("Expected VMR as base for struct field");
                         };
-                        println!("{} {} {}", f.function_id(), base.pretty_print(), offset);
                         hm.entry(vmr).or_default().push(offset as usize);
                         if let Some(offsets) = v.potential_pointer_adds.get(&vmr) {
-                            println!("Extended {} with {:?}", vmr.pretty_print(), offsets);
                             if vmr.is_stack_relative() {
                                 hm.get_mut(&vmr).unwrap().extend(offsets);
                             }
@@ -162,19 +175,20 @@ pub(crate) fn analyze_structure(
         for (vmr, offsets) in hm {
             let size = *offsets.iter().max().unwrap();
             let struct_info = StructInfo::new(size);
-            if vmr.is_stack_relative()
-                && !result.detected_structs[&f.function_id()]
+            if vmr.is_stack_relative() {
+                if !result.functions[&f.function_id()]
                     .register_structs
                     .contains_key(&vmr)
-            {
-                let struct_id = StructId::fresh();
-                result.structs.insert(struct_id, struct_info);
-                result
-                    .detected_structs
-                    .get_mut(&f.function_id())
-                    .unwrap()
-                    .register_structs
-                    .insert(vmr, struct_id);
+                {
+                    let struct_id = StructId::fresh();
+                    result.structs.insert(struct_id, struct_info);
+                    result
+                        .functions
+                        .get_mut(&f.function_id())
+                        .unwrap()
+                        .register_structs
+                        .insert(vmr, struct_id);
+                }
             } else if let Some(addr) = vmr.as_global() {
                 let struct_id = result
                     .global_structs
@@ -193,6 +207,10 @@ pub(crate) fn analyze_structure(
             }
         }
     }
-    println!("res= {result:?}");
+    for (f, fi) in &result.functions {
+        if fi.register_structs.is_empty() {
+            continue;
+        };
+    }
     Ok(model.with_structural_analysis_result(result))
 }

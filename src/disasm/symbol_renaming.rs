@@ -41,8 +41,7 @@ impl StructId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SymbolRenaming {
     user_defs: UserDefs,
 }
@@ -263,6 +262,10 @@ impl UserDefs {
     pub fn get_variables(&self) -> &HashMap<VersionedMemoryReference, (String, Option<Type>)> {
         &self.variable_names
     }
+
+    pub fn get_struct_definitions(&self) -> &HashMap<StructId, StructDef> {
+        &self.struct_definitions
+    }
 }
 
 impl Default for UserDefs {
@@ -292,7 +295,6 @@ impl FunctionSymbol {
 }
 
 impl UserDefs {}
-
 
 fn parse_usize(input: &str) -> IResult<&str, usize> {
     map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)

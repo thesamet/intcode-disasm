@@ -39,6 +39,9 @@ F 1829 infinite_loop
 F 1850 game_over_lava
 F 1872 game_over_grue
 
-F 2329 coolio2329(s: GameThing)
+F 1353 f1353(s: Pointer<GameThing>)
+F 1664 f1664(s: Pointer<GameThing>)
+F 2329 f2329(s: Pointer<GameThing>)
+F 2173 f2173(s: Pointer<GameThing>)
 
 G 3094 SOME_ARR Array<13;Int>

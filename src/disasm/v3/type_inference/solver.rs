@@ -3,7 +3,7 @@
 use itertools::Itertools;
 use log::debug;
 
-use crate::disasm::symbol_renaming::UserDefs;
+use crate::disasm::symbol_renaming::{StructId, UserDefs};
 use crate::disasm::v3::lir::{BinaryOperator, Expression, MemoryReferenceInfo, TypeVarPath};
 use crate::disasm::v3::model::{Model, StructureAnalysisComplete, TypeInferenceComplete};
 use crate::disasm::v3::type_inference::constraints::AddConstraintResult;
@@ -341,13 +341,13 @@ impl CompoundTypeRefiner {
                     let func_type =
                         Type::function(callee_arg_type.clone(), callee_ret_type.clone());
                     store.add_equality_constraint(
-                        Constraint {
-                            sub_type: func_type,
-                            super_type: tv_id.to_type(),
-                            origin_function_id: function_id,
-                            origin_instruction_id: instruction_id,
-                            reason: ConstraintReason::ConstIsFunctionPointer,
-                        },
+                        Constraint::new(
+                            func_type,
+                            tv_id.to_type(),
+                            function_id,
+                            instruction_id,
+                            ConstraintReason::ConstIsFunctionPointer,
+                        ),
                         None,
                         state,
                     );
@@ -460,7 +460,13 @@ impl Solver {
                     constraint_ids.insert(*c);
                 }
             }
-            let mut constraint_ids: VecDeque<ConstraintId> = constraint_ids.into_iter().collect();
+            let mut constraint_ids: VecDeque<ConstraintId> = constraint_ids
+                .into_iter()
+                .sorted_by_key(|id| {
+                    let l = -self.store.get_constraint_by_id(*id).unwrap().priority;
+                    l
+                })
+                .collect();
             while !constraint_ids.is_empty() {
                 while let Some(constraint_id) = constraint_ids.pop_front() {
                     let new_constraints = self.apply_constraint(constraint_id);
@@ -485,8 +491,14 @@ impl Solver {
                     .cloned()
                     .collect_vec();
                 for unclassified in e {
-                    for constraint in self.try_classify_add_expression(&unclassified) {
-                        if let AddConstraintResult::NewConstraint(id) = self.store.add_constraint(constraint, None, &self.state) { constraint_ids.push_back(id) }
+                    for constraint in self
+                        .try_classify_add_expression(&unclassified, &generator_result.struct_types)
+                    {
+                        if let AddConstraintResult::NewConstraint(id) =
+                            self.store.add_constraint(constraint, None, &self.state)
+                        {
+                            constraint_ids.push_back(id)
+                        }
                     }
                 }
             }
@@ -688,8 +700,9 @@ impl Solver {
     fn try_classify_add_expression(
         &mut self,
         unclassified: &UnclassifiedArithmeticExpression,
+        struct_types: &HashMap<StructId, Vec<Type>>,
     ) -> Vec<Constraint> {
-        let Expression::Binary { op, .. } = &unclassified.expression else {
+        let Expression::Binary { op, rhs, .. } = &unclassified.expression else {
             panic!("Expected BinaryOp expression");
         };
         if op != &BinaryOperator::Add && op != &BinaryOperator::Sub {
@@ -716,6 +729,13 @@ impl Solver {
         let is_op1_pointer = op1
             .is_subtype_of(&Type::pointer(Type::Any), &self.state)
             .is_yes();
+        let op1_as_struct_pointer = self
+            .state
+            .upper_bounds(&op1_tvid)
+            .iter()
+            .find_map(|x| x.as_pointer())
+            .and_then(|x| x.as_struct());
+        let op2_as_const = rhs.as_constant();
         let is_op2_pointer = op2
             .is_subtype_of(&Type::pointer(Type::Any), &self.state)
             .is_yes();
@@ -729,8 +749,8 @@ impl Solver {
             new_constraints.push(Constraint::new(
                 sub_type,
                 super_type,
-                FunctionId::new(0),
-                InstructionId::new(0),
+                unclassified.function_id,
+                unclassified.instruction_id,
                 reason,
             ));
         };
@@ -772,16 +792,36 @@ impl Solver {
                 Type::Int,
                 ConstraintReason::ArithmeticOtherOperandMustBeInt,
             );
-            add_constraint(
-                res.clone(),
-                op1.clone(),
-                ConstraintReason::ArithmeticResultMatchesOther,
-            );
-            add_constraint(
-                op1,
-                res.clone(),
-                ConstraintReason::ArithmeticResultMatchesOther,
-            );
+            if let Some(struct_id) = op1_as_struct_pointer {
+                if let Some(offset) = op2_as_const {
+                    let t = &struct_types[&struct_id][offset as usize];
+                    println!(
+                        "CREATING TYPE CONSTRAINT: {:?} {:?} {:?} {:?}",
+                        op1, op2, res, t
+                    );
+                    add_constraint(
+                        res.clone(),
+                        Type::pointer(t.clone()),
+                        ConstraintReason::FieldAccess(struct_id, offset as usize),
+                    );
+                    add_constraint(
+                        Type::pointer(t.clone()),
+                        res.clone(),
+                        ConstraintReason::FieldAccess(struct_id, offset as usize),
+                    );
+                }
+            } else {
+                add_constraint(
+                    res.clone(),
+                    op1.clone(),
+                    ConstraintReason::ArithmeticResultMatchesOther,
+                );
+                add_constraint(
+                    op1,
+                    res.clone(),
+                    ConstraintReason::ArithmeticResultMatchesOther,
+                );
+            }
         }
         if is_op2_char || is_op2_pointer {
             add_constraint(

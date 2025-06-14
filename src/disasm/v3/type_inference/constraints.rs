@@ -5,9 +5,12 @@ use super::{
     InferenceAlgorithmState,
 };
 
-use crate::disasm::v3::{
-    define_id_type, lir::Expression, ssa::SsaMemoryReference,
-    type_inference::type_bounds_map::TypeVarRegistry, FunctionId, InstructionId,
+use crate::disasm::{
+    symbol_renaming::StructId,
+    v3::{
+        define_id_type, lir::Expression, ssa::SsaMemoryReference,
+        type_inference::type_bounds_map::TypeVarRegistry, FunctionId, InstructionId,
+    },
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -75,6 +78,7 @@ pub enum ConstraintReason {
     // Memory Operations
     MemoryReadRequiresPointer,
     MemoryWriteRequiresPointer,
+    FieldAccess(StructId, usize),
 
     // Comparison Operations (e.g. <, ==) - often operands are Ints, result is Bool
     ComparisonLHS,    // `lhs < rhs` => type(lhs) <: Int (or other comparable type)
@@ -104,6 +108,7 @@ pub struct Constraint {
     pub origin_function_id: FunctionId,
     pub origin_instruction_id: InstructionId,
     pub reason: ConstraintReason,
+    pub priority: i32,
 }
 
 impl Constraint {
@@ -120,7 +125,14 @@ impl Constraint {
             origin_function_id,
             origin_instruction_id,
             reason,
+            priority: 0,
         }
+    }
+
+    pub fn with_priority(&self, priority: i32) -> Constraint {
+        let mut c = self.clone();
+        c.priority = priority;
+        c
     }
 
     /// Checks if this constraint involves the specified type variable.
@@ -181,6 +193,8 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableConstraint<'a, 'b, 
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnclassifiedArithmeticExpression {
+    pub function_id: FunctionId,
+    pub instruction_id: InstructionId,
     pub expression: Expression<SsaMemoryReference>,
     pub lhs_type: Type,
     pub rhs_type: Type,
@@ -271,6 +285,8 @@ impl ConstraintStore {
 
     pub fn add_unclassified_add_expression(
         &mut self,
+        function_id: FunctionId,
+        instruction_id: InstructionId,
         expression: Expression<SsaMemoryReference>,
         lhs_type: Type,
         rhs_type: Type,
@@ -278,6 +294,8 @@ impl ConstraintStore {
     ) {
         self.unclassified_add_expressions
             .push(UnclassifiedArithmeticExpression {
+                function_id,
+                instruction_id,
                 expression,
                 lhs_type,
                 rhs_type,

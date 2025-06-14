@@ -3,7 +3,7 @@
 use itertools::Itertools;
 use log::{trace, warn};
 
-use crate::disasm::symbol_renaming::UserDefs;
+use crate::disasm::symbol_renaming::{StructId, UserDefs};
 use crate::disasm::v3::cfg::BlockView;
 use crate::disasm::v3::lir::{
     BinaryOperator, Expression, ExpressionPath, ExpressionPathElement, Instruction,
@@ -12,6 +12,7 @@ use crate::disasm::v3::lir::{
 use crate::disasm::v3::model::{Model, StructureAnalysisComplete};
 use crate::disasm::v3::ssa::converter::PhiFunction;
 use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::v3::type_inference::StructField;
 use crate::disasm::{self};
 // SsaBlock was unused
 use crate::disasm::v3::lir::InstructionNode;
@@ -32,6 +33,7 @@ pub struct TypeConstraintGeneratorResult {
     pub markers: HashMap<char, TypeVarId>, // Type of markers might need adjustment based on actual usage
     pub function_types: HashMap<FunctionId, (Type, Type)>,
     pub global_vars: HashMap<usize, TypeVarId>,
+    pub struct_types: HashMap<StructId, Vec<Type>>,
 }
 
 pub struct TypeConstraintGenerator<'a> {
@@ -52,6 +54,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 markers: HashMap::new(),
                 function_types: HashMap::new(),
                 global_vars: HashMap::new(),
+                struct_types: HashMap::new(),
             },
         }
     }
@@ -59,6 +62,7 @@ impl<'a> TypeConstraintGenerator<'a> {
     // Iterates through the SSA model (conceptual)
     fn generate_all_constraints(&mut self) {
         trace!("Generating constraints for model");
+        self.generate_types_for_structs();
         for (function_id, f) in self.model.functions().sorted_by_key(|f| f.0) {
             let args = self.result.state.add_type_var(TypeVarNode {
                 path: TypeVarPath::FunctionDefArgTuple { function_id },
@@ -177,6 +181,23 @@ impl<'a> TypeConstraintGenerator<'a> {
         self.add_function_argument_types_from_symbol_renaming();
     }
 
+    fn generate_types_for_structs(&mut self) {
+        for (&struct_id, def) in self.user_defs.get_struct_definitions() {
+            let mut types = vec![];
+            for (index, StructField { typ, .. }) in def.fields.iter().enumerate() {
+                let typ = typ.clone().unwrap_or_else(|| {
+                    let node = TypeVarNode {
+                        path: TypeVarPath::StructField { struct_id, index },
+                        vmr: None,
+                    };
+                    self.result.state.add_type_var(node).to_type()
+                });
+                types.push(typ);
+            }
+            self.result.struct_types.insert(struct_id, types);
+        }
+    }
+
     fn add_variable_types_from_symbol_renaming(&mut self) {
         for (vmr, (_, ty)) in self.user_defs.get_variables() {
             let Some(ty) = ty else {
@@ -193,7 +214,8 @@ impl<'a> TypeConstraintGenerator<'a> {
                     vmr.function_id,
                     InstructionId::new(0), // Dummy ID for function args
                     ConstraintReason::SymbolRenaming,
-                ),
+                )
+                .with_priority(100),
                 None,
                 &self.result.state,
             );
@@ -230,7 +252,8 @@ impl<'a> TypeConstraintGenerator<'a> {
                         function_id,
                         InstructionId::new(0), // Dummy ID for function args
                         ConstraintReason::SymbolRenaming,
-                    ),
+                    )
+                    .with_priority(100),
                     None,
                     &self.result.state,
                 );
@@ -583,13 +606,19 @@ impl<'a> TypeConstraintGenerator<'a> {
                 SsaMemoryReference::Deref(inner_ptr_expr) => {
                     /*
                     let struct_offset = match inner_ptr_expr.as_binary() {
-                        Some((_, base, Expression::Constant(offset))) if offset < 10 => {
+                        Some((
+                            _,
+                            Expression::Addressable(memref),
+                            Expression::Constant(offset),
+                        )) if offset < 10 => {
                             let base_type_var_id = self.process_expression(
                                 base,
                                 function_id,
                                 instruction_id,
-                                path.extending_path_element(ExpressionPathElement::Deref),
+                                path.extending_path_element(ExpressionPathElement::Deref)
+                                    .extending_path_element(ExpressionPathElement::BinaryLeft),
                             );
+
                             self.result.state.add_equality_constraint(
                                 Constraint::new(
                                     Type::TypeVar(base_type_var_id),
@@ -651,6 +680,8 @@ impl<'a> TypeConstraintGenerator<'a> {
                     disasm::v3::lir::expression::BinaryOperator::Add
                     | disasm::v3::lir::expression::BinaryOperator::Sub => {
                         self.result.store.add_unclassified_add_expression(
+                            function_id,
+                            instruction_id,
                             expr.clone(),
                             lhs_type.clone(),
                             rhs_type.clone(),
@@ -845,29 +876,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 expr_type
             }
             Expression::StructField { base, .. } => {
-                let base_type = self.process_expression(
-                    base,
-                    function_id,
-                    instruction_id,
-                    path.extending_path_element(ExpressionPathElement::TupleElementBase),
-                );
-                let result_tv_id = self.result.state.make_expression_type_var(path);
-                let result_type = Type::TypeVar(result_tv_id);
-
-                /*
-                self.result.store.add_equality_constraint(
-                    Constraint::new(
-                        Type::TypeVar(base_type),
-                        Type::Tuple(Box::new(vec![result_type.clone()])),
-                        function_id,
-                        instruction_id,
-                        ConstraintReason::TupleElement,
-                    ),
-                    None,
-                    &self.result.state,
-                );
-                */
-                result_tv_id
+                unreachable!()
             }
         }
     }

@@ -1,9 +1,12 @@
-use crate::disasm::v3::{
-    lir::{Expression, Instruction, InstructionNode},
-    model::{HasFoldedSsaResult, Model, ModelState},
-    ssa::{SsaMemoryReference, VersionedMemoryReference},
-    type_inference::TypeVarId,
-    FunctionId, InstructionId,
+use crate::disasm::{
+    symbol_renaming::StructId,
+    v3::{
+        lir::{Expression, Instruction, InstructionNode},
+        model::{HasFoldedSsaResult, Model, ModelState},
+        ssa::{SsaMemoryReference, VersionedMemoryReference},
+        type_inference::TypeVarId,
+        FunctionId, InstructionId,
+    },
 };
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ExpressionPathElement {
@@ -192,6 +195,10 @@ pub enum TypeVarPath {
     PointerRefinement {
         function_id: FunctionId,
         original_type_var_id: TypeVarId,
+    },
+    StructField {
+        struct_id: StructId,
+        index: usize,
     },
 }
 
@@ -404,6 +411,7 @@ impl TypeVarPath {
             | TypeVarPath::TupleRefinement { function_id, .. }
             | TypeVarPath::PointerRefinement { function_id, .. }
             | TypeVarPath::SymbolRenaming { function_id, .. } => *function_id,
+            TypeVarPath::StructField { .. } => FunctionId::new(0),
         }
     }
 
@@ -429,6 +437,7 @@ impl TypeVarPath {
             | TypeVarPath::FunctionRetsRefinement { .. }
             | TypeVarPath::TupleRefinement { .. }
             | TypeVarPath::SymbolRenaming { .. }
+            | TypeVarPath::StructField { .. }
             | TypeVarPath::PointerRefinement { .. } => None,
         }
     }
@@ -449,6 +458,7 @@ impl TypeVarPath {
             | TypeVarPath::FunctionRetsRefinement { .. }
             | TypeVarPath::TupleRefinement { .. }
             | TypeVarPath::SymbolRenaming { .. }
+            | TypeVarPath::StructField { .. }
             | TypeVarPath::PointerRefinement { .. } => None,
             TypeVarPath::AssignmentSrc {
                 expression_path, ..
@@ -536,9 +546,7 @@ impl TypeVarPath {
     pub fn extending_path_element(&self, element: ExpressionPathElement) -> TypeVarPath {
         self.with_expression_path(
             self.expression_path()
-                .unwrap_or_else(|| {
-                    panic!("Cannot extend path for {self:?} / element {element:?}")
-                })
+                .unwrap_or_else(|| panic!("Cannot extend path for {self:?} / element {element:?}"))
                 .extending(element),
         )
     }
@@ -587,9 +595,7 @@ impl TypeVarPath {
             (TypeVarPath::Output { .. }, Instruction::Output(output)) => output,
             (TypeVarPath::CallAddress { .. }, Instruction::Call { addr, .. }) => addr,
             (TypeVarPath::CallArg { index, .. }, Instruction::Call { args, .. }) => &args[*index],
-            _ => panic!(
-                "Unexpected combination of TypeVarPath and Instruction: {self:?}"
-            ),
+            _ => panic!("Unexpected combination of TypeVarPath and Instruction: {self:?}"),
         };
         Some(path.get_subexpression(expr))
     }
