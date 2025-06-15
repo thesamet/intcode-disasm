@@ -5,7 +5,7 @@ use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
 };
 use disasm::disasm::v3::FunctionId;
-use disasm::disasm::{repl, UserDefs};
+use disasm::disasm::{mcp, repl, UserDefs};
 
 use itertools::Itertools;
 use std::process;
@@ -90,6 +90,11 @@ enum Command {
     FlowRecovery {
         input: String,
     },
+    Mcp {
+        input: Option<String>,
+        #[arg(long, help = "Symbol renaming rules files")]
+        symbols: Option<String>,
+    },
 }
 
 fn main() {
@@ -136,6 +141,9 @@ fn main() {
         }
         Command::FlowRecovery { input } => flow_recovery(input),
         Command::Repl { input, symbols } => repl(input.unwrap(), symbols),
+        Command::Mcp { input, symbols } => {
+            mcp(input.unwrap(), symbols);
+        }
         Command::FoldedSsa {
             input,
             theme,
@@ -271,6 +279,24 @@ fn repl(input: String, symbols: Option<String>) {
     };
     let model = analysis::binary_to_hlr(prog, user_defs).unwrap();
     repl::repl(&model);
+}
+
+fn mcp(input: String, symbols: Option<String>) {
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    let user_defs = if let Some(symbols) = symbols {
+        let symbols = std::fs::read_to_string(symbols).unwrap();
+        UserDefs::from_lines(&symbols).unwrap()
+    } else {
+        UserDefs::new()
+    };
+    let model = analysis::binary_to_hlr(prog, user_defs).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let _ = mcp::mcp(model).await;
+        })
 }
 
 fn flow_recovery(input: String) {

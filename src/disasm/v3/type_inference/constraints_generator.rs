@@ -225,12 +225,6 @@ impl<'a> TypeConstraintGenerator<'a> {
     fn add_function_argument_types_from_symbol_renaming(&mut self) {
         for (&function_id, function_symbol) in self.user_defs.get_functions() {
             for (idx, (_name, typ)) in function_symbol.args().iter().enumerate() {
-                println!(
-                    "ARG CONST: f={} arg={_name} idx: {}, typ: {:?}",
-                    function_symbol.name(),
-                    idx,
-                    typ
-                );
                 let Some(typ) = typ else {
                     continue;
                 };
@@ -244,7 +238,6 @@ impl<'a> TypeConstraintGenerator<'a> {
                         index: idx,
                     },
                 );
-                println!("  Adding");
                 self.result.store.add_equality_constraint(
                     Constraint::new(
                         Type::TypeVar(tv_id),

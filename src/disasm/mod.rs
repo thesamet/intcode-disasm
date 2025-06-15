@@ -1,4 +1,5 @@
 pub mod hlr;
+pub mod mcp;
 pub mod parser;
 pub mod repl;
 pub mod v3;

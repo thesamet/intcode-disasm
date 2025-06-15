@@ -4,8 +4,13 @@ use castaway::match_type;
 use clap::{arg, Parser, Subcommand};
 use colored::Colorize;
 use itertools::Itertools;
+use rmcp::schemars::JsonSchema;
 use rustyline::DefaultEditor;
-use tabled::settings::{object::Columns, Span, Style, Width};
+use serde::Serialize;
+use tabled::{
+    settings::{object::Columns, Span, Style, Width},
+    Table, Tabled,
+};
 
 use crate::disasm::v3::{
     common::formatting::{ContextualPrettyPrint, PrettyPrintConfig},
@@ -24,6 +29,26 @@ use super::v3::{
     ssa::SsaMemoryReference,
     type_inference::{constraints::ConstraintId, Type, TypeVarId},
 };
+
+#[derive(Tabled, Serialize)]
+struct TypeVarRow {
+    id: String,
+    function: String,
+    inst: String,
+    role: String,
+    expr: String,
+    lower: String,
+    upper: String,
+}
+
+#[derive(Tabled, Serialize, rmcp::schemars::JsonSchema)]
+pub struct ChangeRow {
+    iter: usize,
+    time: usize,
+    tv_id: String,
+    kind: String,
+    reason: String,
+}
 
 #[derive(Subcommand, Debug, Clone)]
 enum Command {
@@ -139,7 +164,7 @@ where
     }
 }
 
-struct ReplCommands<S> {
+pub struct ReplCommands<S> {
     _data: PhantomData<S>,
 }
 
@@ -222,7 +247,7 @@ where
         }
         Ok(())
     }
-    fn format_path<'a>(
+    pub fn format_path<'a>(
         model: &'a Model<S>,
         path: &TypeVarPath,
     ) -> (String, Option<&'a Expression<SsaMemoryReference>>) {
@@ -283,24 +308,13 @@ where
         (role, expr)
     }
 
-    fn list_variables(
+    pub fn list_variables_data(
         model: &Model<S>,
         id: Option<TypeVarId>,
         function: Option<FunctionId>,
         global: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(Vec<TypeVarRow>, Vec<usize>), String> {
         let ti = model.type_inference_result();
-        use tabled::{Table, Tabled};
-        #[derive(Tabled)]
-        struct TypeVarRow {
-            id: String,
-            function: String,
-            inst: String,
-            role: String,
-            expr: String,
-            lower: String,
-            upper: String,
-        }
         let mut data = Vec::new();
         let mut converged_rows = Vec::new();
         for (row, (tv, tv_node)) in ti
@@ -341,6 +355,16 @@ where
                 },
             });
         }
+        Ok((data, converged_rows))
+    }
+
+    fn list_variables(
+        model: &Model<S>,
+        id: Option<TypeVarId>,
+        function: Option<FunctionId>,
+        global: bool,
+    ) -> Result<(), String> {
+        let (data, converged_rows) = Self::list_variables_data(model, id, function, global)?;
         let mut table = Table::new(data);
         table
             .with(Style::modern())
@@ -383,18 +407,12 @@ where
         }
     }
 
-    fn changelog(model: &Model<S>, tv_id: Option<TypeVarId>, resolve: bool) -> Result<(), String> {
+    pub fn changelog_data(
+        model: &Model<S>,
+        tv_id: Option<TypeVarId>,
+        resolve: bool,
+    ) -> Result<Vec<ChangeRow>, String> {
         let ti: &TypeInferenceResult = model.type_inference_result();
-        use tabled::{Table, Tabled};
-
-        #[derive(Tabled)]
-        struct ChangeRow {
-            iter: usize,
-            time: usize,
-            tv_id: String,
-            kind: String,
-            reason: String,
-        }
 
         let mut data = Vec::new();
 
@@ -428,6 +446,11 @@ where
                 },
             });
         }
+        Ok(data)
+    }
+
+    fn changelog(model: &Model<S>, tv_id: Option<TypeVarId>, resolve: bool) -> Result<(), String> {
+        let data = Self::changelog_data(model, tv_id, resolve)?;
         let mut table = Table::new(data);
         table.with(tabled::settings::Style::modern());
         println!("{table}");

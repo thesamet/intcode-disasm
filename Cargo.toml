@@ -25,6 +25,17 @@ rustyline = "16.0.0"
 tabled = { version = "0.19.0", features = ["ansi"] }
 term_size = "0.3.2"
 heck = "0.5.0"
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", branch = "main", features = [
+  "server",
+  "transport-io",
+  "transport-sse-server",
+  "server",
+] }
+tokio = { version = "1", features = ["full", "net"] }
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+axum = "0.8.4"
+schemars = "0.8.22"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

@@ -20,7 +20,19 @@ impl InstructionId {
 
 macro_rules! define_id_type {
     ($id_type:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            Hash,
+            PartialOrd,
+            Ord,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[serde(transparent)]
         pub struct $id_type(usize);
 
         #[allow(unused)]
@@ -58,9 +70,60 @@ macro_rules! define_id_type {
             fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
                 s.parse::<usize>()
                     .map($id_type::new)
-                    .map_err(|e| format!("Failed to parse FunctionId: {}", e))
+                    .map_err(|e| format!("Failed to parse $id_type: {}", e))
             }
         }
+
+        impl rmcp::schemars::JsonSchema for $id_type {
+            fn schema_name() -> String {
+                // This should return the name of the type for the schema definition
+                stringify!($id_type).to_string()
+            }
+
+            fn json_schema(
+                _gen: &mut rmcp::schemars::SchemaGenerator,
+            ) -> rmcp::schemars::schema::Schema {
+                // Since FunctionId is a newtype around usize, its schema is the same as usize's schema
+                // We delegate the schema generation to the usize implementation
+                usize::json_schema(_gen)
+            }
+        }
+
+        /*
+        impl serde::Serialize for $id_type {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                serializer.serialize_newtype_struct(stringify!($id_type), &self.0)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $id_type {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct PrimitiveVisitor;
+                impl<'a> serde::de::Visitor<'a> for PrimitiveVisitor {
+                    type Value = $id_type;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        formatter.write_str(stringify!($id_type))
+                    }
+
+                    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        Ok($id_type::new(v as usize))
+                    }
+                }
+
+                deserializer.deserialize_newtype_struct(stringify!($id_type), PrimitiveVisitor {})
+            }
+        }
+        */
 
         impl $id_type {}
     };

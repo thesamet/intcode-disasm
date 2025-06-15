@@ -1,6 +1,6 @@
 //! Type inference solver implementation.
 
-use itertools::Itertools;
+use itertools::{iterate, Itertools};
 use log::debug;
 
 use crate::disasm::symbol_renaming::{StructId, UserDefs};
@@ -484,20 +484,22 @@ impl Solver {
                         }
                     }
                 }
-
                 let e = self
                     .store
                     .iter_unclassified_add_expressions()
                     .cloned()
                     .collect_vec();
-                for unclassified in e {
-                    for constraint in self
-                        .try_classify_add_expression(&unclassified, &generator_result.struct_types)
-                    {
-                        if let AddConstraintResult::NewConstraint(id) =
-                            self.store.add_constraint(constraint, None, &self.state)
-                        {
-                            constraint_ids.push_back(id)
+                if self.state.get_iteration() > 1 {
+                    for unclassified in e {
+                        for constraint in self.try_classify_add_expression(
+                            &unclassified,
+                            &generator_result.struct_types,
+                        ) {
+                            if let AddConstraintResult::NewConstraint(id) =
+                                self.store.add_constraint(constraint, None, &self.state)
+                            {
+                                constraint_ids.push_back(id)
+                            }
                         }
                     }
                 }
@@ -697,6 +699,11 @@ impl Solver {
         new_constraints
     }
 
+    fn as_subtype_of_pointer_struct(&self, tv_id: TypeVarId) -> Option<StructId> {
+        //        let typ = self.state.upper_bounds(&tv_id).find_map(|t| t.as_struct_pointer)
+        None
+    }
+
     fn try_classify_add_expression(
         &mut self,
         unclassified: &UnclassifiedArithmeticExpression,
@@ -795,10 +802,6 @@ impl Solver {
             if let Some(struct_id) = op1_as_struct_pointer {
                 if let Some(offset) = op2_as_const {
                     let t = &struct_types[&struct_id][offset as usize];
-                    println!(
-                        "CREATING TYPE CONSTRAINT: {:?} {:?} {:?} {:?}",
-                        op1, op2, res, t
-                    );
                     add_constraint(
                         res.clone(),
                         Type::pointer(t.clone()),

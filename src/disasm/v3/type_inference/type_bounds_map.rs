@@ -697,6 +697,10 @@ impl InferenceAlgorithmState {
     pub fn generic_type_vars(&self) -> HashMap<GenericTypeVarId, GenericTypeVar> {
         self.generic_type_vars.clone()
     }
+
+    pub(crate) fn get_iteration(&self) -> usize {
+        self.iteration
+    }
 }
 
 #[derive(Copy, Clone)]
