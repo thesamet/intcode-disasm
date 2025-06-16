@@ -43,11 +43,19 @@ impl<S: ModelState> TestContext<S> {
 }
 
 pub trait TestContextBuilder<S: ModelState> {
-    fn test_context(asm: &str) -> Result<TestContext<S>, Error>;
+    fn test_context_with_user_defs(asm: &str, user_defs: UserDefs)
+        -> Result<TestContext<S>, Error>;
+
+    fn test_context(asm: &str) -> Result<TestContext<S>, Error> {
+        Self::test_context_with_user_defs(asm, UserDefs::new())
+    }
 }
 
 impl TestContextBuilder<ImageScannerComplete> for ImageScannerComplete {
-    fn test_context(asm: &str) -> Result<TestContext<ImageScannerComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        _user_defs: UserDefs,
+    ) -> Result<TestContext<ImageScannerComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_scanned_image(binary)?;
@@ -56,7 +64,10 @@ impl TestContextBuilder<ImageScannerComplete> for ImageScannerComplete {
 }
 
 impl TestContextBuilder<ControlFlowGraphComplete> for ControlFlowGraphComplete {
-    fn test_context(asm: &str) -> Result<TestContext<ControlFlowGraphComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        _user_defs: UserDefs,
+    ) -> Result<TestContext<ControlFlowGraphComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_cfg(binary)?;
@@ -65,7 +76,10 @@ impl TestContextBuilder<ControlFlowGraphComplete> for ControlFlowGraphComplete {
 }
 
 impl TestContextBuilder<DataFlowComplete> for DataFlowComplete {
-    fn test_context(asm: &str) -> Result<TestContext<DataFlowComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        _user_defs: UserDefs,
+    ) -> Result<TestContext<DataFlowComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_data_flow(binary)?;
@@ -74,7 +88,10 @@ impl TestContextBuilder<DataFlowComplete> for DataFlowComplete {
 }
 
 impl TestContextBuilder<SsaComplete> for SsaComplete {
-    fn test_context(asm: &str) -> Result<TestContext<SsaComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        _user_defs: UserDefs,
+    ) -> Result<TestContext<SsaComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_ssa(binary)?;
@@ -83,7 +100,10 @@ impl TestContextBuilder<SsaComplete> for SsaComplete {
 }
 
 impl TestContextBuilder<FunctionCallAnalysisComplete> for FunctionCallAnalysisComplete {
-    fn test_context(asm: &str) -> Result<TestContext<FunctionCallAnalysisComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        _user_defs: UserDefs,
+    ) -> Result<TestContext<FunctionCallAnalysisComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_function_calls(binary)?;
@@ -92,7 +112,10 @@ impl TestContextBuilder<FunctionCallAnalysisComplete> for FunctionCallAnalysisCo
 }
 
 impl TestContextBuilder<FoldedSsaComplete> for FoldedSsaComplete {
-    fn test_context(asm: &str) -> Result<TestContext<FoldedSsaComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        _user_defs: UserDefs,
+    ) -> Result<TestContext<FoldedSsaComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
         let model = analysis::binary_to_folded_ssa(binary)?;
@@ -101,29 +124,38 @@ impl TestContextBuilder<FoldedSsaComplete> for FoldedSsaComplete {
 }
 
 impl TestContextBuilder<TypeInferenceComplete> for TypeInferenceComplete {
-    fn test_context(asm: &str) -> Result<TestContext<TypeInferenceComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        user_defs: UserDefs,
+    ) -> Result<TestContext<TypeInferenceComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_type_inference(binary, UserDefs::new())?;
+        let model = analysis::binary_to_type_inference(binary, user_defs)?;
 
         Ok(TestContext { model })
     }
 }
 
 impl TestContextBuilder<VariableMergerComplete> for VariableMergerComplete {
-    fn test_context(asm: &str) -> Result<TestContext<VariableMergerComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        user_defs: UserDefs,
+    ) -> Result<TestContext<VariableMergerComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_variable_merger(binary, UserDefs::new())?;
+        let model = analysis::binary_to_variable_merger(binary, user_defs)?;
         Ok(TestContext { model })
     }
 }
 
 impl TestContextBuilder<HlrConstructionComplete> for HlrConstructionComplete {
-    fn test_context(asm: &str) -> Result<TestContext<HlrConstructionComplete>, Error> {
+    fn test_context_with_user_defs(
+        asm: &str,
+        user_defs: UserDefs,
+    ) -> Result<TestContext<HlrConstructionComplete>, Error> {
         init_logging();
         let binary = parser::compile(asm);
-        let model = analysis::binary_to_hlr(binary, UserDefs::new())?;
+        let model = analysis::binary_to_hlr(binary, user_defs)?;
         Ok(TestContext { model })
     }
 }

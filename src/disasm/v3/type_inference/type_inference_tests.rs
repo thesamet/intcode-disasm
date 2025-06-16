@@ -9,6 +9,7 @@ use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 
 use crate::disasm::v3::type_inference::type_bounds_map::TypeVarRegistry;
 use crate::disasm::v3::type_inference::types::Type;
+use crate::disasm::UserDefs;
 // V3 Type
 
 // For full implementation, these might be needed:
@@ -1132,4 +1133,47 @@ fn test_fn_pointer_args_inferred() {
 
     // 'g' is the parameter in f3, should be Pointer<Int>
     assert_marker_type!(ctx, 'g', Type::pointer(Type::Int));
+}
+
+#[test]
+fn test_struct_field_access() {
+    let ctx = TypeInferenceComplete::test_context_with_user_defs(
+        r#"
+            R += 1000
+            halt
+
+        prints_first_field:
+            R += 3
+            'a ptr = [R-2] + 1
+            [R+1] = *ptr
+            [R] = @ret
+            goto @other
+            ret:
+
+            R -= 3
+            goto [R]
+
+        other:
+            R += 2
+            ptr = 100 + [R-1]
+            *ptr = 17
+            R -= 2
+            goto [R]
+            "#,
+        UserDefs::from_lines(
+            r#"
+                S GameThing { a, b, c, d }
+                F 3 func(s: Pointer<GameThing>)
+                "#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    println!(
+        "Pretty printed model with types (V3):\n{}",
+        pretty_print_types(&ctx.model)
+    );
+    ctx.model.type_inference_result().print_all_type_bounds();
+
+    assert_marker_type!(ctx, 'a', Type::pointer(Type::Int));
 }
