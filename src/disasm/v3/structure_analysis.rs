@@ -111,6 +111,29 @@ impl crate::disasm::v3::lir::expression::ExpressionPathVisitor<SsaMemoryReferenc
     }
 }
 
+/// Identifies function arguments that are structs based on user definitions.
+fn identify_function_argument_structs_from_user_defs(
+    model: &Model<FoldedSsaComplete>,
+    function_id: &FunctionId,
+    user_defs: &UserDefs,
+) -> HashMap<VersionedMemoryReference, StructId> {
+    let mut register_structs = HashMap::new();
+    if let Some(def) = user_defs.get_functions().get(function_id) {
+        let entry_vars = &model
+            .function(function_id)
+            .callee_info()
+            .parameter_entry_vars;
+        for (index, (_, typ)) in def.args().iter().enumerate() {
+            let Some(struct_id) = typ.as_ref().and_then(Type::as_struct) else {
+                continue;
+            };
+            let vmr = entry_vars.get(&((index + 1) as i128)).unwrap();
+            register_structs.insert(*vmr, struct_id);
+        }
+    }
+    register_structs
+}
+
 pub(crate) fn analyze_structure(
     model: Model<FoldedSsaComplete>,
     user_defs: &UserDefs,
@@ -122,34 +145,15 @@ pub(crate) fn analyze_structure(
     };
     let mut global_adds: HashMap<usize, Vec<usize>> = HashMap::new();
     for (function_id, f) in model.functions() {
-        result.functions.insert(
-            f.function_id(),
-            FunctionStructInfo {
-                register_structs: HashMap::new(),
-            },
-        );
+        let register_structs =
+            identify_function_argument_structs_from_user_defs(&model, &function_id, user_defs);
+        result
+            .functions
+            .insert(f.function_id(), FunctionStructInfo { register_structs });
         let mut hm: HashMap<VersionedMemoryReference, Vec<usize>> = HashMap::new();
-        if let Some(def) = user_defs.get_functions().get(&f.function_id()) {
-            let entry_vars = &model
-                .function(&function_id)
-                .callee_info()
-                .parameter_entry_vars;
-            for (index, (_, typ)) in def.args().iter().enumerate() {
-                let Some(struct_id) = typ.as_ref().and_then(Type::as_struct) else {
-                    continue;
-                };
-                let vmr = entry_vars.get(&((index + 1) as i128)).unwrap();
-                result
-                    .functions
-                    .get_mut(&function_id)
-                    .unwrap()
-                    .register_structs
-                    .insert(*vmr, struct_id);
-            }
-        };
         for (_, b) in f.blocks() {
             for i in &b.folded_ssa().instructions {
-                for (tvp, e) in i.collect_all_expressions() {
+                for (_, e) in i.collect_all_expressions() {
                     let mut v = FieldAccessCollector::new();
                     e.visit(&mut v, &ExpressionPath::root())?;
                     for (_, base, offset) in v.derefs {
@@ -207,7 +211,7 @@ pub(crate) fn analyze_structure(
             }
         }
     }
-    for (f, fi) in &result.functions {
+    for (_, fi) in &result.functions {
         if fi.register_structs.is_empty() {
             continue;
         };
