@@ -4,9 +4,10 @@ use castaway::match_type;
 use clap::{arg, Parser, Subcommand};
 use colored::Colorize;
 use itertools::Itertools;
-use rmcp::schemars::JsonSchema;
+
 use rustyline::DefaultEditor;
 use serde::Serialize;
+use std::collections::HashSet;
 use tabled::{
     settings::{object::Columns, Span, Style, Width},
     Table, Tabled,
@@ -31,7 +32,7 @@ use super::v3::{
 };
 
 #[derive(Tabled, Serialize)]
-struct TypeVarRow {
+pub struct TypeVarRow {
     id: String,
     function: String,
     inst: String,
@@ -48,6 +49,7 @@ pub struct ChangeRow {
     tv_id: String,
     kind: String,
     reason: String,
+    context: String,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -422,35 +424,114 @@ where
             .enumerate()
             .filter(|(_, c)| tv_id.is_none_or(|id| c.tv_id == id))
         {
+            let mut involved_tvs = HashSet::new();
+            match &change.kind {
+                ChangeLogKind::AddedBound { new_bound, .. } => {
+                    involved_tvs.extend(new_bound.involved_type_vars());
+                }
+                ChangeLogKind::Converged { new_type, .. } => {
+                    involved_tvs.extend(new_type.involved_type_vars());
+                }
+                ChangeLogKind::DependencyConverged {
+                    dependent_var_id,
+                    new_value,
+                } => {
+                    involved_tvs.insert(*dependent_var_id);
+                    involved_tvs.extend(new_value.involved_type_vars());
+                }
+            }
+
+            let context = involved_tvs
+                .iter()
+                .map(|id| {
+                    let node = &ti.type_var_nodes[id];
+                    let (role, expr) = Self::format_path(model, &node.path);
+                    format!(
+                        "{} -> {} @ {}: {}",
+                        id,
+                        role,
+                        node.path.function_id(),
+                        expr.map(|e| e.to_string()).unwrap_or_default()
+                    )
+                })
+                .sorted()
+                .join("\n");
+
             data.push(ChangeRow {
                 iter: change.iteration,
                 time,
                 tv_id: format!("{}", change.tv_id),
-                kind: Self::format_change_log(ti, &change.kind, resolve).to_string(),
+                kind: Self::format_change_log(ti, &change.kind, resolve),
                 reason: match &change.kind {
-                    ChangeLogKind::AddedBound { reason, .. } => {
-                        let reason = match reason {
-                            BoundChangeReason::Constraint(id) => {
-                                let constraint =
-                                    ti.constraint_store.get_constraint_by_id(*id).unwrap();
-                                format!("{}: {:?}", id, constraint.reason)
+                    ChangeLogKind::AddedBound { reason, .. } => match reason {
+                        BoundChangeReason::Constraint(id) => {
+                            let mut reasons = vec![];
+                            let mut current_id = Some(*id);
+                            while let Some(current_id_val) = current_id {
+                                let constraint = ti
+                                    .constraint_store
+                                    .get_constraint_by_id(current_id_val)
+                                    .unwrap();
+                                reasons.push(format!(
+                                    "{}: {:?} @ {}/{}",
+                                    current_id_val,
+                                    constraint.reason,
+                                    constraint.origin_function_id,
+                                    constraint.origin_instruction_id
+                                ));
+                                current_id = ti.constraint_store.get_parent_id(current_id_val);
                             }
-                            _ => format!("{reason}"),
-                        };
-                        reason
-                    }
+                            reasons.join("\n")
+                        }
+                        _ => format!("{reason}"),
+                    },
                     ChangeLogKind::Converged {
                         convergence_type, ..
                     } => format!("{convergence_type}"),
                     ChangeLogKind::DependencyConverged { .. } => "Dependency".to_string(),
                 },
+                context,
             });
         }
         Ok(data)
     }
 
     fn changelog(model: &Model<S>, tv_id: Option<TypeVarId>, resolve: bool) -> Result<(), String> {
+        if let Some(tv_id) = tv_id {
+            if let Ok((data, _)) = Self::list_variables_data(model, Some(tv_id), None, false) {
+                if let Some(row) = data.first() {
+                    println!("{}", "Variable Context".bold().underline());
+                    println!("{:<15}: {}", "ID", row.id);
+                    println!("{:<15}: {}", "Function", row.function);
+                    println!("{:<15}: {}", "Instruction", row.inst);
+                    println!("{:<15}: {}", "Role", row.role);
+                    println!("{:<15}: {}", "Expression", row.expr);
+                    let ti = model.type_inference_result();
+                    let state = ti.type_var_states.get(&tv_id).unwrap();
+                    match state {
+                        TypeVarState::Converged(ty) => {
+                            println!("{:<15}: {}", "State", "Converged".green());
+                            println!("{:<15}: {}", "Type", format!("{}", ty).green());
+                        }
+                        TypeVarState::Bounds {
+                            lower_bounds,
+                            upper_bounds,
+                        } => {
+                            println!("{:<15}: {}", "State", "Bounds");
+                            println!("{:<15}: {}", "Lower bound", format_bounds(lower_bounds));
+                            println!("{:<15}: {}", "Upper bound", format_bounds(upper_bounds));
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+
         let data = Self::changelog_data(model, tv_id, resolve)?;
+        if data.is_empty() {
+            println!("No history found for the given type variable.");
+            return Ok(());
+        }
         let mut table = Table::new(data);
         table.with(tabled::settings::Style::modern());
         println!("{table}");
