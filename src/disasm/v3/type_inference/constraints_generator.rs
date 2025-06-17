@@ -4,10 +4,11 @@ use itertools::Itertools;
 use log::{trace, warn};
 
 use crate::disasm::symbol_renaming::{StructId, UserDefs};
-use crate::disasm::v3::cfg::BlockView;
+use crate::disasm::v3::cfg::{BlockView, FunctionView};
+use crate::disasm::v3::lir::expression::BinaryOperator;
 use crate::disasm::v3::lir::{
-    BinaryOperator, Expression, ExpressionPath, ExpressionPathElement, Instruction,
-    MemoryReferenceInfo, TypeVarPath,
+    Expression, ExpressionPath, ExpressionPathElement, Instruction, MemoryReferenceInfo,
+    TypeVarPath,
 };
 use crate::disasm::v3::model::{Model, StructureAnalysisComplete};
 use crate::disasm::v3::ssa::converter::PhiFunction;
@@ -147,7 +148,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     self.generate_constraints_for_instruction(
                         &ssa_block_content,
                         instruction_node,
-                        function_id,
+                        f,
                     );
                 }
             }
@@ -298,8 +299,9 @@ impl<'a> TypeConstraintGenerator<'a> {
         &mut self,
         block: &BlockView<'a, StructureAnalysisComplete>,
         instruction_node: &InstructionNode<SsaMemoryReference>,
-        function_id: FunctionId,
+        function: FunctionView<StructureAnalysisComplete>,
     ) {
+        let function_id = function.function_id();
         let instruction_id = instruction_node.id;
         trace!(
             "Generating constraints for instruction {}: {}",
@@ -315,7 +317,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             } => {
                 let src_type = self.process_expression(
                     src,
-                    function_id,
+                    function,
                     instruction_id,
                     TypeVarPath::AssignmentSrc {
                         function_id,
@@ -354,7 +356,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     SsaMemoryReference::Deref(ptr_expr_target) => {
                         let ptr_addr_type = self.process_expression(
                             ptr_expr_target.as_ref(), // ptr_expr_target is Box<Expression>
-                            function_id,
+                            function,
                             instruction_id,
                             TypeVarPath::AssignmentTargetDeref {
                                 function_id,
@@ -379,7 +381,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             Instruction::If { cond, .. } => {
                 let cond_type = self.process_expression(
                     cond,
-                    function_id,
+                    function,
                     instruction_id,
                     TypeVarPath::IfCond {
                         function_id,
@@ -402,7 +404,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             Instruction::Output(expr) => {
                 let expr_type = self.process_expression(
                     expr,
-                    function_id,
+                    function,
                     instruction_id,
                     TypeVarPath::Output {
                         function_id,
@@ -425,7 +427,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             Instruction::Call { addr, args, .. } => {
                 let addr_var_id = self.process_expression(
                     addr,
-                    function_id,
+                    function,
                     instruction_id,
                     TypeVarPath::CallAddress {
                         function_id,
@@ -439,7 +441,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                     arg_type_tuple.push(
                         self.process_expression(
                             arg,
-                            function_id,
+                            function,
                             instruction_id,
                             TypeVarPath::CallArg {
                                 function_id,
@@ -564,13 +566,62 @@ impl<'a> TypeConstraintGenerator<'a> {
         }
     }
 
+    fn expression_as_struct_id(
+        &self,
+        function: &FunctionView<StructureAnalysisComplete>,
+        expr: &Expression<SsaMemoryReference>,
+    ) -> Option<StructId> {
+        match expr {
+            Expression::Addressable(SsaMemoryReference::Versioned(vmr)) => {
+                function.structural_analysis().struct_vmrs.get(vmr).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn try_field_access_constraint(
+        &mut self,
+        function: &FunctionView<StructureAnalysisComplete>,
+        instruction_id: InstructionId,
+        lhs: &Expression<SsaMemoryReference>,
+        rhs: &Expression<SsaMemoryReference>,
+        result_type: &Type,
+    ) -> Option<Constraint> {
+        let dbg = function.function_id().index() == 2329;
+        let struct_id = self.expression_as_struct_id(&function, lhs)?;
+        if (dbg) {
+            println!("Field access constraint for struct {}", struct_id);
+        }
+        let offset = rhs.as_constant()?;
+        if offset < 0 {
+            return None;
+        }
+        let offset = offset as usize;
+        if (dbg) {
+            println!("pre!");
+        }
+        let struct_type = self.result.struct_types.get(&struct_id)?;
+        if (dbg) {
+            println!("post!");
+        }
+        Some(Constraint {
+            sub_type: struct_type[offset].clone(),
+            super_type: result_type.clone(),
+            origin_function_id: function.function_id(),
+            origin_instruction_id: instruction_id,
+            reason: ConstraintReason::FieldAccess(struct_id, offset),
+            priority: 100,
+        })
+    }
+
     fn process_expression(
         &mut self,
         expr: &Expression<SsaMemoryReference>,
-        function_id: FunctionId,
+        function: FunctionView<StructureAnalysisComplete>,
         instruction_id: InstructionId,
         path: TypeVarPath,
     ) -> TypeVarId {
+        let function_id = function.function_id();
         match expr {
             Expression::Constant(_) => {
                 let tv_id = self.result.state.make_const_type_var(path);
@@ -631,7 +682,7 @@ impl<'a> TypeConstraintGenerator<'a> {
 
                     let ptr_addr_type_var_id = self.process_expression(
                         inner_ptr_expr,
-                        function_id,
+                        function,
                         instruction_id,
                         path.extending_path_element(ExpressionPathElement::Deref),
                     );
@@ -656,13 +707,13 @@ impl<'a> TypeConstraintGenerator<'a> {
             Expression::Binary { op, lhs, rhs } => {
                 let lhs_type = Type::TypeVar(self.process_expression(
                     lhs,
-                    function_id,
+                    function,
                     instruction_id,
                     path.extending_path_element(ExpressionPathElement::BinaryLeft),
                 ));
                 let rhs_type = Type::TypeVar(self.process_expression(
                     rhs,
-                    function_id,
+                    function,
                     instruction_id,
                     path.extending_path_element(ExpressionPathElement::BinaryRight),
                 ));
@@ -670,18 +721,31 @@ impl<'a> TypeConstraintGenerator<'a> {
                 let result_type = Type::TypeVar(result_tv_id);
 
                 match op {
-                    disasm::v3::lir::expression::BinaryOperator::Add
-                    | disasm::v3::lir::expression::BinaryOperator::Sub => {
-                        self.result.store.add_unclassified_add_expression(
-                            function_id,
+                    BinaryOperator::Add | BinaryOperator::Sub => {
+                        if let Some(constraint) = self.try_field_access_constraint(
+                            &function,
                             instruction_id,
-                            expr.clone(),
-                            lhs_type.clone(),
-                            rhs_type.clone(),
-                            result_type.clone(),
-                        );
+                            lhs,
+                            rhs,
+                            &result_type,
+                        ) {
+                            self.result.store.add_equality_constraint(
+                                constraint,
+                                None,
+                                &self.result.state,
+                            );
+                        } else {
+                            self.result.store.add_unclassified_add_expression(
+                                function_id,
+                                instruction_id,
+                                expr.clone(),
+                                lhs_type.clone(),
+                                rhs_type.clone(),
+                                result_type.clone(),
+                            );
+                        }
                     }
-                    disasm::v3::lir::expression::BinaryOperator::Mul => {
+                    BinaryOperator::Mul => {
                         // Need ConstraintReason::ArithmeticLHS, ArithmeticRHS, ArithmeticResult
                         self.result.store.add_equality_constraint(
                             Constraint::new(
@@ -785,7 +849,7 @@ impl<'a> TypeConstraintGenerator<'a> {
             Expression::Unary { op, arg } => {
                 let arg_type = self.process_expression(
                     arg,
-                    function_id,
+                    function,
                     instruction_id,
                     path.extending_path_element(ExpressionPathElement::Unary),
                 );
@@ -863,8 +927,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 tv_id
             }
             Expression::DebugMarker(marker, inner_expr) => {
-                let expr_type =
-                    self.process_expression(inner_expr, function_id, instruction_id, path);
+                let expr_type = self.process_expression(inner_expr, function, instruction_id, path);
                 self.result.markers.insert(*marker, expr_type);
                 expr_type
             }

@@ -4,7 +4,7 @@ use std::fmt::Display;
 use dsl_macros_impl::match_dsl;
 
 use crate::disasm::v3::lir::{ExpressionPath, ExpressionPathElement};
-use crate::disasm::v3::ssa::SsaMemoryReference;
+use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
 use crate::macros::build_expr;
 
 use super::ReadExpressionExtractor;
@@ -290,6 +290,13 @@ impl<A> Expression<A> {
 }
 
 impl Expression<SsaMemoryReference> {
+    pub fn as_versioned_memory_reference(&self) -> Option<&VersionedMemoryReference> {
+        match self {
+            Expression::Addressable(SsaMemoryReference::Versioned(ref t)) => Some(t),
+            _ => None,
+        }
+    }
+
     pub fn simplify(&self) -> Option<Self> {
         let mut current = self.clone();
         let mut count = 0;

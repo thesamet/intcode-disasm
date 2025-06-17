@@ -38,8 +38,8 @@ impl StructInfo {
 
 #[derive(Debug, Clone)]
 pub struct FunctionStructInfo {
-    // Struct sizes for structs used as relative memory.
-    register_structs: HashMap<VersionedMemoryReference, StructId>,
+    // Struct IDs for structs used as stack-relative memory within this function.
+    pub struct_vmrs: HashMap<VersionedMemoryReference, StructId>,
 }
 
 #[derive(Default)]
@@ -124,13 +124,20 @@ fn identify_function_argument_structs_from_user_defs(
             .callee_info()
             .parameter_entry_vars;
         for (index, (_, typ)) in def.args().iter().enumerate() {
-            let Some(struct_id) = typ.as_ref().and_then(Type::as_struct) else {
+            println!("{function_id} arg {:?} {typ:?}", typ);
+            let Some(struct_id) = typ
+                .as_ref()
+                .and_then(Type::as_pointer)
+                .and_then(Type::as_struct)
+            else {
                 continue;
             };
+            println!("{function_id} arg {:?} - done", typ);
             let vmr = entry_vars.get(&((index + 1) as i128)).unwrap();
             register_structs.insert(*vmr, struct_id);
         }
     }
+    println!("Identified {:?} register structs", register_structs.len());
     register_structs
 }
 
@@ -147,9 +154,16 @@ pub(crate) fn analyze_structure(
     for (function_id, f) in model.functions() {
         let register_structs =
             identify_function_argument_structs_from_user_defs(&model, &function_id, user_defs);
-        result
-            .functions
-            .insert(f.function_id(), FunctionStructInfo { register_structs });
+        println!(
+            "Function {:?} has {:?} register structs",
+            function_id, register_structs
+        );
+        result.functions.insert(
+            f.function_id(),
+            FunctionStructInfo {
+                struct_vmrs: register_structs,
+            },
+        );
         let mut hm: HashMap<VersionedMemoryReference, Vec<usize>> = HashMap::new();
         for (_, b) in f.blocks() {
             for i in &b.folded_ssa().instructions {
@@ -181,16 +195,17 @@ pub(crate) fn analyze_structure(
             let struct_info = StructInfo::new(size);
             if vmr.is_stack_relative() {
                 if !result.functions[&f.function_id()]
-                    .register_structs
+                    .struct_vmrs
                     .contains_key(&vmr)
                 {
                     let struct_id = StructId::fresh();
+                    println!("Adding struct {:?} at {:?}", struct_id, vmr);
                     result.structs.insert(struct_id, struct_info);
                     result
                         .functions
                         .get_mut(&f.function_id())
                         .unwrap()
-                        .register_structs
+                        .struct_vmrs
                         .insert(vmr, struct_id);
                 }
             } else if let Some(addr) = vmr.as_global() {
@@ -212,7 +227,7 @@ pub(crate) fn analyze_structure(
         }
     }
     for (_, fi) in &result.functions {
-        if fi.register_structs.is_empty() {
+        if fi.struct_vmrs.is_empty() {
             continue;
         };
     }
