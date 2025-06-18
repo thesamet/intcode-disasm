@@ -140,6 +140,13 @@ impl<'a> TypeConstraintGenerator<'a> {
                     .map_or_else(|| InstructionId::new(0), |instr| instr.id); // Use first instruction's ID or a dummy
 
                 for phi_function in &ssa_block_content.ssa().phi_functions {
+                    if self
+                        .user_defs
+                        .get_excluded_phis()
+                        .contains(&phi_function.result)
+                    {
+                        continue;
+                    }
                     self.process_phi_function(phi_function, function_id, phi_origin_instruction_id);
                 }
 

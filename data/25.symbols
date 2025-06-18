@@ -17,10 +17,12 @@ G  512  LAUNCHED_TO_SPACE
 G  826  YOU_MAY_PROCEED
 G 1090  ON_THE_KEYPAD
 
+XPHI  2329 [R-1]_3
+XPHI  2173 [R-1]_4
 
 T EncodedString
 
-S GameThing { a, b, c, d }
+S GameThing { a, msg: Pointer<EncodedString>, c, d }
 
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index

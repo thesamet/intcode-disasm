@@ -6,7 +6,7 @@ use nom::{
     sequence::{delimited, preceded},
     IResult,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Helper nom parsers
@@ -89,6 +89,7 @@ pub struct UserDefs {
     custom_types: HashMap<CustomTypeId, String>,
     globals: HashMap<usize, (String, Option<Type>)>,
     struct_definitions: HashMap<StructId, StructDef>,
+    excluded_phis: HashSet<VersionedMemoryReference>,
 }
 
 impl UserDefs {
@@ -99,6 +100,7 @@ impl UserDefs {
             custom_types: HashMap::new(),
             globals: HashMap::new(),
             struct_definitions: HashMap::new(),
+            excluded_phis: HashSet::new(),
         }
     }
 
@@ -157,32 +159,32 @@ impl UserDefs {
                         let struct_def_name = struct_name_key.clone(); // Name for the StructDef value
 
                         let resolved_fields: Vec<StructField> = parsed_fields_str
-                            .into_iter()
-                            .map(|(field_name, opt_field_type_str)| { // opt_field_type_str is Option<String>
-                                match opt_field_type_str {
-                                    Some(field_type_str) => { // If type string is Some, parse it
-                                        match parse_type(&field_type_str, &symbol_renaming.user_defs)
-                                        {
-                                            Ok((_remaining_input, parsed_field_type)) => {
-                                                Ok(StructField {
-                                                    name: field_name,
-                                                    typ: Some(parsed_field_type), // Store as Some(Type)
-                                                })
-                                            }
-                                            Err(e) => Err(format!(
-                                                "Failed to parse type '{field_type_str}' for field '{field_name}' in struct '{struct_name_key}': {e}"
-                                            )),
-                                        }
-                                    }
-                                    None => { // If type string is None, store type as None
-                                        Ok(StructField {
-                                            name: field_name,
-                                            typ: None, // Store as None
-                                        })
-                                    }
-                                }
-                            })
-                            .collect::<Result<Vec<StructField>, String>>()?;
+                                            .into_iter()
+                                            .map(|(field_name, opt_field_type_str)| { // opt_field_type_str is Option<String>
+                                                match opt_field_type_str {
+                                                    Some(field_type_str) => { // If type string is Some, parse it
+                                                        match parse_type(&field_type_str, &symbol_renaming.user_defs)
+                                                        {
+                                                            Ok((_remaining_input, parsed_field_type)) => {
+                                                                Ok(StructField {
+                                                                    name: field_name,
+                                                                    typ: Some(parsed_field_type), // Store as Some(Type)
+                                                                })
+                                                            }
+                                                            Err(e) => Err(format!(
+                                                                "Failed to parse type '{field_type_str}' for field '{field_name}' in struct '{struct_name_key}': {e}"
+                                                            )),
+                                                        }
+                                                    }
+                                                    None => { // If type string is None, store type as None
+                                                        Ok(StructField {
+                                                            name: field_name,
+                                                            typ: None, // Store as None
+                                                        })
+                                                    }
+                                                }
+                                            })
+                                            .collect::<Result<Vec<StructField>, String>>()?;
 
                         let struct_def = StructDef {
                             name: struct_def_name, // This is the cloned name for the value
@@ -192,6 +194,12 @@ impl UserDefs {
                             .user_defs
                             .struct_definitions
                             .insert(StructId::fresh(), struct_def); // Original struct_name_key is moved here as key
+                    }
+                    SymbolRenamingLine::ExcludedPhis(versioned_memory_reference) => {
+                        symbol_renaming
+                            .user_defs
+                            .excluded_phis
+                            .insert(versioned_memory_reference);
                     }
                 },
                 Err(err) => {
@@ -265,6 +273,10 @@ impl UserDefs {
 
     pub fn get_struct_definitions(&self) -> &HashMap<StructId, StructDef> {
         &self.struct_definitions
+    }
+
+    pub fn get_excluded_phis(&self) -> &HashSet<VersionedMemoryReference> {
+        &self.excluded_phis
     }
 }
 
@@ -383,6 +395,7 @@ enum SymbolRenamingLine {
     CustomType(String),
     Global(usize, String, Option<String>),
     Struct(String, Vec<(String, Option<String>)>), // Struct Name, Vec<(Field Name, Option<Field Type String>)>
+    ExcludedPhis(VersionedMemoryReference),
 }
 
 //
@@ -481,6 +494,24 @@ impl SymbolRenamingLine {
                     space0,
                 ),
                 |(_, _, struct_name, _, fields, _)| SymbolRenamingLine::Struct(struct_name, fields),
+            ),
+            map(
+                (
+                    tag("XPHI"),
+                    space1,
+                    parse_function_id,
+                    space1,
+                    parse_vmr_parts,
+                    space0,
+                ),
+                |(_, _, func_id, _, vmr_parts, _)| {
+                    let vmr = VersionedMemoryReference {
+                        kind: vmr_parts.kind,
+                        function_id: func_id,
+                        version: vmr_parts.version,
+                    };
+                    SymbolRenamingLine::ExcludedPhis(vmr)
+                },
             ),
         ))
         .parse(input)
