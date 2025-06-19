@@ -1,0 +1,2 @@
+# Web UI specific cargo config - override the parent config for WASM compatibility
+# Standard dev profile without cranelift backend

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disasm Web UI</title>
+    <link rel="stylesheet" href="style/main.css">
+<link rel="modulepreload" href="/web-ui-31c098cbcb8ff784.js" crossorigin="anonymous" integrity="sha384-KJNmqrRnhIDCHWHL7gl2mT6C8VjvZ3c8fbI9tL2GlOB2uQ2+Q6UUkrI6akV8vskt"><link rel="preload" href="/web-ui-31c098cbcb8ff784_bg.wasm" crossorigin="anonymous" integrity="sha384-nvIZD/nkY7PAxQNXKo03auhop5YpAdrkcJeS0exslX1pMSPIdn3XLKlG/0foaM+5" as="fetch" type="application/wasm"></head>
+<body>
+    <div id="leptos-root"></div>
+
+<script type="module">
+import init, * as bindings from '/web-ui-31c098cbcb8ff784.js';
+const wasm = await init({ module_or_path: '/web-ui-31c098cbcb8ff784_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+</html>

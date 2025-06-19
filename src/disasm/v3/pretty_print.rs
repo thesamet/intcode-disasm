@@ -148,10 +148,10 @@ impl ContextualPrettyPrint for PhiFunction {
                 let source_id_str = pred_kind
                     .source_block_id()
                     .to_string()
-                    .color(ctx.colors().unwrap().const_color);
+                    .to_string();
                 let call_marker_str =
                     if matches!(pred_kind, PredecessorKind::FunctionCallReturns(_)) {
-                        "(call)".color(ctx.colors().unwrap().low_prio).to_string()
+                        ctx.format("(call)", SemanticColor::LowPrio).to_string()
                     } else {
                         String::new()
                     };
@@ -167,8 +167,8 @@ impl ContextualPrettyPrint for PhiFunction {
         format!(
             "{} {} {}({})",
             self.result.pretty_print_with_context(ctx),
-            "=".color(ctx.colors().unwrap().op_color),
-            "φ".color(ctx.colors().unwrap().function),
+            ctx.format("=", SemanticColor::Operator),
+            ctx.format("φ", SemanticColor::Function),
             inputs_str
         )
     }
@@ -202,11 +202,15 @@ where
 
         let clear_to_end_code = "\x1b[K";
 
-        // Create a blank line with background color for separating functions
-        let blank_line = clear_to_end_code
-            .to_string()
-            .on_color(ctx.colors().unwrap().bg_color)
-            .to_string();
+        // Create a blank line with background color for separating functions (if colors enabled)
+        let blank_line = if let Some(colors) = ctx.colors() {
+            clear_to_end_code
+                .to_string()
+                .on_color(colors.bg_color)
+                .to_string()
+        } else {
+            clear_to_end_code.to_string()
+        };
 
         functions_sorted
             .iter()
@@ -238,7 +242,7 @@ fn format_signature<S: ModelState + 'static>(
     {
         format!(
             "{}{}{}",
-            "(".color(ctx.colors().unwrap().low_prio),
+            ctx.format("(", SemanticColor::LowPrio),
             model
                 .function_call_analysis_result()
                 .functions
@@ -248,8 +252,8 @@ fn format_signature<S: ModelState + 'static>(
                 .values()
                 .sorted_by_key(|v| v.as_stack_relative().unwrap())
                 .map(|v| v.pretty_print_with_context(ctx))
-                .join(&", ".color(ctx.colors().unwrap().low_prio).to_string()),
-            ") -> ?".color(ctx.colors().unwrap().low_prio)
+                .join(&ctx.format(", ", SemanticColor::LowPrio).to_string()),
+            ctx.format(") -> ?", SemanticColor::LowPrio)
         )
     }
 
@@ -282,7 +286,7 @@ fn format_signature<S: ModelState + 'static>(
                     t.display_with(res)
                 )
             })
-            .join(&", ".color(ctx.colors().unwrap().low_prio).to_string());
+            .join(&ctx.format(", ", SemanticColor::LowPrio).to_string());
         let rets = model.type_inference_result().function_signatures[&function.function_id()]
             .returns
             .iter()
@@ -294,15 +298,15 @@ fn format_signature<S: ModelState + 'static>(
                     t.display_with(res)
                 )
             })
-            .join(&", ".color(ctx.colors().unwrap().low_prio).to_string());
+            .join(&ctx.format(", ", SemanticColor::LowPrio).to_string());
         format!(
             "{}{}{}{}{}{}",
-            "(".color(ctx.colors().unwrap().low_prio),
+            ctx.format("(", SemanticColor::LowPrio),
             args,
-            ") -> ".color(ctx.colors().unwrap().low_prio),
-            "(".color(ctx.colors().unwrap().low_prio),
+            ctx.format(") -> ", SemanticColor::LowPrio),
+            ctx.format("(", SemanticColor::LowPrio),
             rets,
-            ")".color(ctx.colors().unwrap().low_prio),
+            ctx.format(")", SemanticColor::LowPrio),
         )
     }
 
@@ -441,11 +445,7 @@ where
         let block_header = format!(
             "{}{}:",
             indent_str,
-            self.block_id().index().to_string().color(
-                ctx.colors()
-                    .map(|c| c.get_color(SemanticColor::LowPrio))
-                    .unwrap_or(colored::Color::White)
-            )
+            ctx.format(self.block_id().index().to_string(), SemanticColor::LowPrio)
         );
         lines.push(line(&block_header, ctx));
 
@@ -473,11 +473,7 @@ where
                     "{}{}{:<5}        {}",
                     indent_str,
                     inner_indent_str,
-                    instr.id.to_string().color(
-                        ctx.colors()
-                            .map(|c| c.get_color(SemanticColor::LowPrio))
-                            .unwrap_or(colored::Color::White)
-                    ),
+                    ctx.format(instr.id.to_string(), SemanticColor::LowPrio),
                     instr_str,
                 );
                 lines.push(line(&instruction_line, ctx));

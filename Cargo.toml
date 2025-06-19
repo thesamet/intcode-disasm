@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["crates/model_macros_impl", "crates/dsl_macros_impl"]
+members = ["crates/model_macros_impl", "crates/dsl_macros_impl", "crates/web-ui", "crates/web-bridge", "crates/analysis-server"]
 
 [dependencies]
 model_macros_impl = { path = "crates/model_macros_impl" }

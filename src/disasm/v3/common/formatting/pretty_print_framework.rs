@@ -10,6 +10,7 @@ pub struct PrettyPrintConfig {
     pub show_types_var_ids: bool,
     pub show_vars: bool,
     pub indent_width: usize,
+    pub web_css_output: bool,
 }
 
 impl Default for PrettyPrintConfig {
