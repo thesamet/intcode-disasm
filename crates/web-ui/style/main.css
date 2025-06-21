@@ -1,21 +1,22 @@
 /* Main Styles for Disasm Web UI */
 
 :root {
-  --primary-color: #2563eb;
-  --secondary-color: #64748b;
-  --success-color: #16a34a;
-  --warning-color: #d97706;
-  --danger-color: #dc2626;
+  /* Tokyo Night Dark Theme */
+  --primary-color: #7aa2f7;
+  --secondary-color: #bb9af7;
+  --success-color: #9ece6a;
+  --warning-color: #ff9e64;
+  --danger-color: #f7768e;
   
-  --bg-primary: #ffffff;
-  --bg-secondary: #f8fafc;
-  --bg-tertiary: #e2e8f0;
+  --bg-primary: #1a1b26;
+  --bg-secondary: #24283b;
+  --bg-tertiary: #414868;
   
-  --text-primary: #1e293b;
-  --text-secondary: #64748b;
-  --text-muted: #94a3b8;
+  --text-primary: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-muted: #565f89;
   
-  --border-color: #e2e8f0;
+  --border-color: #414868;
   --border-radius: 6px;
   
   --font-mono: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
@@ -68,7 +69,7 @@ h3 { font-size: 1.5rem; font-weight: 600; }
 }
 
 .btn-primary:hover {
-  background-color: #1d4ed8;
+  background-color: #668ad8;
 }
 
 .btn-secondary {
@@ -78,12 +79,12 @@ h3 { font-size: 1.5rem; font-weight: 600; }
 }
 
 .btn-secondary:hover {
-  background-color: var(--border-color);
+  background-color: #4a5374;
 }
 
 .btn-secondary.active {
   background-color: var(--primary-color);
-  color: white;
+  color: var(--bg-primary);
 }
 
 /* Home Page */
@@ -179,7 +180,7 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   display: inline-block;
   padding: 1rem 2rem;
   background: var(--primary-color);
-  color: white;
+  color: var(--bg-primary);
   border-radius: var(--border-radius);
   cursor: pointer;
   font-weight: 500;
@@ -187,7 +188,7 @@ h3 { font-size: 1.5rem; font-weight: 600; }
 }
 
 .file-label:hover {
-  background-color: #1d4ed8;
+  background-color: #668ad8;
 }
 
 .file-input {
@@ -243,6 +244,14 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   font-family: var(--font-mono);
   font-size: 0.9rem;
   resize: vertical;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.program-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.1);
 }
 
 .controls {
@@ -278,6 +287,8 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   border-radius: var(--border-radius);
   border: 1px solid var(--border-color);
   height: fit-content;
+  position: sticky;
+  top: 2rem;
 }
 
 .function-list {
@@ -310,11 +321,32 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   border: 1px solid var(--border-color);
 }
 
+.all-functions {
+  display: flex;
+  flex-direction: column;
+  gap: 3rem;
+}
+
+.function-section {
+  background: var(--bg-primary);
+  padding: 2rem;
+  border-radius: var(--border-radius);
+  border: 1px solid var(--border-color);
+  scroll-margin-top: 4rem; /* Account for sticky nav */
+}
+
 .function-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.function-section .function-header {
+  /* Override for individual function sections */
+  margin-bottom: 1.5rem;
 }
 
 .view-controls {
@@ -332,7 +364,7 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   border-radius: var(--border-radius);
   border: 1px solid var(--border-color);
   font-family: var(--font-mono);
-  font-size: 0.9rem;
+  font-size: 1.08rem; /* 20% larger than 0.9rem */
   overflow-x: auto;
   margin: 0;
   line-height: 1.5;
@@ -394,6 +426,12 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
   background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
 }
 
 .type-var-list {
@@ -538,6 +576,39 @@ h3 { font-size: 1.5rem; font-weight: 600; }
   color: white;
   border-radius: var(--border-radius);
   margin-bottom: 1rem;
+}
+
+/* Syntax Highlighting - Semantic Color Classes */
+.keyword {
+  color: #bb9af7; /* Tokyo Night purple */
+  font-weight: 600;
+}
+
+.variable {
+  color: #c0caf5; /* Tokyo Night foreground - better contrast */
+}
+
+.operator {
+  color: #ff9e64; /* Tokyo Night orange */
+  font-weight: 500;
+}
+
+.type {
+  color: #7dcfff; /* Tokyo Night cyan - better contrast */
+  font-weight: 500;
+}
+
+.constant {
+  color: #ff9e64; /* Tokyo Night orange */
+}
+
+.low-prio {
+  color: #6b7089; /* Slightly brighter gray for better readability */
+}
+
+.function {
+  color: #7aa2f7; /* Tokyo Night blue */
+  font-weight: 500;
 }
 
 /* Responsive Design */

@@ -2,6 +2,15 @@ use super::colors::{Colors, SemanticColor}; // Import SemanticColor
 use colored::Colorize;
 use std::fmt;
 
+/// Escape HTML special characters for web output
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 
 pub struct PrettyPrintConfig {
@@ -21,6 +30,7 @@ impl Default for PrettyPrintConfig {
             show_vars: true,
             show_types_var_ids: false,
             indent_width: 4,
+            web_css_output: false,
         }
     }
 }
@@ -82,22 +92,49 @@ impl PrettyPrintConfig {
         self.indent_width = indent_width;
         self
     }
+
+    pub fn with_web_css_output(mut self, web_css_output: bool) -> Self {
+        self.web_css_output = web_css_output;
+        self
+    }
 }
 
 // Wrapper type to handle conditional coloring efficiently
 #[derive(Clone, Copy)]
 pub struct FormattedText<'a, T: fmt::Display> {
     text: T,
-    pub color: Option<colored::Color>,
+    pub semantic_color: Option<SemanticColor>,
+    pub web_css_output: bool,
+    pub colors: Option<&'a Colors>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a, T: fmt::Display> fmt::Display for FormattedText<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(color) = self.color {
-            write!(f, "{}", self.text.to_string().color(color))
-        } else {
-            write!(f, "{}", self.text)
+        match (self.semantic_color, self.web_css_output) {
+            (Some(semantic), true) => {
+                // Web CSS output: <span class="keyword">text</span>
+                let escaped_text = html_escape(&self.text.to_string());
+                write!(f, "<span class=\"{}\">{}</span>", semantic.to_css_class(), escaped_text)
+            }
+            (Some(semantic), false) => {
+                // ANSI color output
+                if let Some(colors) = self.colors {
+                    let color = colors.get_color(semantic);
+                    write!(f, "{}", self.text.to_string().color(color))
+                } else {
+                    write!(f, "{}", self.text)
+                }
+            }
+            (None, true) => {
+                // No semantic color, but web CSS output - still need HTML escaping
+                let escaped_text = html_escape(&self.text.to_string());
+                write!(f, "{}", escaped_text)
+            }
+            (None, false) => {
+                // No semantic color, terminal output
+                write!(f, "{}", self.text)
+            }
         }
     }
 }
@@ -148,10 +185,11 @@ impl<'a, T> GenericFormattingContext<'a, T> {
         text: I,
         semantic: SemanticColor,
     ) -> FormattedText<'a, I> {
-        let color = self.config.colors.map(|c| c.get_color(semantic));
         FormattedText {
             text,
-            color,
+            semantic_color: Some(semantic),
+            web_css_output: self.config.web_css_output,
+            colors: self.config.colors.as_ref(),
             _marker: std::marker::PhantomData,
         }
     }

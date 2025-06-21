@@ -30,12 +30,19 @@ fn unary_op_precedence(_op: &UnaryOperator) -> u8 {
 }
 
 fn line(s: &str, ctx: &FormattingContext) -> String {
-    let clear_to_end_code = "\x1b[K\n";
-    match ctx.colors() {
-        Some(colors) => format!("{}{s}{clear_to_end_code}", ctx.indent_str())
-            .on_color(colors.bg_color)
-            .to_string(),
-        None => s.to_string(),
+    // Check if we're in web CSS output mode to avoid ANSI escape codes
+    if ctx.config.web_css_output {
+        // For web output, just return the indented string without ANSI codes
+        format!("{}{s}\n", ctx.indent_str())
+    } else {
+        // For terminal output, use ANSI codes for background colors
+        let clear_to_end_code = "\x1b[K\n";
+        match ctx.colors() {
+            Some(colors) => format!("{}{s}{clear_to_end_code}", ctx.indent_str())
+                .on_color(colors.bg_color)
+                .to_string(),
+            None => s.to_string(),
+        }
     }
 }
 
@@ -213,11 +220,15 @@ impl ContextualPrettyPrint for HlrExpression {
     }
 }
 
+fn format_type(type_info: &crate::disasm::v3::type_inference::Type, ctx: &FormattingContext) -> String {
+    ctx.format(type_info.display_with(ctx.data), SemanticColor::Type).to_string()
+}
+
 fn format_variable_decl(var: &HlrVariable, ctx: &FormattingContext) -> String {
     format!(
         "{}: {}",
         var.pretty_print_with_context(ctx),
-        var.type_info.display_with(ctx.data)
+        format_type(&var.type_info, ctx)
     )
 }
 // Implement ContextualPrettyPrint for statements
@@ -466,7 +477,7 @@ fn format_function_signature(func: &HlrFunction, ctx: &FormattingContext) -> Str
             format!(
                 "{}: {}",
                 arg.pretty_print_with_context(ctx),
-                arg.type_info.display_with(ctx.data),
+                format_type(&arg.type_info, ctx),
             )
         })
         .join(&ctx.fmt_comma().to_string());
@@ -474,15 +485,12 @@ fn format_function_signature(func: &HlrFunction, ctx: &FormattingContext) -> Str
     // Format return type
     let ret_str = match func.return_type.len() {
         0 => ctx.format("void", SemanticColor::Type).to_string(),
-        1 => func.return_type[0]
-            .type_info
-            .display_with(ctx.data)
-            .to_string(),
+        1 => format_type(&func.return_type[0].type_info, ctx),
         _ => {
             let types_str = func
                 .return_type
                 .iter()
-                .map(|ret| ret.type_info.display_with(ctx.data))
+                .map(|ret| format_type(&ret.type_info, ctx))
                 .join(&ctx.fmt_comma().to_string());
 
             format!(

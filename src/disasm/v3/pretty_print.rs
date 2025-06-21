@@ -46,6 +46,11 @@ fn binary_op_precedence(op: &BinaryOperator) -> u8 {
 
 type FormattingContext<'a> = GenericFormattingContext<'a, ()>;
 
+/// Format a type with proper HTML escaping for web output
+fn format_type_for_ssa(type_info: &crate::disasm::v3::type_inference::Type, res: &crate::disasm::v3::type_inference::TypeInferenceResult, ctx: &FormattingContext) -> String {
+    ctx.format(type_info.display_with(res), SemanticColor::Type).to_string()
+}
+
 impl<A: ContextualPrettyPrint<T = ()> + 'static> ContextualPrettyPrint for InstructionNode<A> {
     type T = ();
 
@@ -182,12 +187,14 @@ fn unary_op_precedence(_op: &UnaryOperator) -> u8 {
 
 // --- Expression Formatting ---
 fn line(s: &str, ctx: &FormattingContext) -> String {
-    let clear_to_end_code = "\x1b[K";
     match ctx.colors() {
-        Some(colors) => format!("{s}{clear_to_end_code}")
-            .on_color(colors.bg_color)
-            .to_string(),
-        None => s.to_string(),
+        Some(colors) if !ctx.config.web_css_output => {
+            let clear_to_end_code = "\x1b[K";
+            format!("{s}{clear_to_end_code}")
+                .on_color(colors.bg_color)
+                .to_string()
+        }
+        _ => s.to_string(),
     }
 }
 
@@ -200,16 +207,19 @@ where
         let mut functions_sorted: Vec<_> = self.functions().map(|(_, f)| f).collect();
         functions_sorted.sort_by_key(|f| f.function_id());
 
-        let clear_to_end_code = "\x1b[K";
-
         // Create a blank line with background color for separating functions (if colors enabled)
         let blank_line = if let Some(colors) = ctx.colors() {
-            clear_to_end_code
-                .to_string()
-                .on_color(colors.bg_color)
-                .to_string()
+            if !ctx.config.web_css_output {
+                let clear_to_end_code = "\x1b[K";
+                clear_to_end_code
+                    .to_string()
+                    .on_color(colors.bg_color)
+                    .to_string()
+            } else {
+                "".to_string()  // No ANSI codes for web output
+            }
         } else {
-            clear_to_end_code.to_string()
+            "".to_string()
         };
 
         functions_sorted
@@ -283,7 +293,7 @@ fn format_signature<S: ModelState + 'static>(
                     "{}{}: {}",
                     var_id(tv_id),
                     v.pretty_print_with_context(ctx),
-                    t.display_with(res)
+                    format_type_for_ssa(t, res, ctx)
                 )
             })
             .join(&ctx.format(", ", SemanticColor::LowPrio).to_string());
@@ -295,7 +305,7 @@ fn format_signature<S: ModelState + 'static>(
                     "{}{}: {}",
                     var_id(tv_id),
                     v.pretty_print_with_context(ctx),
-                    t.display_with(res)
+                    format_type_for_ssa(t, res, ctx)
                 )
             })
             .join(&ctx.format(", ", SemanticColor::LowPrio).to_string());

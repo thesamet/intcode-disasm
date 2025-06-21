@@ -13,6 +13,20 @@ pub enum SemanticColor {
     // Add more semantic types if needed
 }
 
+impl SemanticColor {
+    pub fn to_css_class(&self) -> &'static str {
+        match self {
+            SemanticColor::Keyword => "keyword",
+            SemanticColor::Variable => "variable", 
+            SemanticColor::Operator => "operator",
+            SemanticColor::Type => "type",
+            SemanticColor::Constant => "constant",
+            SemanticColor::LowPrio => "low-prio",
+            SemanticColor::Function => "function",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Colors {
     pub keyword: Color,

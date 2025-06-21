@@ -344,5 +344,6 @@ fn get_theme_config(theme: &str, show_types: bool) -> PrettyPrintConfig {
         show_vars: false,
         show_types_var_ids: false,
         indent_width: 4,
+        web_css_output: false,
     }
 }

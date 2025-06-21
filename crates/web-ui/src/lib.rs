@@ -21,9 +21,11 @@ pub fn App() -> impl IntoView {
         <Router>
             <main>
                 <Routes>
-                    <Route path="" view=HomePage/>
+                    <Route path="" view=FunctionPage/>
                     <Route path="/analyze" view=AnalyzePage/>
                     <Route path="/function/:id" view=FunctionPage/>
+                    <Route path="/function" view=FunctionPage/>
+                    <Route path="/home" view=HomePage/>
                     <Route path="/types" view=TypesPage/>
                 </Routes>
             </main>
