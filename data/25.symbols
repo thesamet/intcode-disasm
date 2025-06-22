@@ -24,6 +24,8 @@ T EncodedString
 
 S GameThing { a, msg: Pointer<EncodedString>, c, d }
 
+G 4061 things Array<13;GameThing>
+
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
 
