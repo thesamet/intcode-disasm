@@ -1155,8 +1155,8 @@ fn test_struct_field_access() {
 
         other:
             R += 2
-            ptr = 100 + [R-1]
-            *ptr = 17
+            p2 = 'b [R-1]
+            output *p2
             R -= 2
             goto [R]
             "#,
@@ -1175,7 +1175,8 @@ fn test_struct_field_access() {
     );
     ctx.model.type_inference_result().print_all_type_bounds();
 
-    assert_marker_type!(ctx, 'a', Type::pointer(Type::Int));
+    assert_marker_type!(ctx, 'a', Type::pointer(Type::pointer(Type::Char)));
+    assert_marker_type!(ctx, 'b', Type::pointer(Type::Char));
 }
 
 #[test]
@@ -1185,18 +1186,18 @@ fn test_pointer_refinement_generic_detection() {
     let ctx = TypeInferenceComplete::test_context_with_user_defs(
         r#"
             R += 1000
-            
+
             [1001] = 42
             [1002] = 65
             [1003] = 1
             [1004] = 100
             [1005] = 65
-            
+
             output [1002]
             if [1003] goto @continue1
         continue1:
             [2000] = [1001] + 1
-            
+
             [R+1] = 1001
             [R+2] = 1
             [R+3] = 1
@@ -1253,7 +1254,7 @@ fn test_pointer_refinement_generic_detection() {
             [R-2] = [R-1] + 1
             R -= 5
             goto [R]
-            
+
         char_handler:
             R += 5
             element_ptr = [R-4]
@@ -1261,7 +1262,7 @@ fn test_pointer_refinement_generic_detection() {
             output [R-1]
             R -= 5
             goto [R]
-            
+
         bool_handler:
             R += 5
             element_ptr = [R-4]
@@ -1270,7 +1271,7 @@ fn test_pointer_refinement_generic_detection() {
         bool_done:
             R -= 5
             goto [R]
-            
+
         struct_handler:
             R += 5
             element_ptr = [R-4]
@@ -1299,32 +1300,39 @@ fn test_pointer_refinement_generic_detection() {
         "Pretty printed model with types (V3):\n{}",
         pretty_print_types(&ctx.model)
     );
-    
+
     // Print folded SSA to find actual function addresses
     println!("\nFolded SSA output to find function addresses:");
     println!("{}", pretty_print_folded_ssa(&ctx.model));
-    
+
     ctx.model.type_inference_result().print_all_type_bounds();
 
     // The array_foreach function should have generic types, not PointerRefinement types
     // Check that the first parameter of array_foreach becomes generic
     let type_result = ctx.model.type_inference_result();
-    
+
     // Get all functions and examine their parameter types
     for (function_id, _function_view) in ctx.model.functions() {
         println!("Function ID: {:?}", function_id);
-        
+
         // Get the parameter types for this function
         let call_analysis = ctx.model.function_call_analysis_result();
         if let Some(func_info) = call_analysis.functions.get(&function_id) {
             let param_vmrs: Vec<_> = func_info.parameter_entry_vars.values().collect();
-            
-            println!("Function {:?} has {} parameters", function_id, param_vmrs.len());
-            
+
+            println!(
+                "Function {:?} has {} parameters",
+                function_id,
+                param_vmrs.len()
+            );
+
             for (i, param_vmr) in param_vmrs.iter().enumerate() {
                 let param_type = type_result.get_type_for(param_vmr);
-                println!("  Parameter {}: {:?} -> Type: {:?}", i, param_vmr, param_type);
-                
+                println!(
+                    "  Parameter {}: {:?} -> Type: {:?}",
+                    i, param_vmr, param_type
+                );
+
                 // For the first function with exactly 4 parameters, check if we have PointerRefinement
                 if i == 0 && param_vmrs.len() == 4 {
                     // This is likely our array_foreach function
@@ -1335,9 +1343,13 @@ fn test_pointer_refinement_generic_detection() {
                                     println!("SUCCESS: Function parameter is Pointer<Generic>");
                                 }
                                 _ => {
-                                    println!("ISSUE: Parameter type should be generic but is: {:?}", param_type);
+                                    println!(
+                                        "ISSUE: Parameter type should be generic but is: {:?}",
+                                        param_type
+                                    );
                                     // Check if this is a PointerRefinement case - we'd see this in the display
-                                    let display_str = param_type.display_with(type_result).to_string();
+                                    let display_str =
+                                        param_type.display_with(type_result).to_string();
                                     if display_str.contains("PointerRefinement") {
                                         println!("CONFIRMED: This is the PointerRefinement issue we're trying to fix");
                                     }
@@ -1348,7 +1360,10 @@ fn test_pointer_refinement_generic_detection() {
                             println!("SUCCESS: Function parameter is properly generic");
                         }
                         _ => {
-                            println!("ISSUE: Parameter type should be pointer to generic but is: {:?}", param_type);
+                            println!(
+                                "ISSUE: Parameter type should be pointer to generic but is: {:?}",
+                                param_type
+                            );
                         }
                     }
                 }

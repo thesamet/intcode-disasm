@@ -1146,35 +1146,6 @@ impl Solver {
     }
 
     /// Recursively collect concrete pointer types by following PointerRefinement chains
-    fn collect_concrete_pointer_types_recursively(
-        &self,
-        tv_id: &TypeVarId,
-        concrete_types: &mut std::collections::HashSet<Type>,
-        visited: &mut std::collections::HashSet<TypeVarId>,
-    ) {
-        if visited.contains(tv_id) {
-            return; // Avoid infinite loops
-        }
-        visited.insert(*tv_id);
-
-        if let Some(TypeVarState::Bounds { upper_bounds, .. }) = self.state.get_type_var_state(tv_id) {
-            for bound in upper_bounds {
-                match bound {
-                    Type::Pointer(pointee) => {
-                        // Found a concrete pointer type
-                        concrete_types.insert(bound.clone());
-                    }
-                    Type::TypeVar(nested_tv_id) => {
-                        // Recursively explore this type variable
-                        self.collect_concrete_pointer_types_recursively(nested_tv_id, concrete_types, visited);
-                    }
-                    _ => {
-                        // Other types are not pointer types we're interested in
-                    }
-                }
-            }
-        }
-    }
 
     /// Checks if a TypeVarPath represents a refinement that could be made generic
     fn is_refinement_path(&self, path: &TypeVarPath) -> bool {
