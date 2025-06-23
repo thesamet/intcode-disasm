@@ -617,18 +617,18 @@ impl<'a, 'b, F: TypeVarRegistry> fmt::Display for DisplayableType<'a, 'b, F> {
             Type::NumericLiteral => write!(f, "NumericLiteral"),
             Type::Truthy => write!(f, "Truthy"),
             Type::CustomType(id) => {
-                write!(
-                    f,
-                    "{}",
-                    self.registry.user_defs().get_custom_type(*id).unwrap()
-                )
+                if let Some(custom_type_name) = self.registry.user_defs().get_custom_type(*id) {
+                    write!(f, "{}", custom_type_name)
+                } else {
+                    write!(f, "CustomType({})", id.index())
+                }
             }
             Type::Struct(id) => {
-                write!(
-                    f,
-                    "{}",
-                    self.registry.user_defs().get_struct(*id).unwrap().name
-                )
+                if let Some(struct_def) = self.registry.user_defs().get_struct(*id) {
+                    write!(f, "{}", struct_def.name)
+                } else {
+                    write!(f, "Struct({})", id.index())
+                }
             }
             Type::Array { len, elem_type, .. } => {
                 write!(
