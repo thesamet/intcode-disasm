@@ -699,10 +699,6 @@ impl Solver {
         new_constraints
     }
 
-    fn as_subtype_of_pointer_struct(&self, tv_id: TypeVarId) -> Option<StructId> {
-        //        let typ = self.state.upper_bounds(&tv_id).find_map(|t| t.as_struct_pointer)
-        None
-    }
 
     fn try_classify_add_expression(
         &mut self,
@@ -1006,16 +1002,16 @@ impl Solver {
                         .cloned()
                         .collect_vec(),
                 );
-                if effective_lub.is_some() {
+                if let Some(lub) = effective_lub {
                     debug!(
                         "Type {} {} converged to {} (effective lub)",
                         tv_id,
                         tv_id.display_with(&self.state),
-                        effective_lub.as_ref().unwrap().display_with(&self.state)
+                        lub.display_with(&self.state)
                     );
                     self.state.converge(
                         &tv_id,
-                        effective_lub.unwrap(),
+                        lub,
                         ConverganceType::ConvergeToLUB,
                     );
                     return true;

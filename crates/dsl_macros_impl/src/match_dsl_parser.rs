@@ -92,7 +92,7 @@ impl Parse for MatchArmInput {
 
         // Convert the collected pattern tokens into a PatternExpression AST node
         let parsed_wrapper: ParsablePatternExpression = syn::parse2(pattern_tokens)
-            .map_err(|e| syn::Error::new(e.span(), format!("Failed to parse pattern: {}", e)))?;
+            .map_err(|e| syn::Error::new(e.span(), format!("Failed to parse pattern: {e}")))?;
         let pattern: PatternExpression = parsed_wrapper.0; // Extract the PatternExpression
 
         // 2. Check for an optional guard
@@ -132,8 +132,7 @@ impl Parse for MatchDslInput {
             syn::Error::new(
                 target_expr.span(),
                 format!(
-                    "Expected a comma after the target expression. Original error: {}",
-                    e
+                    "Expected a comma after the target expression. Original error: {e}"
                 ),
             )
         })?;
@@ -447,23 +446,23 @@ fn _handle_addressable_versioned_pattern(
     let pattern_offset_val: i128 = match &pattern_ve.kind {
         crate::dsl::VersionedElementKind::Absolute(offset) => {
             offset.base10_parse().map_err(|e| {
-                syn::Error::new(offset.span(), format!("Invalid pattern offset: {}", e))
+                syn::Error::new(offset.span(), format!("Invalid pattern offset: {e}"))
             })?
         }
         crate::dsl::VersionedElementKind::Relative { offset, .. } => {
             offset.base10_parse().map_err(|e| {
-                syn::Error::new(offset.span(), format!("Invalid pattern offset: {}", e))
+                syn::Error::new(offset.span(), format!("Invalid pattern offset: {e}"))
             })?
         }
         crate::dsl::VersionedElementKind::Pointer(id) => id
             .base10_parse()
-            .map_err(|e| syn::Error::new(id.span(), format!("Invalid pointer ID: {}", e)))?,
+            .map_err(|e| syn::Error::new(id.span(), format!("Invalid pointer ID: {e}")))?,
     };
 
     let pattern_version_val: usize = pattern_ve.version.base10_parse().map_err(|e| {
         syn::Error::new(
             pattern_ve.version.span(),
-            format!("Invalid pattern version: {}", e),
+            format!("Invalid pattern version: {e}"),
         )
     })?;
 

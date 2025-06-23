@@ -3,7 +3,3 @@ mod type_variable_table;
 mod constraint_viewer;
 mod program_overview;
 
-pub use function_view::*;
-pub use type_variable_table::*;
-pub use constraint_viewer::*;
-pub use program_overview::*;

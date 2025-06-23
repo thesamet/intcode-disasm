@@ -49,7 +49,7 @@ impl<'a> IntoContents for FunctionView<'a, HlrConstructionComplete> {
 }
 
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
-struct TypeVarRow {
+pub struct TypeVarRow {
     id: String,
     function: String,
     inst: String,
@@ -120,7 +120,7 @@ impl DisasmService {
                             .map(|bs| bs.display_with(model.type_inference_result()).to_string())
                             .collect(),
                     ),
-                    TypeVarState::Converged(ty) => None,
+                    TypeVarState::Converged(_ty) => None,
                 },
                 upper: match state {
                     TypeVarState::Bounds { upper_bounds, .. } => Some(
@@ -129,7 +129,7 @@ impl DisasmService {
                             .map(|bs| bs.display_with(model.type_inference_result()).to_string())
                             .collect(),
                     ),
-                    TypeVarState::Converged(ty) => None,
+                    TypeVarState::Converged(_ty) => None,
                 },
                 converged: match state {
                     TypeVarState::Converged(ty) => {
@@ -194,7 +194,7 @@ impl rmcp::ServerHandler for DisasmService {
     async fn initialize(
         &self,
         _request: InitializeRequestParam,
-        context: RequestContext<RoleServer>,
+        _context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         Ok(self.get_info())
     }

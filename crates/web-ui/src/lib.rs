@@ -7,7 +7,6 @@ mod components;
 mod demo;
 mod pages;
 
-use components::*;
 use pages::*;
 
 #[component]

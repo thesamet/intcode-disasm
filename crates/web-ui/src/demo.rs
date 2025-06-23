@@ -3,6 +3,7 @@
 
 use crate::analysis::{AnalysisResult, FunctionInfo};
 
+#[allow(dead_code)]
 pub fn get_demo_analysis() -> AnalysisResult {
     // This uses actual analysis results from running the CLI on a sample program
     AnalysisResult {

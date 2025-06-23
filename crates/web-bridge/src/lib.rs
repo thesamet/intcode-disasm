@@ -48,7 +48,7 @@ pub fn analyze_program_for_web_with_symbols(program: Vec<i128>, symbols_content:
     // Parse user definitions from symbols content if provided
     let user_defs = if let Some(symbols) = symbols_content {
         UserDefs::from_lines(&symbols).map_err(|e| {
-            BridgeError::AnalysisError(format!("Failed to parse symbols: {:?}", e))
+            BridgeError::AnalysisError(format!("Failed to parse symbols: {e:?}"))
         })?
     } else {
         UserDefs::new()
@@ -56,7 +56,7 @@ pub fn analyze_program_for_web_with_symbols(program: Vec<i128>, symbols_content:
     
     // Run full analysis pipeline to HLR
     let model = binary_to_hlr(program.clone(), user_defs).map_err(|e| {
-        BridgeError::AnalysisError(format!("Pipeline failed: {:?}", e))
+        BridgeError::AnalysisError(format!("Pipeline failed: {e:?}"))
     })?;
 
     // Extract folded SSA results
@@ -67,7 +67,7 @@ pub fn analyze_program_for_web_with_symbols(program: Vec<i128>, symbols_content:
     
     for function_id in function_ids {
         // Get folded SSA for this function using hierarchical access
-        let function_view = model.function(&function_id);
+        let _function_view = model.function(&function_id);
         
         // Format folded SSA as string  
         let ssa_code = format_function_folded_ssa_from_hlr(&model, &function_id);
@@ -130,6 +130,7 @@ pub fn analyze_program_for_web(program: Vec<i128>) -> Result<WebAnalysisResult, 
 
 // Helper function to format folded SSA for a function using hierarchical access
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 fn format_function_folded_ssa(function_view: &disasm::disasm::v3::cfg::FunctionView<disasm::disasm::v3::model::FoldedSsaComplete>) -> String {
     use disasm::disasm::v3::common::formatting::ContextualPrettyPrint;
     use disasm::disasm::v3::common::formatting::pretty_print_framework::PrettyPrintConfig;

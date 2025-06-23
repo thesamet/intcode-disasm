@@ -268,10 +268,7 @@ impl<A> Expression<A> {
     }
 
     pub fn is_constant(&self) -> bool {
-        match self {
-            Expression::Constant(_) => true,
-            _ => false,
-        }
+        matches!(self, Expression::Constant(_))
     }
 
     pub fn as_constant(&self) -> Option<i128> {

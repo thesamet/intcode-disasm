@@ -244,7 +244,7 @@ fn handle_model(input: &mut DeriveInput) -> Result<proc_macro2::TokenStream, syn
 
     let state_info_vec = match state_info_vec_option {
         Some(siv) => siv.clone(), // Clone to release mutex guard sooner
-        None =>  return Err(syn::Error::new_spanned(&state_type_param.bounds, format!("The trait bound '{}' is not a registered state trait. Ensure an `#[states]` enum named '{}' is defined and compiled before this `#[model]` macro.", state_trait_name_str, state_trait_name_str))),
+        None =>  return Err(syn::Error::new_spanned(&state_type_param.bounds, format!("The trait bound '{state_trait_name_str}' is not a registered state trait. Ensure an `#[states]` enum named '{state_trait_name_str}' is defined and compiled before this `#[model]` macro."))),
     };
     drop(state_infos_guard);
 
@@ -252,8 +252,7 @@ fn handle_model(input: &mut DeriveInput) -> Result<proc_macro2::TokenStream, syn
         return Err(syn::Error::new_spanned(
             &state_type_param.bounds,
             format!(
-                "No states found for '{}'. The #[states] enum must not be empty.",
-                state_trait_name_str
+                "No states found for '{state_trait_name_str}'. The #[states] enum must not be empty."
             ),
         ));
     }

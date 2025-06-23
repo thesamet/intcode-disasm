@@ -1,9 +1,8 @@
 use crate::analysis::{AnalysisResult, FunctionInfo};
 use leptos::*;
-use leptos_router::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{Request, RequestInit, Response};
+use web_sys::Response;
 
 async fn fetch_analysis_from_server() -> Result<AnalysisResult, String> {
     let window = web_sys::window().unwrap();
@@ -29,7 +28,7 @@ async fn fetch_analysis_from_server() -> Result<AnalysisResult, String> {
     }
 
     let server_response: ServerResponse =
-        serde_json::from_str(&text_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        serde_json::from_str(&text_str).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     // Convert to UI format
     let functions = server_response
@@ -80,7 +79,7 @@ pub fn FunctionPage() -> impl IntoView {
     let scroll_to_function = move |func_id: u32| {
         if let Some(window) = web_sys::window() {
             if let Some(document) = window.document() {
-                if let Some(element) = document.get_element_by_id(&format!("function-{}", func_id)) {
+                if let Some(element) = document.get_element_by_id(&format!("function-{func_id}")) {
                     element.scroll_into_view();
                 }
             }

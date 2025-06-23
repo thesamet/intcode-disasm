@@ -63,21 +63,21 @@ async fn main() {
             prog
         }
         Err(e) => {
-            eprintln!("❌ Failed to load program: {}", e);
+            eprintln!("❌ Failed to load program: {e}");
             std::process::exit(1);
         }
     };
     
     // Load symbols if provided
     let symbols_content = if let Some(symbols_file) = &args.symbols {
-        println!("📋 Loading symbols from: {}", symbols_file);
+        println!("📋 Loading symbols from: {symbols_file}");
         match std::fs::read_to_string(symbols_file) {
             Ok(content) => {
                 println!("✅ Loaded symbols file");
                 Some(content)
             }
             Err(e) => {
-                eprintln!("❌ Failed to load symbols file: {}", e);
+                eprintln!("❌ Failed to load symbols file: {e}");
                 std::process::exit(1);
             }
         }
@@ -95,7 +95,7 @@ async fn main() {
             result
         }
         Err(e) => {
-            eprintln!("❌ Analysis failed: {}", e);
+            eprintln!("❌ Analysis failed: {e}");
             std::process::exit(1);
         }
     };

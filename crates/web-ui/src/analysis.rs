@@ -1,6 +1,6 @@
 // Analysis interface using real disasm library via web-bridge
 use serde::{Deserialize, Serialize};
-use web_bridge::{analyze_program_for_web, WebAnalysisResult, WebFunction};
+use web_bridge::analyze_program_for_web;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisResult {
@@ -63,10 +63,11 @@ pub fn analyze_program(_program: Vec<i128>) -> Result<AnalysisResult, String> {
 
 // Native analysis function using disasm library directly
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub fn analyze_program(program: Vec<i128>) -> Result<AnalysisResult, String> {
     // Call the real disasm analysis pipeline
     let web_result = analyze_program_for_web(program)
-        .map_err(|e| format!("Analysis failed: {}", e))?;
+        .map_err(|e| format!("Analysis failed: {e}"))?;
     
     // Convert WebAnalysisResult to our UI AnalysisResult format
     let functions = web_result.functions.into_iter().map(|web_func| {

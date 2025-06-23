@@ -89,7 +89,7 @@ impl Parse for VersionedElement {
                     Err(_) => {
                         let first = first_ident_result?;
                         return Err(
-                            content.error(format!("Expected `R`, `P`, or a number, got {}", first))
+                            content.error(format!("Expected `R`, `P`, or a number, got {first}"))
                         );
                     }
                 }
