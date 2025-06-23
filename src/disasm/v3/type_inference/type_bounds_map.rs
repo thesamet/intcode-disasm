@@ -593,18 +593,25 @@ impl InferenceAlgorithmState {
     }
 
     /// Provides an iterator over all `TypeVarId`s and their associated `TypeVarState`.
+    /// Returns items in deterministic order sorted by TypeVarId.
     pub fn iter_all_type_nodes(&self) -> impl Iterator<Item = (&TypeVarId, &TypeVarNode)> {
-        self.type_var_nodes.iter()
+        let mut items: Vec<_> = self.type_var_nodes.iter().collect();
+        items.sort_by_key(|(id, _)| id.index());
+        items.into_iter()
     }
 
     pub fn iter_all_type_states(&self) -> impl Iterator<Item = (&TypeVarId, &TypeVarState)> {
-        self.type_var_states.iter()
+        let mut items: Vec<_> = self.type_var_states.iter().collect();
+        items.sort_by_key(|(id, _)| id.index());
+        items.into_iter()
     }
 
     pub fn iter_all_vmr_to_type_var_id(
         &self,
     ) -> impl Iterator<Item = (&VersionedMemoryReference, &TypeVarId)> {
-        self.vmr_to_type_var.iter()
+        let mut items: Vec<_> = self.vmr_to_type_var.iter().collect();
+        items.sort_by_key(|(_, type_var_id)| type_var_id.index());
+        items.into_iter()
     }
 
     /// Returns a `Vec` of `TypeVarId`s whose bounds have been updated since the last

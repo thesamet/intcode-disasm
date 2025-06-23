@@ -909,7 +909,11 @@ impl Solver {
 
     fn try_solving(&mut self) -> bool {
         let mut conv = HashMap::new();
-        for (tv_id, state) in self.state.iter_all_type_states() {
+        // Sort TypeVarIds to ensure deterministic processing order
+        let mut type_vars: Vec<_> = self.state.iter_all_type_states().collect();
+        type_vars.sort_by_key(|(tv_id, _)| tv_id.index());
+        
+        for (tv_id, state) in type_vars {
             match state {
                 TypeVarState::Bounds {
                     lower_bounds,
@@ -1050,33 +1054,52 @@ impl Solver {
     fn detect_generic_patterns(&self) -> Vec<GenericOpportunity> {
         let mut opportunities = Vec::new();
 
-        for (tv_id, state) in self.state.iter_all_type_states() {
+        // Sort TypeVarIds to ensure deterministic processing order
+        let mut type_vars: Vec<_> = self.state.iter_all_type_states().collect();
+        type_vars.sort_by_key(|(tv_id, _)| tv_id.index());
+        
+        for (tv_id, state) in type_vars {
             if let TypeVarState::Bounds {
                 upper_bounds,
                 lower_bounds: _,
             } = state
             {
-                // Look for patterns like ty59: upper bounds {Char, Truthy, Int}
-                // Include all types that could represent different concrete types
-                let potential_generic_types: Vec<_> = upper_bounds
-                    .iter()
-                    .filter(|t| Self::is_potential_generic_type(t))
-                    .cloned()
-                    .collect();
-
-                // Check if this is a refinement type variable OR has generic bounds
                 if let Some(node) = self.state.get_type_var_node(tv_id) {
                     let has_generic = upper_bounds.iter().any(|t| matches!(t, Type::Generic(_)));
-                    let generic_count = upper_bounds
+                    let potential_generic_types: Vec<_> = upper_bounds
                         .iter()
-                        .filter(|t| matches!(t, Type::Generic(_)))
-                        .count();
+                        .filter(|t| Self::is_potential_generic_type(t))
+                        .cloned()
+                        .collect();
 
+                    // Check for refinement paths that should become generic
                     if self.is_refinement_path(&node.path) {
-                        // Original logic for refinement paths
-                        if potential_generic_types.len() >= 2
-                            || (has_generic && generic_count == upper_bounds.len())
-                        {
+                        let should_create_opportunity = match &node.path {
+                            TypeVarPath::PointerRefinement { .. } => {
+                                // For PointerRefinement: create opportunity if there are generics, multiple type vars, or multiple concrete types
+                                let has_multiple_type_vars = upper_bounds
+                                    .iter()
+                                    .filter(|t| matches!(t, Type::TypeVar(_)))
+                                    .count() > 1;
+                                let concrete_types: Vec<_> = upper_bounds
+                                    .iter()
+                                    .filter(|t| !matches!(t, Type::TypeVar(_) | Type::Any))
+                                    .cloned()
+                                    .collect();
+                                
+                                has_generic || has_multiple_type_vars || concrete_types.len() >= 2
+                            }
+                            _ => {
+                                // For other refinement paths: use original logic
+                                let generic_count = upper_bounds
+                                    .iter()
+                                    .filter(|t| matches!(t, Type::Generic(_)))
+                                    .count();
+                                potential_generic_types.len() >= 2 || (has_generic && generic_count == upper_bounds.len())
+                            }
+                        };
+                        
+                        if should_create_opportunity {
                             opportunities.push(GenericOpportunity {
                                 refinement_tv_id: *tv_id,
                                 concrete_types: upper_bounds.iter().cloned().collect(),
@@ -1084,9 +1107,7 @@ impl Solver {
                             });
                         }
                     } else if has_generic && upper_bounds.len() > 1 {
-                        // New case: Non-refinement paths with generic + other types
-                        // This handles cases like ty581 with bounds {T, Int}
-                        // Check if all non-generic bounds are compatible with the generic's bounds
+                        // Non-refinement paths with generic + other types
                         let generics_in_bounds: Vec<_> = upper_bounds
                             .iter()
                             .filter(|t| matches!(t, Type::Generic(_)))
@@ -1094,25 +1115,17 @@ impl Solver {
 
                         if generics_in_bounds.len() == 1 {
                             if let Type::Generic(generic_id) = generics_in_bounds[0] {
-                                if let Some(generic_var) =
-                                    self.state.get_generic_type_var(generic_id)
-                                {
+                                if let Some(generic_var) = self.state.get_generic_type_var(generic_id) {
                                     let non_generic_bounds: Vec<_> = upper_bounds
                                         .iter()
                                         .filter(|t| !matches!(t, Type::Generic(_)))
                                         .collect();
 
-                                    // Check if all non-generic bounds are subtypes of the generic's bounds
-                                    let all_compatible =
-                                        non_generic_bounds.iter().all(|other_type| {
-                                            generic_var.bounds.upper_bounds.iter().any(
-                                                |generic_bound| {
-                                                    other_type
-                                                        .is_subtype_of(generic_bound, &self.state)
-                                                        .is_yes()
-                                                },
-                                            )
-                                        });
+                                    let all_compatible = non_generic_bounds.iter().all(|other_type| {
+                                        generic_var.bounds.upper_bounds.iter().any(|generic_bound| {
+                                            other_type.is_subtype_of(generic_bound, &self.state).is_yes()
+                                        })
+                                    });
 
                                     if all_compatible {
                                         opportunities.push(GenericOpportunity {
@@ -1130,6 +1143,37 @@ impl Solver {
         }
 
         opportunities
+    }
+
+    /// Recursively collect concrete pointer types by following PointerRefinement chains
+    fn collect_concrete_pointer_types_recursively(
+        &self,
+        tv_id: &TypeVarId,
+        concrete_types: &mut std::collections::HashSet<Type>,
+        visited: &mut std::collections::HashSet<TypeVarId>,
+    ) {
+        if visited.contains(tv_id) {
+            return; // Avoid infinite loops
+        }
+        visited.insert(*tv_id);
+
+        if let Some(TypeVarState::Bounds { upper_bounds, .. }) = self.state.get_type_var_state(tv_id) {
+            for bound in upper_bounds {
+                match bound {
+                    Type::Pointer(pointee) => {
+                        // Found a concrete pointer type
+                        concrete_types.insert(bound.clone());
+                    }
+                    Type::TypeVar(nested_tv_id) => {
+                        // Recursively explore this type variable
+                        self.collect_concrete_pointer_types_recursively(nested_tv_id, concrete_types, visited);
+                    }
+                    _ => {
+                        // Other types are not pointer types we're interested in
+                    }
+                }
+            }
+        }
     }
 
     /// Checks if a TypeVarPath represents a refinement that could be made generic
@@ -1162,8 +1206,14 @@ impl Solver {
             // Generic types are also potential indicators of generic patterns
             Type::Generic(_) => true,
 
-            // Recursively check compound types
-            Type::Pointer(inner) => Self::is_potential_generic_type(inner),
+            // Pointer types are potential generic types if:
+            // 1. Their pointee type could be generic
+            // 2. Or if we're dealing with multiple pointer types with different pointees
+            Type::Pointer(_inner) => {
+                // Always consider pointers as potential generic types since
+                // we might have multiple pointer types with different pointees
+                true
+            }
             Type::Array { elem_type, .. } => Self::is_potential_generic_type(elem_type),
             Type::Struct(_) => false,
             Type::Function { params, returns } => {
@@ -1218,6 +1268,35 @@ impl Solver {
                 opportunity.refinement_tv_id,
                 generic_id.display_with(&self.state)
             );
+
+            // For PointerRefinement, also update the original type variable to use the generic
+            if let TypeVarPath::PointerRefinement { 
+                original_type_var_id, 
+                .. 
+            } = &opportunity.refinement_path {
+                // Check if the original type variable is already converged
+                if let Some(TypeVarState::Converged(_)) = self.state.get_type_var_state(original_type_var_id) {
+                    debug!(
+                        "Original TypeVar {} is already converged, skipping update",
+                        original_type_var_id
+                    );
+                } else {
+                    // Update the original pointer type to use the new generic
+                    let generic_pointer_type = Type::Pointer(Box::new(Type::Generic(generic_id)));
+                    
+                    debug!(
+                        "Updating original TypeVar {} (from PointerRefinement) to use generic pointer: {}",
+                        original_type_var_id,
+                        generic_pointer_type.display_with(&self.state)
+                    );
+                    
+                    self.state.converge(
+                        original_type_var_id,
+                        generic_pointer_type,
+                        ConverganceType::ReplacedWithGeneric,
+                    );
+                }
+            }
 
             transformed_count += 1;
         }

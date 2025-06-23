@@ -369,8 +369,11 @@ impl ConstraintStore {
     }
 
     /// Provides an iterator over all unique constraints (as &Constraint) in the store.
+    /// Returns constraints in deterministic order sorted by ConstraintId.
     pub fn iter(&self) -> impl Iterator<Item = (&ConstraintId, &Constraint)> {
-        self.constraints.iter()
+        let mut items: Vec<_> = self.constraints.iter().collect();
+        items.sort_by_key(|(id, _)| id.index());
+        items.into_iter()
     }
 
     /// Gets the total number of unique constraints in the store.

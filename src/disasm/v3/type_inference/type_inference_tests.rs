@@ -1177,3 +1177,182 @@ fn test_struct_field_access() {
 
     assert_marker_type!(ctx, 'a', Type::pointer(Type::Int));
 }
+
+#[test]
+fn test_pointer_refinement_generic_detection() {
+    // This test reproduces the issue where a function called with different pointer types
+    // should become generic but instead gets stuck with PointerRefinement types
+    let ctx = TypeInferenceComplete::test_context_with_user_defs(
+        r#"
+            R += 1000
+            
+            [1001] = 42
+            [1002] = 65
+            [1003] = 1
+            [1004] = 100
+            [1005] = 65
+            
+            output [1002]
+            if [1003] goto @continue1
+        continue1:
+            [2000] = [1001] + 1
+            
+            [R+1] = 1001
+            [R+2] = 1
+            [R+3] = 1
+            [R+4] = @int_handler
+            [R] = @ret1
+            goto @array_foreach
+        ret1:
+            [R+1] = 1002
+            [R+2] = 1
+            [R+3] = 1
+            [R+4] = @char_handler
+            [R] = @ret2
+            goto @array_foreach
+        ret2:
+            [R+1] = 1003
+            [R+2] = 1
+            [R+3] = 1
+            [R+4] = @bool_handler
+            [R] = @ret3
+            goto @array_foreach
+        ret3:
+            [R+1] = 1004
+            [R+2] = 1
+            [R+3] = 2
+            [R+4] = @struct_handler
+            [R] = @ret4
+            goto @array_foreach
+        ret4:
+            halt
+
+        array_foreach:
+            R += 10
+            [R-2] = 0
+        iterate:
+            [R-3] = [R-2] == [R-8]
+            if [R-3] goto @done
+            [R-1] = [R-2] * [R-7]
+            [R-1] = [R-1] + [R-9]
+            [R+1] = [R-1]
+            [R+2] = [R-2]
+            [R] = @iterate_ret
+            goto [R-6]
+        iterate_ret:
+            [R-2] = [R-2] + 1
+            goto @iterate
+        done:
+            R -= 10
+            goto [R]
+
+        int_handler:
+            R += 5
+            element_ptr = [R-4]
+            [R-1] = *element_ptr
+            [R-2] = [R-1] + 1
+            R -= 5
+            goto [R]
+            
+        char_handler:
+            R += 5
+            element_ptr = [R-4]
+            [R-1] = *element_ptr
+            output [R-1]
+            R -= 5
+            goto [R]
+            
+        bool_handler:
+            R += 5
+            element_ptr = [R-4]
+            [R-1] = *element_ptr
+            if [R-1] goto @bool_done
+        bool_done:
+            R -= 5
+            goto [R]
+            
+        struct_handler:
+            R += 5
+            element_ptr = [R-4]
+            [R-1] = *element_ptr
+            next_ptr = [R-4] + 1
+            [R-2] = *next_ptr
+            output [R-2]
+            R -= 5
+            goto [R]
+            "#,
+        UserDefs::from_lines(
+            r#"
+                S TestStruct { field1: Int, field2: Char }
+                F 124 array_foreach(list, length, item_size, handle_function)
+                F 172 int_handler(element_ptr: Pointer<Int>, index)
+                F 191 char_handler(element_ptr: Pointer<Char>, index)
+                F 208 bool_handler(element_ptr: Pointer<Bool>, index)
+                F 226 struct_handler(element_ptr: Pointer<TestStruct>, index)
+                "#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    println!(
+        "Pretty printed model with types (V3):\n{}",
+        pretty_print_types(&ctx.model)
+    );
+    
+    // Print folded SSA to find actual function addresses
+    println!("\nFolded SSA output to find function addresses:");
+    println!("{}", pretty_print_folded_ssa(&ctx.model));
+    
+    ctx.model.type_inference_result().print_all_type_bounds();
+
+    // The array_foreach function should have generic types, not PointerRefinement types
+    // Check that the first parameter of array_foreach becomes generic
+    let type_result = ctx.model.type_inference_result();
+    
+    // Get all functions and examine their parameter types
+    for (function_id, _function_view) in ctx.model.functions() {
+        println!("Function ID: {:?}", function_id);
+        
+        // Get the parameter types for this function
+        let call_analysis = ctx.model.function_call_analysis_result();
+        if let Some(func_info) = call_analysis.functions.get(&function_id) {
+            let param_vmrs: Vec<_> = func_info.parameter_entry_vars.values().collect();
+            
+            println!("Function {:?} has {} parameters", function_id, param_vmrs.len());
+            
+            for (i, param_vmr) in param_vmrs.iter().enumerate() {
+                let param_type = type_result.get_type_for(param_vmr);
+                println!("  Parameter {}: {:?} -> Type: {:?}", i, param_vmr, param_type);
+                
+                // For the first function with exactly 4 parameters, check if we have PointerRefinement
+                if i == 0 && param_vmrs.len() == 4 {
+                    // This is likely our array_foreach function
+                    match param_type {
+                        Type::Pointer(ref inner) => {
+                            match inner.as_ref() {
+                                Type::Generic(_) => {
+                                    println!("SUCCESS: Function parameter is Pointer<Generic>");
+                                }
+                                _ => {
+                                    println!("ISSUE: Parameter type should be generic but is: {:?}", param_type);
+                                    // Check if this is a PointerRefinement case - we'd see this in the display
+                                    let display_str = param_type.display_with(type_result).to_string();
+                                    if display_str.contains("PointerRefinement") {
+                                        println!("CONFIRMED: This is the PointerRefinement issue we're trying to fix");
+                                    }
+                                }
+                            }
+                        }
+                        Type::Generic(_) => {
+                            println!("SUCCESS: Function parameter is properly generic");
+                        }
+                        _ => {
+                            println!("ISSUE: Parameter type should be pointer to generic but is: {:?}", param_type);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
