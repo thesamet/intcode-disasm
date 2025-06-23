@@ -39,8 +39,22 @@ pub struct WebFunction {
 /// Main analysis function that bridges disasm library to web frontend
 #[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_program_for_web(program: Vec<i128>) -> Result<WebAnalysisResult, BridgeError> {
+    analyze_program_for_web_with_symbols(program, None)
+}
+
+/// Analysis function with symbols support
+#[cfg(not(target_arch = "wasm32"))]
+pub fn analyze_program_for_web_with_symbols(program: Vec<i128>, symbols_content: Option<String>) -> Result<WebAnalysisResult, BridgeError> {
+    // Parse user definitions from symbols content if provided
+    let user_defs = if let Some(symbols) = symbols_content {
+        UserDefs::from_lines(&symbols).map_err(|e| {
+            BridgeError::AnalysisError(format!("Failed to parse symbols: {:?}", e))
+        })?
+    } else {
+        UserDefs::new()
+    };
+    
     // Run full analysis pipeline to HLR
-    let user_defs = UserDefs::new(); // Use empty user definitions for web
     let model = binary_to_hlr(program.clone(), user_defs).map_err(|e| {
         BridgeError::AnalysisError(format!("Pipeline failed: {:?}", e))
     })?;

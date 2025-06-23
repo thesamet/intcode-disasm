@@ -1,20 +1,15 @@
 use itertools::Itertools;
-use rmcp::handler::server::tool;
 use rmcp::model::{
-    CallToolRequest, Implementation, InitializeRequestParam, InitializeResult, ListToolsResult,
-    ProtocolVersion, ServerCapabilities, ServerInfo,
+    Implementation, InitializeRequestParam, InitializeResult, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::stdio;
 use rmcp::{
     handler::server::tool::IntoCallToolResult,
-    model::{CallToolResult, Content, ErrorData, IntoContents},
+    model::{CallToolResult, Content, IntoContents},
     schemars, tool, ServiceExt,
 };
 use serde::{ser::SerializeStruct, Serialize, Serializer};
-use serde_json::Value;
-use tokio::io::stdin;
-use tokio::main;
 
 use crate::disasm::repl::ReplCommands;
 use crate::disasm::v3::common::formatting::ContextualPrettyPrint;
@@ -94,7 +89,7 @@ impl DisasmService {
     ) -> Result<Vec<TypeVarRow>, String> {
         let ti = model.type_inference_result();
         let mut data = Vec::new();
-        for (_, (tv, tv_node)) in ti
+        for (tv, tv_node) in ti
             .type_var_nodes
             .iter()
             .filter(|(tv_id, n)| {
@@ -103,7 +98,6 @@ impl DisasmService {
             })
             .filter(|(_, n)| !global || n.vmr.is_some_and(|vmr| vmr.is_global()))
             .sorted_by_key(|(id, _)| *id)
-            .enumerate()
         {
             let state = ti.type_var_states.get(tv).unwrap();
             let (role, expr) = ReplCommands::format_path(model, &tv_node.path);

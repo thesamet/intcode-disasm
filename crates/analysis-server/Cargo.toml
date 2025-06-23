@@ -8,6 +8,9 @@ edition = "2021"
 disasm = { path = "../.." }
 web-bridge = { path = "../web-bridge" }
 
+# CLI
+clap = { version = "4.0", features = ["derive"] }
+
 # Web server
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

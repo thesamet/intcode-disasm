@@ -511,13 +511,13 @@ where
                     match state {
                         TypeVarState::Converged(ty) => {
                             println!("{:<15}: {}", "State", "Converged".green());
-                            println!("{:<15}: {}", "Type", format!("{}", ty).green());
+                            println!("{:<15}: {}", "Type", format!("{ty}").green());
                         }
                         TypeVarState::Bounds {
                             lower_bounds,
                             upper_bounds,
                         } => {
-                            println!("{:<15}: {}", "State", "Bounds");
+                            println!("{:<15}: Bounds", "State");
                             println!("{:<15}: {}", "Lower bound", format_bounds(lower_bounds));
                             println!("{:<15}: {}", "Upper bound", format_bounds(upper_bounds));
                         }

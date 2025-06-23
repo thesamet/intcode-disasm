@@ -595,20 +595,20 @@ impl<'a> TypeConstraintGenerator<'a> {
         result_type: &Type,
     ) -> Option<Constraint> {
         let dbg = function.function_id().index() == 2329;
-        let struct_id = self.expression_as_struct_id(&function, lhs)?;
-        if (dbg) {
-            println!("Field access constraint for struct {}", struct_id);
+        let struct_id = self.expression_as_struct_id(function, lhs)?;
+        if dbg {
+            println!("Field access constraint for struct {struct_id}");
         }
         let offset = rhs.as_constant()?;
         if offset < 0 {
             return None;
         }
         let offset = offset as usize;
-        if (dbg) {
+        if dbg {
             println!("pre!");
         }
         let struct_type = self.result.struct_types.get(&struct_id)?;
-        if (dbg) {
+        if dbg {
             println!("post!");
         }
         Some(Constraint {
@@ -938,7 +938,7 @@ impl<'a> TypeConstraintGenerator<'a> {
                 self.result.markers.insert(*marker, expr_type);
                 expr_type
             }
-            Expression::StructField { base, .. } => {
+            Expression::StructField {  .. } => {
                 unreachable!()
             }
         }

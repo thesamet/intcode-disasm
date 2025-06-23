@@ -1,6 +1,6 @@
 //! Type inference solver implementation.
 
-use itertools::{iterate, Itertools};
+use itertools::Itertools;
 use log::debug;
 
 use crate::disasm::symbol_renaming::{StructId, UserDefs};

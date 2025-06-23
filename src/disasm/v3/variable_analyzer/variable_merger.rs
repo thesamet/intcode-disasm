@@ -10,7 +10,6 @@ use crate::disasm::{
         lir::{Instruction, MemoryReferenceInfo},
         model::{Model, TypeInferenceComplete, VariableMergerComplete},
         ssa::{types::VersionableMemoryKind, VersionedMemoryReference},
-        PointerId,
         type_inference::Type,
         FunctionId,
     },
@@ -290,14 +289,14 @@ impl VariableMerger {
             // Generate plain text representation without any formatting
             format!("[{}]_{}", 
                 match &rep.kind {
-                    VersionableMemoryKind::Memory(addr) => format!("{}", addr),
+                    VersionableMemoryKind::Memory(addr) => format!("{addr}"),
                     VersionableMemoryKind::RelativeMemory(offset) => {
                         if *offset == 0 {
                             "R".to_string()
                         } else if *offset > 0 {
-                            format!("R+{}", offset)
+                            format!("R+{offset}")
                         } else {
-                            format!("R{}", offset) // negative offset already includes the minus sign
+                            format!("R{offset}") // negative offset already includes the minus sign
                         }
                     },
                     VersionableMemoryKind::Pointer(ptr_id) => format!("P{}", ptr_id.index()),

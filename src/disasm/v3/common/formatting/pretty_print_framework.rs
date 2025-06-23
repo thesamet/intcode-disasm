@@ -129,7 +129,7 @@ impl<'a, T: fmt::Display> fmt::Display for FormattedText<'a, T> {
             (None, true) => {
                 // No semantic color, but web CSS output - still need HTML escaping
                 let escaped_text = html_escape(&self.text.to_string());
-                write!(f, "{}", escaped_text)
+                write!(f, "{escaped_text}")
             }
             (None, false) => {
                 // No semantic color, terminal output

@@ -5,10 +5,11 @@ use axum::{
     routing::get,
     Router,
 };
+use clap::Parser;
 use serde::Serialize;
 use std::sync::OnceLock;
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use web_bridge::{analyze_program_for_web, WebAnalysisResult};
+use web_bridge::{analyze_program_for_web_with_symbols, WebAnalysisResult};
 
 // Global state to hold the analysis result
 static ANALYSIS_RESULT: OnceLock<WebAnalysisResult> = OnceLock::new();
@@ -29,6 +30,18 @@ async fn health_handler() -> &'static str {
     "Analysis server is running!"
 }
 
+#[derive(Parser)]
+#[command(name = "analysis-server")]
+#[command(about = "Analysis server that loads an Intcode file and serves analysis results")]
+struct Args {
+    /// Path to the Intcode program file
+    input: String,
+    
+    /// Path to symbols file for enhanced analysis
+    #[arg(long, help = "Symbol renaming rules file")]
+    symbols: Option<String>,
+}
+
 fn load_program_from_file(file_path: &str) -> Result<Vec<i128>, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(file_path)?;
     let program: Vec<i128> = content
@@ -40,19 +53,11 @@ fn load_program_from_file(file_path: &str) -> Result<Vec<i128>, Box<dyn std::err
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    
-    if args.len() != 2 {
-        eprintln!("Usage: {} <intcode_file>", args[0]);
-        eprintln!("Example: {} program.txt", args[0]);
-        std::process::exit(1);
-    }
-    
-    let file_path = &args[1];
+    let args = Args::parse();
     
     // Load and analyze the program
-    println!("📂 Loading program from: {}", file_path);
-    let program = match load_program_from_file(file_path) {
+    println!("📂 Loading program from: {}", args.input);
+    let program = match load_program_from_file(&args.input) {
         Ok(prog) => {
             println!("✅ Loaded {} instructions", prog.len());
             prog
@@ -63,9 +68,26 @@ async fn main() {
         }
     };
     
+    // Load symbols if provided
+    let symbols_content = if let Some(symbols_file) = &args.symbols {
+        println!("📋 Loading symbols from: {}", symbols_file);
+        match std::fs::read_to_string(symbols_file) {
+            Ok(content) => {
+                println!("✅ Loaded symbols file");
+                Some(content)
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to load symbols file: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+    
     // Run analysis
     println!("🔍 Running disasm analysis...");
-    let analysis_result = match analyze_program_for_web(program) {
+    let analysis_result = match analyze_program_for_web_with_symbols(program, symbols_content) {
         Ok(result) => {
             println!("✅ Analysis complete:");
             println!("   📊 Functions: {}", result.functions.len());

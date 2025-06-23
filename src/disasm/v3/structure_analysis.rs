@@ -124,7 +124,7 @@ fn identify_function_argument_structs_from_user_defs(
             .callee_info()
             .parameter_entry_vars;
         for (index, (_, typ)) in def.args().iter().enumerate() {
-            println!("{function_id} arg {:?} {typ:?}", typ);
+            println!("{function_id} arg {typ:?} {typ:?}");
             let Some(struct_id) = typ
                 .as_ref()
                 .and_then(Type::as_pointer)
@@ -132,7 +132,7 @@ fn identify_function_argument_structs_from_user_defs(
             else {
                 continue;
             };
-            println!("{function_id} arg {:?} - done", typ);
+            println!("{function_id} arg {typ:?} - done");
             let vmr = entry_vars.get(&((index + 1) as i128)).unwrap();
             register_structs.insert(*vmr, struct_id);
         }
@@ -155,8 +155,7 @@ pub(crate) fn analyze_structure(
         let register_structs =
             identify_function_argument_structs_from_user_defs(&model, &function_id, user_defs);
         println!(
-            "Function {:?} has {:?} register structs",
-            function_id, register_structs
+            "Function {function_id:?} has {register_structs:?} register structs"
         );
         result.functions.insert(
             f.function_id(),
@@ -199,7 +198,7 @@ pub(crate) fn analyze_structure(
                     .contains_key(&vmr)
                 {
                     let struct_id = StructId::fresh();
-                    println!("Adding struct {:?} at {:?}", struct_id, vmr);
+                    println!("Adding struct {struct_id:?} at {vmr:?}");
                     result.structs.insert(struct_id, struct_info);
                     result
                         .functions
@@ -226,7 +225,7 @@ pub(crate) fn analyze_structure(
             }
         }
     }
-    for (_, fi) in &result.functions {
+    for fi in result.functions.values() {
         if fi.struct_vmrs.is_empty() {
             continue;
         };
