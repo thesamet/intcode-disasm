@@ -227,9 +227,11 @@ impl ContextualPrettyPrint for HlrExpression {
             HlrExpression::Input() => ctx.format("input()", SemanticColor::Keyword).to_string(),
             HlrExpression::Deref(expr) => {
                 // Try to detect field access patterns and display as s->field_name
+                // Try to detect array access patterns and display as array[index]
                 match expr.as_ref() {
-                    // Pattern: *(s + offset) -> s->field_name
+                    // Pattern: *(s + offset) -> s->field_name or array[index]
                     HlrExpression::BinaryOp { op: BinaryOperator::Add, left, right, .. } => {
+                        // Try struct field access first: *(struct + offset) -> struct->field_name
                         if let (HlrExpression::Variable(var), HlrExpression::Constant(offset, _)) = (left.as_ref(), right.as_ref()) {
                             if let Some(field_name) = get_field_name_for_deref(ctx, &var.type_info, *offset as usize) {
                                 return format!(
@@ -240,6 +242,13 @@ impl ContextualPrettyPrint for HlrExpression {
                                 );
                             }
                         }
+                        
+                        // Try array indexing: *(index + array) -> array[index] or *(array + index) -> array[index]
+                        if let Some(array_access) = try_format_array_access(ctx, left.as_ref(), right.as_ref()) {
+                            return array_access;
+                        }
+                        
+                        // Fallback to pointer arithmetic
                         format!(
                             "{}{}{}{}",
                             ctx.fmt_star(),
@@ -320,6 +329,47 @@ fn get_field_name_for_deref(
         }
     }
     None
+}
+
+/// Helper function to try formatting array access patterns
+/// Handles both *(index + array) and *(array + index) patterns
+fn try_format_array_access(
+    ctx: &GenericFormattingContext<TypeInferenceResult>,
+    left: &HlrExpression,
+    right: &HlrExpression,
+) -> Option<String> {
+    // Try pattern: *(array + index) -> array[index]
+    if let (HlrExpression::Variable(array_var), index_expr) = (left, right) {
+        if is_array_type(&array_var.type_info) {
+            return Some(format!(
+                "{}{}{}{}",
+                ctx.format(&array_var.name, SemanticColor::Variable),
+                ctx.format("[", SemanticColor::Operator),
+                index_expr.pretty_print_with_context(ctx),
+                ctx.format("]", SemanticColor::Operator)
+            ));
+        }
+    }
+    
+    // Try pattern: *(index + array) -> array[index]
+    if let (index_expr, HlrExpression::Variable(array_var)) = (left, right) {
+        if is_array_type(&array_var.type_info) {
+            return Some(format!(
+                "{}{}{}{}",
+                ctx.format(&array_var.name, SemanticColor::Variable),
+                ctx.format("[", SemanticColor::Operator),
+                index_expr.pretty_print_with_context(ctx),
+                ctx.format("]", SemanticColor::Operator)
+            ));
+        }
+    }
+    
+    None
+}
+
+/// Helper function to check if a type is an array type
+fn is_array_type(ty: &Type) -> bool {
+    matches!(ty, Type::Array { .. })
 }
 
 /// Helper function to find function ID by function name
@@ -833,5 +883,58 @@ mod tests {
         assert!(output.contains("output(1);"));
         assert!(output.contains("} else {"));
         assert!(output.contains("output(0);"));
+    }
+
+    #[test]
+    fn test_array_indexing_pretty_print() {
+        // Test array indexing: *(index + array) -> array[index]
+        let _array_var = hlr_var("arr", Type::Array {
+            len: 5,
+            elem_type: Box::new(Type::Int),
+        });
+        let index_expr = hlr_var_expr("i", Type::Int);
+        
+        // Create *(i + arr) expression
+        let deref_expr = hlr_deref(hlr_binop(
+            BinaryOperator::Add,
+            index_expr,
+            hlr_var_expr("arr", Type::Array {
+                len: 5,
+                elem_type: Box::new(Type::Int),
+            }),
+            Type::Pointer(Box::new(Type::Int)),
+        ));
+
+        let output = deref_expr.print_nocolor_with_data(&TypeInferenceResult::new());
+        assert_eq!(output, "arr[i]");
+
+        // Test array indexing: *(array + index) -> array[index]
+        let deref_expr2 = hlr_deref(hlr_binop(
+            BinaryOperator::Add,
+            hlr_var_expr("arr", Type::Array {
+                len: 5,
+                elem_type: Box::new(Type::Int),
+            }),
+            hlr_var_expr("i", Type::Int),
+            Type::Pointer(Box::new(Type::Int)),
+        ));
+
+        let output2 = deref_expr2.print_nocolor_with_data(&TypeInferenceResult::new());
+        assert_eq!(output2, "arr[i]");
+
+        // Test that non-array variables don't get array indexing syntax
+        let _ptr_var = hlr_var("ptr", Type::Pointer(Box::new(Type::Int)));
+        let deref_expr3 = hlr_deref(hlr_binop(
+            BinaryOperator::Add,
+            hlr_var_expr("ptr", Type::Pointer(Box::new(Type::Int))),
+            hlr_var_expr("offset", Type::Int),
+            Type::Pointer(Box::new(Type::Int)),
+        ));
+
+        let output3 = deref_expr3.print_nocolor_with_data(&TypeInferenceResult::new());
+        // Should fall back to pointer arithmetic notation
+        assert!(output3.contains("*("));
+        assert!(output3.contains("ptr + offset"));
+        assert!(output3.contains(")"));
     }
 }

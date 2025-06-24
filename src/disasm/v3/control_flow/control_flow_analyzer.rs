@@ -120,12 +120,15 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
                             self.model.user_defs(),
                         )
                     }
-                    Type::Int => {
-                        create_int_array_expression(addr, *len, image)
-                    }
                     _ => {
-                        // For other types, show a generic representation
-                        HlrExpression::String(format!("[/* Array<{}; {:?}> */]", len, elem_type))
+                        // Use generic array formatting for all other types
+                        create_generic_array_expression(
+                            addr,
+                            *len,
+                            elem_type,
+                            image,
+                            self.model.user_defs(),
+                        )
                     }
                 };
                 
@@ -1037,6 +1040,36 @@ fn create_int_array_expression(
         } else {
             result.push_str(&format!("/* out of bounds: addr {} */", base_addr + i));
         }
+    }
+    
+    result.push(']');
+    HlrExpression::String(result)
+}
+
+/// Create a generic array expression that works for any element type
+fn create_generic_array_expression(
+    base_addr: usize,
+    len: usize,
+    elem_type: &Type,
+    image: &[i128],
+    user_defs: &UserDefs,
+) -> HlrExpression {
+    let mut result = String::new();
+    result.push('[');
+    
+    for i in 0..len {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        
+        let element_value = image[base_addr + i];
+        let formatted_value = format_field_value(
+            element_value,
+            &Some(elem_type.clone()),
+            image,
+            user_defs,
+        );
+        result.push_str(&formatted_value);
     }
     
     result.push(']');
