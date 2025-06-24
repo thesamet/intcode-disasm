@@ -1,6 +1,8 @@
 G   34  SEPARATOR_START
 G   41  SEPARATOR_END
 G   46  DOORS_HERE_LEAD
+G   92  ITEMS_HERE
+G  106  ITEMS_IN_INVENTORY
 G  133  NOT_CARRYING_ITEMS
 G  166  COMMAND_PROMPT
 G  177  UNRECOGNIZED_COMMAND
@@ -28,17 +30,17 @@ XPHI  2173 [R-1]_4
 
 T EncodedString
 
-S GameThing { a: Int, msg: Pointer<EncodedString>, c, d }
+S Item { location: Pointer<Location>, item_name: Pointer<EncodedString>, c, d }
 
 S Location { location_name: Pointer<EncodedString>, text: Pointer<EncodedString>, func, dir1: Pointer<Location>, dir2: Pointer<Location>, dir3: Pointer<Location>, dir4: Pointer<Location> }
 
 G 3124  INITIAL_LOCATION Location
-G 3252  ANOTHER Array<1; Location>
-G 3321  ANOTHER Array<1; Location>
+G 4052  ANOTHER1 Location
+G 3549  ANOTHER2 Location
 
 G 1128 CURRENT_LOCATION Pointer<Location>
 
-G 4601 things Array<13;GameThing>
+G 4601 ITEMS Array<13;Item>
 
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
@@ -51,20 +53,32 @@ F 0 init
 
 F 1234 print_encoded_string(encoded_string)
 V 1234 [R-1]_0 str Pointer<EncodedString>
-F 1424 set_current_location(new_location)
-
-V 1310 [R+1]_1 Array<13;GameThing>
-
 F 1256 output_sum(a, b, c)
+F 1273 print_direction_if_available(location_id, dir_index)
+
+# Use -1 to print inventory
+F 1310 print_items_in_location_or_inventory(location: Pointer<Location>)
+V 1310 [R+1]_1 Array<13;Item>
+
+G 1308 already_printed_items_header
+G 1309 temp_location_for_printing
+
+
+F 1424 set_current_location(new_location)
 F 1796 finished
 
 F 1829 infinite_loop
 F 1850 game_over_lava
 F 1872 game_over_grue
 
-F 1353 f1353(s: Pointer<GameThing>)
-F 1664 f1664(s: Pointer<GameThing>)
-F 2329 f2329(s: Pointer<GameThing>)
-F 2173 f2173(s: Pointer<GameThing>)
+F 1353 print_item(item: Pointer<Item>)
+V 1353 [R+1]_1 str Pointer<EncodedString>
+F 1664 f1664(s: Pointer<Item>)
+F 2329 f2329(s: Pointer<Item>)
+F 2173 f2173(s: Pointer<Item>)
 
-G 3094 SOME_ARR Array<13;Int>
+F 2634 read_line
+V 2634 [R-3]_1 index
+V 2634 [R-2]_1 ch
+F 2706 assign_minus_one
+G 3094 user_input Array<30;Char>

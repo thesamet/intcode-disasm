@@ -194,13 +194,7 @@ impl<'a> TypeConstraintGenerator<'a> {
         for (&struct_id, def) in self.user_defs.get_struct_definitions() {
             let mut types = vec![];
             for (index, StructField { typ, .. }) in def.fields.iter().enumerate() {
-                let typ = typ.clone().unwrap_or_else(|| {
-                    let node = TypeVarNode {
-                        path: TypeVarPath::StructField { struct_id, index },
-                        vmr: None,
-                    };
-                    self.result.state.add_type_var(node).to_type()
-                });
+                let typ = typ.clone().unwrap_or(Type::Int);
                 types.push(typ);
             }
             self.result.struct_types.insert(struct_id, types);
@@ -396,6 +390,25 @@ impl<'a> TypeConstraintGenerator<'a> {
                                 expression_path: ExpressionPath::root(),
                             },
                         );
+
+                        // Apply field access logic for assignment targets like *(ptr + offset) = value
+                        // This mirrors the logic used in expression processing for array indexing
+                        if let Expression::Binary { op: BinaryOperator::Add, lhs, rhs } = ptr_expr_target.as_ref() {
+                            if let Some(constraint) = self.try_field_access_constraint(
+                                &function,
+                                instruction_id,
+                                lhs,
+                                rhs,
+                                &Type::TypeVar(src_type),
+                            ) {
+                                self.result.store.add_equality_constraint(
+                                    constraint,
+                                    None,
+                                    &self.result.state,
+                                );
+                            }
+                        }
+
                         self.result.store.add_equality_constraint(
                             Constraint::new(
                                 Type::TypeVar(ptr_addr_type),
