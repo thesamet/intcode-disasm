@@ -285,9 +285,9 @@ impl ContextualPrettyPrint for HlrExpression {
                 )
             }
             HlrExpression::String(s) => {
-                // Check if this is array data representation (starts with [)
-                if s.starts_with('[') {
-                    // This is array data representation, don't quote it
+                // Check if this is array or struct data representation (starts with [ or {)
+                if s.starts_with('[') || s.starts_with('{') {
+                    // This is data representation, don't quote it
                     ctx.format(s, SemanticColor::Constant).to_string()
                 } else {
                     // Regular string, quote it

@@ -18,6 +18,11 @@ G  826  YOU_MAY_PROCEED
 G 1090  ON_THE_KEYPAD
 
 
+S Dirs { dir1: Pointer<EncodedString>, dir2: Pointer<EncodedString>, dir3: Pointer<EncodedString>, dir4: Pointer<EncodedString> }
+
+G 66 DIRS Array<4; Pointer<EncodedString>>
+
+
 XPHI  2329 [R-1]_3
 XPHI  2173 [R-1]_4
 
@@ -25,9 +30,13 @@ T EncodedString
 
 S GameThing { a: Int, msg: Pointer<EncodedString>, c, d }
 
-S Location { text1: Pointer<EncodedString>, text2: Pointer<EncodedString>, func }
+S Location { location_name: Pointer<EncodedString>, text: Pointer<EncodedString>, func, dir1: Pointer<Location>, dir2: Pointer<Location>, dir3: Pointer<Location>, dir4: Pointer<Location> }
 
-G 1128 current_location Pointer<Location>
+G 3124  INITIAL_LOCATION Location
+G 3252  ANOTHER Array<1; Location>
+G 3321  ANOTHER Array<1; Location>
+
+G 1128 CURRENT_LOCATION Pointer<Location>
 
 G 4601 things Array<13;GameThing>
 
@@ -42,6 +51,7 @@ F 0 init
 
 F 1234 print_encoded_string(encoded_string)
 V 1234 [R-1]_0 str Pointer<EncodedString>
+F 1424 set_current_location(new_location)
 
 V 1310 [R+1]_1 Array<13;GameThing>
 

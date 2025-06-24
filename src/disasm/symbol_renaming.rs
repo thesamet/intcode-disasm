@@ -106,7 +106,9 @@ impl UserDefs {
 
     pub fn from_lines(lines: &str) -> Result<Self, String> {
         let mut symbol_renaming = SymbolRenaming::new();
+        let mut parsed_lines = Vec::new();
 
+        // Parse all lines first
         for line in lines.lines() {
             let trimmed_line = line.trim();
 
@@ -116,7 +118,36 @@ impl UserDefs {
             }
 
             match SymbolRenamingLine::parse(trimmed_line) {
-                Ok((_, user_defs_line)) => match user_defs_line {
+                Ok((_, user_defs_line)) => parsed_lines.push(user_defs_line),
+                Err(e) => return Err(format!("Failed to parse line '{}': {}", trimmed_line, e)),
+            }
+        }
+
+        // First pass: Register struct names and custom types to enable forward references
+        for user_defs_line in &parsed_lines {
+            match user_defs_line {
+                SymbolRenamingLine::CustomType(name) => {
+                    let custom_type_id = CustomTypeId::fresh();
+                    symbol_renaming.add_custom_type(custom_type_id, name.clone());
+                }
+                SymbolRenamingLine::Struct(struct_name, _) => {
+                    // Register struct name with empty fields first
+                    let struct_def = StructDef {
+                        name: struct_name.clone(),
+                        fields: vec![], // Empty for now
+                    };
+                    symbol_renaming
+                        .user_defs
+                        .struct_definitions
+                        .insert(StructId::fresh(), struct_def);
+                }
+                _ => {} // Skip non-type definitions in first pass
+            }
+        }
+
+        // Second pass: Resolve all other definitions with types
+        for user_defs_line in parsed_lines {
+            match user_defs_line {
                     SymbolRenamingLine::Function(function_id, name, args) => {
                         let resolved_args = args
                             .into_iter()
@@ -156,7 +187,11 @@ impl UserDefs {
                         symbol_renaming.add_global(addr, name, ty);
                     }
                     SymbolRenamingLine::Struct(struct_name_key, parsed_fields_str) => {
-                        let struct_def_name = struct_name_key.clone(); // Name for the StructDef value
+                        // Find the existing struct definition and update its fields
+                        let struct_id = symbol_renaming.user_defs.struct_definitions
+                            .iter()
+                            .find_map(|(&id, def)| if def.name == struct_name_key { Some(id) } else { None })
+                            .expect("Struct should have been registered in first pass");
 
                         let resolved_fields: Vec<StructField> = parsed_fields_str
                                             .into_iter()
@@ -186,14 +221,13 @@ impl UserDefs {
                                             })
                                             .collect::<Result<Vec<StructField>, String>>()?;
 
-                        let struct_def = StructDef {
-                            name: struct_def_name, // This is the cloned name for the value
-                            fields: resolved_fields,
-                        };
+                        // Update the struct definition with resolved fields
                         symbol_renaming
                             .user_defs
                             .struct_definitions
-                            .insert(StructId::fresh(), struct_def); // Original struct_name_key is moved here as key
+                            .get_mut(&struct_id)
+                            .unwrap()
+                            .fields = resolved_fields;
                     }
                     SymbolRenamingLine::ExcludedPhis(versioned_memory_reference) => {
                         symbol_renaming
@@ -201,10 +235,6 @@ impl UserDefs {
                             .excluded_phis
                             .insert(versioned_memory_reference);
                     }
-                },
-                Err(err) => {
-                    return Err(format!("Failed to parse line: {line}\nError: {err}"));
-                }
             }
         }
 

@@ -187,6 +187,7 @@ impl<'a> TypeConstraintGenerator<'a> {
 
         self.add_variable_types_from_symbol_renaming();
         self.add_function_argument_types_from_symbol_renaming();
+        self.add_global_types_from_symbol_renaming();
     }
 
     fn generate_types_for_structs(&mut self) {
@@ -259,6 +260,30 @@ impl<'a> TypeConstraintGenerator<'a> {
                     &self.result.state,
                 );
             }
+        }
+    }
+
+    fn add_global_types_from_symbol_renaming(&mut self) {
+        for (&addr, (_, ty)) in self.user_defs.globals() {
+            let Some(ty) = ty else {
+                continue;
+            };
+            let Some(&tv_id) = self.result.global_vars.get(&addr) else {
+                warn!("Could not find type var for global at address {}", addr);
+                continue;
+            };
+            self.result.store.add_equality_constraint(
+                Constraint::new(
+                    Type::TypeVar(tv_id),
+                    ty.clone(),
+                    FunctionId::new(0), // Dummy function ID for globals
+                    InstructionId::new(0), // Dummy instruction ID for globals
+                    ConstraintReason::SymbolRenaming,
+                )
+                .with_priority(100),
+                None,
+                &self.result.state,
+            );
         }
     }
 

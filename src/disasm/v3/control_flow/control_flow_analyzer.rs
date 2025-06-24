@@ -142,6 +142,31 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
                 );
                 return Ok(());
             }
+            
+            // Handle individual struct types
+            if let Type::Struct(struct_id) = global_type {
+                let image = &self.model.image_scanner_result().image;
+                let struct_def = self.model.user_defs().get_struct_definitions().get(struct_id).unwrap();
+                let struct_expr = format_struct_instance(
+                    addr,
+                    struct_def,
+                    image,
+                    self.model.user_defs(),
+                );
+                
+                self.globals.insert(
+                    addr,
+                    (
+                        HlrVariable {
+                            name: global_name.clone(),
+                            type_info: global_type.clone(),
+                            scope: Scope::Global,
+                        },
+                        HlrExpression::String(struct_expr),
+                    ),
+                );
+                return Ok(());
+            }
         }
         
         if let Some(Type::CustomType(ct_id)) = typ.as_pointer() {

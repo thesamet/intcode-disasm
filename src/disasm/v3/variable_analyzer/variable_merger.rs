@@ -273,7 +273,7 @@ impl VariableMerger {
             .or_insert_with(FunctionVarNamingState::new);
         let name = if globals.values().contains(set_id) {
             let addr = rep.as_global().unwrap();
-            format!("Global{addr}")
+            self.user_defs().get_global(addr).cloned().unwrap_or_else(|| format!("Global{addr}"))
         } else if vars.iter().find_map(|v| v.kind.as_pointer()).is_some() {
             let n = state.next_pointer;
             state.next_pointer += 1;
