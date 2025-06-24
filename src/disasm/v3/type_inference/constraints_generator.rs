@@ -697,6 +697,28 @@ impl<'a> TypeConstraintGenerator<'a> {
                     let pointee_tv_id = self.result.state.make_expression_type_var(path);
                     let pointee_type = Type::TypeVar(pointee_tv_id);
 
+                    // Check if dereferencing a struct pointer directly (accessing first field)
+                    if let Some(struct_id) = self.expression_as_struct_id(&function, inner_ptr_expr) {
+                        if let Some(struct_type) = self.result.struct_types.get(&struct_id) {
+                            if !struct_type.is_empty() {
+                                // Dereferencing struct pointer directly means accessing first field (offset 0)
+                                let field_constraint = Constraint {
+                                    sub_type: struct_type[0].clone(),
+                                    super_type: pointee_type.clone(),
+                                    origin_function_id: function.function_id(),
+                                    origin_instruction_id: instruction_id,
+                                    reason: ConstraintReason::FieldAccess(struct_id, 0),
+                                    priority: 100,
+                                };
+                                self.result.store.add_equality_constraint(
+                                    field_constraint,
+                                    None,
+                                    &self.result.state,
+                                );
+                            }
+                        }
+                    }
+
                     self.result.store.add_equality_constraint(
                         Constraint::new(
                             Type::TypeVar(ptr_addr_type_var_id),

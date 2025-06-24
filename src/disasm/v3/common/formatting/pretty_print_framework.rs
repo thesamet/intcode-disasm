@@ -3,7 +3,7 @@ use colored::Colorize;
 use std::fmt;
 
 /// Escape HTML special characters for web output
-fn html_escape(text: &str) -> String {
+pub fn html_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

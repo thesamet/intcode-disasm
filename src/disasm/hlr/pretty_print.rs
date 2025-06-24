@@ -4,9 +4,9 @@ use super::ast::{
 };
 use crate::disasm::v3::common::formatting::colors::SemanticColor;
 use crate::disasm::v3::common::formatting::pretty_print_framework::{
-    ContextualPrettyPrint, GenericFormattingContext,
+    html_escape, ContextualPrettyPrint, GenericFormattingContext,
 };
-use crate::disasm::v3::type_inference::TypeInferenceResult;
+use crate::disasm::v3::type_inference::{Type, TypeInferenceResult};
 use colored::Colorize;
 use itertools::Itertools;
 
@@ -178,7 +178,35 @@ impl ContextualPrettyPrint for HlrExpression {
                             .get_function_name(function_id)
                             .cloned()
                             .unwrap_or_else(|| format!("fu{id}"));
-                        ctx.format(name, SemanticColor::Function).to_string()
+                        
+                        // Generate clickable link for web output, plain text for terminal
+                        if ctx.config.web_css_output {
+                            format!(
+                                "<a href=\"#function-{}\" class=\"function-call-link function\">{}</a>",
+                                id,
+                                html_escape(&name)
+                            )
+                        } else {
+                            ctx.format(name, SemanticColor::Function).to_string()
+                        }
+                    }
+                    HlrExpression::StaticFunctionReference(name) => {
+                        // Find the function ID from the name for linking
+                        if let Some(function_id) = find_function_id_by_name(ctx, name) {
+                            // Generate clickable link for web output
+                            if ctx.config.web_css_output {
+                                format!(
+                                    "<a href=\"#function-{}\" class=\"function-call-link function\">{}</a>",
+                                    function_id.index(),
+                                    html_escape(name)
+                                )
+                            } else {
+                                ctx.format(name, SemanticColor::Function).to_string()
+                            }
+                        } else {
+                            // Fallback if function ID not found
+                            ctx.format(name, SemanticColor::Function).to_string()
+                        }
                     }
                     _ => func_expr.pretty_print_with_context(ctx),
                 };
@@ -197,17 +225,55 @@ impl ContextualPrettyPrint for HlrExpression {
                 )
             }
             HlrExpression::Input() => ctx.format("input()", SemanticColor::Keyword).to_string(),
-            HlrExpression::Deref(expr) => match expr.as_ref() {
-                HlrExpression::BinaryOp { .. } => {
-                    format!(
-                        "{}{}{}{}",
-                        ctx.fmt_star(),
-                        ctx.fmt_open_paren(),
-                        expr.pretty_print_with_context(ctx),
-                        ctx.fmt_close_paren()
-                    )
+            HlrExpression::Deref(expr) => {
+                // Try to detect field access patterns and display as s->field_name
+                match expr.as_ref() {
+                    // Pattern: *(s + offset) -> s->field_name
+                    HlrExpression::BinaryOp { op: BinaryOperator::Add, left, right, .. } => {
+                        if let (HlrExpression::Variable(var), HlrExpression::Constant(offset, _)) = (left.as_ref(), right.as_ref()) {
+                            if let Some(field_name) = get_field_name_for_deref(ctx, &var.type_info, *offset as usize) {
+                                return format!(
+                                    "{}{}{}",
+                                    ctx.format(&var.name, SemanticColor::Variable),
+                                    ctx.format("->", SemanticColor::Operator),
+                                    ctx.format(&field_name, SemanticColor::Variable)
+                                );
+                            }
+                        }
+                        format!(
+                            "{}{}{}{}",
+                            ctx.fmt_star(),
+                            ctx.fmt_open_paren(),
+                            expr.pretty_print_with_context(ctx),
+                            ctx.fmt_close_paren()
+                        )
+                    }
+                    // Pattern: *s -> s->first_field (offset 0)
+                    HlrExpression::Variable(var) => {
+                        if let Some(field_name) = get_field_name_for_deref(ctx, &var.type_info, 0) {
+                            format!(
+                                "{}{}{}",
+                                ctx.format(&var.name, SemanticColor::Variable),
+                                ctx.format("->", SemanticColor::Operator),
+                                ctx.format(&field_name, SemanticColor::Variable)
+                            )
+                        } else {
+                            format!("{}{}", ctx.fmt_star(), expr.pretty_print_with_context(ctx))
+                        }
+                    }
+                    // Other binary ops like *(s - offset)
+                    HlrExpression::BinaryOp { .. } => {
+                        format!(
+                            "{}{}{}{}",
+                            ctx.fmt_star(),
+                            ctx.fmt_open_paren(),
+                            expr.pretty_print_with_context(ctx),
+                            ctx.fmt_close_paren()
+                        )
+                    }
+                    // Fallback to original behavior
+                    _ => format!("{}{}", ctx.fmt_star(), expr.pretty_print_with_context(ctx)),
                 }
-                _ => format!("{}{}", ctx.fmt_star(), expr.pretty_print_with_context(ctx)),
             },
             HlrExpression::StaticFunctionReference(name) => {
                 format!("{}", ctx.format(name, SemanticColor::Variable))
@@ -234,6 +300,39 @@ impl ContextualPrettyPrint for HlrExpression {
         }
     }
 }
+
+/// Helper function to get field name for struct pointer dereference
+fn get_field_name_for_deref(
+    ctx: &GenericFormattingContext<TypeInferenceResult>,
+    pointer_type: &Type,
+    offset: usize,
+) -> Option<String> {
+    // Check if this is a pointer to a struct
+    if let Type::Pointer(pointee_type) = pointer_type {
+        if let Type::Struct(struct_id) = pointee_type.as_ref() {
+            // Look up the struct definition in UserDefs
+            if let Some(struct_def) = ctx.data.user_defs.get_struct(*struct_id) {
+                // Get the field name at the given offset
+                if let Some(field) = struct_def.fields.get(offset) {
+                    return Some(field.name.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Helper function to find function ID by function name
+fn find_function_id_by_name(
+    ctx: &GenericFormattingContext<TypeInferenceResult>,
+    name: &str,
+) -> Option<crate::disasm::v3::FunctionId> {
+    ctx.data.user_defs.get_functions()
+        .iter()
+        .find(|(_, function_symbol)| function_symbol.name() == name)
+        .map(|(function_id, _)| *function_id)
+}
+
 
 fn format_type(type_info: &crate::disasm::v3::type_inference::Type, ctx: &FormattingContext) -> String {
     ctx.format(type_info.display_with(ctx.data), SemanticColor::Type).to_string()

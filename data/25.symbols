@@ -17,12 +17,17 @@ G  512  LAUNCHED_TO_SPACE
 G  826  YOU_MAY_PROCEED
 G 1090  ON_THE_KEYPAD
 
+
 XPHI  2329 [R-1]_3
 XPHI  2173 [R-1]_4
 
 T EncodedString
 
 S GameThing { a: Int, msg: Pointer<EncodedString>, c, d }
+
+S Location { text1: Pointer<EncodedString>, text2: Pointer<EncodedString>, func }
+
+G 1128 current_location Pointer<Location>
 
 G 4601 things Array<13;GameThing>
 
