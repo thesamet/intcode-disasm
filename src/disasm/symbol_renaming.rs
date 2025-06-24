@@ -237,6 +237,10 @@ impl UserDefs {
         self.globals.get(&addr).map(|(name, _)| name)
     }
 
+    pub fn globals(&self) -> &HashMap<usize, (String, Option<Type>)> {
+        &self.globals
+    }
+
     pub fn struct_by_name(&self, name: &str) -> Option<(&StructId, &StructDef)> {
         self.struct_definitions.iter().find(|(_, s)| s.name == name)
     }

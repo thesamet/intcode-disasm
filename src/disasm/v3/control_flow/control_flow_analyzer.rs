@@ -18,10 +18,11 @@ use crate::disasm::v3::lir::{
 use crate::disasm::v3::model::{HlrConstructionComplete, Model, VariableMergerComplete};
 use crate::disasm::v3::ssa::types::VersionableMemoryKind;
 use crate::disasm::v3::ssa::{SsaMemoryReference, VersionedMemoryReference};
-use crate::disasm::v3::type_inference::Type;
+use crate::disasm::v3::type_inference::{Type, StructDef};
 use crate::disasm::v3::variable_analyzer::ClusterId;
 use crate::disasm::v3::{BlockId, FunctionId, InstructionId, NextKind};
 use crate::disasm::Error;
+use crate::disasm::symbol_renaming::{StructId, UserDefs};
 
 type Function<'a> = FunctionView<'a, VariableMergerComplete>;
 
@@ -104,6 +105,45 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
         } else {
             value as usize
         };
+        
+        // Check if this address is defined as a global array in UserDefs
+        if let Some((global_name, Some(global_type))) = self.model.user_defs().globals().get(&addr) {
+            if let Type::Array { len, elem_type } = global_type {
+                let image = &self.model.image_scanner_result().image;
+                let array_expr = match elem_type.as_ref() {
+                    Type::Struct(struct_id) => {
+                        create_struct_array_expression(
+                            addr,
+                            *len,
+                            *struct_id,
+                            image,
+                            self.model.user_defs(),
+                        )
+                    }
+                    Type::Int => {
+                        create_int_array_expression(addr, *len, image)
+                    }
+                    _ => {
+                        // For other types, show a generic representation
+                        HlrExpression::String(format!("[/* Array<{}; {:?}> */]", len, elem_type))
+                    }
+                };
+                
+                self.globals.insert(
+                    addr,
+                    (
+                        HlrVariable {
+                            name: global_name.clone(),
+                            type_info: global_type.clone(),
+                            scope: Scope::Global,
+                        },
+                        array_expr,
+                    ),
+                );
+                return Ok(());
+            }
+        }
+        
         if let Some(Type::CustomType(ct_id)) = typ.as_pointer() {
             let ct_name = self.model.user_defs().get_custom_type(*ct_id).unwrap();
             let image = &self.model.image_scanner_result().image;
@@ -128,6 +168,45 @@ impl<'a> ExpressionPathVisitor<SsaMemoryReference> for GlobalVariableDiscovery<'
                         scope: Scope::Global,
                     },
                     HlrExpression::String(r),
+                ),
+            );
+        } else if let Type::Array { len, elem_type } = &typ {
+            let image = &self.model.image_scanner_result().image;
+            let name = self
+                .model
+                .user_defs()
+                .get_global(addr)
+                .cloned()
+                .unwrap_or_else(|| format!("Array_{}", addr));
+            
+            let array_expr = match elem_type.as_ref() {
+                Type::Struct(struct_id) => {
+                    create_struct_array_expression(
+                        addr,
+                        *len,
+                        *struct_id,
+                        image,
+                        self.model.user_defs(),
+                    )
+                }
+                Type::Int => {
+                    create_int_array_expression(addr, *len, image)
+                }
+                _ => {
+                    // For other types, show a generic representation
+                    HlrExpression::String(format!("[/* Array<{}; {:?}> */]", len, elem_type))
+                }
+            };
+            
+            self.globals.insert(
+                addr,
+                (
+                    HlrVariable {
+                        name,
+                        type_info: typ.clone(),
+                        scope: Scope::Global,
+                    },
+                    array_expr,
                 ),
             );
         }
@@ -884,6 +963,135 @@ impl ControlFlowStructureAnalyzer {
         }
         HlrExpression::Constant(c, typ)
     }
+}
+
+/// Create a structured HLR expression for a struct array using actual memory data
+fn create_struct_array_expression(
+    base_addr: usize,
+    len: usize,
+    struct_id: StructId,
+    image: &[i128],
+    user_defs: &UserDefs,
+) -> HlrExpression {
+    let Some(struct_def) = user_defs.get_struct(struct_id) else {
+        return HlrExpression::String(format!("[/* Unknown struct {:?} */]", struct_id));
+    };
+    
+    let mut result = String::new();
+    result.push_str("[\n");
+    
+    for i in 0..len {
+        if i > 0 {
+            result.push_str(",\n");
+        }
+        
+        let struct_addr = base_addr + i * struct_def.fields.len();
+        result.push_str("    ");
+        result.push_str(&format_struct_instance(struct_addr, struct_def, image, user_defs));
+    }
+    
+    result.push_str("\n]");
+    HlrExpression::String(result)
+}
+
+fn create_int_array_expression(
+    base_addr: usize,
+    len: usize,
+    image: &[i128],
+) -> HlrExpression {
+    let mut result = String::new();
+    result.push('[');
+    
+    for i in 0..len {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        
+        if base_addr + i < image.len() {
+            result.push_str(&image[base_addr + i].to_string());
+        } else {
+            result.push_str(&format!("/* out of bounds: addr {} */", base_addr + i));
+        }
+    }
+    
+    result.push(']');
+    HlrExpression::String(result)
+}
+
+/// Format a single struct instance with proper indentation
+fn format_struct_instance(
+    struct_addr: usize,
+    struct_def: &StructDef,
+    image: &[i128],
+    user_defs: &UserDefs,
+) -> String {
+    let mut result = String::new();
+    result.push_str("{\n");
+    
+    for (field_idx, field) in struct_def.fields.iter().enumerate() {
+        if field_idx > 0 {
+            result.push_str(",\n");
+        }
+        
+        let field_addr = struct_addr + field_idx;
+        let field_value = image.get(field_addr).copied().unwrap_or(0);
+        let formatted_value = format_field_value(field_value, &field.typ, image, user_defs);
+        
+        result.push_str(&format!("        {}: {}", field.name, formatted_value));
+    }
+    
+    result.push_str("\n    }");
+    result
+}
+
+/// Format a field value based on its type
+fn format_field_value(
+    field_value: i128,
+    field_type: &Option<Type>,
+    image: &[i128],
+    user_defs: &UserDefs,
+) -> String {
+    let Some(Type::Pointer(inner_type)) = field_type else {
+        return field_value.to_string();
+    };
+    
+    let Type::CustomType(custom_type_id) = inner_type.as_ref() else {
+        return field_value.to_string();
+    };
+    
+    let Some(type_name) = user_defs.get_custom_type(*custom_type_id) else {
+        return field_value.to_string();
+    };
+    
+    if type_name != "EncodedString" {
+        return field_value.to_string();
+    }
+    
+    if field_value <= 0 || field_value as usize >= image.len() {
+        return field_value.to_string();
+    }
+    
+    format_encoded_string_shared(field_value as usize, image)
+}
+
+/// Shared function for formatting EncodedString (can be reused by pretty_print.rs)
+fn format_encoded_string_shared(addr: usize, image: &[i128]) -> String {
+    if addr >= image.len() {
+        return "\"\"".to_string();
+    }
+    
+    let len = image[addr] as usize;
+    if addr + len >= image.len() {
+        return "\"\"".to_string();
+    }
+    
+    let chars: String = image[(addr + 1)..(addr + len + 1)]
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| (x + len as i128 + i as i128) as u8 as char)
+        .collect();
+    
+    format!("\"{}\"", chars.escape_default())
 }
 
 /*

@@ -46,6 +46,7 @@ async fn fetch_analysis_from_server() -> Result<AnalysisResult, String> {
 
     Ok(AnalysisResult {
         functions,
+        globals: server_response.result.globals,
         type_variables: vec![], // TODO: Add real type variable data
         constraints: vec![],    // TODO: Add real constraint data
     })
@@ -54,7 +55,7 @@ async fn fetch_analysis_from_server() -> Result<AnalysisResult, String> {
 #[component]
 pub fn FunctionPage() -> impl IntoView {
     let (analysis_result, set_analysis_result) = create_signal(None::<AnalysisResult>);
-    let (show_ssa, set_show_ssa) = create_signal(true);
+    let (show_ssa, set_show_ssa) = create_signal(false); // Default to HLR view
     let (loading, set_loading) = create_signal(true);
     let (error, set_error) = create_signal(None::<String>);
 
@@ -127,7 +128,7 @@ pub fn FunctionPage() -> impl IntoView {
                                                     scroll_to_function(func_id);
                                                 }
                                             >
-                                                {func.name} " (" {func.instruction_count} " instructions)"
+                                                {func.name}
                                             </a>
                                         </li>
                                     }
@@ -139,6 +140,17 @@ pub fn FunctionPage() -> impl IntoView {
 
                 <main class="function-content">
                     <Show when=move || analysis_result.get().is_some()>
+                        // Show globals section first
+                        <div class="globals-section">
+                            <h2>"Global Variables"</h2>
+                            <div class="code-view">
+                                <pre class="code-block">
+                                    <code inner_html=move || analysis_result.get().map(|r| r.globals.clone()).unwrap_or_default()>
+                                    </code>
+                                </pre>
+                            </div>
+                        </div>
+                        
                         <div class="all-functions">
                             <For
                                 each=move || analysis_result.get().map(|r| r.functions).unwrap_or_default()
@@ -148,10 +160,6 @@ pub fn FunctionPage() -> impl IntoView {
                                         <div class="function-section" id=format!("function-{}", func.id)>
                                             <div class="function-header">
                                                 <h2>{func.name.clone()}</h2>
-                                                <div class="function-stats">
-                                                    <span class="stat-label">"Instructions: "</span>
-                                                    <span class="stat-value">{func.instruction_count}</span>
-                                                </div>
                                             </div>
 
                                             <div class="code-view">

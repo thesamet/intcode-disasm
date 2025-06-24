@@ -15,6 +15,7 @@ thiserror = "2.0"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 disasm = { path = "../.." }
 log = "0.4"
+itertools = "0.14"
 
 # WASM support
 [target.'cfg(target_arch = "wasm32")'.dependencies]

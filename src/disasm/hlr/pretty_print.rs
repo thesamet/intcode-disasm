@@ -169,9 +169,17 @@ impl ContextualPrettyPrint for HlrExpression {
             }
             HlrExpression::FunctionCall(func_expr, args) => {
                 let func_name = match &**func_expr {
-                    HlrExpression::Constant(id, _) => ctx
-                        .format(format!("fu{id}"), SemanticColor::Function)
-                        .to_string(),
+                    HlrExpression::Constant(id, _) => {
+                        // Try to get function name from UserDefs, fallback to fu{id}
+                        let function_id = crate::disasm::v3::FunctionId::new(*id as usize);
+                        let name = ctx
+                            .data
+                            .user_defs
+                            .get_function_name(function_id)
+                            .cloned()
+                            .unwrap_or_else(|| format!("fu{id}"));
+                        ctx.format(name, SemanticColor::Function).to_string()
+                    }
                     _ => func_expr.pretty_print_with_context(ctx),
                 };
 
@@ -211,10 +219,17 @@ impl ContextualPrettyPrint for HlrExpression {
                 )
             }
             HlrExpression::String(s) => {
-                format!(
-                    "\"{}\"",
-                    ctx.format(s.escape_default(), SemanticColor::Constant)
-                )
+                // Check if this is array data representation (starts with [)
+                if s.starts_with('[') {
+                    // This is array data representation, don't quote it
+                    ctx.format(s, SemanticColor::Constant).to_string()
+                } else {
+                    // Regular string, quote it
+                    format!(
+                        "\"{}\"",
+                        ctx.format(s.escape_default(), SemanticColor::Constant)
+                    )
+                }
             }
         }
     }
@@ -231,6 +246,7 @@ fn format_variable_decl(var: &HlrVariable, ctx: &FormattingContext) -> String {
         format_type(&var.type_info, ctx)
     )
 }
+
 // Implement ContextualPrettyPrint for statements
 impl ContextualPrettyPrint for HlrStatement {
     type T = TypeInferenceResult;

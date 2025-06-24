@@ -3222,6 +3222,7 @@ name = "web-bridge"
 version = "0.1.0"
 dependencies = [
  "disasm",
+ "itertools 0.14.0",
  "js-sys",
  "log",
  "serde",

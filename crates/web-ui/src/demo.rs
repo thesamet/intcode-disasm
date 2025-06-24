@@ -57,6 +57,10 @@ halt()"#.to_string(),
                 instruction_count: 8,
             }
         ],
+        globals: r#"// Demo global variables
+static DEMO_CONSTANT: Int = 42
+static BUFFER_SIZE: Int = 1024
+static STATUS_FLAG: Bool = false"#.to_string(),
         type_variables: vec![], // TODO: Add real type variable data
         constraints: vec![],    // TODO: Add real constraint data
     }

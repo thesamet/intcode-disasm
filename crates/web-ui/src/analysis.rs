@@ -5,6 +5,7 @@ use web_bridge::analyze_program_for_web;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisResult {
     pub functions: Vec<FunctionInfo>,
+    pub globals: String,
     pub type_variables: Vec<TypeVarInfo>,
     pub constraints: Vec<ConstraintInfo>,
 }
@@ -82,6 +83,7 @@ pub fn analyze_program(program: Vec<i128>) -> Result<AnalysisResult, String> {
     
     Ok(AnalysisResult {
         functions,
+        globals: web_result.globals,
         // TODO: Extract real type variables and constraints from analysis
         type_variables: vec![], // Placeholder for now
         constraints: vec![],     // Placeholder for now

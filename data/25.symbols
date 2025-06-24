@@ -22,9 +22,9 @@ XPHI  2173 [R-1]_4
 
 T EncodedString
 
-S GameThing { a, msg: Pointer<EncodedString>, c, d }
+S GameThing { a: Int, msg: Pointer<EncodedString>, c, d }
 
-G 4061 things Array<13;GameThing>
+G 4601 things Array<13;GameThing>
 
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
@@ -33,8 +33,12 @@ F 1174 length_encoded_foreach(array, mapper)
 V 1174 [R-2]_1 length
 V 1174 [R-3]_1 index
 
+F 0 init
+
 F 1234 print_encoded_string(encoded_string)
 V 1234 [R-1]_0 str Pointer<EncodedString>
+
+V 1310 [R+1]_1 Array<13;GameThing>
 
 F 1256 output_sum(a, b, c)
 F 1796 finished

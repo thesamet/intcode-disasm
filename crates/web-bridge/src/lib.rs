@@ -22,6 +22,7 @@ pub enum BridgeError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebAnalysisResult {
     pub functions: Vec<WebFunction>,
+    pub globals: String, // Formatted globals section
     pub program_size: usize,
     pub analysis_complete: bool,
 }
@@ -84,18 +85,28 @@ pub fn analyze_program_for_web_with_symbols(program: Vec<i128>, symbols_content:
         let instruction_count = function_info.map(|f| f.instructions.len()).unwrap_or(0);
         let entry_point = function_info.map(|f| f.instructions[0].span.start).unwrap_or(0);
         
+        // Try to get the function name from UserDefs, fallback to default naming
+        let function_name = model.user_defs()
+            .get_function_name(function_id)
+            .cloned()
+            .unwrap_or_else(|| format!("function_{}", function_id.index()));
+
         functions.push(WebFunction {
             id: function_id.index() as u32, // Extract the numeric value
-            name: format!("function_{}", function_id.index()),
+            name: function_name,
             ssa_folded_code: ssa_code,
             hlr_code,
             instruction_count,
             entry_point,
         });
     }
+
+    // Extract globals from HLR program
+    let globals = format_globals_from_hlr(&model);
     
     Ok(WebAnalysisResult {
         functions,
+        globals,
         program_size: program.len(),
         analysis_complete: true,
     })
@@ -123,9 +134,80 @@ pub fn analyze_program_for_web(program: Vec<i128>) -> Result<WebAnalysisResult, 
                 entry_point: 0,
             }
         ],
+        globals: "// Mock globals for WASM\n// Real analysis would run on server".to_string(),
         program_size: program.len(),
         analysis_complete: false, // Indicate this is mock data
     })
+}
+
+// Helper function to format globals from HLR model
+#[cfg(not(target_arch = "wasm32"))]
+fn format_globals_from_hlr(model: &disasm::disasm::v3::model::Model<disasm::disasm::v3::model::HlrConstructionComplete>) -> String {
+    use disasm::disasm::v3::common::formatting::ContextualPrettyPrint;
+    use disasm::disasm::v3::common::formatting::pretty_print_framework::PrettyPrintConfig;
+    use disasm::disasm::v3::common::formatting::colors::SemanticColor;
+    use disasm::disasm::v3::common::formatting::pretty_print_framework::GenericFormattingContext;
+    use itertools::Itertools;
+    
+    // Use the pretty print system with web CSS output
+    let config = PrettyPrintConfig::default()
+        .with_web_css_output(true) // Enable CSS class output for web
+        .with_no_colors(); // Disable ANSI colors for web output
+    
+    // Get the HLR program and format globals
+    let hlr_program = model.hlr_program();
+    let ctx = GenericFormattingContext::new_with_data(&config, model.type_inference_result());
+    
+    // Format HLR detected globals
+    let hlr_globals_output = hlr_program
+        .globals
+        .iter()
+        .sorted_by_key(|(addr, _)| *addr)
+        .map(|(_, (var, value))| {
+            let type_info = var.type_info.display_with(ctx.data);
+            format!(
+                "{} {}: {} = {}",
+                ctx.format("static", SemanticColor::Keyword),
+                ctx.format(&var.name, SemanticColor::Variable),
+                ctx.format(&type_info, SemanticColor::Type),
+                value.pretty_print_with_context(&ctx)
+            )
+        })
+        .collect::<Vec<_>>();
+    
+    // Format UserDefs globals that aren't already in HLR globals
+    let user_defs = &model.type_inference_result().user_defs;
+    let hlr_addresses: std::collections::HashSet<usize> = hlr_program.globals.keys().copied().collect();
+    
+    let mut userdef_globals_output = Vec::new();
+    for (addr, (name, opt_type)) in user_defs.globals().iter().sorted_by_key(|(addr, _)| *addr) {
+        if !hlr_addresses.contains(addr) {
+            let type_str = if let Some(typ) = opt_type {
+                format!("{}", typ.display_with(ctx.data))
+            } else {
+                "Pointer<EncodedString>".to_string() // Default for undefined globals
+            };
+            
+            userdef_globals_output.push(format!(
+                "{} {}: {} = {}",
+                ctx.format("static", SemanticColor::Keyword),
+                ctx.format(name, SemanticColor::Variable),
+                ctx.format(&type_str, SemanticColor::Type),
+                ctx.format("&lt;unknown&gt;", SemanticColor::LowPrio)
+            ));
+        }
+    }
+    
+    // Combine HLR and UserDefs globals
+    let mut all_globals = hlr_globals_output;
+    all_globals.extend(userdef_globals_output);
+    let globals_output = all_globals.join("\n");
+    
+    if globals_output.is_empty() {
+        "// No global variables defined".to_string()
+    } else {
+        globals_output
+    }
 }
 
 // Helper function to format folded SSA for a function using hierarchical access
