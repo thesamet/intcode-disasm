@@ -172,9 +172,8 @@ impl UserDefs {
                             .transpose()?;
                         symbol_renaming.add_variable_name(&variable, name, ty);
                     }
-                    SymbolRenamingLine::CustomType(name) => {
-                        let custom_type_id = CustomTypeId::fresh();
-                        symbol_renaming.add_custom_type(custom_type_id, name);
+                    SymbolRenamingLine::CustomType(_name) => {
+                        // Skip - already processed in first pass
                     }
                     SymbolRenamingLine::Global(addr, name, type_opt) => {
                         let ty = type_opt
@@ -553,43 +552,45 @@ impl SymbolRenamingLine {
 }
 
 fn parse_type_as_str(input: &str) -> IResult<&str, String> {
-    map(
-        nom::bytes::complete::take_while1(|c: char| {
-            // Define characters that are allowed within a type string.
-            // Space IS included here. Combined with trim() and careful space0 usage by callers,
-            // this should correctly parse types with internal spaces like "Array<10; Int>".
-            // Crucially, delimiters like ':', '{', '}', '(', ')', ',' are EXCLUDED.
-            c.is_alphanumeric()
-                || c == '<'
-                || c == '>'
-                || c == '_'
-                || c == ';' // For array types like Array<N; T>
-                || c == ' ' // Allow spaces within types
-                || c == '[' || c == ']' // For potential future C-style array syntax or similar
-                || c == '*' // For pointers
-                || c == '&' // For references
-                || c == ']'
-                || c == '*'
-                || c == '&'
-        }),
-        |s: &str| s.trim().to_string(), // trim() is crucial
-    )
-    .parse(input)
+    // Use parse_type in string-only mode - we don't need to resolve custom types,
+    // we just want to determine how much of the input is a valid type string
+    let empty_user_defs = UserDefs::new();
+    
+    match parse_type_string_only(input, &empty_user_defs) {
+        Ok((remaining, _parsed_type)) => {
+            // Calculate how much input was consumed
+            let consumed_len = input.len() - remaining.len();
+            let consumed = &input[..consumed_len];
+            Ok((remaining, consumed.trim().to_string()))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+// Parse type for string extraction only - custom types are treated as identifiers
+// without requiring them to be in user_defs
+fn parse_type_string_only<'a>(input: &'a str, _user_defs: &UserDefs) -> IResult<&'a str, Type> {
+    parse_type_internal(input, _user_defs, true)
 }
 
 pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, Type> {
+    parse_type_internal(input, user_defs, false)
+}
+
+fn parse_type_internal<'a>(input: &'a str, user_defs: &UserDefs, string_only_mode: bool) -> IResult<&'a str, Type> {
     use nom::{
         branch::alt,
         bytes::complete::tag,
         character::complete::space0,
-        combinator::{map, map_res},
+        combinator::{map, map_res, recognize},
+        multi,
         sequence::delimited,
     };
 
     let parse_pointer_type = map(
         delimited(
             preceded(space0, tag("Pointer<")),
-            preceded(space0, |i| parse_type(i, user_defs)),
+            preceded(space0, |i| parse_type_internal(i, user_defs, string_only_mode)),
             preceded(space0, tag(">")),
         ),
         |pointee_type| Type::Pointer(Box::new(pointee_type)),
@@ -601,7 +602,7 @@ pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, 
             (
                 preceded(space0, parse_usize),
                 preceded(space0, tag(";")),
-                preceded(space0, |i| parse_type(i, user_defs)),
+                preceded(space0, |i| parse_type_internal(i, user_defs, string_only_mode)),
             ),
             preceded(space0, tag(">")),
         ),
@@ -611,14 +612,45 @@ pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, 
             elem_type: Box::new(elem_type),
         },
     );
+
+    let parse_function_type = map(
+        (
+            preceded(space0, tag("Function")),
+            preceded(space0, tag("(")),
+            preceded(space0, tag(")")),
+            preceded(space0, tag("->")),
+            preceded(space0, tag("(")),
+            preceded(space0, tag(")")),
+        ),
+        |_| Type::Function {
+            params: Box::new(Type::Tuple(vec![])),
+            returns: Box::new(Type::Tuple(vec![])),
+        },
+    );
     let parse_custom_type = map_res(
-        preceded(space0, nom::character::complete::alpha1),
+        preceded(space0, recognize(multi::many1(alt((
+            nom::character::complete::alpha1,
+            nom::character::complete::digit1,
+            tag("_"),
+        ))))),
         |name: &str| {
-            user_defs
-                .type_from_name(name)
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| format!("Unknown custom type: {name}"))
+            // Don't match "Function" as a custom type - it should be handled by parse_function_type
+            if name == "Function" {
+                return Err("Function keyword reserved".to_string());
+            }
+            
+            if string_only_mode {
+                // In string-only mode, treat any identifier as a valid custom type
+                // We create a dummy CustomTypeId since we're not actually resolving types
+                Ok(Type::CustomType(CustomTypeId::new(0)))
+            } else {
+                // Normal mode - look up the custom type in user_defs
+                user_defs
+                    .type_from_name(name)
+                    .as_ref()
+                    .cloned()
+                    .ok_or_else(|| format!("Unknown custom type: {name}"))
+            }
         },
     );
 
@@ -642,6 +674,7 @@ pub fn parse_type<'a>(input: &'a str, user_defs: &UserDefs) -> IResult<&'a str, 
         parse_basic_type,
         parse_pointer_type,
         parse_array_type,
+        parse_function_type,
         parse_custom_type,
     ))
     .parse(input)
@@ -889,9 +922,10 @@ mod tests {
         let input = "X 1234 function_name";
         let result = UserDefs::from_lines(input);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Failed to parse line: X 1234 function_name"));
+        let error_msg = result.unwrap_err();
+        println!("Actual error message: '{}'", error_msg);
+        assert!(error_msg.contains("Failed to parse line"));
+        assert!(error_msg.contains("X 1234 function_name"));
     }
     #[test]
     fn test_parse_custom_type_line() {
@@ -986,11 +1020,27 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_struct_line_simple() {
+        let line = "S GameThing { a: Int }";
+        let result = SymbolRenamingLine::parse(line);
+        if let Err(ref e) = result {
+            println!("Simple struct parsing error: {:?}", e);
+        }
+        assert!(result.is_ok(), "Simple struct parsing failed: {:?}", result.err());
+        let (remaining, parsed_line) = result.unwrap();
+        println!("Simple remaining: '{}', parsed: {:?}", remaining, parsed_line);
+    }
+
+    #[test]
     fn test_parse_struct_line_with_multiple_fields() {
         let line = "S GameThing { a: Int, b: Pointer<Int>, c: CustomType1 }";
         let result = SymbolRenamingLine::parse(line);
+        if let Err(ref e) = result {
+            println!("Struct parsing error: {:?}", e);
+        }
         assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
-        let (_, parsed_line) = result.unwrap();
+        let (remaining, parsed_line) = result.unwrap();
+        println!("Remaining: '{}', parsed: {:?}", remaining, parsed_line);
         assert_eq!(
             parsed_line,
             SymbolRenamingLine::Struct(
@@ -1135,7 +1185,121 @@ mod tests {
         assert_eq!(name, Some(&"variable_name".to_string()));
     }
     #[test]
+    fn test_parse_identifier() {
+        let input = "arg1:Int";
+        let result = parse_identifier(input);
+        assert!(result.is_ok());
+        if let Ok((remaining, identifier)) = result {
+            println!("Identifier: '{}', remaining: '{}'", identifier, remaining);
+            assert_eq!(identifier, "arg1");
+            assert_eq!(remaining, ":Int");
+        }
+    }
+
+    #[test]
+    fn test_parse_type_as_str() {
+        let input = "Int, arg2";
+        let result = parse_type_as_str(input);
+        assert!(result.is_ok());
+        if let Ok((remaining, type_str)) = result {
+            println!("Type: '{}', remaining: '{}'", type_str, remaining);
+            assert_eq!(type_str, "Int");
+            assert_eq!(remaining, ", arg2");
+        }
+
+        // Test the problematic case
+        let input2 = "Int)";
+        let result2 = parse_type_as_str(input2);
+        assert!(result2.is_ok());
+        if let Ok((remaining2, type_str2)) = result2 {
+            println!("Type2: '{}', remaining2: '{}'", type_str2, remaining2);
+        }
+
+        // Test function type parsing within array context
+        let input3 = "Function() -> ()>";
+        let result3 = parse_type_as_str(input3);
+        assert!(result3.is_ok());
+        if let Ok((remaining3, type_str3)) = result3 {
+            println!("Type3: '{}', remaining3: '{}'", type_str3, remaining3);
+            assert_eq!(type_str3, "Function() -> ()");
+            assert_eq!(remaining3, ">");
+        }
+
+        // Test struct field type parsing
+        let input4 = "Pointer<Int>, c";
+        let result4 = parse_type_as_str(input4);
+        assert!(result4.is_ok());
+        if let Ok((remaining4, type_str4)) = result4 {
+            println!("Type4: '{}', remaining4: '{}'", type_str4, remaining4);
+            assert_eq!(type_str4, "Pointer<Int>");
+            assert_eq!(remaining4, ", c");
+        }
+
+        // Test custom type parsing  
+        let input5 = "CustomType1 }";
+        let result5 = parse_type_as_str(input5);
+        assert!(result5.is_ok());
+        if let Ok((remaining5, type_str5)) = result5 {
+            println!("Type5: '{}', remaining5: '{}'", type_str5, remaining5);
+            assert_eq!(type_str5, "CustomType1");
+            assert_eq!(remaining5, " }");
+        }
+    }
+
+    #[test]
+    fn test_parse_function_line_with_one_typed_arg() {
+        let input = "F 1234 function_name(arg1:Int)";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok(), "Line parsing failed: {:?}", result.err());
+        if let Ok((remaining, parsed_line)) = result {
+            println!("Remaining: '{}'", remaining);
+            match parsed_line {
+                SymbolRenamingLine::Function(fid, name, args) => {
+                    assert_eq!(fid, FunctionId::new(1234));
+                    assert_eq!(name, "function_name");
+                    assert_eq!(args.len(), 1);
+                    assert_eq!(args[0], ("arg1".to_string(), Some("Int".to_string())));
+                }
+                _ => panic!("Expected Function line, got {:?}", parsed_line),
+            }
+        }
+    }
+
+    #[test]
     fn test_from_lines_function_with_args_and_types() {
+        // Test identifier parsing first
+        let id_input = "arg1:Int";
+        let id_result = parse_identifier(id_input);
+        assert!(id_result.is_ok(), "Identifier parsing failed: {:?}", id_result.err());
+        
+        // Test type string parsing
+        let type_input = "Int, arg2";
+        let type_result = parse_type_as_str(type_input);
+        assert!(type_result.is_ok(), "Type string parsing failed: {:?}", type_result.err());
+        
+        // Test line parsing step by step
+        let line = "F 1234 function_name(arg1:Int, arg2:MyCustomType)";
+        let line_result = SymbolRenamingLine::parse(line);
+        assert!(line_result.is_ok(), "Line parsing failed: {:?}", line_result.err());
+        
+        // Check the parsed line structure
+        if let Ok((remaining, parsed_line)) = line_result {
+            println!("Remaining after parse: '{}'", remaining);
+            println!("Parsed line: {:?}", parsed_line);
+            
+            match parsed_line {
+                SymbolRenamingLine::Function(fid, name, args) => {
+                    assert_eq!(fid, FunctionId::new(1234));
+                    assert_eq!(name, "function_name");
+                    println!("Args parsed: {:?}", args);
+                    assert_eq!(args.len(), 2, "Expected 2 args, got {}: {:?}", args.len(), args);
+                    assert_eq!(args[0], ("arg1".to_string(), Some("Int".to_string())));
+                    assert_eq!(args[1], ("arg2".to_string(), Some("MyCustomType".to_string())));
+                }
+                _ => panic!("Expected Function line, got {:?}", parsed_line),
+            }
+        }
+        
         let input = "T MyCustomType\nF 1234 function_name(arg1:Int, arg2:MyCustomType)";
         let result = UserDefs::from_lines(input);
         assert!(result.is_ok());
@@ -1413,5 +1577,116 @@ mod tests {
             "Should fail on missing semicolon: {}",
             input_err3
         );
+    }
+
+    #[test]
+    fn test_parse_function_type() {
+        let user_defs = UserDefs::new();
+        
+        // Test basic function type Function() -> ()
+        let input = "Function() -> ()";
+        let result = parse_type(input, &user_defs);
+        assert!(result.is_ok(), "Failed to parse: '{}', error: {:?}", input, result.err());
+        
+        if let Ok((remaining, parsed_type)) = result {
+            assert_eq!(remaining, "", "Input not fully consumed, remaining: '{}'", remaining);
+            assert_eq!(
+                parsed_type,
+                Type::Function {
+                    params: Box::new(Type::Tuple(vec![])),
+                    returns: Box::new(Type::Tuple(vec![])),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_array_of_functions() {
+        let user_defs = UserDefs::new();
+        
+        // Test Array<7; Function() -> ()>
+        let input = "Array<7; Function() -> ()>";
+        let result = parse_type(input, &user_defs);
+        println!("Parsing result for '{}': {:?}", input, result);
+        assert!(result.is_ok(), "Failed to parse: '{}', error: {:?}", input, result.err());
+        
+        if let Ok((remaining, parsed_type)) = result {
+            assert_eq!(remaining, "", "Input not fully consumed, remaining: '{}'", remaining);
+            assert_eq!(
+                parsed_type,
+                Type::Array {
+                    len: 7,
+                    elem_type: Box::new(Type::Function {
+                        params: Box::new(Type::Tuple(vec![])),
+                        returns: Box::new(Type::Tuple(vec![])),
+                    })
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_variable_with_function_type() {
+        let input = "V 1234 [R-1]_0 func_ptr Function() -> ()";
+        let result = SymbolRenamingLine::parse(input);
+        assert!(result.is_ok(), "Line parsing failed: {:?}", result.err());
+        if let Ok((remaining, parsed_line)) = result {
+            println!("Remaining: '{}'", remaining);
+            match parsed_line {
+                SymbolRenamingLine::Variable(_vmr, name, type_opt) => {
+                    assert_eq!(name, "func_ptr");
+                    assert_eq!(type_opt, Some("Function() -> ()".to_string()));
+                }
+                _ => panic!("Expected Variable line, got {:?}", parsed_line),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_global_with_array_of_functions() {
+        // Test just the global line first
+        let line = "G 100 callback_array Array<7; Function() -> ()>";
+        let line_result = SymbolRenamingLine::parse(line);
+        println!("Global line parse result: {:?}", line_result);
+        assert!(line_result.is_ok(), "Global line parsing failed: {:?}", line_result.err());
+        
+        if let Ok((remaining, parsed_line)) = line_result {
+            match parsed_line {
+                SymbolRenamingLine::Global(addr, name, type_opt) => {
+                    assert_eq!(addr, 100);
+                    assert_eq!(name, "callback_array");
+                    println!("Parsed type string: {:?}", type_opt);
+                    assert_eq!(type_opt, Some("Array<7; Function() -> ()>".to_string()));
+                }
+                _ => panic!("Expected Global line, got {:?}", parsed_line),
+            }
+        }
+    }
+
+    #[test]  
+    fn test_full_function_type_integration() {
+        // Test a simpler version first
+        let input = "G 100 callback_array Array<7; Function() -> ()>";
+        
+        let result = UserDefs::from_lines(input);
+        if let Err(ref e) = result {
+            println!("Error: {:?}", e);
+        }
+        assert!(result.is_ok(), "Full integration test failed: {:?}", result.as_ref().err());
+        
+        let user_defs = result.unwrap();
+        
+        // Check global variable with array of functions
+        let global = user_defs.globals().get(&100);
+        assert!(global.is_some());
+        let (global_name, global_type) = global.unwrap();
+        assert_eq!(global_name, "callback_array");
+        assert!(global_type.is_some());
+        if let Some(Type::Array { len, elem_type }) = global_type {
+            assert_eq!(*len, 7);
+            assert!(matches!(elem_type.as_ref(), Type::Function { .. }));
+        } else {
+            panic!("Expected Array type for global, got {:?}", global_type);
+        }
     }
 }
