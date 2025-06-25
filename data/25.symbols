@@ -74,6 +74,10 @@ F 1872 game_over_grue
 F 1353 print_item(item: Pointer<Item>)
 V 1353 [R+1]_1 str Pointer<EncodedString>
 F 1664 f1664(s: Pointer<Item>)
+
+G 1901 NEW_ARR Array<30; Int>
+
+G 1934 FUNCS Array<7;Int>
 F 2329 f2329(s: Pointer<Item>)
 F 2173 f2173(s: Pointer<Item>)
 

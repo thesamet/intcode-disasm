@@ -9,7 +9,7 @@ use crate::disasm::v3::lir::{Expression, Instruction}; // Assuming InstructionNo
 use crate::disasm::v3::model::{FoldedSsaComplete, FunctionCallAnalysisComplete, Model};
 use crate::disasm::v3::ssa::types::SsaMemoryReference;
 use crate::disasm::v3::ssa::VersionedMemoryReference;
-use crate::disasm::v3::BlockId;
+use crate::disasm::v3::{BlockId, NextKind};
 // For InstructionNode<SsaMemoryReference>
 use crate::disasm::Error;
 
@@ -63,6 +63,7 @@ impl FoldedSsaBuilder {
                 block.block_id(),
                 FoldedSsaBlock {
                     instructions: block.ssa().instructions.clone(),
+                    next: block.ssa().next.clone(),
                 },
             );
         }
@@ -119,6 +120,24 @@ impl FoldedSsaBuilder {
                 else {
                     continue;
                 };
+                
+                // Don't eliminate if this looks like a loop counter increment
+                // Pattern: [R-N]_X = [R-N]_Y + constant (or other operations)
+                let is_loop_counter_increment = if let Expression::Binary { op: _, lhs, rhs: _ } = expr {
+                    if let Expression::Addressable(SsaMemoryReference::Versioned(base_var)) = lhs.as_ref() {
+                        // If the variable being incremented has the same kind/function but different version,
+                        // it's likely a loop counter
+                        base_var.kind == var.kind && base_var.function_id == var.function_id && base_var.version != var.version
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                
+                if is_loop_counter_increment {
+                    continue; // Don't eliminate loop counter increments
+                }
 
                 current
                     .get_mut(var_def_block_id)
@@ -176,6 +195,15 @@ impl FoldedSsaBuilder {
                     |_, x| update_read_args(var, expr, x),
                     |_, x| update_write_arg(var, expr, x),
                 );
+                
+                // Also update NextKind condition operand if it uses the same variable
+                let use_block_mut = current.get_mut(&use_block).unwrap();
+                if let NextKind::Condition(ref mut cond) = use_block_mut.next {
+                    cond.condition_operand = cond.condition_operand.flat_map(&mut |mem_ref| {
+                        update_read_args(var, expr, mem_ref)
+                    });
+                }
+                
                 return true;
             }
             false

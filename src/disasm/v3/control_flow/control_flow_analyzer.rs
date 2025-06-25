@@ -627,29 +627,56 @@ impl ControlFlowStructureAnalyzer {
                         context.in_loop = Some(discovered_loop);
                         let loop_body = self.analyze_block(func, context, current, None);
                         if let NextKind::Condition(cond) =
-                            &func.block(&discovered_loop.jump_back).ssa().next
+                            &func.block(&discovered_loop.jump_back).folded_ssa().next
                         {
                             assert!(cond.target_block == discovered_loop.header);
-                            let op = if cond.jump_if_true {
-                                BinaryOperator::NotEquals
-                            } else {
-                                BinaryOperator::Equals
+                            
+                            let condition_expr = self.expr_to_hlr(
+                                &cond.condition_operand,
+                                TypeVarPath::if_cond(
+                                    func.function_id(),
+                                    cond.instruction_id,
+                                ),
+                            );
+                            
+                            // Check if the condition is already a boolean comparison
+                            let loop_condition = match &condition_expr {
+                                HlrExpression::BinaryOp { op, .. } if op.is_logical_operator() => {
+                                    // Already a boolean expression, use it directly
+                                    // Negate it if jump_if_true is false (we want to continue while true)
+                                    if cond.jump_if_true {
+                                        condition_expr
+                                    } else {
+                                        // Negate the comparison
+                                        if let HlrExpression::BinaryOp { op, left, right, result_type } = condition_expr {
+                                            HlrExpression::BinaryOp {
+                                                op: op.logical_not(),
+                                                left,
+                                                right,
+                                                result_type,
+                                            }
+                                        } else {
+                                            unreachable!()
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    // Not a boolean comparison, compare to 0 as before
+                                    let op = if cond.jump_if_true {
+                                        BinaryOperator::NotEquals
+                                    } else {
+                                        BinaryOperator::Equals
+                                    };
+                                    HlrExpression::BinaryOp {
+                                        op,
+                                        left: Box::new(condition_expr),
+                                        right: Box::new(HlrExpression::Constant(0, Type::Int)),
+                                        result_type: Type::Bool,
+                                    }
+                                }
                             };
-                            statements.push(HlrStatement::DoWhile(
-                                loop_body,
-                                HlrExpression::BinaryOp {
-                                    op,
-                                    left: Box::new(self.expr_to_hlr(
-                                        &cond.condition_operand,
-                                        TypeVarPath::if_cond(
-                                            func.function_id(),
-                                            cond.instruction_id,
-                                        ),
-                                    )),
-                                    right: Box::new(HlrExpression::Constant(0, Type::Int)),
-                                    result_type: Type::Bool,
-                                },
-                            ));
+                            
+                            statements.push(HlrStatement::DoWhile(loop_body, loop_condition));
                         } else {
                             // If the loop jumps to a different block, we need to
                             // negate the jump condition and make it a break.
@@ -670,7 +697,7 @@ impl ControlFlowStructureAnalyzer {
                     break;
                 }
             }
-            match &block.ssa().next {
+            match &block.folded_ssa().next {
                 NextKind::Follows(next) => {
                     current = *next;
                 }

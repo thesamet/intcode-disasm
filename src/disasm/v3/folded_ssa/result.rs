@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::disasm::v3::{
-    lir::InstructionNode, model::add_block_view_when, ssa::SsaMemoryReference, BlockId,
+    lir::InstructionNode, model::add_block_view_when, ssa::SsaMemoryReference, BlockId, NextKind,
 };
 
 /// The overall result of the "Folded SSA" pipeline phase.
@@ -25,4 +25,5 @@ add_block_view_when!(FoldedSsa, folded_ssa);
 #[derive(Debug, Clone)]
 pub struct FoldedSsaBlock {
     pub instructions: Vec<InstructionNode<SsaMemoryReference>>,
+    pub next: NextKind<SsaMemoryReference>,
 }
