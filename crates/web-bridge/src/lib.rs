@@ -188,12 +188,15 @@ fn format_globals_from_hlr(model: &disasm::disasm::v3::model::Model<disasm::disa
                 "Pointer<EncodedString>".to_string() // Default for undefined globals
             };
             
+            // For all unused globals, show as unknown
+            let value_str = "&lt;unknown&gt;".to_string();
+            
             userdef_globals_output.push(format!(
                 "{} {}: {} = {}",
                 ctx.format("static", SemanticColor::Keyword),
                 ctx.format(name, SemanticColor::Variable),
                 ctx.format(&type_str, SemanticColor::Type),
-                ctx.format("&lt;unknown&gt;", SemanticColor::LowPrio)
+                ctx.format(&value_str, SemanticColor::Constant)
             ));
         }
     }

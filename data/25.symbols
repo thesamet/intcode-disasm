@@ -15,6 +15,8 @@ G  316  CANT_MOVE_MAGNET
 G  377  INFINITE_LOOP
 G  407  GAME_OVER_LAVA
 G  452  GAME_OVER_GRUE
+G  548  DROID_HEAVIER
+G  687  DROID_LIGHTER
 G  512  LAUNCHED_TO_SPACE
 G  826  YOU_MAY_PROCEED
 G 1090  ON_THE_KEYPAD
@@ -30,17 +32,36 @@ XPHI  2173 [R-1]_4
 
 T EncodedString
 
-S Item { location: Pointer<Location>, item_name: Pointer<EncodedString>, c, d }
+S Item { location: Pointer<Location>, item_name: Pointer<EncodedString>, c, take_effect: Function() -> () }
 
-S Location { location_name: Pointer<EncodedString>, text: Pointer<EncodedString>, func, dir1: Pointer<Location>, dir2: Pointer<Location>, dir3: Pointer<Location>, dir4: Pointer<Location> }
+S Location { location_name: Pointer<EncodedString>, text: Pointer<EncodedString>, func, north: Pointer<Location>, east: Pointer<Location>, south: Pointer<Location>, west: Pointer<Location> }
 
-G 3124  INITIAL_LOCATION Location
-G 4052  ANOTHER1 Location
-G 3549  ANOTHER2 Location
+G 3124  LOCATION_INITIAL_LOCATION                  Location
+G 3252  LOCATION_GIFT_WRAPPING_CENTER              Location
+G 3321  LOCATION_NAVIGATION                        Location
+G 3417  LOCATION_SCIENCE_LAB                       Location
+G 3492  LOCATION_CREW_QUARTERS                     Location
+G 3549  LOCATION_WARP_DRIVE_MAINTENANCE            Location
+G 3614  LOCATION_KITCHEN                           Location
+G 3656  LOCATION_ENGINEERING                       Location
+G 3727  LOCATION_STABLES                           Location
+G 3777  LOCATION_SICK_BAY                          Location
+G 3866  LOCATION_HOT_CHOCOLATE_FOUNTAIN            Location
+G 3925  LOCATION_ARCADE                            Location
+G 3980  LOCATION_PASSAGES                          Location
+G 4052  LOCATION_OBSERVATORY                       Location
+G 4132  LOCATION_STORAGE                           Location
+G 4196  LOCATION_CORRIDOR                          Location
+G 4292  LOCATION_HOLODECK                          Location
+G 4365  LOCATION_HALLWAY                           Location
+G 4457  LOCATION_SECURITY_CHECKPOINT_ENTRANCE      Location
+G 4556  LOCATION_PRESSURE_SENSITIVE_FLOOR          Location
 
 G 1128 CURRENT_LOCATION Pointer<Location>
 
 G 4601 ITEMS Array<13;Item>
+
+G 1129 STRANDED_BY_MAGNET
 
 F 1130 array_foreach(list, length, item_size, handle_function)
 V 1130 [R-2]_2 index
@@ -63,27 +84,80 @@ V 1310 [R+1]_1 Array<13;Item>
 G 1308 already_printed_items_header
 G 1309 temp_location_for_printing
 
+F 1353 print_item(item: Pointer<Item>)
+V 1353 [R+1]_1 str Pointer<EncodedString>
 
 F 1424 set_current_location(new_location)
-F 1796 finished
+
+G 1550 GAME_RESULT
+G 1551 Const_3021
+V 1553 [R+1]_3 str Pointer<EncodedString>
+
+F 1664 update_game_result_for_inventory_item(item: Pointer<Item>, index: Int)
+
+F 1752 print_result_and_exit
+F 1796 on_take_escape_pod
 
 F 1829 infinite_loop
 F 1850 game_over_lava
 F 1872 game_over_grue
 
-F 1353 print_item(item: Pointer<Item>)
-V 1353 [R+1]_1 str Pointer<EncodedString>
-F 1664 f1664(s: Pointer<Item>)
 
+F 1818 on_take_magnet
+F 1829 on_take_infinite_loop
+F 1850 on_take_molten_lave
+F 1872 on_take_photons
+
+G 1894 COMMANDS Array<7; Pointer<EncodedString>>
 G 1901 NEW_ARR Array<30; Int>
 
-G 1934 FUNCS Array<7;Function() -> ()>
-F 2329 f2329(s: Pointer<Item>)
-F 2173 f2173(s: Pointer<Item>)
+G 1934 COMMAND_HANDLERS Array<7;Function() -> ()>
+
+F 1984 read_line_and_handle_it
+V 1984 [R-1]_0 index
+V 1984 [R+1]_3 matches
+
+F 2081 handle_move(dir: Int)
+V 2081 [R-1]_1 location Pointer<Location>
+
+G 2124 take_item_matched
+F 2125 handle_take
+F 2173 handle_take_item(item: Pointer<Item>)
+V 2173 [R+1]_2 item_matches_user_input
+V 2173 [R-1]_0 item_name Pointer<EncodedString>
+
+
+G 2280 drop_item_matched
+F 2281 handle_drop
+F 2329 handle_drop_item(item: Pointer<Item>)
+V 2329 [R-1]_0 item_name Pointer<EncodedString>
+V 2329 [R+1]_2 item_matches_user_input
+
+G 2486 Const_53
+G 1352 Const_57
+
+G 2523 start_offset Int
+G 2524 match_result Bool
+F 2525 match_string(pat: Pointer<EncodedString>, match_eol: Bool)
+V 2525 [R-4]_1 result
 
 F 2634 read_line
 V 2634 [R-3]_1 index
 V 2634 [R-2]_1 ch
 F 2706 assign_minus_one
+G 2721 QUOTIENT_HANDLER
+F 2722 for_each_bit(num, precision, handler)
 F 2763 mod(dividend, depth, divisor)
+
+F 2468 handle_east
+F 2418 handle_inv
+F 2450 handle_north
+F 2487 handle_south
+F 2505 handle_west
+
+F 2863 print_base10(num)
+F 2909 print_base10_positive(num)
+F 3010 convoluted_mod(num, div)
+
+G 2959 POWERS Array<51; Int>
 G 3094 user_input Array<30;Char>

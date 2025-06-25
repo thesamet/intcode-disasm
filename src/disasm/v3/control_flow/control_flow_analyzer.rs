@@ -449,11 +449,106 @@ impl ControlFlowStructureAnalyzer {
         Ok(())
     }
 
+    /// Add UserDefs globals that weren't discovered through code analysis
+    fn add_unused_global_variables(&mut self) {
+        let user_defs = &self.model.type_inference_result().user_defs;
+        let existing_addresses: std::collections::HashSet<usize> = self.globals.keys().copied().collect();
+        
+        for (addr, (name, opt_type)) in user_defs.globals().iter() {
+            if !existing_addresses.contains(addr) {
+                // Get the type from UserDefs or default to a basic pointer type
+                let type_info = opt_type.clone().unwrap_or(
+                    crate::disasm::v3::type_inference::Type::Pointer(
+                        Box::new(crate::disasm::v3::type_inference::Type::Char)
+                    )
+                );
+                
+                // Analyze the memory content at this address to get the actual value
+                let hlr_value = self.analyze_global_memory_content(*addr, &type_info);
+                
+                // Create HLR variable for this global
+                let hlr_var = crate::disasm::hlr::ast::HlrVariable {
+                    name: name.clone(),
+                    type_info: type_info.clone(),
+                    scope: crate::disasm::hlr::ast::Scope::Global,
+                };
+                
+                self.globals.insert(*addr, (hlr_var, hlr_value));
+            }
+        }
+    }
+    
+    /// Analyze memory content at a global address to create appropriate HLR expression
+    fn analyze_global_memory_content(&self, addr: usize, type_info: &crate::disasm::v3::type_inference::Type) -> crate::disasm::hlr::ast::HlrExpression {
+        let image = &self.model.image_scanner_result().image;
+        let user_defs = self.model.user_defs();
+        
+        match type_info {
+            // Handle array types
+            crate::disasm::v3::type_inference::Type::Array { len, elem_type } => {
+                match elem_type.as_ref() {
+                    crate::disasm::v3::type_inference::Type::Struct(struct_id) => {
+                        create_struct_array_expression(addr, *len, *struct_id, image, user_defs)
+                    }
+                    _ => {
+                        create_generic_array_expression(addr, *len, elem_type, image, user_defs)
+                    }
+                }
+            }
+            
+            // Handle struct types  
+            crate::disasm::v3::type_inference::Type::Struct(struct_id) => {
+                let struct_def = user_defs.get_struct_definitions().get(struct_id).unwrap();
+                let struct_expr = format_struct_instance(addr, struct_def, image, user_defs);
+                crate::disasm::hlr::ast::HlrExpression::String(struct_expr)
+            }
+            
+            // Handle custom types (like Location)
+            crate::disasm::v3::type_inference::Type::CustomType(ct_id) => {
+                // For Location and other custom types, try to format as struct if it looks like one
+                if let Some(struct_id) = self.try_infer_struct_for_custom_type(*ct_id, addr) {
+                    if let Some(struct_def) = user_defs.get_struct_definitions().get(&struct_id) {
+                        let struct_expr = format_struct_instance(addr, struct_def, image, user_defs);
+                        return crate::disasm::hlr::ast::HlrExpression::String(struct_expr);
+                    }
+                }
+                
+                // Fallback for custom types
+                crate::disasm::hlr::ast::HlrExpression::String("<unknown>".to_string())
+            }
+            
+            // Handle other types
+            _ => {
+                crate::disasm::hlr::ast::HlrExpression::String("<unknown>".to_string())
+            }
+        }
+    }
+    
+    /// Try to infer what struct a custom type (like Location) should be formatted as
+    fn try_infer_struct_for_custom_type(&self, ct_id: crate::disasm::symbol_renaming::CustomTypeId, _addr: usize) -> Option<crate::disasm::symbol_renaming::StructId> {
+        let user_defs = self.model.user_defs();
+        
+        // Get the custom type name
+        if let Some(custom_type_name) = user_defs.get_custom_type(ct_id) {
+            // Look for a struct with the same name
+            for (struct_id, struct_def) in user_defs.get_struct_definitions() {
+                if &struct_def.name == custom_type_name {
+                    return Some(*struct_id);
+                }
+            }
+        }
+        
+        None
+    }
+
     /// Recovers high-level control flow structures for the entire program.
     fn recover_structures(mut self) -> Result<Model<HlrConstructionComplete>, Error> {
         let mut hlr_functions = Vec::new();
 
         self.extract_global_variables()?;
+        
+        // Add any unused global variables from UserDefs that weren't discovered through code analysis
+        self.add_unused_global_variables();
 
         // Process each function in the program
         for (_, func) in self.model.functions() {
