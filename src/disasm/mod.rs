@@ -3,6 +3,7 @@ pub mod mcp;
 pub mod parser;
 pub mod repl;
 pub mod v3;
+pub mod vm;
 
 mod symbol_renaming;
 #[cfg(test)]

@@ -60,7 +60,6 @@ G 4556  LOCATION_PRESSURE_SENSITIVE_FLOOR          Location
 G 1128 CURRENT_LOCATION Pointer<Location>
 
 G 4601 ITEMS Array<13;Item>
-
 G 1129 STRANDED_BY_MAGNET
 
 F 1130 array_foreach(list, length, item_size, handle_function)
@@ -89,12 +88,17 @@ V 1353 [R+1]_1 str Pointer<EncodedString>
 
 F 1424 set_current_location(new_location)
 
-G 1550 GAME_RESULT
-G 1551 Const_3021
+G 1550 ITEM_BITMASK
+G 1551 MAGIC_THRESHOLD_3021
+G 1552 ITEM_COMPARISON_RESULT
+F 1553 verify_item_set_matches
 V 1553 [R+1]_3 str Pointer<EncodedString>
 
-F 1664 update_game_result_for_inventory_item(item: Pointer<Item>, index: Int)
+F 1664 update_inv_item_bitmask(item: Pointer<Item>, index: Int)
 
+# new_arr[33-bit_index] of item must be > 3021 if item is in set.
+# Otherwise, it must not be in set.
+F 1702 check_item_in_set
 F 1752 print_result_and_exit
 F 1796 on_take_escape_pod
 
@@ -109,7 +113,7 @@ F 1850 on_take_molten_lave
 F 1872 on_take_photons
 
 G 1894 COMMANDS Array<7; Pointer<EncodedString>>
-G 1901 NEW_ARR Array<30; Int>
+G 1901 WEIGHT_THRESHOLDS Array<33; Int>
 
 G 1934 COMMAND_HANDLERS Array<7;Function() -> ()>
 
@@ -157,7 +161,7 @@ F 2505 handle_west
 
 F 2863 print_base10(num)
 F 2909 print_base10_positive(num)
-F 3010 convoluted_mod(num, div)
+F 3010 div_mod(num, div)
 
 G 2959 POWERS Array<51; Int>
 G 3094 user_input Array<30;Char>

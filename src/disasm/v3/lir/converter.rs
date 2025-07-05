@@ -355,7 +355,10 @@ fn extract_arguments(
     // If arguments were found, the sequence must be complete,
     // meaning it ended with R+1 (so next_expected_lower_offset became Some(0)).
     // If no arguments were found, next_expected_lower_offset is None, and collected_args is empty.
-    assert!(next_expected_lower_offset.is_none_or(|x| x == 0));
+    assert!(
+        next_expected_lower_offset.is_none_or(|x| x == 0),
+        "Next expected lower offset: {next_expected_lower_offset:?}; previous instructions: {previous_instructions:?}"
+    );
 
     // The collected_args are currently in [R+N, ..., R+1] order. Reverse it.
     collected_args.reverse();

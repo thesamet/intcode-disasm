@@ -13,15 +13,22 @@ use tabled::{
     Table, Tabled,
 };
 
-use crate::disasm::v3::{
-    common::formatting::{ContextualPrettyPrint, PrettyPrintConfig},
-    lir::{MemoryReferenceInfo, TypeVarPath},
-    type_inference::{
-        type_bounds_map::{BoundChangeReason, ChangeLogKind, TypeVarRegistry},
-        Constraint, TypeInferenceResult, TypeVarState,
+use crate::disasm::{
+    vm::{FunctionCaller},
+    v3::{
+        common::formatting::{ContextualPrettyPrint, PrettyPrintConfig},
+        lir::{MemoryReferenceInfo, TypeVarPath},
+        type_inference::{
+            type_bounds_map::{BoundChangeReason, ChangeLogKind, TypeVarRegistry},
+            Constraint, TypeInferenceResult, TypeVarState,
+        },
+        FunctionId,
     },
-    FunctionId,
 };
+
+pub struct ReplState {
+    caller: FunctionCaller,
+}
 
 use super::v3::{
     cfg::FunctionView,
@@ -50,6 +57,12 @@ pub struct ChangeRow {
     kind: String,
     reason: String,
     context: String,
+}
+
+#[derive(Tabled, Serialize)]
+pub struct FunctionRow {
+    name: String,
+    address: String,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -89,6 +102,27 @@ enum Command {
         #[arg(short, long)]
         function: Option<FunctionId>,
     },
+    /// Call a function with the given arguments
+    #[clap(alias = "c")]
+    Call {
+        addr: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<i128>,
+    },
+    /// Read memory value at address
+    Memget {
+        addr: usize,
+    },
+    /// Write value to memory address  
+    Memset {
+        addr: usize,
+        value: i128,
+    },
+    /// Set input buffer with text (automatically adds newline)
+    SetInput {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        text: Vec<String>,
+    },
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -105,6 +139,12 @@ pub fn repl<S: HasTypeInferenceResult + ModelState + 'static>(model: &Model<S>) 
         println!("No previous history found.");
     }
 
+    // Initialize persistent state
+    let program = &model.image_scanner_result().image;
+    let mut state = ReplState {
+        caller: FunctionCaller::new(program.clone()),
+    };
+
     loop {
         let readline = editor.readline(">> ");
         match readline {
@@ -115,7 +155,7 @@ pub fn repl<S: HasTypeInferenceResult + ModelState + 'static>(model: &Model<S>) 
                 editor.add_history_entry(line.as_str()).unwrap();
                 match ReplLine::try_parse_from(std::iter::once(">>").chain(line.split_whitespace()))
                 {
-                    Ok(cmd) => match ReplCommands::<S>::run_command(cmd, model) {
+                    Ok(cmd) => match ReplCommands::<S>::run_command(cmd, model, &mut state) {
                         Ok(_) => {}
                         Err(err) => {
                             println!("{}", err.red())
@@ -183,7 +223,7 @@ where
         })
     }
 
-    fn run_command(cmd: ReplLine, model: &Model<S>) -> Result<(), String> {
+    fn run_command(cmd: ReplLine, model: &Model<S>, state: &mut ReplState) -> Result<(), String> {
         match cmd.command {
             Command::Print {
                 function,
@@ -235,9 +275,7 @@ where
                 }
             }
             Command::Functions => {
-                for (id, _) in model.functions().sorted_by_key(|f| f.0) {
-                    println!("{id}");
-                }
+                Self::list_functions(model)?;
             }
             Command::Variables {
                 id,
@@ -246,6 +284,10 @@ where
             } => Self::list_variables(model, id, function, global)?,
             Command::History { tv_id, resolve } => Self::changelog(model, tv_id, resolve)?,
             Command::Constraints { id, function } => Self::constraint(model, id, function)?,
+            Command::Call { addr, args } => Self::call_function(&addr, args, model, state)?,
+            Command::Memget { addr } => Self::memget(addr, state)?,
+            Command::Memset { addr, value } => Self::memset(addr, value, state)?,
+            Command::SetInput { text } => Self::set_input(text, state)?,
         }
         Ok(())
     }
@@ -608,6 +650,138 @@ where
         table.with(tabled::settings::Style::modern());
         println!("{table}");
 
+        Ok(())
+    }
+
+    fn list_functions(model: &Model<S>) -> Result<(), String> {
+        let mut data = Vec::new();
+        
+        for (id, _function_info) in model.functions().sorted_by_key(|f| f.0) {
+            let name = model.user_defs().get_function_name(id)
+                .map(|s| s.clone())
+                .unwrap_or("—".to_string());
+            
+            data.push(FunctionRow {
+                name,
+                address: format!("{}", id.index()),
+            });
+        }
+        
+        let mut table = Table::new(data);
+        table.with(Style::rounded());
+        println!("{table}");
+        
+        Ok(())
+    }
+
+    fn call_function(addr_str: &str, args: Vec<i128>, model: &Model<S>, state: &mut ReplState) -> Result<(), String> {
+        let program = &model.image_scanner_result().image;
+        
+        // Try to parse as a number first, otherwise look up symbol name
+        let addr = match addr_str.parse::<i128>() {
+            Ok(num) => {
+                if num < 0 {
+                    return Err("Function address cannot be negative".to_string());
+                }
+                num
+            }
+            Err(_) => {
+                // Look up function name in user symbols
+                let user_defs = model.user_defs();
+                let mut found_addr = None;
+                
+                // Search through all functions for a matching name
+                for (function_id, _) in model.functions() {
+                    if let Some(function_name) = user_defs.get_function_name(function_id) {
+                        if function_name == addr_str {
+                            found_addr = Some(function_id.index() as i128);
+                            break;
+                        }
+                    }
+                }
+                
+                match found_addr {
+                    Some(addr) => addr,
+                    None => return Err(format!("Function '{}' not found in symbols", addr_str)),
+                }
+            }
+        };
+        
+        let addr_usize = addr as usize;
+        if addr_usize >= program.len() {
+            return Err(format!("Function address {} is beyond program size {}", addr, program.len()));
+        }
+        
+        println!("Calling function '{}' at address {} with {} arguments: {:?}", addr_str, addr, args.len(), args);
+        
+        match state.caller.call_function(addr_usize, &args) {
+            Ok(result) => {
+                if result.completed {
+                    println!("Function completed successfully");
+                } else {
+                    println!("Function halted without returning");
+                }
+                
+                if !result.outputs.is_empty() {
+                    println!("Outputs: {:?}", result.outputs);
+                    // Convert outputs to ASCII string, showing printable characters
+                    let ascii_chars: Vec<char> = result.outputs.iter()
+                        .map(|&val| {
+                            if (32..=126).contains(&val) {
+                                val as u8 as char
+                            } else if val == 10 {
+                                '\n'  // Show newlines
+                            } else if val == 9 {
+                                '\t'  // Show tabs
+                            } else {
+                                '?'
+                            }
+                        })
+                        .collect();
+                    
+                    // Only show ASCII output if it contains some printable characters
+                    let printable_count = result.outputs.iter()
+                        .filter(|&&val| (32..=126).contains(&val) || val == 10 || val == 9)
+                        .count();
+                    
+                    if printable_count > 0 {
+                        let ascii_string: String = ascii_chars.into_iter().collect();
+                        println!("ASCII: \"{}\"", ascii_string);
+                    }
+                }
+                
+                if !result.return_values.is_empty() {
+                    println!("Return values: {:?}", result.return_values);
+                }
+                
+                if result.outputs.is_empty() && result.return_values.is_empty() {
+                    println!("No outputs or return values");
+                }
+            }
+            Err(err) => {
+                println!("Function call failed: {err}");
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn memget(addr: usize, state: &ReplState) -> Result<(), String> {
+        let value = state.caller.get_memory(addr);
+        println!("Memory[{}] = {}", addr, value);
+        Ok(())
+    }
+
+    fn memset(addr: usize, value: i128, state: &mut ReplState) -> Result<(), String> {
+        state.caller.set_memory(addr, value);
+        println!("Memory[{}] set to {}", addr, value);
+        Ok(())
+    }
+
+    fn set_input(text: Vec<String>, state: &mut ReplState) -> Result<(), String> {
+        let input_string = text.join(" ");
+        state.caller.set_input_string(&input_string);
+        println!("Input buffer set to: \"{}\" (with newline)", input_string);
         Ok(())
     }
 }

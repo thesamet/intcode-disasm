@@ -1231,27 +1231,55 @@ fn format_field_value(
     image: &[i128],
     user_defs: &UserDefs,
 ) -> String {
-    let Some(Type::Pointer(inner_type)) = field_type else {
-        return field_value.to_string();
-    };
-    
-    let Type::CustomType(custom_type_id) = inner_type.as_ref() else {
-        return field_value.to_string();
-    };
-    
-    let Some(type_name) = user_defs.get_custom_type(*custom_type_id) else {
-        return field_value.to_string();
-    };
-    
-    if type_name != "EncodedString" {
-        return field_value.to_string();
+    // First check if field_value matches a global address
+    if field_value > 0 {
+        if let Some(global_name) = user_defs.get_global(field_value as usize) {
+            return global_name.clone();
+        }
     }
-    
-    if field_value <= 0 || field_value as usize >= image.len() {
-        return field_value.to_string();
+
+    // Handle typed fields
+    if let Some(field_type) = field_type {
+        match field_type {
+            // Direct function type
+            Type::Function { .. } => {
+                if field_value > 0 {
+                    let function_id = FunctionId::new(field_value as usize);
+                    if let Some(function_name) = user_defs.get_function_name(function_id) {
+                        return function_name.clone();
+                    }
+                }
+            }
+            // Pointer to function
+            Type::Pointer(inner_type) => {
+                match inner_type.as_ref() {
+                    Type::Function { .. } => {
+                        // Pointer to function - dereference and resolve
+                        if field_value > 0 {
+                            let function_id = FunctionId::new(field_value as usize);
+                            if let Some(function_name) = user_defs.get_function_name(function_id) {
+                                return function_name.clone();
+                            }
+                        }
+                    }
+                    Type::CustomType(custom_type_id) => {
+                        // Handle custom types like EncodedString
+                        if let Some(type_name) = user_defs.get_custom_type(*custom_type_id) {
+                            if type_name == "EncodedString" {
+                                if field_value > 0 && (field_value as usize) < image.len() {
+                                    return format_encoded_string_shared(field_value as usize, image);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
-    
-    format_encoded_string_shared(field_value as usize, image)
+
+    field_value.to_string()
 }
 
 /// Shared function for formatting EncodedString (can be reused by pretty_print.rs)
