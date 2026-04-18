@@ -4,6 +4,23 @@ A static analysis toolkit for **Intcode** — the fictional virtual machine from
 
 ---
 
+## What This Repo Provides
+
+This project implements a complete static analysis pipeline for Intcode:
+
+- **Execution** — an interpreter that runs programs interactively against stdin/stdout
+- **Disassembly** — decodes raw bytecode into readable assembly notation
+- **Control flow recovery** — identifies basic blocks and builds a control flow graph
+- **SSA conversion** — converts the program to Static Single Assignment form
+- **Function detection** — recovers function boundaries, signatures, and call sites
+- **Type inference** — infers types (integers, booleans, chars, pointers, structs, generics) from usage patterns
+- **High-level decompilation** — emits structured code with inferred control flow (if/else, loops)
+- **Symbol support** — accepts user-supplied name and type annotations to improve output quality
+- **Web UI** — an interactive browser interface for exploring analysis results
+- **MCP server** — exposes analysis results via the Model Context Protocol for AI-assisted exploration
+
+---
+
 ## What is Intcode?
 
 Intcode is a simple register-based virtual machine whose programs are encoded as comma-separated integers (e.g. `1,0,0,3,99`). It was introduced in Advent of Code 2019 and extended across several puzzles, eventually supporting I/O, conditional jumps, and relative addressing.
@@ -46,23 +63,6 @@ The **R** (relative base) register doubles as a stack pointer. Functions increme
 ### Indirect Addressing
 
 Intcode has no native pointer dereference instruction. Programs implement it by **self-modifying the operand** of a load or store instruction at runtime — overwriting the address field of a subsequent instruction before executing it. The decompiler detects this pattern and represents it as `*ptr` in the lifted output.
-
----
-
-## What This Repo Provides
-
-This project implements a complete static analysis pipeline for Intcode:
-
-- **Execution** — an interpreter that runs programs interactively against stdin/stdout
-- **Disassembly** — decodes raw bytecode into readable assembly notation
-- **Control flow recovery** — identifies basic blocks and builds a control flow graph
-- **SSA conversion** — converts the program to Static Single Assignment form
-- **Function detection** — recovers function boundaries, signatures, and call sites
-- **Type inference** — infers types (integers, booleans, chars, pointers, structs, generics) from usage patterns
-- **High-level decompilation** — emits structured code with inferred control flow (if/else, loops)
-- **Symbol support** — accepts user-supplied name and type annotations to improve output quality
-- **Web UI** — an interactive browser interface for exploring analysis results
-- **MCP server** — exposes analysis results via the Model Context Protocol for AI-assisted exploration
 
 ---
 
