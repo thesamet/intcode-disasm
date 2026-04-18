@@ -432,39 +432,21 @@ mod tests {
         let c3_val = make_test_constraint(Bool, Int, ConstraintReason::Assignment);
 
         let id1 = match store.add_constraint(c1_val.clone(), None, &state) {
-            AddConstraintResult::NewConstraint(id) => {
-                assert!(true, "Adding c1 should succeed");
-                id
-            }
-            _ => {
-                assert!(false, "Adding c1 should succeed");
-                ConstraintId::new(0) // Dummy value
-            }
+            AddConstraintResult::NewConstraint(id) => id,
+            _ => panic!("Adding c1 should succeed"),
         };
         assert_eq!(store.len(), 1);
 
         let id2 = match store.add_constraint(c2_val.clone(), None, &state) {
-            AddConstraintResult::ExistingConstraint(id) => {
-                assert!(true, "Adding c2 (duplicate) should not report as new");
-                id
-            }
-            _ => {
-                assert!(false, "Adding c2 (duplicate) should not report as new");
-                ConstraintId::new(0) // Dummy value
-            }
+            AddConstraintResult::ExistingConstraint(id) => id,
+            _ => panic!("Adding c2 (duplicate) should not report as new"),
         };
         assert_eq!(id1, id2, "IDs for identical constraints should be the same");
         assert_eq!(store.len(), 1);
 
         let id3 = match store.add_constraint(c3_val.clone(), None, &state) {
-            AddConstraintResult::NewConstraint(id) => {
-                assert!(true, "Adding c3 should succeed");
-                id
-            }
-            _ => {
-                assert!(false, "Adding c3 should succeed");
-                ConstraintId::new(0) // Dummy value
-            }
+            AddConstraintResult::NewConstraint(id) => id,
+            _ => panic!("Adding c3 should succeed"),
         };
         assert_ne!(id1, id3, "ID for c3 should be different from c1");
         assert_eq!(store.len(), 2);

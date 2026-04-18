@@ -1263,10 +1263,11 @@ fn format_field_value(
                     Type::CustomType(custom_type_id) => {
                         // Handle custom types like EncodedString
                         if let Some(type_name) = user_defs.get_custom_type(*custom_type_id) {
-                            if type_name == "EncodedString" {
-                                if field_value > 0 && (field_value as usize) < image.len() {
-                                    return format_encoded_string_shared(field_value as usize, image);
-                                }
+                            if type_name == "EncodedString"
+                                && field_value > 0
+                                && (field_value as usize) < image.len()
+                            {
+                                return format_encoded_string_shared(field_value as usize, image);
                             }
                         }
                     }

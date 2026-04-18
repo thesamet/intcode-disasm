@@ -193,7 +193,7 @@ impl<'a> TypeConstraintGenerator<'a> {
     fn generate_types_for_structs(&mut self) {
         for (&struct_id, def) in self.user_defs.get_struct_definitions() {
             let mut types = vec![];
-            for (index, StructField { typ, .. }) in def.fields.iter().enumerate() {
+            for StructField { typ, .. } in def.fields.iter() {
                 let typ = typ.clone().unwrap_or(Type::Int);
                 types.push(typ);
             }

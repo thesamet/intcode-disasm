@@ -658,7 +658,7 @@ where
         
         for (id, _function_info) in model.functions().sorted_by_key(|f| f.0) {
             let name = model.user_defs().get_function_name(id)
-                .map(|s| s.clone())
+                .cloned()
                 .unwrap_or("—".to_string());
             
             data.push(FunctionRow {

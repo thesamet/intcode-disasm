@@ -1023,7 +1023,7 @@ mod tests {
         let line = "S GameThing { a: Int }";
         let result = SymbolRenamingLine::parse(line);
         assert!(result.is_ok(), "Simple struct parsing failed: {:?}", result.err());
-        let (remaining, parsed_line) = result.unwrap();
+        let (_remaining, parsed_line) = result.unwrap();
     }
 
     #[test]
@@ -1031,7 +1031,7 @@ mod tests {
         let line = "S GameThing { a: Int, b: Pointer<Int>, c: CustomType1 }";
         let result = SymbolRenamingLine::parse(line);
         assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
-        let (remaining, parsed_line) = result.unwrap();
+        let (_remaining, parsed_line) = result.unwrap();
         assert_eq!(
             parsed_line,
             SymbolRenamingLine::Struct(

@@ -1145,8 +1145,6 @@ impl Solver {
         opportunities
     }
 
-    /// Recursively collect concrete pointer types by following PointerRefinement chains
-
     /// Checks if a TypeVarPath represents a refinement that could be made generic
     fn is_refinement_path(&self, path: &TypeVarPath) -> bool {
         matches!(
