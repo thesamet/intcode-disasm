@@ -118,6 +118,14 @@ impl IntcodeVm {
         self.halted
     }
 
+    pub fn has_input(&self) -> bool {
+        !self.input_queue.is_empty()
+    }
+
+    pub fn is_waiting_for_input(&self) -> bool {
+        !self.halted && self.get_memory(self.instruction_pointer) % 100 == 3 && !self.has_input()
+    }
+
     pub fn get_instruction_pointer(&self) -> usize {
         self.instruction_pointer
     }

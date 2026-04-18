@@ -5,6 +5,7 @@ use disasm::disasm::v3::pretty_print::{
     pretty_print_folded_ssa_with_config, pretty_print_ssa_stdout, pretty_print_ssa_with_config,
 };
 use disasm::disasm::v3::FunctionId;
+use disasm::disasm::vm::IntcodeVm;
 use disasm::disasm::{mcp, repl, UserDefs};
 
 use itertools::Itertools;
@@ -82,6 +83,9 @@ enum Command {
         #[arg(long, help = "Show variable IDs")]
         show_var_ids: bool,
     },
+    Run {
+        input: String,
+    },
     Repl {
         input: Option<String>,
         #[arg(long, help = "Symbol renaming rules files")]
@@ -136,6 +140,7 @@ fn main() {
                 theme,
             )
         }
+        Command::Run { input } => run_program(input),
         Command::Repl { input, symbols } => repl(input.unwrap(), symbols),
         Command::Mcp { input, symbols } => {
             mcp(input.unwrap(), symbols);
@@ -256,6 +261,43 @@ fn types(input: String, function: Option<FunctionId>, show_var_ids: bool, _theme
     } else {
         let config = PrettyPrintConfig::default().with_show_types_var_ids(show_var_ids);
         println!("{}", model.pretty_print_with_config(&config));
+    }
+}
+
+fn run_program(input: String) {
+    use std::io::{self, BufRead, Write};
+
+    let prog = parse_program(std::fs::read_to_string(input).unwrap());
+    let mut vm = IntcodeVm::new(prog);
+
+    loop {
+        if vm.is_waiting_for_input() {
+            io::stdout().flush().unwrap();
+            let mut line = String::new();
+            if io::stdin().lock().read_line(&mut line).unwrap() == 0 {
+                break; // EOF
+            }
+            for byte in line.bytes() {
+                vm.push_input(byte as i128);
+            }
+        }
+
+        match vm.step() {
+            Ok(false) => break,
+            Ok(true) => {}
+            Err(e) => {
+                eprintln!("VM error: {e}");
+                process::exit(1);
+            }
+        }
+
+        while let Some(val) = vm.pop_output() {
+            if (0..=127).contains(&val) {
+                print!("{}", val as u8 as char);
+            } else {
+                println!("{val}");
+            }
+        }
     }
 }
 
