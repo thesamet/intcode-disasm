@@ -199,30 +199,123 @@ cargo run -- compile <source.asm>
 
 ### Symbol Files
 
-A symbol file provides name and type hints that are woven into the analysis output. This is the primary way to guide the decompiler toward more readable results.
+A symbol file provides name and type hints woven into the analysis output. Lines beginning with `#` are comments. Each directive starts with a letter prefix followed by space-separated fields.
+
+#### `G` — Global variable
 
 ```
-# Globals
+G <addr> <name> [<type>]
+```
+
+- `addr` — memory address (non-negative integer)
+- `name` — identifier to use in output
+- `type` — optional type annotation
+
+```
 G 34  SEPARATOR_START
-G 166 COMMAND_PROMPT
+G 166 COMMAND_PROMPT Int
+```
 
-# Custom types
-T EncodedString
-S GameThing { a, msg: Pointer<EncodedString>, c, d }
+#### `F` — Function
 
-# Function signatures
-F 1234 print_encoded_string(encoded_string: Pointer<EncodedString>)
-F 1353 process_game_thing(thing: Pointer<GameThing>)
+```
+F <addr> <name>[(<param>[: <type>], ...)]
+```
 
-# Local variable names and types
+- `addr` — function entry address (non-negative integer)
+- `name` — identifier to use in output
+- Optional parenthesised parameter list; each parameter is `name` or `name: type`
+
+```
+F 1234 print_string
+F 1234 print_string(str: Pointer<EncodedString>)
+F 1353 process(thing: Pointer<GameThing>, count: Int)
+```
+
+#### `V` — Variable
+
+```
+V <func_addr> <vmr> <name> [<type>]
+```
+
+- `func_addr` — entry address of the containing function
+- `vmr` — versioned memory reference identifying the variable (see below)
+- `name` — identifier to use in output
+- `type` — optional type annotation
+
+```
 V 1234 [R-1]_0 str   Pointer<EncodedString>
 V 1130 [R-2]_2 index Int
+```
 
-# Suppress noisy phi nodes
+#### `T` — Custom type name
+
+```
+T <name>
+```
+
+Declares an opaque named type that can be referenced in other annotations.
+
+```
+T EncodedString
+```
+
+#### `S` — Struct definition
+
+```
+S <name> { <field>[: <type>], ... }
+```
+
+Declares a struct with named fields. Field types are optional.
+
+```
+S Point { x: Int, y: Int }
+S GameThing { a, msg: Pointer<EncodedString>, c, d }
+```
+
+#### `XPHI` — Exclude phi node
+
+```
+XPHI <func_addr> <vmr>
+```
+
+Suppresses a specific φ-node from type inference. Useful when an inferred merge point produces a spurious constraint that degrades output quality.
+
+```
 XPHI 2329 [R-1]_3
 ```
 
-Available types: `Int`, `Bool`, `Char`, `Pointer<T>`, `Array<N; T>`, any name defined with `T` or `S`.
+---
+
+#### Versioned Memory References (VMR)
+
+A VMR identifies a specific SSA version of a variable within a function. The format is `[<ref>]_<version>`:
+
+| Syntax        | Meaning                                                  |
+|---------------|----------------------------------------------------------|
+| `[123]_N`     | Absolute memory address 123, SSA version N               |
+| `[R]_N`       | Stack-relative address with offset 0, SSA version N      |
+| `[R+4]_N`     | Stack-relative address R+4, SSA version N                |
+| `[R-4]_N`     | Stack-relative address R−4, SSA version N                |
+| `[P7]_N`      | Pointer variable with internal ID 7, SSA version N       |
+
+The SSA version number and internal IDs are visible in the output of `folded-ssa` and `ssa`.
+
+---
+
+#### Types
+
+| Syntax              | Meaning                                          |
+|---------------------|--------------------------------------------------|
+| `Int`               | Integer                                          |
+| `Bool`              | Boolean (0 or 1)                                 |
+| `Char`              | ASCII character                                  |
+| `Pointer<T>`        | Pointer to a value of type T                     |
+| `Array<N; T>`       | Fixed-length array of N elements of type T       |
+| `Function() -> ()`  | Function value (no parameters, no return value)  |
+| _custom name_       | Any name declared with `T` or `S`                |
+
+Types can be nested: `Pointer<Array<8; Int>>`, `Array<4; Pointer<GameThing>>`.
 
 ### Web UI
 
