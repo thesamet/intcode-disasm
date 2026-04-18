@@ -600,13 +600,6 @@ impl<'a> TypeConstraintGenerator<'a> {
                 }
             }
 
-            // TODO: Handle If, Call, Output, Return for SsaMemoryReference
-            // Example for If:
-            // crate::disasm::v3::lir::Instruction::If { cond, .. } => {
-            //     let cond_type = self.process_expression(cond, function_id, instruction_id, state, store);
-            //     // Need a new ConstraintReason::IfConditionOperand
-            //     store.add_constraint(Constraint::new(cond_type, Type::Truthy, function_id, instruction_id, ConstraintReason::ComparisonOperand /* Placeholder */));
-            // }
             _ => {}
         }
     }

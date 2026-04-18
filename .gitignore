@@ -30,3 +30,7 @@ context_portal
 history.txt
 profile.json.gz
 crates/web-ui/dist
+
+CLAUDE.md
+*_output.txt
+Untitled

@@ -937,8 +937,6 @@ impl ControlFlowStructureAnalyzer {
                             let cond = build_expr! { !#cond };
                             let cond = self.expr_to_hlr(
                                 &cond.simplify().unwrap_or(cond),
-                                // TODO: This is likely wrong, if the expression has been simplified, the path may be out of sync with the expression
-                                // used in the typevar.
                                 TypeVarPath::if_cond(
                                     func.function_id(),
                                     next_kind_cond.instruction_id,

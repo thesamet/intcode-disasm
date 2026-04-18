@@ -145,8 +145,8 @@ pub trait TypeVarRegistry {
         }
     }
 
-    // This is a hack to wire down UserDefs to types through the type registry. We should have
-    // a better contextual way to do this.
+    // Provides access to user-supplied type definitions. Ideally this context would be
+    // threaded through the constraint generation pipeline rather than accessed via the registry.
     fn user_defs(&self) -> &UserDefs;
 }
 

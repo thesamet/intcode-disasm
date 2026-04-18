@@ -87,9 +87,6 @@ enum Command {
         #[arg(long, help = "Symbol renaming rules files")]
         symbols: Option<String>,
     },
-    FlowRecovery {
-        input: String,
-    },
     Mcp {
         input: Option<String>,
         #[arg(long, help = "Symbol renaming rules files")]
@@ -139,7 +136,6 @@ fn main() {
                 theme,
             )
         }
-        Command::FlowRecovery { input } => flow_recovery(input),
         Command::Repl { input, symbols } => repl(input.unwrap(), symbols),
         Command::Mcp { input, symbols } => {
             mcp(input.unwrap(), symbols);
@@ -240,20 +236,14 @@ fn ssa(input: String, theme: String) {
 
 fn folded_ssa(input: String, theme: String) {
     let prog = parse_program(std::fs::read_to_string(input).unwrap());
-    // The analysis function `binary_to_folded_ssa` returns Model<FoldedSsaComplete>
-    // The existing `pretty_print_ssa_stdout` expects Model<FunctionCallAnalysisComplete>
-    // We'll need to adapt this. For now, let's assume we have a way to print it.
-    // This might involve making pretty_print_ssa_stdout generic or creating a new one.
-    // For this step, we'll call the existing SSA printers, anticipating they can be adapted.
     let model = analysis::binary_to_folded_ssa(prog).unwrap();
 
     if theme == "default" {
-        pretty_print_ssa_stdout(&model); // This will likely need adjustment to accept Model<FoldedSsaComplete>
+        pretty_print_ssa_stdout(&model);
         return;
     }
 
-    let config = get_theme_config(&theme, false); // `show_types` is false for SSA view
-                                                  // Similar to above, pretty_print_ssa_with_config might need adjustment.
+    let config = get_theme_config(&theme, false);
     println!("{}", pretty_print_folded_ssa_with_config(&model, config));
 }
 
@@ -297,12 +287,6 @@ fn mcp(input: String, symbols: Option<String>) {
         .block_on(async {
             let _ = mcp::mcp(model).await;
         })
-}
-
-fn flow_recovery(input: String) {
-    let _prog = parse_program(std::fs::read_to_string(input).unwrap());
-    // TODO: Implement flow recovery
-    println!("Flow recovery not yet implemented");
 }
 
 fn hlr(input: String, symbols: Option<String>, theme: String) {

@@ -923,7 +923,6 @@ mod tests {
         let result = UserDefs::from_lines(input);
         assert!(result.is_err());
         let error_msg = result.unwrap_err();
-        println!("Actual error message: '{}'", error_msg);
         assert!(error_msg.contains("Failed to parse line"));
         assert!(error_msg.contains("X 1234 function_name"));
     }
@@ -1023,24 +1022,16 @@ mod tests {
     fn test_parse_struct_line_simple() {
         let line = "S GameThing { a: Int }";
         let result = SymbolRenamingLine::parse(line);
-        if let Err(ref e) = result {
-            println!("Simple struct parsing error: {:?}", e);
-        }
         assert!(result.is_ok(), "Simple struct parsing failed: {:?}", result.err());
         let (remaining, parsed_line) = result.unwrap();
-        println!("Simple remaining: '{}', parsed: {:?}", remaining, parsed_line);
     }
 
     #[test]
     fn test_parse_struct_line_with_multiple_fields() {
         let line = "S GameThing { a: Int, b: Pointer<Int>, c: CustomType1 }";
         let result = SymbolRenamingLine::parse(line);
-        if let Err(ref e) = result {
-            println!("Struct parsing error: {:?}", e);
-        }
         assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
         let (remaining, parsed_line) = result.unwrap();
-        println!("Remaining: '{}', parsed: {:?}", remaining, parsed_line);
         assert_eq!(
             parsed_line,
             SymbolRenamingLine::Struct(
@@ -1190,7 +1181,6 @@ mod tests {
         let result = parse_identifier(input);
         assert!(result.is_ok());
         if let Ok((remaining, identifier)) = result {
-            println!("Identifier: '{}', remaining: '{}'", identifier, remaining);
             assert_eq!(identifier, "arg1");
             assert_eq!(remaining, ":Int");
         }
@@ -1202,7 +1192,6 @@ mod tests {
         let result = parse_type_as_str(input);
         assert!(result.is_ok());
         if let Ok((remaining, type_str)) = result {
-            println!("Type: '{}', remaining: '{}'", type_str, remaining);
             assert_eq!(type_str, "Int");
             assert_eq!(remaining, ", arg2");
         }
@@ -1211,16 +1200,12 @@ mod tests {
         let input2 = "Int)";
         let result2 = parse_type_as_str(input2);
         assert!(result2.is_ok());
-        if let Ok((remaining2, type_str2)) = result2 {
-            println!("Type2: '{}', remaining2: '{}'", type_str2, remaining2);
-        }
 
         // Test function type parsing within array context
         let input3 = "Function() -> ()>";
         let result3 = parse_type_as_str(input3);
         assert!(result3.is_ok());
         if let Ok((remaining3, type_str3)) = result3 {
-            println!("Type3: '{}', remaining3: '{}'", type_str3, remaining3);
             assert_eq!(type_str3, "Function() -> ()");
             assert_eq!(remaining3, ">");
         }
@@ -1230,7 +1215,6 @@ mod tests {
         let result4 = parse_type_as_str(input4);
         assert!(result4.is_ok());
         if let Ok((remaining4, type_str4)) = result4 {
-            println!("Type4: '{}', remaining4: '{}'", type_str4, remaining4);
             assert_eq!(type_str4, "Pointer<Int>");
             assert_eq!(remaining4, ", c");
         }
@@ -1240,7 +1224,6 @@ mod tests {
         let result5 = parse_type_as_str(input5);
         assert!(result5.is_ok());
         if let Ok((remaining5, type_str5)) = result5 {
-            println!("Type5: '{}', remaining5: '{}'", type_str5, remaining5);
             assert_eq!(type_str5, "CustomType1");
             assert_eq!(remaining5, " }");
         }
@@ -1252,7 +1235,6 @@ mod tests {
         let result = SymbolRenamingLine::parse(input);
         assert!(result.is_ok(), "Line parsing failed: {:?}", result.err());
         if let Ok((remaining, parsed_line)) = result {
-            println!("Remaining: '{}'", remaining);
             match parsed_line {
                 SymbolRenamingLine::Function(fid, name, args) => {
                     assert_eq!(fid, FunctionId::new(1234));
@@ -1284,14 +1266,10 @@ mod tests {
         
         // Check the parsed line structure
         if let Ok((remaining, parsed_line)) = line_result {
-            println!("Remaining after parse: '{}'", remaining);
-            println!("Parsed line: {:?}", parsed_line);
-            
             match parsed_line {
                 SymbolRenamingLine::Function(fid, name, args) => {
                     assert_eq!(fid, FunctionId::new(1234));
                     assert_eq!(name, "function_name");
-                    println!("Args parsed: {:?}", args);
                     assert_eq!(args.len(), 2, "Expected 2 args, got {}: {:?}", args.len(), args);
                     assert_eq!(args[0], ("arg1".to_string(), Some("Int".to_string())));
                     assert_eq!(args[1], ("arg2".to_string(), Some("MyCustomType".to_string())));
@@ -1607,7 +1585,6 @@ mod tests {
         // Test Array<7; Function() -> ()>
         let input = "Array<7; Function() -> ()>";
         let result = parse_type(input, &user_defs);
-        println!("Parsing result for '{}': {:?}", input, result);
         assert!(result.is_ok(), "Failed to parse: '{}', error: {:?}", input, result.err());
         
         if let Ok((remaining, parsed_type)) = result {
@@ -1630,8 +1607,7 @@ mod tests {
         let input = "V 1234 [R-1]_0 func_ptr Function() -> ()";
         let result = SymbolRenamingLine::parse(input);
         assert!(result.is_ok(), "Line parsing failed: {:?}", result.err());
-        if let Ok((remaining, parsed_line)) = result {
-            println!("Remaining: '{}'", remaining);
+        if let Ok((_remaining, parsed_line)) = result {
             match parsed_line {
                 SymbolRenamingLine::Variable(_vmr, name, type_opt) => {
                     assert_eq!(name, "func_ptr");
@@ -1647,7 +1623,6 @@ mod tests {
         // Test just the global line first
         let line = "G 100 callback_array Array<7; Function() -> ()>";
         let line_result = SymbolRenamingLine::parse(line);
-        println!("Global line parse result: {:?}", line_result);
         assert!(line_result.is_ok(), "Global line parsing failed: {:?}", line_result.err());
         
         if let Ok((remaining, parsed_line)) = line_result {
@@ -1655,7 +1630,6 @@ mod tests {
                 SymbolRenamingLine::Global(addr, name, type_opt) => {
                     assert_eq!(addr, 100);
                     assert_eq!(name, "callback_array");
-                    println!("Parsed type string: {:?}", type_opt);
                     assert_eq!(type_opt, Some("Array<7; Function() -> ()>".to_string()));
                 }
                 _ => panic!("Expected Global line, got {:?}", parsed_line),
@@ -1669,9 +1643,6 @@ mod tests {
         let input = "G 100 callback_array Array<7; Function() -> ()>";
         
         let result = UserDefs::from_lines(input);
-        if let Err(ref e) = result {
-            println!("Error: {:?}", e);
-        }
         assert!(result.is_ok(), "Full integration test failed: {:?}", result.as_ref().err());
         
         let user_defs = result.unwrap();

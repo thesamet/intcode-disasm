@@ -108,10 +108,6 @@ impl SsaResult {
         let mut blocks = HashMap::new();
         // Process each function using the v3 model's function iterator
         for (_, function_view) in model.functions() {
-            // Convert v3 FunctionId to v2 FunctionId for SsaResult key and internal use
-            // Assuming a simple usize conversion is okay for now.
-            // TODO: Revisit ID conversions if they become more complex.
-
             // Pass the v3 model and the specific function view to the converter
             let mut converter = SSAConversionState::new(function_view);
             blocks.extend(converter.convert_function());

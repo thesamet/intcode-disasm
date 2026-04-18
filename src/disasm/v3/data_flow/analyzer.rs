@@ -253,7 +253,7 @@ impl DataFlowAnalyzer {
             // Use block view
             let pred_block_id = pred_kind.source_block_id();
             let pred_block = df_result.blocks.get(&pred_block_id);
-            let pred_flow = pred_block.as_ref().unwrap(); // TODO: Handle panic
+            let pred_flow = pred_block.as_ref().unwrap();
 
             new_defs_in.extend(pred_flow.defs_out.iter().cloned());
         }
@@ -266,7 +266,7 @@ impl DataFlowAnalyzer {
             // smaller than all the reads).
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
-                let other_flow = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
+                let other_flow = df_result.blocks.get(&other_block_id).unwrap();
                 new_defs_in.extend(
                     other_flow
                         .use_before_def
@@ -397,7 +397,7 @@ impl DataFlowAnalyzer {
             // to the entry point's live in.
             for (other_block_id, _) in function.blocks() {
                 // Iterate view blocks
-                let dfr = df_result.blocks.get(&other_block_id).unwrap(); // TODO: Handle panic
+                let dfr = df_result.blocks.get(&other_block_id).unwrap();
                 for gen in dfr
                     .gen
                     .keys()
